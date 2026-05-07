@@ -21,3 +21,4 @@ instance/
 .omx/review-context/
 .omx/review-context/
 .omx/review-prompts/
+.omx/review-results/
