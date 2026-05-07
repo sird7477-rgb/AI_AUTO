@@ -8,11 +8,13 @@ Before claiming a task is complete, the agent must:
 
 1. keep the change small and within scope
 2. inspect the diff
-3. run `./scripts/verify.sh`
-4. report the verification result
+3. run `./scripts/verify.sh` for basic verification
+4. run `./scripts/review-gate.sh` before presenting a commit candidate
+5. report the verification and review results
 5. mention any remaining warnings or limitations
 
 If `./scripts/verify.sh` fails, the task is not complete.
+If `./scripts/review-gate.sh` fails or returns a non-proceed review decision, do not present the change as ready to commit.
 
 ## Scope
 
@@ -40,6 +42,7 @@ Use these files as the workflow baseline:
 - `docs/WORKFLOW.md`
 - `docs/AI_ROLES.md`
 - `scripts/verify.sh`
+- `scripts/review-gate.sh`
 
 ## Completion Report Format
 
