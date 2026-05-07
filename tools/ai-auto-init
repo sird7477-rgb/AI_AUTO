@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INSTALLER="$HOME/workspace/ai-lab/scripts/install-automation-template.sh"
+
+case "${1:-}" in
+  -h|--help)
+    echo "Usage: aiinit"
+    echo
+    echo "Run this inside a target git repository."
+    echo "It installs the automation template from ~/workspace/ai-lab."
+    echo
+    echo "Example:"
+    echo "  cd ~/workspace/my-project"
+    echo "  aiinit"
+    exit 0
+    ;;
+esac
+
+if [ ! -x "$INSTALLER" ]; then
+  echo "Installer not found or not executable: $INSTALLER"
+  exit 1
+fi
+
+"$INSTALLER" "$(pwd)"

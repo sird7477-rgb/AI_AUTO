@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  -h|--help)
+    echo "Usage: workspace-scan [workspace-path]"
+    echo
+    echo "Scans git repositories under a workspace directory."
+    echo
+    echo "Default workspace:"
+    echo "  ~/workspace"
+    echo
+    echo "Examples:"
+    echo "  workspace-scan"
+    echo "  workspace-scan ~/workspace"
+    exit 0
+    ;;
+esac
+
+WORKSPACE="${1:-$HOME/workspace}"
+
+if [ ! -d "$WORKSPACE" ]; then
+  echo "Workspace not found: $WORKSPACE"
+  exit 1
+fi
+
+shorten() {
+  local value="$1"
+  local max="$2"
+
+  if [ "${#value}" -le "$max" ]; then
+    printf "%s" "$value"
+  else
+    printf "%s…" "${value:0:$((max - 1))}"
+  fi
+}
+
+printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %s\n" \
+  "PROJECT" "BRANCH" "STATUS" "VERIFY" "GATE" "COMMIT" "REMOTE" "PATH"
+
+printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %s\n" \
+  "-------" "------" "------" "------" "----" "------" "------" "----"
+
+find "$WORKSPACE" -mindepth 1 -maxdepth 2 -type d -name .git | sort | while read -r gitdir; do
+  repo="$(dirname "$gitdir")"
+  name="$(basename "$repo")"
+
+  branch="$(git -C "$repo" branch --show-current 2>/dev/null || true)"
+  if [ -z "$branch" ]; then
+    branch="detached"
+  fi
+
+  if [ -n "$(git -C "$repo" status --short 2>/dev/null)" ]; then
+    status="dirty"
+  else
+    status="clean"
+  fi
+
+  if [ -x "$repo/scripts/verify.sh" ]; then
+    verify="yes"
+  else
+    verify="no"
+  fi
+
+  if [ -x "$repo/scripts/review-gate.sh" ]; then
+    gate="yes"
+  else
+    gate="no"
+  fi
+
+  last_commit="$(git -C "$repo" log -1 --format='%h' 2>/dev/null || echo none)"
+
+  if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    remote="yes"
+  else
+    remote="no"
+  fi
+
+  short_name="$(shorten "$name" 22)"
+  short_branch="$(shorten "$branch" 10)"
+
+  printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %s\n" \
+    "$short_name" "$short_branch" "$status" "$verify" "$gate" "$last_commit" "$remote" "$repo"
+done
