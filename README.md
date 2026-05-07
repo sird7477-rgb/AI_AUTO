@@ -87,4 +87,5 @@ Out of scope:
 ## Documentation Map
 
 - `docs/AI_ROLES.md` describes the AI roles used when exercising the workflow.
+- `docs/WORKFLOW.md` describes the required Codex/OMX single-agent verification loop.
 - `.omx/plans/ralplan-ai-dev-testbed-cleanup.md` contains the approved cleanup plan for this pass.
