@@ -24,6 +24,12 @@ This is not an end-user app, a deployment template, or a framework showcase.
 
 ## Verified Commands
 
+Before marking any work complete, run the repository verification script:
+
+```bash
+./scripts/verify.sh
+```
+
 Run the local test suite with the repository virtual environment:
 
 ```bash
