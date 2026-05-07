@@ -1,0 +1,54 @@
+# New Project Automation Guide
+
+This guide explains how to initialize the automation workflow in a new repository.
+
+## Manual setup
+
+From inside the target git repository:
+
+    aiinit
+
+Then customize:
+
+    scripts/verify.sh
+
+Run the gate:
+
+    ./scripts/verify.sh
+    ./scripts/review-gate.sh
+
+## Codex setup request
+
+Use this request when asking Codex to initialize a new project:
+
+    이 프로젝트에 자동화 기반을 초기화해줘.
+
+    절차:
+    1. 현재 경로와 git 상태를 확인해.
+    2. aiinit을 실행해.
+    3. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 확인해.
+    4. scripts/verify.sh를 이 프로젝트에 맞게 수정해.
+    5. ./scripts/verify.sh를 실행해.
+    6. ./scripts/review-gate.sh를 실행해.
+    7. 커밋은 하지 말고 결과만 보고해.
+
+    완료 보고에는 아래를 포함해:
+    - 변경 파일
+    - verify.sh에 넣은 검증 기준
+    - verify 결과
+    - review-gate 결과
+    - Claude 리뷰 요약
+    - Gemini skip 여부
+    - 남은 warning 또는 제한사항
+    - 커밋하지 않았다는 확인
+
+## Short request
+
+    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치하고, 이 프로젝트에 맞게 scripts/verify.sh를 수정한 뒤 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+
+## Notes
+
+- `aiinit` must be run inside a git repository.
+- Project-specific checks belong in `scripts/verify.sh`.
+- Do not blindly reuse ai-lab Flask checks in other projects.
+- Commit only after reviewing the generated files and verification results.
