@@ -18,3 +18,4 @@ instance/
 .flaskenv
 
 .DS_Store
+.omx/review-context/
