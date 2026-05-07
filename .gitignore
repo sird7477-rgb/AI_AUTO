@@ -19,3 +19,5 @@ instance/
 
 .DS_Store
 .omx/review-context/
+.omx/review-context/
+.omx/review-prompts/
