@@ -29,3 +29,42 @@ Then customize:
 Update scripts/verify.sh for the target project.
 
 Do not keep ai-lab-specific checks in a real project unless they are relevant.
+
+## Smoke test the template
+
+You can test this template in a temporary repository before applying it to a real project.
+
+Example:
+
+    cd ~/workspace
+    rm -rf automation-template-smoke
+    mkdir automation-template-smoke
+    cd automation-template-smoke
+    git init
+
+    cp -r ~/workspace/ai-lab/templates/automation-base/* .
+
+    mv scripts/verify.example.sh scripts/verify.sh
+    chmod +x scripts/*.sh
+
+    cat > scripts/verify.sh <<'VERIFY'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "[verify] smoke test for automation template"
+    test -f AGENTS.md
+    test -f docs/WORKFLOW.md
+    test -x scripts/review-gate.sh
+
+    echo "[verify] success"
+    VERIFY
+
+    chmod +x scripts/verify.sh
+
+    git add .
+    git commit -m "test: initialize automation template smoke repo"
+
+    ./scripts/verify.sh
+    ./scripts/review-gate.sh
+
+The smoke test should complete with verification success, Claude review if available, Gemini skipped by default, and a review verdict summary.
