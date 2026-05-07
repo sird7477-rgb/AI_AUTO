@@ -1,10 +1,15 @@
+import os
+
 from flask import Flask, jsonify, request
 
+from repository import TodoRepository
 
-def create_app():
+
+def create_app(db_path=None):
     app = Flask(__name__)
-    todos = {}
-    next_id = 1
+    repository = TodoRepository(
+        db_path or os.environ.get("DATABASE_URL") or "instance/todos.sqlite3"
+    )
 
     def serialize_todo(todo):
         return {
@@ -12,6 +17,10 @@ def create_app():
             "title": todo["title"],
             "completed": todo["completed"],
         }
+
+    @app.get("/")
+    def root():
+        return jsonify({"status": "ok"})
 
     @app.get("/health")
     def health():
@@ -23,30 +32,22 @@ def create_app():
 
     @app.get("/todos")
     def list_todos():
-        return jsonify([serialize_todo(todo) for todo in todos.values()])
+        return jsonify([serialize_todo(todo) for todo in repository.list()])
 
     @app.post("/todos")
     def create_todo():
-        nonlocal next_id
-
         data = request.get_json(silent=True) or {}
         title = data.get("title")
         if not isinstance(title, str) or not title.strip():
             return jsonify({"error": "title is required"}), 400
 
-        todo = {
-            "id": next_id,
-            "title": title.strip(),
-            "completed": bool(data.get("completed", False)),
-        }
-        todos[next_id] = todo
-        next_id += 1
+        todo = repository.create(title.strip(), bool(data.get("completed", False)))
 
         return jsonify(serialize_todo(todo)), 201
 
     @app.get("/todos/<int:todo_id>")
     def get_todo(todo_id):
-        todo = todos.get(todo_id)
+        todo = repository.get(todo_id)
         if todo is None:
             return jsonify({"error": "todo not found"}), 404
 
@@ -54,38 +55,37 @@ def create_app():
 
     @app.patch("/todos/<int:todo_id>")
     def update_todo(todo_id):
-        todo = todos.get(todo_id)
+        todo = repository.get(todo_id)
         if todo is None:
             return jsonify({"error": "todo not found"}), 404
 
         data = request.get_json(silent=True) or {}
+        title = None
+        completed = None
 
         if "title" in data:
             title = data["title"]
             if not isinstance(title, str) or not title.strip():
                 return jsonify({"error": "title must be a non-empty string"}), 400
-            todo["title"] = title.strip()
+            title = title.strip()
 
         if "completed" in data:
             if not isinstance(data["completed"], bool):
                 return jsonify({"error": "completed must be a boolean"}), 400
-            todo["completed"] = data["completed"]
+            completed = data["completed"]
 
-        return jsonify(serialize_todo(todo))
+        return jsonify(serialize_todo(repository.update(todo_id, title, completed)))
 
     @app.delete("/todos/<int:todo_id>")
     def delete_todo(todo_id):
-        if todo_id not in todos:
+        if not repository.delete(todo_id):
             return jsonify({"error": "todo not found"}), 404
 
-        del todos[todo_id]
         return "", 204
 
     return app
 
 
-app = create_app()
-
-
 if __name__ == "__main__":
+    app = create_app()
     app.run(debug=True)
