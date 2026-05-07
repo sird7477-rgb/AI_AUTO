@@ -17,6 +17,10 @@ def create_app():
     def health():
         return jsonify({"status": "ok"})
 
+    @app.get("/")
+    def root_health():
+        return jsonify({"status": "ok"})
+
     @app.get("/todos")
     def list_todos():
         return jsonify([serialize_todo(todo) for todo in todos.values()])

@@ -26,6 +26,13 @@ def test_health(client):
     assert response.get_json() == {"status": "ok"}
 
 
+def test_root_health_check(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok"}
+
+
 def test_create_and_list_todos(client):
     create_response = client.post("/todos", json={"title": "Buy milk"})
 
