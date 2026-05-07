@@ -1,11 +1,15 @@
+import os
+
 from flask import Flask, jsonify, request
 
 from repository import TodoRepository
 
 
-def create_app(db_path="instance/todos.sqlite3"):
+def create_app(db_path=None):
     app = Flask(__name__)
-    repository = TodoRepository(db_path)
+    repository = TodoRepository(
+        db_path or os.environ.get("DATABASE_URL") or "instance/todos.sqlite3"
+    )
 
     def serialize_todo(todo):
         return {
