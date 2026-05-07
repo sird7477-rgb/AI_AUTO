@@ -4,8 +4,8 @@ from app import create_app
 
 
 @pytest.fixture()
-def client():
-    app = create_app()
+def client(tmp_path):
+    app = create_app(tmp_path / "todos.sqlite3")
     app.config.update(TESTING=True)
 
     return app.test_client()
@@ -42,6 +42,30 @@ def test_create_and_list_todos(client):
     assert list_response.status_code == 200
     assert list_response.get_json() == [
         {"id": todo_id, "title": "Buy milk", "completed": False}
+    ]
+
+
+def test_todos_persist_across_app_instances(tmp_path):
+    db_path = tmp_path / "todos.sqlite3"
+    first_app = create_app(db_path)
+    first_app.config.update(TESTING=True)
+    first_client = first_app.test_client()
+
+    create_response = first_client.post("/todos", json={"title": "Persist me"})
+    assert create_response.status_code == 201
+
+    second_app = create_app(db_path)
+    second_app.config.update(TESTING=True)
+    second_client = second_app.test_client()
+
+    list_response = second_client.get("/todos")
+    assert list_response.status_code == 200
+    assert list_response.get_json() == [
+        {
+            "id": create_response.get_json()["id"],
+            "title": "Persist me",
+            "completed": False,
+        }
     ]
 
 

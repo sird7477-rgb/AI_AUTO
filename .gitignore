@@ -14,6 +14,7 @@ env/
 .env.*
 
 instance/
+*.sqlite3
 .flaskenv
 
 .DS_Store
