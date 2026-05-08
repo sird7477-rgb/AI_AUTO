@@ -213,12 +213,6 @@ check_helper_link() {
     return
   fi
 
-  if [ -L "$link_path" ]; then
-    say_warn "global helper link points elsewhere: ${link_path}"
-    suggest "review ${link_path} before replacing it"
-    return
-  fi
-
   if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
     say_warn "global helper path exists but is not a symlink: ${link_path}"
     suggest "review ${link_path} before replacing it"
@@ -229,6 +223,9 @@ check_helper_link() {
     mkdir -p "$(dirname "$link_path")"
     ln -sfn "$target_path" "$link_path"
     say_fix "linked ${link_path} -> ${target_path}"
+  elif [ -L "$link_path" ]; then
+    say_warn "global helper link points elsewhere: ${link_path}"
+    suggest "./scripts/automation-doctor.sh --fix"
   else
     say_warn "global helper link missing or points elsewhere: ${link_path}"
     suggest "./scripts/automation-doctor.sh --fix"

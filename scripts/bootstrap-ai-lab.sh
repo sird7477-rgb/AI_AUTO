@@ -124,12 +124,6 @@ ensure_link() {
     return
   fi
 
-  if [ -L "$link_path" ]; then
-    say_warn "helper link points elsewhere: ${link_path}"
-    suggest "review ${link_path} before replacing it"
-    return
-  fi
-
   if [ "$FIX" -eq 1 ]; then
     local link_dir
     link_dir="$(dirname "$link_path")"
@@ -149,6 +143,9 @@ ensure_link() {
     mkdir -p "$link_dir"
     ln -sfn "$target_path" "$link_path"
     say_fix "linked ${link_path} -> ${target_path}"
+  elif [ -L "$link_path" ]; then
+    say_warn "helper link points elsewhere: ${link_path}"
+    suggest "./scripts/bootstrap-ai-lab.sh --fix"
   else
     say_warn "helper link missing: ${link_path}"
     suggest "./scripts/bootstrap-ai-lab.sh --fix"

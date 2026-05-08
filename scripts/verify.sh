@@ -19,6 +19,7 @@ for script in \
   scripts/automation-doctor.sh \
   scripts/collect-review-context.sh \
   scripts/discover-ai-models.sh \
+  scripts/install-global-files.sh \
   scripts/install-automation-template.sh \
   scripts/make-review-prompts.sh \
   scripts/review-gate.sh \
@@ -222,6 +223,113 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
   grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
+)
+
+echo "[verify] testing global helper link repair..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_global_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_global_tmp EXIT
+
+  mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
+  ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
+
+  HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
+
+  test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
+)
+
+echo "[verify] testing global helper non-symlink conflict handling..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_global_conflict_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_global_conflict_tmp EXIT
+
+  mkdir -p "${tmp_home}/bin"
+  printf 'do not replace\n' > "${tmp_home}/bin/aiinit"
+
+  if HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null; then
+    echo "[verify] install-global-files unexpectedly overwrote or ignored non-symlink conflict"
+    exit 1
+  fi
+
+  test ! -L "${tmp_home}/bin/aiinit"
+  grep -q "do not replace" "${tmp_home}/bin/aiinit"
+)
+
+echo "[verify] testing global helper symlink-to-directory repair..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_global_dirlink_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_global_dirlink_tmp EXIT
+
+  mkdir -p "${tmp_home}/bin" "${tmp_home}/old-helper-dir"
+  ln -s "${tmp_home}/old-helper-dir" "${tmp_home}/bin/aiinit"
+
+  HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
+
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test ! -e "${tmp_home}/old-helper-dir/ai-auto-init"
+)
+
+echo "[verify] testing bootstrap --fix global helper repair..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_bootstrap_fix_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_bootstrap_fix_tmp EXIT
+
+  mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
+  ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
+
+  HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/bootstrap-ai-lab.sh --fix >/dev/null
+
+  test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
+)
+
+echo "[verify] testing automation-doctor --fix global helper repair..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_doctor_fix_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_doctor_fix_tmp EXIT
+
+  mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
+  ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
+
+  DOCTOR_SKIP_DIRTY_CHECK=1 HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/automation-doctor.sh --fix >/dev/null
+
+  test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
 echo "[verify] checking automation template sync..."

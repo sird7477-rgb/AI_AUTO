@@ -37,6 +37,12 @@ ai-lab-only bootstrap command:
   - Runs automation-doctor with the dirty-tree check skipped
   - Applies only safe helper-link fixes with `--fix`
 
+- `./scripts/install-global-files.sh`
+  - User-facing wrapper for cloned checkouts
+  - Intended AI keyword: `전역파일 설치해줘`
+  - Creates or repairs only the safe repo-owned helper symlinks under `~/bin`
+  - Does not install external programs, edit shell profiles, configure credentials, run `automation-doctor --fix`, or overwrite non-symlink files
+
 ## Link setup
 
 Expected links:
@@ -46,6 +52,10 @@ Expected links:
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
 To recreate the links:
+
+    ./scripts/install-global-files.sh
+
+Manual equivalent:
 
     mkdir -p ~/bin
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/ai-auto-init

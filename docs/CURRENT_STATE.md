@@ -248,6 +248,17 @@ Expected links:
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
+Clone recovery command:
+
+- `./scripts/install-global-files.sh`
+
+When a user opens a cloned checkout and asks `전역파일 설치해줘`, AGENTS.md routes the AI
+to run this command from the repository root.
+
+It only creates or repairs safe repo-owned helper symlinks under `~/bin`; it does
+not install external programs, edit shell profiles, configure credentials, run
+`automation-doctor --fix`, or overwrite non-symlink files.
+
 ### ai-lab bootstrap
 
 Completed first slice.
@@ -314,6 +325,7 @@ Verification behavior:
 For ai-lab itself:
 
     ./scripts/verify.sh
+    ./scripts/install-global-files.sh
     ./scripts/bootstrap-ai-lab.sh
     ./scripts/automation-doctor.sh
     ./scripts/review-gate.sh
