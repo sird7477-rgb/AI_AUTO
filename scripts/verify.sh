@@ -231,6 +231,31 @@ echo "[verify] testing automation template installer..."
   grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "${installer_output}"
 )
 
+echo "[verify] testing automation template conflict guidance..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_installer_conflict_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_installer_conflict_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  conflict_output="${tmp_dir}/conflict.out"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  printf '# Existing instructions\n' > "${target_dir}/AGENTS.md"
+
+  if ./scripts/install-automation-template.sh "${target_dir}" > "${conflict_output}"; then
+    echo "[verify] installer unexpectedly overwrote existing automation file"
+    exit 1
+  fi
+
+  grep -q "Refusing to overwrite existing files" "${conflict_output}"
+  grep -q "기존 프로젝트에 자동화 기반을 병합 도입해줘" "${conflict_output}"
+  grep -q "# Existing instructions" "${target_dir}/AGENTS.md"
+)
+
 echo "[verify] testing aiinit wrapper onboarding handoff..."
 (
   tmp_dir="$(mktemp -d)"

@@ -230,6 +230,13 @@ verify, and review-gate before reporting.
 
 The installer also creates `.omx/reviewer-state` and adds `.omx/` to the target repository's local `.git/info/exclude` so generated reviewer, review, and model-routing artifacts stay out of commit candidates by default.
 
+If target automation files already exist, aiinit refuses to overwrite them. The
+conflict message directs users of existing or advanced projects to ask the AI:
+
+    기존 프로젝트에 자동화 기반을 병합 도입해줘.
+    기존 AGENTS.md, docs, scripts/verify.sh는 덮어쓰지 말고 먼저 분석한 뒤
+    필요한 자동화 파일과 지침만 제안/반영해줘.
+
 Then run a project onboarding interview and customize:
 
     AGENTS.md

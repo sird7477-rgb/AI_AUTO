@@ -48,7 +48,15 @@ if [ "${#conflicts[@]}" -gt 0 ]; then
   echo "Refusing to overwrite existing files:"
   printf ' - %s\n' "${conflicts[@]}"
   echo
-  echo "Move or review these files first, then rerun."
+  echo "This looks like an existing project or an already-initialized automation setup."
+  echo "aiinit is intentionally stopping before it overwrites project instructions, docs, or verification scripts."
+  echo
+  echo "For an existing project, ask the AI:"
+  echo "  기존 프로젝트에 자동화 기반을 병합 도입해줘."
+  echo "  기존 AGENTS.md, docs, scripts/verify.sh는 덮어쓰지 말고 먼저 분석한 뒤"
+  echo "  필요한 자동화 파일과 지침만 제안/반영해줘."
+  echo
+  echo "If this is a new project and these files are accidental, move or review them first, then rerun aiinit."
   exit 1
 fi
 

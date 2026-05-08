@@ -84,6 +84,22 @@ Use this after `aiinit` has already installed the template:
 
     프로젝트 초기설정 해줘
 
+## Existing Project Adoption
+
+`aiinit` is intentionally conservative. If an existing project already has files
+such as `AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`, it stops instead
+of overwriting them.
+
+For an existing or already-advanced project, ask the AI:
+
+    기존 프로젝트에 자동화 기반을 병합 도입해줘.
+    기존 AGENTS.md, docs, scripts/verify.sh는 덮어쓰지 말고 먼저 분석한 뒤
+    필요한 자동화 파일과 지침만 제안/반영해줘.
+
+The AI should preserve existing project instructions and verification behavior,
+then add only the missing automation files or guidance needed for the Codex/OMX
+workflow.
+
 ## Notes
 
 - `aiinit` must be run inside a git repository.
