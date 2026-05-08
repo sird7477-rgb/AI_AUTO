@@ -98,6 +98,22 @@ Timeout seconds: 180
 MSG
 }
 
+write_valid_request_changes_with_skipped_word() {
+  local file="$1"
+
+  cat > "${file}" <<'MSG'
+# Review
+
+## Verdict
+
+request_changes
+
+## Findings
+
+The review context mentions Skipped: output from disabled reviewers, but this review itself requested changes.
+MSG
+}
+
 write_fallback_summary() {
   local file="$1"
   local status="$2"
@@ -377,6 +393,25 @@ case_valid_review_with_fenced_failure_footer() {
   assert_summary "valid_review_with_fenced_failure_footer" "proceed" "multi_reviewer" 0
 }
 
+case_valid_request_changes_with_skipped_word() {
+  local dir="${TMP_ROOT}/valid_request_changes_with_skipped_word"
+  mkdir -p "${dir}"
+
+  write_skipped "${dir}/claude-review-current.md"
+  write_skipped "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-architect-current.md" "approve_with_notes"
+  write_valid_request_changes_with_skipped_word "${dir}/codex-test-current.md"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "valid_request_changes_with_skipped_word" "revise" "codex_only_degraded" 1 "claude:skipped, gemini:skipped"
+}
+
 case_multi_reviewer
 case_single_external_plus_codex
 case_codex_only_degraded
@@ -387,5 +422,6 @@ case_failed_reviewer_prompt_text_ignored
 case_failed_reviewer_skipped_text_ignored
 case_valid_review_with_failure_words
 case_valid_review_with_fenced_failure_footer
+case_valid_request_changes_with_skipped_word
 
 echo "[summary-test] success"

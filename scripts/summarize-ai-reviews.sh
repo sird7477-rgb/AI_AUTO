@@ -73,11 +73,6 @@ extract_verdict() {
     return 0
   fi
 
-  if grep -qi 'Skipped:' "${file}"; then
-    echo "skipped"
-    return 0
-  fi
-
   local verdict
   verdict="$(
     awk '
@@ -98,6 +93,11 @@ extract_verdict() {
 
   if [ -n "${verdict}" ]; then
     echo "${verdict}"
+    return 0
+  fi
+
+  if grep -qi '^Skipped:' "${file}"; then
+    echo "skipped"
     return 0
   fi
 
