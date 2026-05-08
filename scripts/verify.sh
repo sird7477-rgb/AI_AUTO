@@ -225,10 +225,43 @@ echo "[verify] testing automation template installer..."
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
   grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
-  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "templates/automation-base/README.md"
-  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "templates/automation-base/README.md"
+  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "프로젝트 초기설정 해줘" "${installer_output}"
-  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "${installer_output}"
+  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "${installer_output}"
+  test ! -e "${target_dir}/templates/domain-packs/odoo/README.md"
+  test -f "${target_dir}/.omx/domain-packs/odoo/README.md"
+  grep -q "Optional domain packs installed for onboarding reference" "${installer_output}"
+)
+
+echo "[verify] checking optional domain pack structure..."
+test -f "templates/domain-packs/odoo/README.md"
+test -f "templates/domain-packs/odoo/AGENTS.patch.md"
+test -f "templates/domain-packs/odoo/WORKFLOW.md"
+test -f "templates/domain-packs/odoo/verify-patterns.md"
+test -f "templates/domain-packs/odoo/review-checklist.md"
+grep -q "ignored onboarding reference under" "templates/domain-packs/odoo/README.md"
+grep -Fq 'Path("custom_addons").rglob("*.xml")' "templates/domain-packs/odoo/verify-patterns.md"
+grep -q "도메인팩" "templates/automation-base/docs/WORKFLOW.md"
+
+echo "[verify] testing domain pack copy preserves existing references..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_domain_pack_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_domain_pack_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  mkdir -p "${target_dir}/.omx/domain-packs/odoo"
+  printf 'keep me\n' > "${target_dir}/.omx/domain-packs/odoo/README.md"
+
+  ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
+
+  grep -q "keep me" "${target_dir}/.omx/domain-packs/odoo/README.md"
 )
 
 echo "[verify] testing automation template conflict guidance..."
@@ -271,7 +304,7 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   git -c init.defaultBranch=main init -q "${target_dir}"
   ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
-  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "${aiinit_output}"
+  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
 )
 

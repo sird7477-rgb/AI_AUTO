@@ -83,16 +83,39 @@ cp "${TEMPLATE_DIR}/scripts/test-review-summary.sh" "${TARGET_DIR}/scripts/test-
 cp "${TEMPLATE_DIR}/scripts/review-gate.sh" "${TARGET_DIR}/scripts/review-gate.sh"
 cp "${TEMPLATE_DIR}/scripts/verify.example.sh" "${TARGET_DIR}/scripts/verify.sh"
 
+domain_packs_dir="$(dirname "${TEMPLATE_DIR}")/domain-packs"
+if [ -d "${domain_packs_dir}" ]; then
+  mkdir -p "${TARGET_DIR}/.omx/domain-packs"
+  for pack_dir in "${domain_packs_dir}"/*; do
+    if [ ! -d "${pack_dir}" ]; then
+      continue
+    fi
+
+    pack_name="$(basename "${pack_dir}")"
+    target_pack_dir="${TARGET_DIR}/.omx/domain-packs/${pack_name}"
+    if [ -e "${target_pack_dir}" ]; then
+      echo "Preserving existing optional domain pack reference: ${target_pack_dir}"
+      continue
+    fi
+
+    cp -R "${pack_dir}" "${target_pack_dir}"
+  done
+fi
+
 chmod +x "${TARGET_DIR}"/scripts/*.sh
 
 echo "Automation template installed into: ${TARGET_DIR}"
 echo "Local git exclude updated for .omx/ runtime artifacts."
+if [ -d "${TARGET_DIR}/.omx/domain-packs" ]; then
+  echo "Optional domain packs installed for onboarding reference: ${TARGET_DIR}/.omx/domain-packs"
+fi
 echo
 echo "Next steps:"
 echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
-echo "2. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "3. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
-echo "4. Run:"
+echo "2. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
+echo "3. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
+echo "4. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
+echo "5. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"
@@ -102,4 +125,6 @@ echo "Next AI request:"
 echo "  프로젝트 초기설정 해줘"
 echo
 echo "Equivalent detailed request:"
-echo "  프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘"
+echo "  프로젝트 요구사항을 인터뷰하고, .omx/domain-packs/에 설치된 선택 적용 표준팩 중"
+echo "  적용할 항목이 있는지 확정한 뒤, AGENTS.md, docs/WORKFLOW.md,"
+echo "  scripts/verify.sh를 프로젝트에 맞게 설정해줘"

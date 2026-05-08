@@ -46,11 +46,15 @@ record the project-specific operating rules.
 Clarify at minimum:
 
 - project purpose and non-goals
+- which installed domain packs under `.omx/domain-packs/` apply or do not apply
 - stack and runtime commands
 - allowed and forbidden change types
 - required verification commands
 - smoke checks that prove the final result works
 - project-specific documentation or domain constraints
+
+Optional domain packs may be available under `.omx/domain-packs/` after
+`aiinit`. They are onboarding references only and are ignored by git by default.
 
 Then update:
 
@@ -74,14 +78,18 @@ Onboarding workflow:
    `(old)/`, `docs/`, `README.md`, or domain notes when present.
 3. Interview the project owner for purpose, stack, completion criteria, forbidden
    changes, sensitive-data boundaries, and required verification.
-4. Update `AGENTS.md` with project-specific agent rules.
-5. Update `docs/WORKFLOW.md` with project-specific workflow and verification
+4. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
+   apply and which do not. If a pack applies, use it as reference material and
+   merge only the applicable rules. Do not apply domain packs to unrelated
+   projects.
+5. Update `AGENTS.md` with project-specific agent rules.
+6. Update `docs/WORKFLOW.md` with project-specific workflow and verification
    expectations.
-6. Customize `scripts/verify.sh` with real project checks while preserving useful template safeguards.
-7. Run `./scripts/automation-doctor.sh`.
-8. Run `./scripts/verify.sh`.
-9. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
-10. Do not commit unless the user explicitly asks for a commit.
+7. Customize `scripts/verify.sh` with real project checks while preserving useful template safeguards.
+8. Run `./scripts/automation-doctor.sh`.
+9. Run `./scripts/verify.sh`.
+10. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
+11. Do not commit unless the user explicitly asks for a commit.
 
 ## Required References
 

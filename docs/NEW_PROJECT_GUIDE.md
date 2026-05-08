@@ -20,11 +20,14 @@ After `aiinit`, ask the AI:
 
 Equivalent detailed request:
 
-    프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
+    프로젝트 요구사항을 인터뷰하고, .omx/domain-packs/에 설치된 선택 적용 표준팩 중
+    적용할 항목이 있는지 확정한 뒤, AGENTS.md, docs/WORKFLOW.md,
+    scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 This should start a short onboarding interview before real work begins. Capture:
 
 - project purpose and non-goals
+- whether a domain pack applies, such as the Odoo pack for Odoo projects
 - stack and runtime commands
 - allowed and forbidden change types
 - required verification commands
@@ -56,11 +59,13 @@ Use this request when asking Codex to initialize a new project:
     2. aiinit을 실행해.
     3. aiinit이 출력한 automation-doctor 결과를 확인해.
     4. 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰해.
-    5. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
-    6. ./scripts/automation-doctor.sh를 실행해.
-    7. ./scripts/verify.sh를 실행해.
-    8. ./scripts/review-gate.sh를 실행해.
-    9. 커밋은 하지 말고 결과만 보고해.
+    5. .omx/domain-packs/에 설치된 선택 적용 표준팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
+    6. 적용하기로 확정한 표준팩이 있으면 필요한 항목만 반영해.
+    7. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
+    8. ./scripts/automation-doctor.sh를 실행해.
+    9. ./scripts/verify.sh를 실행해.
+    10. ./scripts/review-gate.sh를 실행해.
+    11. 커밋은 하지 말고 결과만 보고해.
 
     완료 보고에는 아래를 포함해:
     - 변경 파일
@@ -83,6 +88,29 @@ Use this request when asking Codex to initialize a new project:
 Use this after `aiinit` has already installed the template:
 
     프로젝트 초기설정 해줘
+
+## Domain Packs
+
+Domain packs are optional reference packs for project-specific onboarding.
+`aiinit` copies them into the target repository only as ignored runtime
+references under `.omx/domain-packs/`. It does not merge them into project
+instructions automatically.
+
+Source packs in this repository:
+
+    templates/domain-packs/odoo/
+
+During onboarding, the AI should ask whether the project matches an available
+pack. In the target repository, read the installed copy from `.omx/domain-packs/`.
+If a pack applies, use it as source material for `AGENTS.md`,
+`docs/WORKFLOW.md`, and `scripts/verify.sh`. Apply only the parts that match the
+actual project. Keep unrelated domain guidance out of generic projects.
+
+The onboarding interview should explicitly record:
+
+- selected domain pack names
+- rejected domain pack names
+- project-specific rules that must stay outside the reusable domain pack
 
 ## Existing Project Adoption
 

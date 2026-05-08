@@ -203,6 +203,20 @@ Completed.
 
 ./scripts/install-automation-template.sh installs the automation template into a target git repository.
 
+### Domain packs
+
+Domain-specific standards are separated from the generic `aiinit` template.
+`aiinit` installs only the reusable automation baseline into project files. It
+also copies optional domain packs into `.omx/domain-packs/` as ignored
+onboarding references so the AI running inside the target repository can read
+them. During `프로젝트 초기설정 해줘`, the agent should ask whether an optional
+domain pack applies and merge only the applicable guidance into the target
+project's `AGENTS.md`, `docs/WORKFLOW.md`, and `scripts/verify.sh`.
+
+Current optional domain pack:
+
+- `templates/domain-packs/odoo/`
+
 The shorter global command is:
 
 - aiinit

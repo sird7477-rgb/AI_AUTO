@@ -42,7 +42,9 @@ Then ask the AI:
 
 Equivalent detailed request:
 
-    프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
+    프로젝트 요구사항을 인터뷰하고, .omx/domain-packs/에 설치된 선택 적용 표준팩 중
+    적용할 항목이 있는지 확정한 뒤, AGENTS.md, docs/WORKFLOW.md,
+    scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 The AI should interview the project owner, then update the generated files for the target project:
 
