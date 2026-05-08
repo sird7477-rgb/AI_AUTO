@@ -12,7 +12,7 @@ The current goal is to make a reliable workflow where:
 2. The project runs a fixed verification command.
 3. AI review context is collected.
 4. Claude reviews the change.
-5. Gemini is supported as an optional reviewer, but disabled by default.
+5. Gemini runs as an optional second reviewer by default when available.
 6. Review results are summarized.
 7. A final review gate runs before a commit candidate is presented.
 
@@ -88,9 +88,17 @@ Completed.
 Current behavior:
 
 - Claude review runs automatically if claude is available.
-- Gemini review is disabled by default.
-- Gemini can be enabled with RUN_GEMINI_REVIEW=1.
+- Gemini review runs automatically if gemini is available.
+- Gemini can be disabled for a specific run with RUN_GEMINI_REVIEW=0.
+- REVIEW_EXECUTION_MODE=external prepares review prompts and a runner script for unrestricted interactive execution.
 - Reviewer failures are captured instead of blocking the whole script.
+- Claude is invoked in non-interactive print mode when supported.
+- Claude uses plan permission mode when supported.
+- Claude has a shorter default reviewer timeout in agent-run contexts.
+- Gemini is invoked in non-interactive prompt mode.
+- Gemini uses plan approval mode, skip-trust, and text output when supported.
+- Large Gemini prompts switch to stdin mode to avoid command-line argument length limits.
+- Review context, prompts, and results can use separate output directories.
 
 The output is written under:
 
@@ -109,6 +117,13 @@ Possible final decisions include:
 - blocked
 - review_manually
 
+The summary also reports:
+
+- decision reason
+- review coverage
+- missing or unusable reviewers
+- reviewer disagreement
+
 ### Review gate
 
 Completed.
@@ -120,6 +135,13 @@ Completed.
 3. ./scripts/summarize-ai-reviews.sh
 
 This is the current final check before presenting a commit candidate.
+
+Current behavior:
+
+- exits successfully only when the final review decision is proceed
+- exits non-zero for revise, blocked, or review_manually
+- exits with the external review preparation status when REVIEW_EXECUTION_MODE=external is used
+- prints the review verdict summary before exiting
 
 ### Integrated rehearsal
 
@@ -138,7 +160,7 @@ Result:
 
 - final verdict: proceed
 - Claude: approve_with_notes
-- Gemini: skipped by default
+- Gemini: skipped by the old default behavior at that time
 
 ### Automation template
 
@@ -251,6 +273,32 @@ Current handling:
 - do not block the workflow if the interactive terminal passes
 - record it as a known environment limitation
 
+### Claude CLI timeout in agent-run context
+
+Claude can time out when invoked from this agent-run context even for a very small prompt.
+
+Observed diagnostics:
+
+- `claude --print` with a short prompt timed out.
+- `claude --print --permission-mode plan` with a short prompt also timed out.
+- `claude --bare --print` failed immediately with `Not logged in`.
+- Debug logs showed repeated Anthropic API connection errors such as `ECONNREFUSED`.
+- Debug logs also showed read-only filesystem errors while Claude tried to write under `/root/.claude`.
+
+Current interpretation:
+
+- this is a context-dependent network/auth/filesystem issue, not a review prompt size issue
+- reviewer failures remain non-blocking inside `./scripts/run-ai-reviews.sh`
+- `./scripts/review-gate.sh` can still proceed when another reviewer returns a usable approval
+- `CLAUDE_REVIEW_TIMEOUT_SECONDS` defaults to 300 because observed Claude CLI runs can need more than 60 seconds before producing a usable result
+- reviewer timeouts use `REVIEW_TIMEOUT_KILL_AFTER_SECONDS` as a short forced-kill grace period after the initial timeout
+- reviewers with session, weekly, quota, or rate-limit failures are disabled immediately and stay disabled via `.omx/reviewer-state/` until reset by the user
+- other reviewer failures retry up to `REVIEW_RETRY_LIMIT` times before the reviewer is disabled
+- disabled reviewers are announced on every review run and skipped until `RESET_DISABLED_AI_REVIEWERS=claude|gemini|all` is used
+- when one reviewer is disabled, the remaining reviewer prompt receives additional coverage for the disabled reviewer's perspective
+- Codex also writes a `codex-self-review-*.md` persona fallback artifact and the summary reports Codex self-review coverage separately; this is informational only and does not count as independent reviewer approval
+- the most stable non-API-key workaround is `REVIEW_EXECUTION_MODE=external`, which prepares a runner for an unrestricted interactive terminal
+
 ### Explore Harness warning
 
 omx doctor still reports a warning about the Explore Harness.
@@ -260,7 +308,7 @@ Current handling:
 - non-blocking
 - can be fixed later by installing Rust or configuring a compatible prebuilt harness
 
-### Gemini review disabled by default
+### Gemini review enabled by default
 
 Gemini CLI previously caused hangs and capacity errors.
 
@@ -270,12 +318,53 @@ Observed issues:
 - unauthorized run_shell_command call
 - model capacity error: RESOURCE_EXHAUSTED
 - long hang during non-interactive invocation
+- unauthenticated agent-run smoke tests can show an auth prompt that consumes stdin
 
 Current handling:
 
-- Gemini review is disabled by default
-- enable only with RUN_GEMINI_REVIEW=1
+- Gemini review is enabled by default
+- disable only with RUN_GEMINI_REVIEW=0
+- run in non-interactive prompt mode with plan approval mode where supported
+- use stdin mode automatically for large prompts to avoid command-line argument length limits
+- `GEMINI_REVIEW_TIMEOUT_SECONDS` can be set separately from the Claude timeout
+- `REVIEW_TIMEOUT_KILL_AFTER_SECONDS` applies to both Claude and Gemini timeout cleanup
 - Claude is the current stable external reviewer
+- Gemini absence or failure is reported as incomplete review coverage
+
+Gemini can hit a similar class of context-dependent failures as Claude, but the observed failure mode differs:
+
+- Claude failed from API connection refusal and read-only writes under `/root/.claude`.
+- Gemini has previously failed from capacity/tool-mode issues and can prompt for browser authentication when credentials are unavailable.
+- Gemini's CLI documents that `--prompt` appends stdin, so large-prompt stdin fallback is valid when Gemini is authenticated.
+
+### External reviewer lane
+
+Use this when the agent-run context blocks reviewer network access or runtime writes, but the user's interactive terminal has working Claude/Gemini authentication.
+
+Command:
+
+    REVIEW_EXECUTION_MODE=external ./scripts/review-gate.sh
+
+Behavior:
+
+- runs normal project verification first
+- collects review context
+- generates Claude and Gemini prompts
+- writes an executable runner under `.omx/external-review/`
+- the runner resolves the repository root relative to `.omx/external-review/` before falling back to the generation-time path
+- the runner uses `REVIEW_OUTPUT_MODE=tee` by default so reviewer prompts, approval waits, and errors are visible in the terminal while still being saved to result files
+- the runner treats generated timeout/path settings as defaults, so execution-time environment overrides still work
+- the runner carries `REVIEW_STATE_DIR` and `REVIEW_RETRY_LIMIT` so disabled reviewer state and retry policy are consistent across external runs
+- the runner uses `SKIP_CONTEXT_GENERATION=1` by default so external execution reviews the prompts prepared by the agent instead of regenerating context
+- exits before invoking reviewer CLIs in the restricted context
+
+Then run the generated external runner from an unrestricted interactive terminal.
+
+The runner executes reviewers and then runs:
+
+    ./scripts/summarize-ai-reviews.sh
+
+This is the preferred workaround when API-key based bare mode is intentionally excluded.
 
 ## Deferred
 
@@ -315,9 +404,13 @@ Possible checks:
 
 ### Gemini non-interactive mode
 
-Deferred.
+Partially addressed.
 
-Gemini should only be re-enabled after confirming a reliable non-interactive review invocation.
+The review runner now prefers Gemini's non-interactive prompt mode and read-only approval settings when the installed CLI supports them.
+
+Remaining limitation:
+
+- Gemini failures may still happen because of CLI capacity, tool-mode, or timeout behavior; failures are captured and summarized instead of stopping review collection.
 
 ## Current stage
 
@@ -325,6 +418,8 @@ The project has completed:
 
 - Codex single-agent workflow
 - Claude-backed review gate
+- explicit single-reviewer and multi-reviewer review summaries
+- reviewer disagreement handling
 - reusable automation template
 - global helper command setup
 - workspace scanning

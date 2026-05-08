@@ -27,23 +27,31 @@ extract_verdict() {
     return 0
   fi
 
+  local verdict
+  verdict="$(
+    awk '
+      BEGIN { in_verdict = 0 }
+      tolower($0) ~ /^#+[[:space:]]+verdict[[:space:]:.-]*$/ { in_verdict = 1; next }
+      in_verdict && /^#+[[:space:]]+/ { exit }
+      in_verdict && /^[[:space:]]*$/ { next }
+      in_verdict {
+        verdict = tolower($0)
+        gsub(/[^a-z_]/, "", verdict)
+        if (verdict == "approve" || verdict == "approve_with_notes" || verdict == "request_changes") {
+          print verdict
+          exit
+        }
+      }
+    ' "${file}"
+  )"
+
+  if [ -n "${verdict}" ]; then
+    echo "${verdict}"
+    return 0
+  fi
+
   if grep -qiE 'failed|timed out|RESOURCE_EXHAUSTED|429|Operation cancelled|not found' "${file}"; then
     echo "failed"
-    return 0
-  fi
-
-  if grep -qi 'request_changes' "${file}"; then
-    echo "request_changes"
-    return 0
-  fi
-
-  if grep -qi 'approve_with_notes' "${file}"; then
-    echo "approve_with_notes"
-    return 0
-  fi
-
-  if grep -qi 'approve' "${file}"; then
-    echo "approve"
     return 0
   fi
 
@@ -53,6 +61,17 @@ extract_verdict() {
 final_decision() {
   local claude="$1"
   local gemini="$2"
+
+  # Approval/request_changes disagreement means a human should inspect the reviews.
+  if is_approval "${claude}" && [ "${gemini}" = "request_changes" ]; then
+    echo "review_manually"
+    return 0
+  fi
+
+  if is_approval "${gemini}" && [ "${claude}" = "request_changes" ]; then
+    echo "review_manually"
+    return 0
+  fi
 
   if [ "${claude}" = "request_changes" ] || [ "${gemini}" = "request_changes" ]; then
     echo "revise"
@@ -69,12 +88,17 @@ final_decision() {
     return 0
   fi
 
-  if [ "${claude}" = "approve" ] || [ "${claude}" = "approve_with_notes" ]; then
+  if ! is_usable_review "${claude}" && ! is_usable_review "${gemini}"; then
+    echo "blocked"
+    return 0
+  fi
+
+  if is_approval "${claude}"; then
     echo "proceed"
     return 0
   fi
 
-  if [ "${gemini}" = "approve" ] || [ "${gemini}" = "approve_with_notes" ]; then
+  if is_approval "${gemini}"; then
     echo "proceed"
     return 0
   fi
@@ -82,12 +106,115 @@ final_decision() {
   echo "review_manually"
 }
 
+is_approval() {
+  [ "$1" = "approve" ] || [ "$1" = "approve_with_notes" ]
+}
+
+review_coverage() {
+  local claude="$1"
+  local gemini="$2"
+
+  if is_usable_review "${claude}" && is_usable_review "${gemini}"; then
+    echo "multi_reviewer"
+    return 0
+  fi
+
+  if is_usable_review "${claude}" || is_usable_review "${gemini}"; then
+    echo "single_reviewer"
+    return 0
+  fi
+
+  echo "no_usable_review"
+}
+
+is_usable_review() {
+  is_approval "$1" || [ "$1" = "request_changes" ]
+}
+
+decision_reason() {
+  local claude="$1"
+  local gemini="$2"
+
+  if { is_approval "${claude}" && [ "${gemini}" = "request_changes" ]; } || \
+     { is_approval "${gemini}" && [ "${claude}" = "request_changes" ]; }; then
+    echo "reviewer_disagreement"
+    return 0
+  fi
+
+  if [ "${claude}" = "request_changes" ] || [ "${gemini}" = "request_changes" ]; then
+    echo "reviewer_requested_changes"
+    return 0
+  fi
+
+  if [ "${claude}" = "failed" ] && [ "${gemini}" = "failed" ]; then
+    echo "all_reviewers_failed"
+    return 0
+  fi
+
+  if [ "${claude}" = "missing" ] && [ "${gemini}" = "missing" ]; then
+    echo "all_reviewers_missing"
+    return 0
+  fi
+
+  if ! is_usable_review "${claude}" && ! is_usable_review "${gemini}"; then
+    echo "no_usable_review"
+    return 0
+  fi
+
+  if is_approval "${claude}" && is_approval "${gemini}"; then
+    echo "multi_reviewer_approval"
+    return 0
+  fi
+
+  if is_approval "${claude}" || is_approval "${gemini}"; then
+    echo "single_reviewer_approval"
+    return 0
+  fi
+
+  echo "unclassified_review_output"
+}
+
+missing_reviewers() {
+  local claude="$1"
+  local gemini="$2"
+  local missing=()
+
+  case "${claude}" in
+    skipped|missing|failed|unknown) missing+=("claude:${claude}") ;;
+  esac
+
+  case "${gemini}" in
+    skipped|missing|failed|unknown) missing+=("gemini:${gemini}") ;;
+  esac
+
+  if [ "${#missing[@]}" -eq 0 ]; then
+    echo "none"
+  else
+    local joined="${missing[0]}"
+    local item
+    for item in "${missing[@]:1}"; do
+      joined="${joined}, ${item}"
+    done
+    echo "${joined}"
+  fi
+}
+
 CLAUDE_FILE="$(latest_file 'claude-review-*.md')"
 GEMINI_FILE="$(latest_file 'gemini-review-*.md')"
+CODEX_SELF_REVIEW_FILE="$(latest_file 'codex-self-review-*.md')"
 
 CLAUDE_VERDICT="$(extract_verdict "${CLAUDE_FILE}")"
 GEMINI_VERDICT="$(extract_verdict "${GEMINI_FILE}")"
 FINAL_DECISION="$(final_decision "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}")"
+REVIEW_COVERAGE="$(review_coverage "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}")"
+DECISION_REASON="$(decision_reason "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}")"
+MISSING_REVIEWERS="$(missing_reviewers "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}")"
+CODEX_SELF_REVIEW_COVERAGE="none"
+if [ -n "${CODEX_SELF_REVIEW_FILE}" ] && [ -f "${CODEX_SELF_REVIEW_FILE}" ]; then
+  if grep -q '^informational_only$' "${CODEX_SELF_REVIEW_FILE}"; then
+    CODEX_SELF_REVIEW_COVERAGE="available_informational_only"
+  fi
+fi
 
 TIMESTAMP="$(date +%Y%m%dT%H%M%S)"
 SUMMARY_FILE="${OUT_DIR}/review-verdict-${TIMESTAMP}.md"
@@ -101,6 +228,24 @@ Generated at: $(date -Iseconds)
 
 ${FINAL_DECISION}
 
+## Decision Reason
+
+${DECISION_REASON}
+
+## Review Coverage
+
+${REVIEW_COVERAGE}
+
+## Missing Or Unusable Reviewers
+
+${MISSING_REVIEWERS}
+
+## Codex Self-Review Coverage
+
+${CODEX_SELF_REVIEW_COVERAGE}
+
+Codex self-review coverage compensates for missing perspectives, but it is not independent Claude or Gemini reviewer approval.
+
 ## Reviewer Verdicts
 
 | Reviewer | Verdict | File |
@@ -108,12 +253,20 @@ ${FINAL_DECISION}
 | Claude | ${CLAUDE_VERDICT} | ${CLAUDE_FILE:-missing} |
 | Gemini | ${GEMINI_VERDICT} | ${GEMINI_FILE:-missing} |
 
+## Codex Self-Review
+
+| Coverage | File |
+|---|---|
+| ${CODEX_SELF_REVIEW_COVERAGE} | ${CODEX_SELF_REVIEW_FILE:-missing} |
+
 ## Interpretation
 
 - proceed: review is sufficient to continue toward user approval or commit.
 - revise: at least one reviewer requested changes.
 - blocked: no usable review result is available.
-- review_manually: review output exists, but the verdict could not be confidently parsed.
+- review_manually: review output exists, but the verdict could not be confidently parsed, or reviewers disagreed.
+- single_reviewer: only one reviewer produced a usable verdict; inspect missing reviewer status before relying on multi-agent coverage.
+- multi_reviewer: both reviewers produced usable verdicts.
 
 ## Next Step
 
@@ -127,3 +280,7 @@ SUMMARY
 echo "${SUMMARY_FILE}"
 echo
 cat "${SUMMARY_FILE}"
+
+if [ "${FINAL_DECISION}" != "proceed" ]; then
+  exit 1
+fi

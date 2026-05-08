@@ -118,8 +118,8 @@ Responsibilities:
 Current status:
 
 - implemented as an optional reviewer
-- disabled by default
-- enabled only with RUN_GEMINI_REVIEW=1
+- enabled by default when gemini is available
+- disabled only with RUN_GEMINI_REVIEW=0
 - unstable in non-interactive CLI usage
 
 Gemini must not block the whole workflow when unavailable.
@@ -208,9 +208,9 @@ missing_reviewers:
 
 ## Known unresolved issues
 
-### Gemini CLI instability
+### Gemini CLI context instability
 
-Gemini is currently not stable enough to be enabled by default.
+Gemini is enabled by default, but its failures are still treated as context-dependent and non-blocking.
 
 Observed problems include:
 
@@ -219,19 +219,70 @@ Observed problems include:
 - unauthorized tool call attempts
 - model capacity errors
 - long hangs
+- browser-auth prompts when credentials are unavailable
 
 Current handling:
 
-- Gemini is disabled by default
-- Gemini can be enabled with RUN_GEMINI_REVIEW=1
+- Gemini is enabled by default
+- Gemini can be disabled with RUN_GEMINI_REVIEW=0
 - Gemini failures are captured instead of blocking the entire review gate
+- large Gemini prompts switch to stdin mode to avoid command-line argument length limits
+- Gemini has its own timeout via GEMINI_REVIEW_TIMEOUT_SECONDS
+- reviewer timeouts use REVIEW_TIMEOUT_KILL_AFTER_SECONDS as a forced-kill grace period
+- session, weekly, quota, or rate-limit failures disable that reviewer immediately
+- other reviewer failures retry up to REVIEW_RETRY_LIMIT times before disabling that reviewer
+- disabled reviewer state is stored under .omx/reviewer-state and announced on every run until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
+- disabled reviewer perspectives are added to the remaining reviewer prompt as extra coverage
+- Codex writes a self-review persona fallback artifact when reviewers are disabled and the summary reports that coverage separately, but it is informational only and does not count as independent review coverage
+- REVIEW_EXECUTION_MODE=external can move reviewer execution to an unrestricted interactive terminal
+- external reviewer execution uses REVIEW_OUTPUT_MODE=tee by default so prompts and approval waits remain visible
+- external reviewer execution uses SKIP_CONTEXT_GENERATION=1 by default so it reviews the already-prepared prompts
 
 Future work:
 
-- find a reliable non-interactive Gemini invocation
-- add strict timeout handling
+- keep validating reliable non-interactive Gemini invocation across authenticated and unauthenticated contexts
+- keep validating strict timeout handling in real CLI contexts
 - prevent tool/agent mode when used as reviewer
 - classify Gemini absence as incomplete review coverage
+
+### External reviewer lane
+
+When API-key based bare/headless mode is not being used, the most stable workaround for reviewer network or runtime write restrictions is to prepare reviewer inputs in the agent-run context and execute reviewer CLIs from the user's unrestricted interactive terminal.
+
+Use:
+
+    REVIEW_EXECUTION_MODE=external ./scripts/review-gate.sh
+
+The generated `.omx/external-review/run-reviewers-latest.sh` script resolves the repository root from its own location, runs Claude/Gemini reviews with visible `tee` output against the already-prepared prompts, and then summarizes the verdicts. Generated timeout/path values are defaults, so execution-time overrides such as `CLAUDE_REVIEW_TIMEOUT_SECONDS=600 .omx/external-review/run-reviewers-latest.sh` still work.
+
+### Codex persona fallback
+
+When an independent reviewer is disabled, Codex records a separate self-review artifact:
+
+- Claude disabled -> `codex-architect-review`
+- Gemini disabled -> `codex-test-alternative-review`
+- both disabled -> plus `codex-operator-review`
+
+This fallback is explicitly marked informational-only. It reduces blind spots but does not upgrade `single_reviewer` to `multi_reviewer`.
+
+### Command group
+
+The user-facing keyword `명령어` means: show the current AI review and recovery command group.
+
+Current command group:
+
+- `리뷰 상태`: inspect `.omx/reviewer-state/` and summarize which reviewers are disabled and why.
+- `클로드 복구`: re-enable Claude review with `RESET_DISABLED_AI_REVIEWERS=claude`.
+- `제미나이 복구`: re-enable Gemini review with `RESET_DISABLED_AI_REVIEWERS=gemini`.
+- `AI 복구`: re-enable all disabled reviewers with `RESET_DISABLED_AI_REVIEWERS=all`.
+- `외부 리뷰`: prepare external reviewer execution with `REVIEW_EXECUTION_MODE=external ./scripts/review-gate.sh`.
+- `리뷰 게이트`: run `./scripts/review-gate.sh`.
+
+Rule:
+
+- Any future user-facing operational keyword for this review workflow belongs to the `명령어` group.
+- When the user says `명령어`, list the full current group with purpose, command, and caveats.
+- Do not treat these keywords as independent reviewer approvals; they are operator shortcuts only.
 
 ### OMX / Codex / Explore Harness environment issues
 

@@ -67,4 +67,14 @@ Example:
     ./scripts/verify.sh
     ./scripts/review-gate.sh
 
-The smoke test should complete with verification success, Claude review if available, Gemini skipped by default, and a review verdict summary.
+The smoke test should complete with verification success, Claude review if available, Gemini review if available, and a review verdict summary. Set RUN_GEMINI_REVIEW=0 to skip Gemini for a specific run. Large Gemini prompts are sent through stdin to avoid command-line argument length limits. Reviewer-specific timeouts are available as CLAUDE_REVIEW_TIMEOUT_SECONDS and GEMINI_REVIEW_TIMEOUT_SECONDS, with REVIEW_TIMEOUT_KILL_AFTER_SECONDS as the forced-kill grace period. Claude defaults to a longer reviewer timeout because login-based CLI calls can take more than a minute.
+
+Reviewer failures are stateful. Session, weekly, quota, or rate-limit failures disable that reviewer immediately. Other failures retry up to REVIEW_RETRY_LIMIT times before disabling the reviewer. Disabled reviewer state is stored under `.omx/reviewer-state` and is announced on every run until reset with RESET_DISABLED_AI_REVIEWERS=claude, RESET_DISABLED_AI_REVIEWERS=gemini, or RESET_DISABLED_AI_REVIEWERS=all.
+
+When a reviewer is disabled, the remaining reviewer prompt receives additional coverage for the missing perspective. Codex also writes a `codex-self-review-*.md` persona fallback artifact, but that self-review is informational only and does not count as independent reviewer approval.
+
+If the current agent context blocks reviewer network access or runtime writes, use:
+
+    REVIEW_EXECUTION_MODE=external ./scripts/review-gate.sh
+
+Then run the generated `.omx/external-review/run-reviewers-latest.sh` script from an unrestricted interactive terminal. The script resolves the repository root from its own location before running the reviewers, shows reviewer output with `tee`, uses the already-prepared prompts by default, and allows execution-time timeout overrides.
