@@ -36,7 +36,15 @@ Check the automation setup:
 
 Template-specific helper link and `~/bin` PATH checks only run when the script detects the ai-lab source tree.
 
-Interview the project owner, then update the generated files for the target project:
+Then ask the AI:
+
+    프로젝트 초기설정 해줘
+
+Equivalent detailed request:
+
+    프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
+
+The AI should interview the project owner, then update the generated files for the target project:
 
     AGENTS.md
     docs/WORKFLOW.md

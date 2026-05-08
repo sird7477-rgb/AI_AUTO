@@ -14,7 +14,15 @@ Or from another directory:
 
 `aiinit` installs the automation template, creates `.omx/reviewer-state`, adds `.omx/` to the target repository's local `.git/info/exclude`, and then runs the installed automation doctor with the install-time dirty-tree check skipped.
 
-Then run a short onboarding interview before real work begins. Capture:
+After `aiinit`, ask the AI:
+
+    프로젝트 초기설정 해줘
+
+Equivalent detailed request:
+
+    프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
+
+This should start a short onboarding interview before real work begins. Capture:
 
 - project purpose and non-goals
 - stack and runtime commands
@@ -69,6 +77,12 @@ Use this request when asking Codex to initialize a new project:
 ## Short request
 
     현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정하고, ./scripts/automation-doctor.sh, ./scripts/verify.sh, ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+
+## Post-aiinit request
+
+Use this after `aiinit` has already installed the template:
+
+    프로젝트 초기설정 해줘
 
 ## Notes
 

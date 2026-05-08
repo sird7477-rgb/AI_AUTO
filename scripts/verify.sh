@@ -217,12 +217,37 @@ echo "[verify] testing automation template installer..."
   trap cleanup_installer_tmp EXIT
 
   target_dir="${tmp_dir}/target"
+  installer_output="${tmp_dir}/installer.out"
   git -c init.defaultBranch=main init -q "${target_dir}"
-  ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
+  ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
   test -x "${target_dir}/scripts/discover-ai-models.sh"
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
   grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
+  grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
+  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "templates/automation-base/README.md"
+  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "프로젝트 초기설정 해줘" "${installer_output}"
+  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "${installer_output}"
+)
+
+echo "[verify] testing aiinit wrapper onboarding handoff..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_aiinit_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_aiinit_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  aiinit_output="${tmp_dir}/aiinit.out"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
+  grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
+  grep -q "프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘" "${aiinit_output}"
+  grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
 )
 
 echo "[verify] testing global helper link repair..."

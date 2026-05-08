@@ -219,6 +219,15 @@ After installation, aiinit automatically runs:
 
     DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh
 
+Then it prints the recommended AI handoff request:
+
+    프로젝트 초기설정 해줘
+
+The installed template AGENTS.md routes this request to the onboarding workflow:
+interview the project owner, inspect existing reference materials, customize
+AGENTS.md, docs/WORKFLOW.md, and scripts/verify.sh, then run automation-doctor,
+verify, and review-gate before reporting.
+
 The installer also creates `.omx/reviewer-state` and adds `.omx/` to the target repository's local `.git/info/exclude` so generated reviewer, review, and model-routing artifacts stay out of commit candidates by default.
 
 Then run a project onboarding interview and customize:

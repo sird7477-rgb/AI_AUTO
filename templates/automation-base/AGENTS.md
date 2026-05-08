@@ -61,6 +61,28 @@ Then update:
 Run `./scripts/automation-doctor.sh`, `./scripts/verify.sh`, and
 `./scripts/review-gate.sh` before treating the automation baseline as ready.
 
+## Command Keywords
+
+When the user asks `프로젝트 초기설정 해줘`, or asks to interview project
+requirements and configure `AGENTS.md`, `docs/WORKFLOW.md`, and
+`scripts/verify.sh`, run the onboarding workflow.
+
+Onboarding workflow:
+
+1. Confirm the current path and git status.
+2. Inspect existing project materials as references, including folders such as
+   `(old)/`, `docs/`, `README.md`, or domain notes when present.
+3. Interview the project owner for purpose, stack, completion criteria, forbidden
+   changes, sensitive-data boundaries, and required verification.
+4. Update `AGENTS.md` with project-specific agent rules.
+5. Update `docs/WORKFLOW.md` with project-specific workflow and verification
+   expectations.
+6. Customize `scripts/verify.sh` with real project checks while preserving useful template safeguards.
+7. Run `./scripts/automation-doctor.sh`.
+8. Run `./scripts/verify.sh`.
+9. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
+10. Do not commit unless the user explicitly asks for a commit.
+
 ## Required References
 
 Use these files as the workflow baseline:

@@ -83,9 +83,15 @@ echo
 echo "Next steps:"
 echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
 echo "2. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "3. Replace ${TARGET_DIR}/scripts/verify.sh with project-specific checks."
+echo "3. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
 echo "4. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"
 echo "   ./scripts/review-gate.sh"
+echo
+echo "Next AI request:"
+echo "  프로젝트 초기설정 해줘"
+echo
+echo "Equivalent detailed request:"
+echo "  프로젝트 요구사항 인터뷰하고 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘"
