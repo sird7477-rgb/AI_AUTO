@@ -8,6 +8,10 @@ From inside the target git repository:
 
     aiinit
 
+Check the installed automation foundation:
+
+    ./scripts/automation-doctor.sh
+
 Then customize:
 
     scripts/verify.sh
@@ -26,14 +30,16 @@ Use this request when asking Codex to initialize a new project:
     절차:
     1. 현재 경로와 git 상태를 확인해.
     2. aiinit을 실행해.
-    3. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 확인해.
-    4. scripts/verify.sh를 이 프로젝트에 맞게 수정해.
-    5. ./scripts/verify.sh를 실행해.
-    6. ./scripts/review-gate.sh를 실행해.
-    7. 커밋은 하지 말고 결과만 보고해.
+    3. ./scripts/automation-doctor.sh를 실행해 자동화 구성 상태를 진단해.
+    4. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 확인해.
+    5. scripts/verify.sh를 이 프로젝트에 맞게 수정해.
+    6. ./scripts/verify.sh를 실행해.
+    7. ./scripts/review-gate.sh를 실행해.
+    8. 커밋은 하지 말고 결과만 보고해.
 
     완료 보고에는 아래를 포함해:
     - 변경 파일
+    - automation-doctor 결과
     - verify.sh에 넣은 검증 기준
     - verify 결과
     - review-gate 결과
@@ -44,11 +50,13 @@ Use this request when asking Codex to initialize a new project:
 
 ## Short request
 
-    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치하고, 이 프로젝트에 맞게 scripts/verify.sh를 수정한 뒤 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치하고, ./scripts/automation-doctor.sh로 상태를 확인한 뒤, 이 프로젝트에 맞게 scripts/verify.sh를 수정하고 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
 
 ## Notes
 
 - `aiinit` must be run inside a git repository.
+- `./scripts/automation-doctor.sh` diagnoses automation readiness and suggests repair commands.
+- `./scripts/automation-doctor.sh --fix` may apply only safe non-overwriting setup fixes.
 - Project-specific checks belong in `scripts/verify.sh`.
 - Do not blindly reuse ai-lab Flask checks in other projects.
 - Commit only after reviewing the generated files and verification results.

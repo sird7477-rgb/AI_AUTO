@@ -6,6 +6,7 @@ This template contains the base files for a CLI-based AI development workflow.
 
 - AGENTS.md: repo-local agent operating rules
 - docs/WORKFLOW.md: project workflow documentation
+- scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
 - scripts/verify.example.sh: example verification script; customize per project
 - scripts/collect-review-context.sh: collects git diff and workflow context
 - scripts/make-review-prompts.sh: generates reviewer prompts
@@ -25,6 +26,10 @@ Then customize:
 
     mv scripts/verify.example.sh scripts/verify.sh
     chmod +x scripts/*.sh
+
+Check the automation setup:
+
+    ./scripts/automation-doctor.sh
 
 Update scripts/verify.sh for the target project.
 
@@ -61,6 +66,7 @@ Example:
 
     chmod +x scripts/verify.sh
 
+    ./scripts/automation-doctor.sh
     git add .
     git commit -m "test: initialize automation template smoke repo"
 
@@ -78,3 +84,5 @@ If the current agent context blocks reviewer network access or runtime writes, u
     REVIEW_EXECUTION_MODE=external ./scripts/review-gate.sh
 
 Then run the generated `.omx/external-review/run-reviewers-latest.sh` script from an unrestricted interactive terminal. The script resolves the repository root from its own location before running the reviewers, shows reviewer output with `tee`, uses the already-prepared prompts by default, and allows execution-time timeout overrides.
+
+Review context lists untracked files but omits their content by default. Set `INCLUDE_UNTRACKED_CONTENT=1` to include untracked text files up to `MAX_UNTRACKED_BYTES` bytes after confirming secrets and generated output are covered by `.gitignore`.

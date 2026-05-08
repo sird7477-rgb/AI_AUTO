@@ -15,6 +15,15 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Scans git repositories under `~/workspace`
   - Shows branch, dirty status, automation script availability, latest commit, remote presence, and path
 
+Repo-local command installed by the automation template:
+
+- `./scripts/automation-doctor.sh`
+  - Diagnoses whether the current repository has the expected automation foundation
+  - Suggests repair commands by default
+  - Applies only safe non-overwriting setup fixes with `--fix`
+
+ai-lab ships its own copy at `scripts/automation-doctor.sh`; the template copy is what gets installed into new projects.
+
 ## Link setup
 
 Expected links:

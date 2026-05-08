@@ -32,6 +32,7 @@ Current working pieces include:
 - ./scripts/review-gate.sh as the current final review gate
 - templates/automation-base/ as the reusable automation template
 - aiinit as the template installer command
+- ./scripts/automation-doctor.sh as the repo-local automation readiness doctor
 - workspace-scan as the workspace status scanner
 
 ## Current limitation
@@ -267,10 +268,14 @@ This fallback is explicitly marked informational-only. It reduces blind spots bu
 
 ### Command group
 
-The user-facing keyword `명령어` means: show the current AI review and recovery command group.
+The user-facing keyword `명령어` means: show the current automation, AI review, and recovery command group.
 
 Current command group:
 
+- `자동화 진단`: run `./scripts/automation-doctor.sh` to inspect automation readiness and suggested repairs.
+- `자동화 수정`: run `./scripts/automation-doctor.sh --fix` to apply safe non-overwriting setup fixes.
+- `초기화`: run `aiinit` inside a target git repository to install the automation template.
+- `워크스페이스 스캔`: run `workspace-scan` to inspect repositories under `~/workspace`.
 - `리뷰 상태`: inspect `.omx/reviewer-state/` and summarize which reviewers are disabled and why.
 - `클로드 복구`: re-enable Claude review with `RESET_DISABLED_AI_REVIEWERS=claude`.
 - `제미나이 복구`: re-enable Gemini review with `RESET_DISABLED_AI_REVIEWERS=gemini`.

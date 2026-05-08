@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
+mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
+
 echo "[gate] running verification..."
-./scripts/verify.sh
+./scripts/verify.sh 2>&1 | tee "$VERIFY_OUTPUT_FILE"
 
 echo "[gate] running AI reviews..."
 set +e

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 OUT_DIR="${OUT_DIR:-.omx/review-context}"
+INCLUDE_UNTRACKED_CONTENT="${INCLUDE_UNTRACKED_CONTENT:-0}"
+MAX_UNTRACKED_BYTES="${MAX_UNTRACKED_BYTES:-102400}"
 mkdir -p "${OUT_DIR}"
 
 OUT_FILE="${OUT_DIR}/latest-review-context.md"
@@ -29,12 +31,41 @@ OUT_FILE="${OUT_DIR}/latest-review-context.md"
   git diff --stat
   echo '```'
   echo
+  echo "## Untracked Files"
+  echo
+  echo '```text'
+  git ls-files --others --exclude-standard
+  echo '```'
+  echo
+  echo "Untracked text file content is omitted by default. Set INCLUDE_UNTRACKED_CONTENT=1 to include text files up to ${MAX_UNTRACKED_BYTES} bytes after confirming .gitignore excludes secrets."
+  echo
   echo "## Diff"
   echo
   echo '```diff'
   git diff
+  if [ "$INCLUDE_UNTRACKED_CONTENT" = "1" ]; then
+    while IFS= read -r -d '' file; do
+      [ -f "$file" ] || continue
+      grep -qI '' "$file" 2>/dev/null || continue
+      size="$(wc -c < "$file" | tr -d ' ')"
+      if [ "$size" -gt "$MAX_UNTRACKED_BYTES" ]; then
+        echo "diff --git a/${file} b/${file}"
+        echo "# skipped untracked file content: ${file} is ${size} bytes, limit is ${MAX_UNTRACKED_BYTES}"
+        continue
+      fi
+      git diff --no-index -- /dev/null "$file" || true
+    done < <(git ls-files -z --others --exclude-standard)
+  fi
   echo '```'
   echo
+  if [ -f "${OUT_DIR}/latest-verify-output.txt" ]; then
+    echo "## Latest Verification Output"
+    echo
+    echo '```text'
+    sed -n '1,240p' "${OUT_DIR}/latest-verify-output.txt"
+    echo '```'
+    echo
+  fi
   echo "## Workflow Rule"
   echo
   echo "- Before completion, run ./scripts/verify.sh"

@@ -13,6 +13,22 @@ trap cleanup EXIT
 echo "[verify] running pytest..."
 .venv/bin/python -m pytest -q
 
+if [ ! -f scripts/automation-doctor.sh ] || [ ! -f templates/automation-base/scripts/automation-doctor.sh ]; then
+  echo "[verify] automation doctor copy is missing"
+  echo "[verify] expected scripts/automation-doctor.sh and templates/automation-base/scripts/automation-doctor.sh"
+  exit 1
+fi
+
+echo "[verify] checking automation doctor template sync..."
+if ! diff -u scripts/automation-doctor.sh templates/automation-base/scripts/automation-doctor.sh; then
+  echo "[verify] automation doctor copies are out of sync"
+  echo "[verify] sync scripts/automation-doctor.sh and templates/automation-base/scripts/automation-doctor.sh, then rerun"
+  exit 1
+fi
+
+echo "[verify] running automation doctor..."
+./scripts/automation-doctor.sh
+
 echo "[verify] starting docker compose on API_PORT=${API_PORT}..."
 API_PORT="${API_PORT}" docker compose up --build -d
 

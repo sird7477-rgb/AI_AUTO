@@ -29,6 +29,7 @@ conflicts=()
 for path in \
   "AGENTS.md" \
   "docs/WORKFLOW.md" \
+  "scripts/automation-doctor.sh" \
   "scripts/collect-review-context.sh" \
   "scripts/make-review-prompts.sh" \
   "scripts/run-ai-reviews.sh" \
@@ -54,6 +55,7 @@ mkdir -p "${TARGET_DIR}/docs" "${TARGET_DIR}/scripts"
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
 cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 
+cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
 cp "${TEMPLATE_DIR}/scripts/make-review-prompts.sh" "${TARGET_DIR}/scripts/make-review-prompts.sh"
 cp "${TEMPLATE_DIR}/scripts/run-ai-reviews.sh" "${TARGET_DIR}/scripts/run-ai-reviews.sh"

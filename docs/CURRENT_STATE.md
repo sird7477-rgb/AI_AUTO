@@ -175,6 +175,7 @@ It contains:
 - repo-local AGENTS.md
 - workflow documentation
 - example verification script
+- automation doctor
 - review context collector
 - review prompt generator
 - AI review runner
@@ -235,11 +236,30 @@ It reports:
 - whether origin remote exists
 - path
 
+### Automation doctor
+
+Completed.
+
+./scripts/automation-doctor.sh diagnoses whether a repository is ready for the generic automation loop.
+
+Default behavior:
+
+- prints pass, warning, and failure status lines
+- suggests repair commands
+- does not modify files
+
+Fix behavior:
+
+- `./scripts/automation-doctor.sh --fix` applies only safe non-overwriting setup fixes
+- allowed fixes include missing automation directories, executable bits, missing template files when running in ai-lab, and expected helper symlinks
+- it does not install external tools, overwrite existing files, or run destructive git operations
+
 ## Current operating commands
 
 For ai-lab itself:
 
     ./scripts/verify.sh
+    ./scripts/automation-doctor.sh
     ./scripts/review-gate.sh
     omx doctor
     workspace-scan
@@ -248,6 +268,7 @@ For a new project:
 
     cd ~/workspace/new-project
     aiinit
+    ./scripts/automation-doctor.sh
 
 Then edit:
 
@@ -383,6 +404,7 @@ Possible responsibilities:
 - check required tools
 - link aiinit
 - link workspace-scan
+- run automation-doctor
 - update PATH
 - check Codex/OMX/Claude/Gemini/Docker availability
 - run basic diagnostics
@@ -421,11 +443,12 @@ The project has completed:
 - explicit single-reviewer and multi-reviewer review summaries
 - reviewer disagreement handling
 - reusable automation template
+- generic automation doctor
 - global helper command setup
 - workspace scanning
 
 The next recommended stage is:
 
 1. keep this current-state document updated
-2. design an Odoo-specific verification strategy
+2. improve aiinit based on automation-doctor findings
 3. later add clone/bootstrap setup automation
