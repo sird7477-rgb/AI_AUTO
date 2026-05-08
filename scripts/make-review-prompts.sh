@@ -65,9 +65,9 @@ Say whether the reported verification evidence is sufficient.
 Give a short final recommendation.
 
 ---
-
-$(cat "${CONTEXT_FILE}")
 PROMPT
+
+cat "${CONTEXT_FILE}" >> "${CLAUDE_PROMPT}"
 
 cat > "${GEMINI_PROMPT}" <<PROMPT
 # Gemini Review Request
@@ -118,9 +118,9 @@ Say whether the documentation is clear enough for the next agent.
 Give a short final recommendation.
 
 ---
-
-$(cat "${CONTEXT_FILE}")
 PROMPT
+
+cat "${CONTEXT_FILE}" >> "${GEMINI_PROMPT}"
 
 echo "${CLAUDE_PROMPT}"
 echo "${GEMINI_PROMPT}"

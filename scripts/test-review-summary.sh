@@ -25,6 +25,79 @@ write_skipped() {
   printf '# Review\n\nSkipped: disabled for fixture\n' > "${file}"
 }
 
+write_failed_with_prompt_verdict() {
+  local file="$1"
+
+  cat > "${file}" <<'MSG'
+# Reviewer Prompt Echo
+
+## Verdict
+
+approve_with_notes
+
+---
+
+Gemini review failed or timed out.
+Exit status: 124
+Timeout seconds: 180
+RESOURCE_EXHAUSTED
+MSG
+}
+
+write_failed_with_skipped_prompt() {
+  local file="$1"
+
+  cat > "${file}" <<'MSG'
+# Reviewer Prompt Echo
+
+Skipped: this text was echoed from prompt context and is not the runner status.
+
+---
+
+Gemini review failed or timed out.
+Exit status: 124
+Timeout seconds: 180
+MSG
+}
+
+write_valid_with_failure_words() {
+  local file="$1"
+
+  cat > "${file}" <<'MSG'
+# Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+The reviewed change discusses command not found, Too Many Requests, Operation cancelled, and RESOURCE_EXHAUSTED as handled error text.
+MSG
+}
+
+write_valid_with_fenced_failure_footer() {
+  local file="$1"
+
+  cat > "${file}" <<'MSG'
+# Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+The reviewer quotes a runner footer without failing:
+
+```text
+Gemini review failed or timed out.
+Exit status: 124
+Timeout seconds: 180
+```
+MSG
+}
+
 write_fallback_summary() {
   local file="$1"
   local status="$2"
@@ -74,6 +147,7 @@ assert_summary() {
   local expected_decision="$2"
   local expected_coverage="$3"
   local expected_status="$4"
+  local expected_missing="${5:-}"
   local dir="${TMP_ROOT}/${name}"
   local out_dir="${dir}/out"
   local status=0
@@ -94,9 +168,10 @@ assert_summary() {
     exit 1
   fi
 
-  local decision coverage
+  local decision coverage missing
   decision="$(summary_value "${summary_file}" "Final Decision")"
   coverage="$(summary_value "${summary_file}" "Review Coverage")"
+  missing="$(summary_value "${summary_file}" "Missing Or Unusable Reviewers")"
 
   if [ "${decision}" != "${expected_decision}" ]; then
     echo "[summary-test] ${name}: expected decision ${expected_decision}, got ${decision}"
@@ -112,6 +187,12 @@ assert_summary() {
 
   if [ "${status}" -ne "${expected_status}" ]; then
     echo "[summary-test] ${name}: expected exit ${expected_status}, got ${status}"
+    cat "${summary_file}"
+    exit 1
+  fi
+
+  if [ -n "${expected_missing}" ] && [ "${missing}" != "${expected_missing}" ]; then
+    echo "[summary-test] ${name}: expected missing reviewers ${expected_missing}, got ${missing}"
     cat "${summary_file}"
     exit 1
   fi
@@ -226,11 +307,85 @@ case_stale_fallback_ignored() {
   assert_summary "stale_fallback_ignored" "proceed" "multi_reviewer" 0
 }
 
+case_failed_reviewer_prompt_text_ignored() {
+  local dir="${TMP_ROOT}/failed_reviewer_prompt_text_ignored"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_failed_with_prompt_verdict "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-test-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "failed_reviewer_prompt_text_ignored" "proceed_degraded" "single_external_plus_codex_fallback" 0
+}
+
+case_failed_reviewer_skipped_text_ignored() {
+  local dir="${TMP_ROOT}/failed_reviewer_skipped_text_ignored"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_failed_with_skipped_prompt "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-test-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "failed_reviewer_skipped_text_ignored" "proceed_degraded" "single_external_plus_codex_fallback" 0 "gemini:failed"
+}
+
+case_valid_review_with_failure_words() {
+  local dir="${TMP_ROOT}/valid_review_with_failure_words"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_valid_with_failure_words "${dir}/gemini-review-current.md"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "valid_review_with_failure_words" "proceed" "multi_reviewer" 0
+}
+
+case_valid_review_with_fenced_failure_footer() {
+  local dir="${TMP_ROOT}/valid_review_with_fenced_failure_footer"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_valid_with_fenced_failure_footer "${dir}/gemini-review-current.md"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "valid_review_with_fenced_failure_footer" "proceed" "multi_reviewer" 0
+}
+
 case_multi_reviewer
 case_single_external_plus_codex
 case_codex_only_degraded
 case_missing_fallback_blocks
 case_request_changes_blocks
 case_stale_fallback_ignored
+case_failed_reviewer_prompt_text_ignored
+case_failed_reviewer_skipped_text_ignored
+case_valid_review_with_failure_words
+case_valid_review_with_fenced_failure_footer
 
 echo "[summary-test] success"

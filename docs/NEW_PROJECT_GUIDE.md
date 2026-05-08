@@ -12,14 +12,28 @@ Or from another directory:
 
     aiinit /path/to/target-repo
 
-`aiinit` installs the automation template, creates `.omx/reviewer-state`, and then runs the installed automation doctor with the install-time dirty-tree check skipped.
+`aiinit` installs the automation template, creates `.omx/reviewer-state`, adds `.omx/` to the target repository's local `.git/info/exclude`, and then runs the installed automation doctor with the install-time dirty-tree check skipped.
+
+Then run a short onboarding interview before real work begins. Capture:
+
+- project purpose and non-goals
+- stack and runtime commands
+- allowed and forbidden change types
+- required verification commands
+- smoke checks that prove the final result works
+- project-specific docs or domain constraints
 
 Then customize:
 
+    AGENTS.md
+    docs/WORKFLOW.md
     scripts/verify.sh
+
+The generated `scripts/verify.sh` is a placeholder and exits non-zero until it is replaced with project-specific checks.
 
 Run the gate:
 
+    ./scripts/automation-doctor.sh
     ./scripts/verify.sh
     ./scripts/review-gate.sh
 
@@ -33,15 +47,17 @@ Use this request when asking Codex to initialize a new project:
     1. 현재 경로와 git 상태를 확인해.
     2. aiinit을 실행해.
     3. aiinit이 출력한 automation-doctor 결과를 확인해.
-    4. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 확인해.
-    5. scripts/verify.sh를 이 프로젝트에 맞게 수정해.
-    6. ./scripts/verify.sh를 실행해.
-    7. ./scripts/review-gate.sh를 실행해.
-    8. 커밋은 하지 말고 결과만 보고해.
+    4. 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰해.
+    5. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
+    6. ./scripts/automation-doctor.sh를 실행해.
+    7. ./scripts/verify.sh를 실행해.
+    8. ./scripts/review-gate.sh를 실행해.
+    9. 커밋은 하지 말고 결과만 보고해.
 
     완료 보고에는 아래를 포함해:
     - 변경 파일
     - automation-doctor 결과
+    - 인터뷰에서 확정한 운영 지침
     - verify.sh에 넣은 검증 기준
     - verify 결과
     - review-gate 결과
@@ -52,7 +68,7 @@ Use this request when asking Codex to initialize a new project:
 
 ## Short request
 
-    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치하고, aiinit이 출력한 automation-doctor 결과를 확인한 뒤, 이 프로젝트에 맞게 scripts/verify.sh를 수정하고 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정하고, ./scripts/automation-doctor.sh, ./scripts/verify.sh, ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
 
 ## Notes
 
@@ -61,6 +77,8 @@ Use this request when asking Codex to initialize a new project:
 - `aiinit` runs the installed `./scripts/automation-doctor.sh` after template installation.
 - `./scripts/automation-doctor.sh` diagnoses automation readiness and suggests repair commands.
 - `./scripts/automation-doctor.sh --fix` may apply only safe non-overwriting setup fixes.
+- Project-specific agent instructions belong in `AGENTS.md`.
+- Project-specific workflow notes belong in `docs/WORKFLOW.md`.
 - Project-specific checks belong in `scripts/verify.sh`.
-- Do not blindly reuse ai-lab Flask checks in other projects.
+- Do not keep the placeholder `scripts/verify.sh` as a real project gate.
 - Commit only after reviewing the generated files and verification results.

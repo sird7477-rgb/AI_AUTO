@@ -31,11 +31,45 @@ manifest_file() {
   latest_file "${fallback_pattern}"
 }
 
+is_failure_result() {
+  local file="$1"
+
+  awk '
+    /^```/ {
+      in_code = !in_code
+      next
+    }
+    in_code {
+      next
+    }
+    /^[A-Za-z -]+ review failed or timed out\.$/ {
+      marker_line = NR
+      next
+    }
+    marker_line && NR <= marker_line + 4 && /^Exit status: [0-9]+$/ {
+      has_exit_status = 1
+      next
+    }
+    marker_line && NR <= marker_line + 5 && /^Timeout seconds: [0-9]+$/ {
+      has_timeout = 1
+      next
+    }
+    END {
+      exit !(marker_line && has_exit_status && has_timeout)
+    }
+  ' "${file}"
+}
+
 extract_verdict() {
   local file="$1"
 
   if [ -z "${file}" ] || [ ! -f "${file}" ]; then
     echo "missing"
+    return 0
+  fi
+
+  if is_failure_result "${file}"; then
+    echo "failed"
     return 0
   fi
 
@@ -64,11 +98,6 @@ extract_verdict() {
 
   if [ -n "${verdict}" ]; then
     echo "${verdict}"
-    return 0
-  fi
-
-  if grep -qiE 'failed|timed out|RESOURCE_EXHAUSTED|429|Operation cancelled|not found' "${file}"; then
-    echo "failed"
     return 0
   fi
 

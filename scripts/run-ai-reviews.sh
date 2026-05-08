@@ -16,8 +16,13 @@ GEMINI_PROMPT_ARG_MAX_BYTES="${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
 REVIEW_RETRY_LIMIT="${REVIEW_RETRY_LIMIT:-3}"
 REVIEW_OUTPUT_MODE="${REVIEW_OUTPUT_MODE:-file}"
 SKIP_CONTEXT_GENERATION="${SKIP_CONTEXT_GENERATION:-0}"
+REVIEW_INCLUDE_UNTRACKED_CONTENT="${REVIEW_INCLUDE_UNTRACKED_CONTENT:-0}"
+AI_MODEL_DISCOVERY="${AI_MODEL_DISCOVERY:-1}"
+AI_MODEL_DISCOVERY_DIR="${AI_MODEL_DISCOVERY_DIR:-.omx/model-routing}"
+AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV:-${AI_MODEL_DISCOVERY_DIR}/latest.env}"
+AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT:-${AI_MODEL_DISCOVERY_DIR}/latest.md}"
 
-mkdir -p "${OUT_DIR}" "${CONTEXT_DIR}" "${PROMPT_DIR}" "${EXTERNAL_REVIEW_DIR}" "${REVIEW_STATE_DIR}"
+mkdir -p "${OUT_DIR}" "${CONTEXT_DIR}" "${PROMPT_DIR}" "${EXTERNAL_REVIEW_DIR}" "${REVIEW_STATE_DIR}" "${AI_MODEL_DISCOVERY_DIR}"
 
 if [ "${SKIP_CONTEXT_GENERATION}" = "1" ]; then
   echo "[review] using existing review context and prompts..."
@@ -25,7 +30,7 @@ if [ "${SKIP_CONTEXT_GENERATION}" = "1" ]; then
   CONTEXT_FILE="${CONTEXT_FILE:-existing context in ${CONTEXT_DIR}}"
 else
   echo "[review] collecting review context..."
-  CONTEXT_FILE="$(OUT_DIR="${CONTEXT_DIR}" ./scripts/collect-review-context.sh)"
+  CONTEXT_FILE="$(OUT_DIR="${CONTEXT_DIR}" INCLUDE_UNTRACKED_CONTENT="${REVIEW_INCLUDE_UNTRACKED_CONTENT}" ./scripts/collect-review-context.sh)"
 
   echo "[review] generating review prompts..."
   OUT_DIR="${PROMPT_DIR}" ./scripts/make-review-prompts.sh "${CONTEXT_FILE}" >/dev/null
@@ -75,6 +80,11 @@ cd "\${repo_root}"
 : "\${REVIEW_RETRY_LIMIT:=${REVIEW_RETRY_LIMIT}}"
 : "\${REVIEW_OUTPUT_MODE:=tee}"
 : "\${SKIP_CONTEXT_GENERATION:=1}"
+: "\${REVIEW_INCLUDE_UNTRACKED_CONTENT:=${REVIEW_INCLUDE_UNTRACKED_CONTENT}}"
+: "\${AI_MODEL_DISCOVERY:=${AI_MODEL_DISCOVERY}}"
+: "\${AI_MODEL_DISCOVERY_DIR:=${AI_MODEL_DISCOVERY_DIR}}"
+: "\${AI_MODEL_ROUTING_ENV:=${AI_MODEL_ROUTING_ENV}}"
+: "\${AI_MODEL_ROUTING_REPORT:=${AI_MODEL_ROUTING_REPORT}}"
 
 REVIEW_EXECUTION_MODE=local \\
 OUT_DIR="\${OUT_DIR}" \\
@@ -90,6 +100,11 @@ GEMINI_PROMPT_ARG_MAX_BYTES="\${GEMINI_PROMPT_ARG_MAX_BYTES}" \\
 REVIEW_RETRY_LIMIT="\${REVIEW_RETRY_LIMIT}" \\
 REVIEW_OUTPUT_MODE="\${REVIEW_OUTPUT_MODE}" \\
 SKIP_CONTEXT_GENERATION="\${SKIP_CONTEXT_GENERATION}" \\
+REVIEW_INCLUDE_UNTRACKED_CONTENT="\${REVIEW_INCLUDE_UNTRACKED_CONTENT}" \\
+AI_MODEL_DISCOVERY="\${AI_MODEL_DISCOVERY}" \\
+AI_MODEL_DISCOVERY_DIR="\${AI_MODEL_DISCOVERY_DIR}" \\
+AI_MODEL_ROUTING_ENV="\${AI_MODEL_ROUTING_ENV}" \\
+AI_MODEL_ROUTING_REPORT="\${AI_MODEL_ROUTING_REPORT}" \\
 ./scripts/run-ai-reviews.sh
 
 RESULT_DIR="\${OUT_DIR}" OUT_DIR="\${OUT_DIR}" ./scripts/summarize-ai-reviews.sh
@@ -156,6 +171,38 @@ reset_disabled_reviewers() {
 }
 
 reset_disabled_reviewers
+
+load_model_routing() {
+  if [ "${AI_MODEL_DISCOVERY}" = "0" ]; then
+    echo "[review] AI model discovery disabled by AI_MODEL_DISCOVERY=0"
+    return 0
+  fi
+
+  if [ ! -x "./scripts/discover-ai-models.sh" ]; then
+    echo "[review] AI model discovery script missing; using provider defaults"
+    return 0
+  fi
+
+  echo "[review] discovering AI model routing..."
+  if AI_MODEL_DISCOVERY_DIR="${AI_MODEL_DISCOVERY_DIR}" \
+    AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV}" \
+    AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT}" \
+    ./scripts/discover-ai-models.sh >/dev/null; then
+    # shellcheck disable=SC1090
+    . "${AI_MODEL_ROUTING_ENV}"
+    echo "[review] model routing report: ${AI_MODEL_ROUTING_REPORT}"
+    echo "[review] selected models: claude=${CLAUDE_REVIEW_MODEL:-provider-default} gemini=${GEMINI_REVIEW_MODEL:-provider-default} codex_architect=${CODEX_ARCHITECT_REVIEW_MODEL:-provider-default} codex_test=${CODEX_TEST_REVIEW_MODEL:-provider-default}"
+  else
+    echo "[review] AI model discovery failed; using provider defaults"
+  fi
+}
+
+help_supports_flag() {
+  local help_text="$1"
+  local flag="$2"
+
+  printf '%s\n' "${help_text}" | grep -Eq "(^|[^[:alnum:]_-])${flag}($|[^[:alnum:]_-])"
+}
 
 reviewer_disabled_file() {
   echo "${REVIEW_STATE_DIR}/$1.disabled"
@@ -342,6 +389,10 @@ MSG
       claude_args+=(--permission-mode plan)
     fi
 
+    if [ -n "${CLAUDE_REVIEW_MODEL:-}" ] && help_supports_flag "${claude_help}" "--model"; then
+      claude_args+=(--model "${CLAUDE_REVIEW_MODEL}")
+    fi
+
     run_with_retries "claude" "${CLAUDE_OUT}" run_review_command "${CLAUDE_OUT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}" "$(cat "${CLAUDE_PROMPT}")"
   else
     run_with_retries "claude" "${CLAUDE_OUT}" run_review_command_stdin "${CLAUDE_OUT}" "${CLAUDE_PROMPT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude
@@ -427,6 +478,10 @@ MSG
 
     if printf '%s\n' "${gemini_help}" | grep -q -- '--output-format'; then
       gemini_args+=(--output-format text)
+    fi
+
+    if [ -n "${GEMINI_REVIEW_MODEL:-}" ] && help_supports_flag "${gemini_help}" "--model"; then
+      gemini_args+=(--model "${GEMINI_REVIEW_MODEL}")
     fi
 
     if [ "${gemini_stdin_mode}" -eq 1 ]; then
@@ -641,6 +696,17 @@ run_codex_fallback_review() {
   local focus="$4"
   local prompt_file="${OUT_DIR}/${persona}-${TIMESTAMP}-prompt.md"
   local log_file="${output_file}.log"
+  local codex_model=""
+  local codex_model_args=()
+
+  case "${persona}" in
+    codex-architect-review)
+      codex_model="${CODEX_ARCHITECT_REVIEW_MODEL:-}"
+      ;;
+    codex-test-alternative-review)
+      codex_model="${CODEX_TEST_REVIEW_MODEL:-}"
+      ;;
+  esac
 
   if [ "${RUN_CODEX_FALLBACK_REVIEW:-1}" = "0" ]; then
     write_codex_fallback_skipped "${output_file}" "${persona}" "RUN_CODEX_FALLBACK_REVIEW=0"
@@ -652,12 +718,21 @@ run_codex_fallback_review() {
     return 0
   fi
 
+  if [ -n "${codex_model}" ]; then
+    codex_exec_help="$(codex exec --help 2>/dev/null || true)"
+    if help_supports_flag "${codex_exec_help}" "--model"; then
+      codex_model_args=(--model "${codex_model}")
+    else
+      echo "[review] Codex model selector ignored for ${persona}: codex exec does not advertise --model"
+    fi
+  fi
+
   write_codex_fallback_prompt "${prompt_file}" "${persona}" "${disabled_reviewer}" "${focus}"
   echo "[review] running ${persona} Codex fallback review..."
 
   set +e
   timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}" \
-    codex exec --cd "$(pwd)" --sandbox read-only --ephemeral -o "${output_file}" - < "${prompt_file}" > "${log_file}" 2>&1
+    codex exec "${codex_model_args[@]}" --cd "$(pwd)" --sandbox read-only --ephemeral -o "${output_file}" - < "${prompt_file}" > "${log_file}" 2>&1
   status=$?
   set -e
 
@@ -726,6 +801,7 @@ run_codex_fallback_reviews() {
   fi
 }
 
+load_model_routing
 run_claude
 run_gemini
 run_codex_fallback_reviews
@@ -741,6 +817,7 @@ Generated at: $(date -Iseconds)
 - Context: ${CONTEXT_FILE}
 - Claude prompt: ${CLAUDE_PROMPT}
 - Gemini prompt: ${GEMINI_PROMPT}
+- Model routing report: ${AI_MODEL_ROUTING_REPORT}
 
 ## Outputs
 

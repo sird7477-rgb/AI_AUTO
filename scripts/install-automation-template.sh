@@ -31,6 +31,7 @@ for path in \
   "docs/WORKFLOW.md" \
   "scripts/automation-doctor.sh" \
   "scripts/collect-review-context.sh" \
+  "scripts/discover-ai-models.sh" \
   "scripts/make-review-prompts.sh" \
   "scripts/run-ai-reviews.sh" \
   "scripts/summarize-ai-reviews.sh" \
@@ -53,11 +54,20 @@ fi
 
 mkdir -p "${TARGET_DIR}/.omx/reviewer-state" "${TARGET_DIR}/docs" "${TARGET_DIR}/scripts"
 
+exclude_file="${TARGET_DIR}/.git/info/exclude"
+if ! grep -Eq '^[.]omx/?$' "${exclude_file}" 2>/dev/null; then
+  {
+    echo
+    echo ".omx/"
+  } >> "${exclude_file}"
+fi
+
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
 cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
+cp "${TEMPLATE_DIR}/scripts/discover-ai-models.sh" "${TARGET_DIR}/scripts/discover-ai-models.sh"
 cp "${TEMPLATE_DIR}/scripts/make-review-prompts.sh" "${TARGET_DIR}/scripts/make-review-prompts.sh"
 cp "${TEMPLATE_DIR}/scripts/run-ai-reviews.sh" "${TARGET_DIR}/scripts/run-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/summarize-ai-reviews.sh" "${TARGET_DIR}/scripts/summarize-ai-reviews.sh"
@@ -68,11 +78,14 @@ cp "${TEMPLATE_DIR}/scripts/verify.example.sh" "${TARGET_DIR}/scripts/verify.sh"
 chmod +x "${TARGET_DIR}"/scripts/*.sh
 
 echo "Automation template installed into: ${TARGET_DIR}"
+echo "Local git exclude updated for .omx/ runtime artifacts."
 echo
 echo "Next steps:"
-echo "1. Edit ${TARGET_DIR}/scripts/verify.sh for the target project."
-echo "2. Review ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md."
-echo "3. Run:"
+echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
+echo "2. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
+echo "3. Replace ${TARGET_DIR}/scripts/verify.sh with project-specific checks."
+echo "4. Run:"
 echo "   cd ${TARGET_DIR}"
+echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"
 echo "   ./scripts/review-gate.sh"

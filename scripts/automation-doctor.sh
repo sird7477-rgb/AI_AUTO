@@ -8,7 +8,7 @@ usage() {
   cat <<'USAGE'
 Usage: ./scripts/automation-doctor.sh [--fix]
 
-Diagnose whether this repository is ready for the ai-lab automation loop.
+Diagnose whether this repository is ready for the Codex/OMX automation loop.
 
 Default mode prints status and suggested repair commands without changing files.
 With --fix, the doctor may apply safe non-overwriting automation setup fixes.
@@ -293,6 +293,7 @@ REQUIRED_FILES=(
   "docs/WORKFLOW.md"
   "scripts/review-gate.sh"
   "scripts/collect-review-context.sh"
+  "scripts/discover-ai-models.sh"
   "scripts/make-review-prompts.sh"
   "scripts/run-ai-reviews.sh"
   "scripts/summarize-ai-reviews.sh"
@@ -305,6 +306,10 @@ done
 
 if [ -f "scripts/verify.sh" ]; then
   say_pass "required file exists: scripts/verify.sh"
+  if grep -q "VERIFY_TEMPLATE_UNCONFIGURED=1" "scripts/verify.sh"; then
+    say_warn "scripts/verify.sh is still the generic onboarding placeholder"
+    suggest "interview the project requirements and replace scripts/verify.sh with project-specific checks"
+  fi
 elif [ -f "scripts/verify.example.sh" ]; then
   say_warn "scripts/verify.sh is missing; template example exists"
   suggest "mv scripts/verify.example.sh scripts/verify.sh && chmod +x scripts/verify.sh"

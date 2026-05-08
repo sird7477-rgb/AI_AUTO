@@ -1,6 +1,9 @@
 # Agent Instructions
 
-This repository is a Codex/OMX single-agent workflow testbed.
+This repository uses the Codex/OMX automation baseline.
+
+Project-specific purpose, scope, and verification rules must be defined during
+onboarding before feature work begins.
 
 ## Operating Rule
 
@@ -24,23 +27,45 @@ Allowed:
 - workflow clarification
 - narrow reliability fixes
 - verification script improvements
-- small testbed maintenance
+- small changes within the project scope defined during onboarding
 
 Not allowed without a new explicit plan:
 
-- new todo app features
-- UI work
-- authentication
-- background jobs
+- project-specific feature work before onboarding defines the scope
+- authentication, authorization, or security-sensitive changes
+- data model, migration, or destructive storage changes
+- new dependencies or external services
 - large architecture rewrites
 - deployment hardening
+
+## Onboarding Rule
+
+After `aiinit`, interview the project owner before the first real task and
+record the project-specific operating rules.
+
+Clarify at minimum:
+
+- project purpose and non-goals
+- stack and runtime commands
+- allowed and forbidden change types
+- required verification commands
+- smoke checks that prove the final result works
+- project-specific documentation or domain constraints
+
+Then update:
+
+- `AGENTS.md`
+- `docs/WORKFLOW.md`
+- `scripts/verify.sh`
+
+Run `./scripts/automation-doctor.sh`, `./scripts/verify.sh`, and
+`./scripts/review-gate.sh` before treating the automation baseline as ready.
 
 ## Required References
 
 Use these files as the workflow baseline:
 
 - `docs/WORKFLOW.md`
-- `docs/AI_ROLES.md`
 - `scripts/verify.sh`
 - `scripts/review-gate.sh`
 

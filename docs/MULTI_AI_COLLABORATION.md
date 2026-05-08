@@ -236,6 +236,8 @@ Current handling:
 - disabled reviewer perspectives are not injected into the remaining external reviewer prompt
 - Codex/GPT fallback reviews run as separate degraded artifacts when reviewers are disabled, and the summary reports that coverage separately without counting it as independent external review coverage
 - Codex fallback execution uses `codex exec` when available and can be disabled for diagnostics with RUN_CODEX_FALLBACK_REVIEW=0
+- AI model routing is discovered at review-run start by `scripts/discover-ai-models.sh`; it writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`, then the runner applies provider-specific `--model` flags only when supported
+- model routing avoids dated hardcoded model names; use env overrides such as CLAUDE_REVIEW_MODEL, GEMINI_REVIEW_MODEL, CODEX_ARCHITECT_REVIEW_MODEL, CODEX_TEST_REVIEW_MODEL, or CODEX_FALLBACK_MODEL when a specific current model should be forced
 - REVIEW_EXECUTION_MODE=external can move reviewer execution to an unrestricted interactive terminal
 - external reviewer execution uses REVIEW_OUTPUT_MODE=tee by default so prompts and approval waits remain visible
 - external reviewer execution uses SKIP_CONTEXT_GENERATION=1 by default so it reviews the already-prepared prompts

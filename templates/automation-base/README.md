@@ -7,8 +7,9 @@ This template contains the base files for a CLI-based AI development workflow.
 - AGENTS.md: repo-local agent operating rules
 - docs/WORKFLOW.md: project workflow documentation
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
-- scripts/verify.example.sh: example verification script; customize per project
+- scripts/verify.example.sh: onboarding placeholder; replace with project-specific verification
 - scripts/collect-review-context.sh: collects git diff and workflow context
+- scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
 - scripts/make-review-prompts.sh: generates reviewer prompts
 - scripts/run-ai-reviews.sh: runs available AI reviewers
 - scripts/summarize-ai-reviews.sh: summarizes reviewer verdicts
@@ -35,9 +36,14 @@ Check the automation setup:
 
 Template-specific helper link and `~/bin` PATH checks only run when the script detects the ai-lab source tree.
 
-Update scripts/verify.sh for the target project.
+Interview the project owner, then update the generated files for the target project:
 
-Do not keep ai-lab-specific checks in a real project unless they are relevant.
+    AGENTS.md
+    docs/WORKFLOW.md
+    scripts/verify.sh
+
+The installed `scripts/verify.sh` is intentionally not project-ready. It exits
+non-zero until it is replaced with real checks for the target repository.
 
 ## Smoke test the template
 
@@ -82,6 +88,8 @@ The smoke test should complete with verification success, Claude review if avail
 
 Reviewer failures are stateful. Session, weekly, quota, or rate-limit failures disable that reviewer immediately. Other failures retry up to REVIEW_RETRY_LIMIT times before disabling the reviewer. Disabled reviewer state is stored under `.omx/reviewer-state` and is announced on every run until reset with RESET_DISABLED_AI_REVIEWERS=claude, RESET_DISABLED_AI_REVIEWERS=gemini, or RESET_DISABLED_AI_REVIEWERS=all.
 
+Before the first AI reviewer invocation in a run, `scripts/discover-ai-models.sh` writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`. The review runner sources that env file and applies model selectors only when the installed CLI supports `--model`. Use `CLAUDE_REVIEW_MODEL`, `GEMINI_REVIEW_MODEL`, `CODEX_ARCHITECT_REVIEW_MODEL`, `CODEX_TEST_REVIEW_MODEL`, or `CODEX_FALLBACK_MODEL` to override routing without editing scripts. Set `AI_MODEL_DISCOVERY=0` to use provider defaults.
+
 When a reviewer is disabled, the remaining external reviewer prompt stays focused on its own role. The disabled lane is covered by a separate Codex/GPT fallback review artifact, such as `codex-architect-fallback-*.md` or `codex-test-fallback-*.md`. If both external reviewers are disabled, both fallback reviewers are required and the verdict is reported as degraded coverage such as `codex_only_degraded`; it does not count as independent Claude/Gemini approval. Codex fallback uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics.
 
 If the current agent context blocks reviewer network access or runtime writes, use:
@@ -90,4 +98,6 @@ If the current agent context blocks reviewer network access or runtime writes, u
 
 Then run the generated `.omx/external-review/run-reviewers-latest.sh` script from an unrestricted interactive terminal. The script resolves the repository root from its own location before running the reviewers, shows reviewer output with `tee`, uses the already-prepared prompts by default, and allows execution-time timeout overrides.
 
-Review context lists untracked files but omits their content by default. Set `INCLUDE_UNTRACKED_CONTENT=1` to include untracked text files up to `MAX_UNTRACKED_BYTES` bytes after confirming secrets and generated output are covered by `.gitignore`.
+Review context lists untracked files but omits their content by default. Set `REVIEW_INCLUDE_UNTRACKED_CONTENT=1` for review-gate runs, or `INCLUDE_UNTRACKED_CONTENT=1` when calling `scripts/collect-review-context.sh` directly, to include untracked text files up to `MAX_UNTRACKED_BYTES` bytes after confirming secrets and generated output are covered by `.gitignore`.
+
+`aiinit` adds `.omx/` to the target repository's local `.git/info/exclude` so generated review, model-routing, and reviewer-state artifacts do not become commit candidates by default.

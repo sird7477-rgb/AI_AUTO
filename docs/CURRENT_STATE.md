@@ -59,6 +59,7 @@ Completed.
 - git status
 - diff stat
 - full diff
+- latest commit diff when the working tree is clean, for post-commit review context
 - workflow rules
 - relevant project instruction files
 
@@ -87,6 +88,8 @@ Completed.
 
 Current behavior:
 
+- before the first AI reviewer call in a run, `scripts/discover-ai-models.sh` inspects local CLI capabilities and writes `.omx/model-routing/latest.env` plus `.omx/model-routing/latest.md`
+- model routing avoids dated hardcoded model names; it prefers explicit env overrides, advertised CLI aliases, or the OMX model contract, then falls back to provider defaults
 - Claude review runs automatically if claude is available.
 - Gemini review runs automatically if gemini is available.
 - Gemini can be disabled for a specific run with RUN_GEMINI_REVIEW=0.
@@ -123,6 +126,12 @@ The summary also reports:
 - review coverage
 - missing or unusable reviewers
 - reviewer disagreement
+
+Current parsing guard:
+
+- reviewer failure and timeout markers take precedence over any prompt-like `## Verdict` text in a failed reviewer output
+- failure detection is limited to the runner failure footer shape, not arbitrary error words in a valid review body
+- fixture coverage includes a failed reviewer output that echoes `approve_with_notes`, a valid review mentioning failure-like words, and a valid review quoting failure footer text in a code fence
 
 ### Review gate
 
@@ -174,13 +183,19 @@ It contains:
 
 - repo-local AGENTS.md
 - workflow documentation
-- example verification script
+- onboarding placeholder verification script
 - automation doctor
 - review context collector
 - review prompt generator
 - AI review runner
 - review summarizer
 - review gate
+
+Current behavior:
+
+- template AGENTS/WORKFLOW defaults are generic and do not assume the ai-lab Flask todo sample
+- `scripts/verify.example.sh` is intentionally unconfigured and exits non-zero after showing onboarding guidance
+- new projects must define project-specific AGENTS, WORKFLOW, and verify checks before the gate can be treated as ready
 
 ### Template installer
 
@@ -204,14 +219,18 @@ After installation, aiinit automatically runs:
 
     DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh
 
-The installer also creates `.omx/reviewer-state` so a newly initialized repository does not need a follow-up doctor fix for reviewer state storage.
+The installer also creates `.omx/reviewer-state` and adds `.omx/` to the target repository's local `.git/info/exclude` so generated reviewer, review, and model-routing artifacts stay out of commit candidates by default.
 
-Then customize:
+Then run a project onboarding interview and customize:
 
+    AGENTS.md
+    docs/WORKFLOW.md
     scripts/verify.sh
 
 Then run:
 
+    ./scripts/automation-doctor.sh
+    ./scripts/verify.sh
     ./scripts/review-gate.sh
 
 ### Global helper tools
@@ -306,12 +325,16 @@ For a new project:
     cd ~/workspace/new-project
     aiinit
 
-Then edit:
+Then interview the project owner and edit:
 
+    AGENTS.md
+    docs/WORKFLOW.md
     scripts/verify.sh
 
 Then run:
 
+    ./scripts/automation-doctor.sh
+    ./scripts/verify.sh
     ./scripts/review-gate.sh
 
 ## Known issues
@@ -355,6 +378,7 @@ Current interpretation:
 - when one reviewer is disabled, the remaining external reviewer prompt stays role-pure instead of simulating the missing model's perspective
 - Codex/GPT writes separate fallback review artifacts such as `codex-architect-fallback-*.md` and `codex-test-fallback-*.md`; summaries mark this as degraded/informational coverage and never count it as independent Claude/Gemini approval
 - Codex fallback execution uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics, because both external reviewers disabled plus skipped fallback remains blocked
+- Codex fallback model selection can use `CODEX_ARCHITECT_REVIEW_MODEL`, `CODEX_TEST_REVIEW_MODEL`, `CODEX_FALLBACK_MODEL`, or `OMX_DEFAULT_FRONTIER_MODEL`
 - the most stable non-API-key workaround is `REVIEW_EXECUTION_MODE=external`, which prepares a runner for an unrestricted interactive terminal
 
 ### Explore Harness warning
@@ -467,6 +491,7 @@ Completed capabilities:
 - aiinit doctor handoff
 - ai-lab bootstrap first slice
 - workspace scanning
+- generic aiinit onboarding defaults with no Flask todo/testbed assumption
 
 No additional generic automation implementation is planned unless a real first-time setup or target-project initialization gap appears.
 
