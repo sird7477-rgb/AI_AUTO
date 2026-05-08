@@ -29,6 +29,14 @@ Repo-local command installed by the automation template:
 
 ai-lab ships its own copy at `scripts/automation-doctor.sh`; the template copy is what gets installed into new projects.
 
+ai-lab-only bootstrap command:
+
+- `./scripts/bootstrap-ai-lab.sh`
+  - Checks first-time ai-lab checkout setup
+  - Verifies source helper scripts, command availability, helper links, and `~/bin` PATH
+  - Runs automation-doctor with the dirty-tree check skipped
+  - Applies only safe helper-link fixes with `--fix`
+
 ## Link setup
 
 Expected links:

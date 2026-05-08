@@ -30,6 +30,12 @@ Before marking any work complete, run the repository verification script:
 ./scripts/verify.sh
 ```
 
+Check first-time ai-lab checkout setup:
+
+```bash
+./scripts/bootstrap-ai-lab.sh
+```
+
 Run the local test suite with the repository virtual environment:
 
 ```bash

@@ -13,6 +13,11 @@ trap cleanup EXIT
 echo "[verify] running pytest..."
 .venv/bin/python -m pytest -q
 
+echo "[verify] checking shell script syntax..."
+bash -n scripts/bootstrap-ai-lab.sh
+bash -n scripts/automation-doctor.sh
+bash -n templates/automation-base/scripts/automation-doctor.sh
+
 if [ ! -f scripts/automation-doctor.sh ] || [ ! -f templates/automation-base/scripts/automation-doctor.sh ]; then
   echo "[verify] automation doctor copy is missing"
   echo "[verify] expected scripts/automation-doctor.sh and templates/automation-base/scripts/automation-doctor.sh"
@@ -26,8 +31,8 @@ if ! diff -u scripts/automation-doctor.sh templates/automation-base/scripts/auto
   exit 1
 fi
 
-echo "[verify] running automation doctor..."
-DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh
+echo "[verify] running ai-lab bootstrap check..."
+./scripts/bootstrap-ai-lab.sh
 
 echo "[verify] starting docker compose on API_PORT=${API_PORT}..."
 API_PORT="${API_PORT}" docker compose up --build -d

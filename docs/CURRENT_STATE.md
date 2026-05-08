@@ -229,6 +229,26 @@ Expected links:
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
+### ai-lab bootstrap
+
+Completed first slice.
+
+./scripts/bootstrap-ai-lab.sh checks first-time ai-lab setup for this checkout.
+
+Default behavior:
+
+- checks ai-lab source helper scripts
+- checks git, Docker, Claude, Gemini, and OmX command availability
+- checks expected `~/bin` helper symlinks and PATH
+- runs automation-doctor with `DOCTOR_SKIP_DIRTY_CHECK=1`
+- prints suggested fixes without installing external tools or editing shell profiles
+
+Fix behavior:
+
+- `./scripts/bootstrap-ai-lab.sh --fix` may create safe helper symlinks
+- it delegates automation setup fixes to `./scripts/automation-doctor.sh --fix`
+- it does not install external tools, configure git remotes, reset reviewer state, or mutate shell profile files
+
 ### Workspace scan
 
 Completed.
@@ -275,6 +295,7 @@ Verification behavior:
 For ai-lab itself:
 
     ./scripts/verify.sh
+    ./scripts/bootstrap-ai-lab.sh
     ./scripts/automation-doctor.sh
     ./scripts/review-gate.sh
     omx doctor
@@ -461,9 +482,11 @@ The project has completed:
 - generic automation doctor
 - global helper command setup
 - aiinit doctor handoff
+- ai-lab bootstrap first slice
 - workspace scanning
 
 The next recommended stage is:
 
 1. keep this current-state document updated
-2. later add clone/bootstrap setup automation
+2. expand bootstrap only if a real first-time setup gap appears
+3. later add Odoo-specific verification patterns

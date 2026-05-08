@@ -274,6 +274,8 @@ Current command group:
 
 - `자동화 진단`: run `./scripts/automation-doctor.sh` to inspect automation readiness and suggested repairs.
 - `자동화 수정`: run `./scripts/automation-doctor.sh --fix` to apply safe non-overwriting setup fixes.
+- `부트스트랩 진단`: run `./scripts/bootstrap-ai-lab.sh` to inspect first-time ai-lab checkout setup.
+- `부트스트랩 수정`: run `./scripts/bootstrap-ai-lab.sh --fix` to create safe ai-lab helper links and run doctor fixes.
 - `초기화`: run `aiinit` inside a target git repository, or `aiinit /path/to/repo`, to install the automation template and run the installed doctor.
 - `워크스페이스 스캔`: run `workspace-scan` to inspect repositories under `~/workspace`.
 - `리뷰 상태`: inspect `.omx/reviewer-state/` and summarize which reviewers are disabled and why.

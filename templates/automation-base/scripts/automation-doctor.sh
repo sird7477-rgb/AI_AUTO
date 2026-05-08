@@ -53,6 +53,11 @@ ROOT="$(pwd)"
 TEMPLATE_DIR="${ROOT}/templates/automation-base"
 IN_AI_LAB=0
 HOME_DIR="${HOME:-}"
+HOME_READY=0
+
+if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
+  HOME_READY=1
+fi
 
 if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
   IN_AI_LAB=1
@@ -358,7 +363,7 @@ fi
 echo
 echo "[doctor] checking ai-lab helper links"
 
-if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ]; then
+if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   check_helper_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   check_helper_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
   check_helper_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
@@ -371,6 +376,9 @@ if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ]; then
       suggest 'export PATH="$HOME/bin:$PATH"'
       ;;
   esac
+elif [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ]; then
+  say_warn "HOME directory does not exist; ai-lab helper link checks skipped: ${HOME_DIR}"
+  suggest "set HOME to an existing user directory"
 elif [ "$IN_AI_LAB" -eq 1 ]; then
   say_warn "HOME is not set; ai-lab helper link checks skipped"
 else
