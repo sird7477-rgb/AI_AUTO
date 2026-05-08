@@ -2,7 +2,7 @@
 
 이 저장소는 Codex/OMX 기반 CLI 개발 루프를 검증하기 위한 테스트베드다.
 
-현재 단계는 Claude/Gemini를 붙인 멀티 에이전트 구조가 아니라, Codex 단독 루프를 먼저 안정화하는 단계다.
+현재 단계는 Codex가 구현하고, 고정 검증과 Claude/Gemini 리뷰 게이트를 통과한 뒤에만 커밋 후보를 만드는 범용 자동화 루프다.
 
 ## 현재 루프
 
@@ -13,7 +13,8 @@
 5. `./scripts/verify.sh`를 실행한다.
 6. 실패하면 수정 후 다시 검증한다.
 7. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
-8. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+8. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
+9. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
 
 ## 필수 검증
 
@@ -35,6 +36,26 @@ automation-doctor 기본 진단
 이 명령이 실패하면 작업은 완료된 것이 아니다.
 
 `./scripts/verify.sh`는 작업 중인 변경사항 자체를 경고로 만들지 않도록 `DOCTOR_SKIP_DIRTY_CHECK=1`로 automation-doctor를 실행한다. 단독으로 `./scripts/automation-doctor.sh`를 실행하면 dirty working tree는 계속 경고로 보고된다.
+
+## 리뷰 게이트
+
+커밋 후보 전 반드시 실행한다.
+
+```bash
+./scripts/review-gate.sh
+```
+
+이 명령은 다음을 실행한다.
+
+./scripts/verify.sh
+Claude 리뷰
+Gemini 리뷰
+필요 시 Codex fallback 리뷰
+리뷰 verdict 요약
+
+Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로 응답할 수 없으면 해당 리뷰어는 `.omx/reviewer-state/`에 disabled 상태로 기록된다. disabled 리뷰어는 사용자가 `RESET_DISABLED_AI_REVIEWERS=claude|gemini|all`로 복구하기 전까지 스킵된다.
+
+한 리뷰어가 disabled 상태이면 남은 외부 리뷰어 프롬프트는 그대로 유지하고, disabled 역할은 별도 Codex/GPT fallback 리뷰가 담당한다. 두 외부 리뷰어가 모두 disabled 상태이면 `codex-architect-review`와 `codex-test-alternative-review` fallback 리뷰가 모두 필요하다. 이 결과는 `proceed_degraded`, `single_external_plus_codex_fallback`, 또는 `codex_only_degraded`로 표시되며 독립 Claude/Gemini 승인으로 세지 않는다. `proceed_degraded`는 진행 가능한 gate 결과지만 완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
 
 완료 보고에 포함할 것
 변경 파일
@@ -68,15 +89,18 @@ diff를 검토했다.
 ./scripts/verify.sh가 통과했다.
 남은 warning을 기록했다.
 커밋 메시지가 실제 변경 내용과 일치한다.
-이후 확장 방향
+운영 명령
 
-나중에는 다음 구조로 확장할 수 있다.
+자동화 진단:
 
-Codex가 구현한다.
-Claude가 구조, 유지보수성, 리스크를 리뷰한다.
-Gemini가 대안, 누락 케이스, 테스트 아이디어를 리뷰한다.
-Codex가 수용된 피드백을 반영한다.
-./scripts/verify.sh를 다시 통과시킨다.
-최종 커밋 후보를 만든다.
+```bash
+./scripts/automation-doctor.sh
+```
 
-그 전까지 이 저장소는 Codex/OMX 단독 루프 테스트베드로 취급한다.
+새 프로젝트 초기화:
+
+```bash
+aiinit
+```
+
+Odoo 등 특정 프레임워크 검증 패턴은 별도 계획에서 다룬다.

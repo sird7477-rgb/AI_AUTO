@@ -352,8 +352,9 @@ Current interpretation:
 - reviewers with session, weekly, quota, or rate-limit failures are disabled immediately and stay disabled via `.omx/reviewer-state/` until reset by the user
 - other reviewer failures retry up to `REVIEW_RETRY_LIMIT` times before the reviewer is disabled
 - disabled reviewers are announced on every review run and skipped until `RESET_DISABLED_AI_REVIEWERS=claude|gemini|all` is used
-- when one reviewer is disabled, the remaining reviewer prompt receives additional coverage for the disabled reviewer's perspective
-- Codex also writes a `codex-self-review-*.md` persona fallback artifact and the summary reports Codex self-review coverage separately; this is informational only and does not count as independent reviewer approval
+- when one reviewer is disabled, the remaining external reviewer prompt stays role-pure instead of simulating the missing model's perspective
+- Codex/GPT writes separate fallback review artifacts such as `codex-architect-fallback-*.md` and `codex-test-fallback-*.md`; summaries mark this as degraded/informational coverage and never count it as independent Claude/Gemini approval
+- Codex fallback execution uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics, because both external reviewers disabled plus skipped fallback remains blocked
 - the most stable non-API-key workaround is `REVIEW_EXECUTION_MODE=external`, which prepares a runner for an unrestricted interactive terminal
 
 ### Explore Harness warning
@@ -425,26 +426,6 @@ This is the preferred workaround when API-key based bare mode is intentionally e
 
 ## Deferred
 
-### Clone/bootstrap automation
-
-Deferred.
-
-A future script may automate first-time setup after cloning ai-lab on a new PC or for another user.
-
-Candidate script:
-
-- scripts/bootstrap-ai-lab.sh
-
-Possible responsibilities:
-
-- check required tools
-- link aiinit
-- link workspace-scan
-- run automation-doctor
-- update PATH
-- check Codex/OMX/Claude/Gemini/Docker availability
-- run basic diagnostics
-
 ### Odoo-specific workflow
 
 Deferred.
@@ -472,7 +453,9 @@ Remaining limitation:
 
 ## Current stage
 
-The project has completed:
+The generic automation foundation is complete for the current scope.
+
+Completed capabilities:
 
 - Codex single-agent workflow
 - Claude-backed review gate
@@ -485,8 +468,9 @@ The project has completed:
 - ai-lab bootstrap first slice
 - workspace scanning
 
-The next recommended stage is:
+No additional generic automation implementation is planned unless a real first-time setup or target-project initialization gap appears.
+
+Recommended next stage:
 
 1. keep this current-state document updated
-2. expand bootstrap only if a real first-time setup gap appears
-3. later add Odoo-specific verification patterns
+2. define Odoo-specific verification patterns when the Odoo work resumes

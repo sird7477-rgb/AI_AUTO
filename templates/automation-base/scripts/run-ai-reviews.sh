@@ -11,6 +11,7 @@ REVIEW_TIMEOUT_SECONDS="${REVIEW_TIMEOUT_SECONDS:-180}"
 REVIEW_TIMEOUT_KILL_AFTER_SECONDS="${REVIEW_TIMEOUT_KILL_AFTER_SECONDS:-5}"
 CLAUDE_REVIEW_TIMEOUT_SECONDS="${CLAUDE_REVIEW_TIMEOUT_SECONDS:-300}"
 GEMINI_REVIEW_TIMEOUT_SECONDS="${GEMINI_REVIEW_TIMEOUT_SECONDS:-${REVIEW_TIMEOUT_SECONDS}}"
+CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS="${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS:-300}"
 GEMINI_PROMPT_ARG_MAX_BYTES="${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
 REVIEW_RETRY_LIMIT="${REVIEW_RETRY_LIMIT:-3}"
 REVIEW_OUTPUT_MODE="${REVIEW_OUTPUT_MODE:-file}"
@@ -20,7 +21,7 @@ mkdir -p "${OUT_DIR}" "${CONTEXT_DIR}" "${PROMPT_DIR}" "${EXTERNAL_REVIEW_DIR}" 
 
 if [ "${SKIP_CONTEXT_GENERATION}" = "1" ]; then
   echo "[review] using existing review context and prompts..."
-  CONTEXT_FILE="$(find "${CONTEXT_DIR}" -maxdepth 1 -type f -name 'review-context-*.md' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
+  CONTEXT_FILE="$(find "${CONTEXT_DIR}" -maxdepth 1 -type f \( -name 'review-context-*.md' -o -name 'latest-review-context.md' \) -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
   CONTEXT_FILE="${CONTEXT_FILE:-existing context in ${CONTEXT_DIR}}"
 else
   echo "[review] collecting review context..."
@@ -41,7 +42,9 @@ fi
 TIMESTAMP="$(date +%Y%m%dT%H%M%S)"
 CLAUDE_OUT="${OUT_DIR}/claude-review-${TIMESTAMP}.md"
 GEMINI_OUT="${OUT_DIR}/gemini-review-${TIMESTAMP}.md"
-CODEX_SELF_REVIEW_OUT="${OUT_DIR}/codex-self-review-${TIMESTAMP}.md"
+CODEX_ARCHITECT_FALLBACK_OUT="${OUT_DIR}/codex-architect-fallback-${TIMESTAMP}.md"
+CODEX_TEST_FALLBACK_OUT="${OUT_DIR}/codex-test-fallback-${TIMESTAMP}.md"
+CODEX_FALLBACK_SUMMARY_OUT="${OUT_DIR}/codex-fallback-summary-${TIMESTAMP}.md"
 SUMMARY_OUT="${OUT_DIR}/review-summary-${TIMESTAMP}.md"
 EXTERNAL_RUNNER="${EXTERNAL_REVIEW_DIR}/run-reviewers-${TIMESTAMP}.sh"
 EXTERNAL_LATEST="${EXTERNAL_REVIEW_DIR}/run-reviewers-latest.sh"
@@ -67,6 +70,7 @@ cd "\${repo_root}"
 : "\${REVIEW_TIMEOUT_KILL_AFTER_SECONDS:=${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}}"
 : "\${CLAUDE_REVIEW_TIMEOUT_SECONDS:=${CLAUDE_REVIEW_TIMEOUT_SECONDS}}"
 : "\${GEMINI_REVIEW_TIMEOUT_SECONDS:=${GEMINI_REVIEW_TIMEOUT_SECONDS}}"
+: "\${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS:=${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}}"
 : "\${GEMINI_PROMPT_ARG_MAX_BYTES:=${GEMINI_PROMPT_ARG_MAX_BYTES}}"
 : "\${REVIEW_RETRY_LIMIT:=${REVIEW_RETRY_LIMIT}}"
 : "\${REVIEW_OUTPUT_MODE:=tee}"
@@ -81,6 +85,7 @@ REVIEW_TIMEOUT_SECONDS="\${REVIEW_TIMEOUT_SECONDS}" \\
 REVIEW_TIMEOUT_KILL_AFTER_SECONDS="\${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" \\
 CLAUDE_REVIEW_TIMEOUT_SECONDS="\${CLAUDE_REVIEW_TIMEOUT_SECONDS}" \\
 GEMINI_REVIEW_TIMEOUT_SECONDS="\${GEMINI_REVIEW_TIMEOUT_SECONDS}" \\
+CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS="\${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}" \\
 GEMINI_PROMPT_ARG_MAX_BYTES="\${GEMINI_PROMPT_ARG_MAX_BYTES}" \\
 REVIEW_RETRY_LIMIT="\${REVIEW_RETRY_LIMIT}" \\
 REVIEW_OUTPUT_MODE="\${REVIEW_OUTPUT_MODE}" \\
@@ -462,10 +467,10 @@ codex_persona_needed() {
   [ -f "$(reviewer_disabled_file claude)" ] || [ -f "$(reviewer_disabled_file gemini)" ]
 }
 
-generate_codex_self_review() {
+generate_codex_fallback_summary() {
   if ! codex_persona_needed; then
-    cat > "${CODEX_SELF_REVIEW_OUT}" <<MSG
-# Codex Self-Review Persona Fallback
+    cat > "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+# Codex Fallback Review
 
 Generated at: $(date -Iseconds)
 
@@ -473,21 +478,21 @@ Generated at: $(date -Iseconds)
 
 none
 
-## Assigned Personas
+## Assigned Fallback Reviewers
 
 none
 
 ## Gate Policy
 
-No Codex persona fallback was needed for this run.
+No Codex fallback review was needed for this run.
 MSG
     return 0
   fi
 
-  echo "[review] generating Codex self-review persona fallback: ${CODEX_SELF_REVIEW_OUT}"
+  echo "[review] generating Codex fallback review summary: ${CODEX_FALLBACK_SUMMARY_OUT}"
 
-  cat > "${CODEX_SELF_REVIEW_OUT}" <<MSG
-# Codex Self-Review Persona Fallback
+  cat > "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+# Codex Fallback Review
 
 Generated at: $(date -Iseconds)
 
@@ -497,59 +502,234 @@ informational_only
 
 ## Independence Boundary
 
-This is Codex self-review coverage. It compensates for missing reviewer perspectives, but it is not an independent Claude or Gemini approval.
+This is Codex/GPT fallback coverage for disabled external reviewers. It is degraded, informational-only, and not an independent Claude or Gemini approval.
 
-## Assigned Personas
+## Assigned Fallback Reviewers
 MSG
 
   if [ -f "$(reviewer_disabled_file claude)" ]; then
-    cat >> "${CODEX_SELF_REVIEW_OUT}" <<MSG
+    cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
 - codex-architect-review
-  - compensates for disabled Claude coverage
+  - covers the disabled Claude lane
   - focus: correctness, maintainability, scope control, hidden risk, AGENTS.md and workflow compliance
   - disabled reason: $(disabled_reason claude)
+  - artifact: ${CODEX_ARCHITECT_FALLBACK_OUT}
 MSG
   fi
 
   if [ -f "$(reviewer_disabled_file gemini)" ]; then
-    cat >> "${CODEX_SELF_REVIEW_OUT}" <<MSG
+    cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
 - codex-test-alternative-review
-  - compensates for disabled Gemini coverage
+  - covers the disabled Gemini lane
   - focus: missed edge cases, simpler alternatives, test coverage gaps, documentation clarity, future automation friction
   - disabled reason: $(disabled_reason gemini)
+  - artifact: ${CODEX_TEST_FALLBACK_OUT}
 MSG
   fi
 
   if [ -f "$(reviewer_disabled_file claude)" ] && [ -f "$(reviewer_disabled_file gemini)" ]; then
-    cat >> "${CODEX_SELF_REVIEW_OUT}" <<MSG
+    cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
-- codex-operator-review
-  - compensates for complete independent reviewer outage
-  - focus: execution flow, recovery path, state management, operator-visible warnings, reset instructions
+## Complete External Reviewer Outage
+
+Both Claude and Gemini are disabled. Two Codex/GPT fallback reviews are required, but this remains codex_only_degraded coverage.
 MSG
   fi
 
-  cat >> "${CODEX_SELF_REVIEW_OUT}" <<MSG
+  cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
 ## Required Checklist
 
 - Verify disabled reviewer reasons are visible in every run.
-- Verify remaining reviewer prompts include additional coverage for disabled reviewer roles.
-- Verify summary still reports single_reviewer or no_usable_review instead of multi_reviewer.
-- Verify Codex self-review is not counted as independent AI reviewer approval.
+- Verify external reviewer prompts stay role-pure and do not simulate another model's perspective.
+- Verify summary reports degraded fallback coverage instead of multi_reviewer when external reviewers are missing.
+- Verify Codex fallback is not counted as independent Claude or Gemini reviewer approval.
 - Verify re-enable instructions are present for disabled reviewers.
 
 ## Gate Policy
 
-Codex self-review can reduce blind spots during reviewer outages, but it does not upgrade review coverage to multi_reviewer.
+Codex fallback can reduce blind spots during reviewer outages, but it does not upgrade review coverage to multi_reviewer.
 MSG
+}
+
+write_codex_fallback_skipped() {
+  local output_file="$1"
+  local persona="$2"
+  local reason="$3"
+
+  cat > "${output_file}" <<MSG
+# ${persona}
+
+## Status
+
+skipped
+
+Skipped: ${reason}
+
+## Reason
+
+${reason}
+
+## Verdict
+
+missing
+MSG
+}
+
+write_codex_fallback_prompt() {
+  local prompt_file="$1"
+  local persona="$2"
+  local disabled_reviewer="$3"
+  local focus="$4"
+  local reason
+  reason="$(disabled_reason "${disabled_reviewer}")"
+
+  cat > "${prompt_file}" <<MSG
+# ${persona}
+
+You are running as a Codex/GPT fallback reviewer because ${disabled_reviewer} is disabled.
+
+This is a degraded fallback review. Do not claim to be an independent external Claude or Gemini reviewer.
+
+Focus:
+${focus}
+
+Return exactly this Markdown structure:
+
+## Verdict
+
+Choose one:
+
+- approve
+- approve_with_notes
+- request_changes
+
+## Findings
+
+List concrete issues only. If no blocking issues exist, say "No blocking findings."
+
+## Fallback Boundary
+
+State that this is Codex/GPT fallback coverage and not independent external review.
+
+## Final Recommendation
+
+Give a short recommendation for the review gate.
+
+Disabled reviewer reason:
+${reason}
+
+---
+
+MSG
+
+  if [ -f "${CONTEXT_FILE}" ]; then
+    cat "${CONTEXT_FILE}" >> "${prompt_file}"
+  else
+    cat >> "${prompt_file}" <<MSG
+Review context file is unavailable: ${CONTEXT_FILE}
+MSG
+  fi
+}
+
+run_codex_fallback_review() {
+  local persona="$1"
+  local output_file="$2"
+  local disabled_reviewer="$3"
+  local focus="$4"
+  local prompt_file="${OUT_DIR}/${persona}-${TIMESTAMP}-prompt.md"
+  local log_file="${output_file}.log"
+
+  if [ "${RUN_CODEX_FALLBACK_REVIEW:-1}" = "0" ]; then
+    write_codex_fallback_skipped "${output_file}" "${persona}" "RUN_CODEX_FALLBACK_REVIEW=0"
+    return 0
+  fi
+
+  if ! command -v codex >/dev/null 2>&1; then
+    write_codex_fallback_skipped "${output_file}" "${persona}" "codex command not found"
+    return 0
+  fi
+
+  write_codex_fallback_prompt "${prompt_file}" "${persona}" "${disabled_reviewer}" "${focus}"
+  echo "[review] running ${persona} Codex fallback review..."
+
+  set +e
+  timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}" \
+    codex exec --cd "$(pwd)" --sandbox read-only --ephemeral -o "${output_file}" - < "${prompt_file}" > "${log_file}" 2>&1
+  status=$?
+  set -e
+
+  if [ "${status}" -ne 0 ]; then
+    {
+      echo "# ${persona}"
+      echo
+      echo "## Status"
+      echo
+      echo "failed"
+      echo
+      echo "Codex fallback review failed or timed out."
+      echo
+      echo "Exit status: ${status}"
+      echo "Timeout seconds: ${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}"
+      echo "Log file: ${log_file}"
+      echo
+      echo "## Verdict"
+      echo
+      echo "failed"
+    } > "${output_file}"
+    echo "[review] ${persona} Codex fallback failed; result captured: ${output_file}"
+    return 0
+  fi
+
+  if ! has_usable_verdict "${output_file}"; then
+    {
+      echo
+      echo "---"
+      echo
+      echo "Codex fallback review produced no usable ## Verdict section."
+      echo "Log file: ${log_file}"
+    } >> "${output_file}"
+  fi
+
+  echo "[review] ${persona} Codex fallback result: ${output_file}"
+}
+
+run_codex_fallback_reviews() {
+  if ! codex_persona_needed; then
+    return 0
+  fi
+
+  if [ -f "$(reviewer_disabled_file claude)" ]; then
+    run_codex_fallback_review \
+      "codex-architect-review" \
+      "${CODEX_ARCHITECT_FALLBACK_OUT}" \
+      "claude" \
+      "- correctness
+- maintainability
+- scope control
+- hidden risk
+- AGENTS.md and docs/WORKFLOW.md compliance"
+  fi
+
+  if [ -f "$(reviewer_disabled_file gemini)" ]; then
+    run_codex_fallback_review \
+      "codex-test-alternative-review" \
+      "${CODEX_TEST_FALLBACK_OUT}" \
+      "gemini" \
+      "- missed edge cases
+- simpler alternatives
+- test coverage gaps
+- documentation clarity
+- future automation friction"
+  fi
 }
 
 run_claude
 run_gemini
-generate_codex_self_review
+run_codex_fallback_reviews
+generate_codex_fallback_summary
 
 cat > "${SUMMARY_OUT}" <<SUMMARY
 # AI Review Summary
@@ -566,7 +746,9 @@ Generated at: $(date -Iseconds)
 
 - Claude result: ${CLAUDE_OUT}
 - Gemini result: ${GEMINI_OUT}
-- Codex self-review fallback: ${CODEX_SELF_REVIEW_OUT}
+- Codex architect fallback: ${CODEX_ARCHITECT_FALLBACK_OUT}
+- Codex test fallback: ${CODEX_TEST_FALLBACK_OUT}
+- Codex fallback summary: ${CODEX_FALLBACK_SUMMARY_OUT}
 
 ## Notes
 

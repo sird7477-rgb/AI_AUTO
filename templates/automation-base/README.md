@@ -12,6 +12,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/make-review-prompts.sh: generates reviewer prompts
 - scripts/run-ai-reviews.sh: runs available AI reviewers
 - scripts/summarize-ai-reviews.sh: summarizes reviewer verdicts
+- scripts/test-review-summary.sh: fixture tests for review verdict decisions
 - scripts/review-gate.sh: runs verification, reviews, and verdict summary
 
 ## How to use in a new project
@@ -81,7 +82,7 @@ The smoke test should complete with verification success, Claude review if avail
 
 Reviewer failures are stateful. Session, weekly, quota, or rate-limit failures disable that reviewer immediately. Other failures retry up to REVIEW_RETRY_LIMIT times before disabling the reviewer. Disabled reviewer state is stored under `.omx/reviewer-state` and is announced on every run until reset with RESET_DISABLED_AI_REVIEWERS=claude, RESET_DISABLED_AI_REVIEWERS=gemini, or RESET_DISABLED_AI_REVIEWERS=all.
 
-When a reviewer is disabled, the remaining reviewer prompt receives additional coverage for the missing perspective. Codex also writes a `codex-self-review-*.md` persona fallback artifact, but that self-review is informational only and does not count as independent reviewer approval.
+When a reviewer is disabled, the remaining external reviewer prompt stays focused on its own role. The disabled lane is covered by a separate Codex/GPT fallback review artifact, such as `codex-architect-fallback-*.md` or `codex-test-fallback-*.md`. If both external reviewers are disabled, both fallback reviewers are required and the verdict is reported as degraded coverage such as `codex_only_degraded`; it does not count as independent Claude/Gemini approval. Codex fallback uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics.
 
 If the current agent context blocks reviewer network access or runtime writes, use:
 

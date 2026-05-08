@@ -296,6 +296,7 @@ REQUIRED_FILES=(
   "scripts/make-review-prompts.sh"
   "scripts/run-ai-reviews.sh"
   "scripts/summarize-ai-reviews.sh"
+  "scripts/test-review-summary.sh"
 )
 
 for path in "${REQUIRED_FILES[@]}"; do

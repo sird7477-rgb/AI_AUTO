@@ -14,22 +14,52 @@ echo "[verify] running pytest..."
 .venv/bin/python -m pytest -q
 
 echo "[verify] checking shell script syntax..."
-bash -n scripts/bootstrap-ai-lab.sh
-bash -n scripts/automation-doctor.sh
-bash -n templates/automation-base/scripts/automation-doctor.sh
+for script in \
+  scripts/bootstrap-ai-lab.sh \
+  scripts/automation-doctor.sh \
+  scripts/collect-review-context.sh \
+  scripts/install-automation-template.sh \
+  scripts/make-review-prompts.sh \
+  scripts/review-gate.sh \
+  scripts/run-ai-reviews.sh \
+  scripts/summarize-ai-reviews.sh \
+  scripts/test-review-summary.sh \
+  templates/automation-base/scripts/automation-doctor.sh \
+  templates/automation-base/scripts/collect-review-context.sh \
+  templates/automation-base/scripts/make-review-prompts.sh \
+  templates/automation-base/scripts/review-gate.sh \
+  templates/automation-base/scripts/run-ai-reviews.sh \
+  templates/automation-base/scripts/summarize-ai-reviews.sh \
+  templates/automation-base/scripts/test-review-summary.sh \
+  templates/automation-base/scripts/verify.example.sh
+do
+  bash -n "${script}"
+done
 
-if [ ! -f scripts/automation-doctor.sh ] || [ ! -f templates/automation-base/scripts/automation-doctor.sh ]; then
-  echo "[verify] automation doctor copy is missing"
-  echo "[verify] expected scripts/automation-doctor.sh and templates/automation-base/scripts/automation-doctor.sh"
-  exit 1
-fi
+echo "[verify] testing review summary decisions..."
+./scripts/test-review-summary.sh
 
-echo "[verify] checking automation doctor template sync..."
-if ! diff -u scripts/automation-doctor.sh templates/automation-base/scripts/automation-doctor.sh; then
-  echo "[verify] automation doctor copies are out of sync"
-  echo "[verify] sync scripts/automation-doctor.sh and templates/automation-base/scripts/automation-doctor.sh, then rerun"
-  exit 1
-fi
+echo "[verify] checking automation template sync..."
+for script in \
+  automation-doctor.sh \
+  collect-review-context.sh \
+  make-review-prompts.sh \
+  review-gate.sh \
+  run-ai-reviews.sh \
+  summarize-ai-reviews.sh \
+  test-review-summary.sh
+do
+  if [ ! -f "scripts/${script}" ] || [ ! -f "templates/automation-base/scripts/${script}" ]; then
+    echo "[verify] automation script copy is missing: ${script}"
+    exit 1
+  fi
+
+  if ! diff -u "scripts/${script}" "templates/automation-base/scripts/${script}"; then
+    echo "[verify] automation script copies are out of sync: ${script}"
+    echo "[verify] sync scripts/${script} and templates/automation-base/scripts/${script}, then rerun"
+    exit 1
+  fi
+done
 
 echo "[verify] running ai-lab bootstrap check..."
 ./scripts/bootstrap-ai-lab.sh

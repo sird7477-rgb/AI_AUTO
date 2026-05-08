@@ -14,7 +14,7 @@ Before claiming a task is complete, the agent must:
 5. mention any remaining warnings or limitations
 
 If `./scripts/verify.sh` fails, the task is not complete.
-If `./scripts/review-gate.sh` fails or returns a non-proceed review decision, do not present the change as ready to commit.
+If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
 
 ## Scope
 

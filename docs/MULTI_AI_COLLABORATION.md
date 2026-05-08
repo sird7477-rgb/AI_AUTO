@@ -233,8 +233,9 @@ Current handling:
 - session, weekly, quota, or rate-limit failures disable that reviewer immediately
 - other reviewer failures retry up to REVIEW_RETRY_LIMIT times before disabling that reviewer
 - disabled reviewer state is stored under .omx/reviewer-state and announced on every run until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
-- disabled reviewer perspectives are added to the remaining reviewer prompt as extra coverage
-- Codex writes a self-review persona fallback artifact when reviewers are disabled and the summary reports that coverage separately, but it is informational only and does not count as independent review coverage
+- disabled reviewer perspectives are not injected into the remaining external reviewer prompt
+- Codex/GPT fallback reviews run as separate degraded artifacts when reviewers are disabled, and the summary reports that coverage separately without counting it as independent external review coverage
+- Codex fallback execution uses `codex exec` when available and can be disabled for diagnostics with RUN_CODEX_FALLBACK_REVIEW=0
 - REVIEW_EXECUTION_MODE=external can move reviewer execution to an unrestricted interactive terminal
 - external reviewer execution uses REVIEW_OUTPUT_MODE=tee by default so prompts and approval waits remain visible
 - external reviewer execution uses SKIP_CONTEXT_GENERATION=1 by default so it reviews the already-prepared prompts
@@ -256,15 +257,19 @@ Use:
 
 The generated `.omx/external-review/run-reviewers-latest.sh` script resolves the repository root from its own location, runs Claude/Gemini reviews with visible `tee` output against the already-prepared prompts, and then summarizes the verdicts. Generated timeout/path values are defaults, so execution-time overrides such as `CLAUDE_REVIEW_TIMEOUT_SECONDS=600 .omx/external-review/run-reviewers-latest.sh` still work.
 
-### Codex persona fallback
+### Codex fallback review
 
-When an independent reviewer is disabled, Codex records a separate self-review artifact:
+When an independent reviewer is disabled, Codex records separate fallback review artifacts:
 
 - Claude disabled -> `codex-architect-review`
 - Gemini disabled -> `codex-test-alternative-review`
-- both disabled -> plus `codex-operator-review`
+- both disabled -> both fallback reviews are required
 
-This fallback is explicitly marked informational-only. It reduces blind spots but does not upgrade `single_reviewer` to `multi_reviewer`.
+This fallback is explicitly marked degraded and informational-only. It reduces blind spots but does not upgrade coverage to `multi_reviewer`; summaries use `single_external_plus_codex_fallback` or `codex_only_degraded` to keep trust boundaries visible.
+
+If Codex fallback cannot run, its artifact is marked skipped or failed and the summary stays blocked when no external reviewer produced a usable result.
+
+`proceed_degraded` is an allowed review-gate success state only when the degraded trust level, missing reviewer state, and Codex fallback files are reported to the user.
 
 ### Command group
 
@@ -311,38 +316,44 @@ Future work:
 - separate interactive-terminal diagnostics from agent-context diagnostics
 - avoid depending on unstable agent-run behavior for the core workflow
 
-## Near-term roadmap
+## Roadmap Status
 
 ### Phase 1: Foundation
 
-Status: mostly complete.
+Status: complete.
 
 Includes:
 
 - scoped Codex work
 - fixed verification command
 - Claude review
+- Gemini review by default when available
 - review summary
 - review gate
 - reusable template
+- automation doctor
+- aiinit
+- ai-lab bootstrap
 - workspace scanning
 
 ### Phase 2: Multi-AI review clarity
 
-Status: next.
+Status: complete for the current generic automation scope.
 
-Tasks:
+Completed:
 
-1. make Gemini absence explicit in summaries
-2. distinguish single-reviewer approval from multi-reviewer approval
-3. improve review result classification
-4. add reviewer disagreement handling
+- Gemini absence or failure is explicit in summaries.
+- single-reviewer and multi-reviewer approvals are distinguished.
+- reviewer failures are classified and stored.
+- reviewer disagreement does not silently proceed.
+- disabled reviewer perspectives are no longer injected into the remaining reviewer prompt.
+- Codex/GPT fallback reviews are separate degraded artifacts and do not count as independent approval.
 
 ### Phase 3: Revision loop
 
-Status: not started.
+Status: deferred.
 
-Tasks:
+Possible future tasks:
 
 1. generate Codex revision tasks from reviewer findings
 2. run verification again after revision
@@ -350,9 +361,11 @@ Tasks:
 4. limit revision cycles
 5. present final human decision point
 
+This is deferred until a real repeated-review need appears. Current practice is manual acceptance of reviewer findings followed by another verify/review-gate run.
+
 ### Phase 4: Real project application
 
-Status: not started.
+Status: next non-generic stage.
 
 Tasks:
 
@@ -362,6 +375,6 @@ Tasks:
 
 ### Phase 5: Clone/bootstrap packaging
 
-Status: deferred.
+Status: complete for first slice.
 
-This should only be added after the collaboration loop is stable.
+`./scripts/bootstrap-ai-lab.sh` now diagnoses first-time ai-lab checkout setup and can repair safe helper symlinks with `--fix`. Expand it only if a real first-time setup gap appears.

@@ -3,7 +3,6 @@ set -euo pipefail
 
 CONTEXT_FILE="${1:-.omx/review-context/latest-review-context.md}"
 OUT_DIR="${OUT_DIR:-.omx/review-prompts}"
-REVIEW_STATE_DIR="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
 
 mkdir -p "${OUT_DIR}"
 
@@ -15,23 +14,6 @@ fi
 
 CLAUDE_PROMPT="${OUT_DIR}/claude-review.md"
 GEMINI_PROMPT="${OUT_DIR}/gemini-review.md"
-
-reviewer_disabled() {
-  [ -f "${REVIEW_STATE_DIR}/$1.disabled" ]
-}
-
-disabled_note() {
-  local reviewer="$1"
-  local file="${REVIEW_STATE_DIR}/${reviewer}.disabled"
-
-  if [ -f "${file}" ]; then
-    local reason details disabled_at
-    reason="$(sed -n 's/^reason=//p' "${file}")"
-    details="$(sed -n 's/^details=//p' "${file}")"
-    disabled_at="$(sed -n 's/^disabled_at=//p' "${file}")"
-    echo "reason=${reason}; details=${details}; disabled_at=${disabled_at}"
-  fi
-}
 
 cat > "${CLAUDE_PROMPT}" <<PROMPT
 # Claude Review Request
@@ -46,21 +28,6 @@ Focus on:
 - hidden risk
 - whether the change follows AGENTS.md and docs/WORKFLOW.md
 PROMPT
-
-if reviewer_disabled gemini; then
-  cat >> "${CLAUDE_PROMPT}" <<PROMPT
-
-Additional coverage because Gemini is disabled:
-
-- missed edge cases
-- alternative simpler approaches
-- test coverage gaps
-- documentation clarity
-- future automation friction
-
-Gemini disabled reason: $(disabled_note gemini)
-PROMPT
-fi
 
 cat >> "${CLAUDE_PROMPT}" <<PROMPT
 
@@ -115,21 +82,6 @@ Focus on:
 - documentation clarity
 - whether the change creates future automation friction
 PROMPT
-
-if reviewer_disabled claude; then
-  cat >> "${GEMINI_PROMPT}" <<PROMPT
-
-Additional coverage because Claude is disabled:
-
-- correctness
-- maintainability
-- scope control
-- hidden risk
-- AGENTS.md and docs/WORKFLOW.md compliance
-
-Claude disabled reason: $(disabled_note claude)
-PROMPT
-fi
 
 cat >> "${GEMINI_PROMPT}" <<PROMPT
 

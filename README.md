@@ -99,5 +99,9 @@ Out of scope:
 ## Documentation Map
 
 - `docs/AI_ROLES.md` describes the AI roles used when exercising the workflow.
-- `docs/WORKFLOW.md` describes the required Codex/OMX single-agent verification loop.
+- `docs/WORKFLOW.md` describes the required Codex/OMX verification and review-gate loop.
+- `docs/CURRENT_STATE.md` is the current handoff document for completed automation capabilities, known limitations, and next-stage boundaries.
+- `docs/GLOBAL_TOOLS.md` describes `aiinit`, `workspace-scan`, and bootstrap helper setup.
+- `docs/NEW_PROJECT_GUIDE.md` explains how to apply the generic automation template to another repository.
+- `docs/MULTI_AI_COLLABORATION.md` documents the Claude/Gemini review gate, degraded-review behavior, and command keywords.
 - `.omx/plans/ralplan-ai-dev-testbed-cleanup.md` contains the approved cleanup plan for this pass.
