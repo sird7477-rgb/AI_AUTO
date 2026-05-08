@@ -206,6 +206,62 @@ echo "[verify] testing review context edge cases..."
   grep -q "No staged or unstaged tracked diff detected" .omx/review-context/latest-review-context.md
 )
 
+echo "[verify] testing review run manifest and external disabled guidance..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_run_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_run_tmp EXIT
+
+  mkdir -p \
+    "${tmp_dir}/context" \
+    "${tmp_dir}/prompts" \
+    "${tmp_dir}/results" \
+    "${tmp_dir}/external" \
+    "${tmp_dir}/state"
+
+  printf '# Context\n' > "${tmp_dir}/context/latest-review-context.md"
+  printf '## Verdict\n\napprove\n' > "${tmp_dir}/prompts/claude-review.md"
+  printf '## Verdict\n\napprove\n' > "${tmp_dir}/prompts/gemini-review.md"
+  cat > "${tmp_dir}/state/claude.disabled" <<'MARKER'
+reviewer=claude
+disabled_at=2026-01-01T00:00:00+00:00
+reason=usage_limit
+details=test disabled marker
+source_run_id=fixture-run
+next_action=user_reset_required
+reset_hint=RESET_DISABLED_AI_REVIEWERS=claude ./scripts/review-gate.sh
+MARKER
+
+  set +e
+  REVIEW_EXECUTION_MODE=external \
+    SKIP_CONTEXT_GENERATION=1 \
+    OUT_DIR="${tmp_dir}/results" \
+    CONTEXT_DIR="${tmp_dir}/context" \
+    PROMPT_DIR="${tmp_dir}/prompts" \
+    EXTERNAL_REVIEW_DIR="${tmp_dir}/external" \
+    REVIEW_STATE_DIR="${tmp_dir}/state" \
+    REVIEW_RUN_ID='fixture/run id' \
+    ./scripts/run-ai-reviews.sh > "${tmp_dir}/external.out"
+  status=$?
+  set -e
+
+  if [ "${status}" -ne 2 ]; then
+    echo "[verify] external review mode should exit 2 after preparing runner"
+    exit 1
+  fi
+
+  test -x "${tmp_dir}/external/run-reviewers-latest.sh"
+  test -f "${tmp_dir}/results/review-run-fixture_run_id.md"
+  grep -q "Review run id: fixture_run_id" "${tmp_dir}/results/review-run-fixture_run_id.md"
+  grep -q "claude: reason=usage_limit" "${tmp_dir}/results/review-run-fixture_run_id.md"
+  grep -q "disabled reviewers for external runner" "${tmp_dir}/external.out"
+  grep -q "RESET_DISABLED_AI_REVIEWERS=claude ./scripts/review-gate.sh" "${tmp_dir}/external.out"
+)
+
 echo "[verify] testing automation template installer..."
 (
   tmp_dir="$(mktemp -d)"

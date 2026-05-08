@@ -3,6 +3,7 @@ set -euo pipefail
 
 FIX=0
 SKIP_DIRTY_CHECK="${DOCTOR_SKIP_DIRTY_CHECK:-0}"
+OMX_ARTIFACT_WARN_COUNT="${OMX_ARTIFACT_WARN_COUNT:-200}"
 
 usage() {
   cat <<'USAGE'
@@ -16,6 +17,7 @@ With --fix, the doctor may apply safe non-overwriting automation setup fixes.
 
 Environment:
   DOCTOR_SKIP_DIRTY_CHECK=1  skip the uncommitted-changes check
+  OMX_ARTIFACT_WARN_COUNT=N   warn when a .omx artifact directory has more than N files
 USAGE
 }
 
@@ -102,6 +104,13 @@ suggest() {
 
   SUGGESTIONS+=("$suggestion")
 }
+
+case "${OMX_ARTIFACT_WARN_COUNT}" in
+  ''|*[!0-9]*)
+    say_warn "invalid OMX_ARTIFACT_WARN_COUNT='${OMX_ARTIFACT_WARN_COUNT}'; using 200"
+    OMX_ARTIFACT_WARN_COUNT=200
+    ;;
+esac
 
 copy_from_template_if_missing() {
   local path="$1"
@@ -346,10 +355,23 @@ if [ -d ".omx/reviewer-state" ]; then
     disabled_count=$((disabled_count + 1))
     reviewer="$(basename "$marker" .disabled)"
     reason="$(sed -n 's/^reason=//p' "$marker" 2>/dev/null | head -n 1)"
+    details="$(sed -n 's/^details=//p' "$marker" 2>/dev/null | head -n 1)"
+    disabled_at="$(sed -n 's/^disabled_at=//p' "$marker" 2>/dev/null | head -n 1)"
+    source_run_id="$(sed -n 's/^source_run_id=//p' "$marker" 2>/dev/null | head -n 1)"
+    next_action="$(sed -n 's/^next_action=//p' "$marker" 2>/dev/null | head -n 1)"
+    reset_hint="$(sed -n 's/^reset_hint=//p' "$marker" 2>/dev/null | head -n 1)"
     if [ -n "$reason" ]; then
       say_warn "reviewer disabled: ${reviewer} (${reason})"
     else
       say_warn "reviewer disabled: ${reviewer}"
+    fi
+    [ -n "$details" ] && printf '       details: %s\n' "$details"
+    [ -n "$disabled_at" ] && printf '       disabled_at: %s\n' "$disabled_at"
+    [ -n "$source_run_id" ] && printf '       source_run_id: %s\n' "$source_run_id"
+    [ -n "$next_action" ] && printf '       next_action: %s\n' "$next_action"
+    if [ -n "$reset_hint" ]; then
+      printf '       reset_hint: %s\n' "$reset_hint"
+      suggest "$reset_hint"
     fi
   done
 
@@ -360,6 +382,42 @@ if [ -d ".omx/reviewer-state" ]; then
   fi
 else
   say_warn "reviewer state directory is missing"
+  suggest "./scripts/automation-doctor.sh --fix"
+fi
+
+echo
+echo "[doctor] checking .omx session artifacts"
+
+if [ -d ".omx" ]; then
+  for artifact_dir in \
+    ".omx/review-results" \
+    ".omx/review-context" \
+    ".omx/review-prompts" \
+    ".omx/model-routing" \
+    ".omx/external-review"
+  do
+    if [ ! -d "$artifact_dir" ]; then
+      say_skip "session artifact directory missing: ${artifact_dir}"
+      continue
+    fi
+
+    artifact_count="$(find "$artifact_dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "$artifact_count" -gt "$OMX_ARTIFACT_WARN_COUNT" ]; then
+      say_warn "session artifact directory has ${artifact_count} files: ${artifact_dir}"
+      suggest "review ${artifact_dir} and archive or delete old ignored .omx artifacts when they are no longer needed"
+    else
+      say_pass "session artifact directory size ok: ${artifact_dir} (${artifact_count} files)"
+    fi
+  done
+
+  latest_manifest="$(ls -t .omx/review-results/review-run-*.md 2>/dev/null | head -n 1 || true)"
+  if [ -n "$latest_manifest" ]; then
+    say_pass "latest review run manifest: ${latest_manifest}"
+  else
+    say_skip "no review run manifest recorded yet"
+  fi
+else
+  say_warn ".omx directory is missing"
   suggest "./scripts/automation-doctor.sh --fix"
 fi
 

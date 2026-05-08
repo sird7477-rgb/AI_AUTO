@@ -422,6 +422,10 @@ Current interpretation:
 - Codex fallback execution uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics, because both external reviewers disabled plus skipped fallback remains blocked
 - Codex fallback model selection can use `CODEX_ARCHITECT_REVIEW_MODEL`, `CODEX_TEST_REVIEW_MODEL`, `CODEX_FALLBACK_MODEL`, or `OMX_DEFAULT_FRONTIER_MODEL`
 - the most stable non-API-key workaround is `REVIEW_EXECUTION_MODE=external`, which prepares a runner for an unrestricted interactive terminal
+- each AI review run now writes a `review-run-*.md` manifest that links the context, prompts, outputs, fallback artifacts, external runner, model routing report, and disabled reviewer state for that run
+- disabled reviewer markers include `source_run_id`, `next_action`, and `reset_hint` fields so doctor/external runs can show the recovery path without guessing
+- external review mode reports current disabled reviewers before stopping, because the generated external runner shares `.omx/reviewer-state/` and will skip disabled reviewers until reset
+- automation doctor reports `.omx` session artifact directory sizes and suggests manual archive/delete cleanup when a directory exceeds `OMX_ARTIFACT_WARN_COUNT`; it does not delete artifacts automatically
 
 ### Explore Harness warning
 

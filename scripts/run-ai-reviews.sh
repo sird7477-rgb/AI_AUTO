@@ -45,14 +45,113 @@ if [ ! -f "${CLAUDE_PROMPT}" ] || [ ! -f "${GEMINI_PROMPT}" ]; then
 fi
 
 TIMESTAMP="$(date +%Y%m%dT%H%M%S)"
+REVIEW_RUN_ID_RAW="${REVIEW_RUN_ID:-${TIMESTAMP}}"
+REVIEW_RUN_ID="$(printf '%s' "${REVIEW_RUN_ID_RAW}" | sed 's/[^A-Za-z0-9_.-]/_/g')"
+if [ -z "${REVIEW_RUN_ID}" ]; then
+  REVIEW_RUN_ID="${TIMESTAMP}"
+fi
 CLAUDE_OUT="${OUT_DIR}/claude-review-${TIMESTAMP}.md"
 GEMINI_OUT="${OUT_DIR}/gemini-review-${TIMESTAMP}.md"
 CODEX_ARCHITECT_FALLBACK_OUT="${OUT_DIR}/codex-architect-fallback-${TIMESTAMP}.md"
 CODEX_TEST_FALLBACK_OUT="${OUT_DIR}/codex-test-fallback-${TIMESTAMP}.md"
 CODEX_FALLBACK_SUMMARY_OUT="${OUT_DIR}/codex-fallback-summary-${TIMESTAMP}.md"
 SUMMARY_OUT="${OUT_DIR}/review-summary-${TIMESTAMP}.md"
+MANIFEST_OUT="${OUT_DIR}/review-run-${REVIEW_RUN_ID}.md"
 EXTERNAL_RUNNER="${EXTERNAL_REVIEW_DIR}/run-reviewers-${TIMESTAMP}.sh"
 EXTERNAL_LATEST="${EXTERNAL_REVIEW_DIR}/run-reviewers-latest.sh"
+
+reviewer_disabled_file() {
+  echo "${REVIEW_STATE_DIR}/$1.disabled"
+}
+
+reset_disabled_reviewers() {
+  case "${RESET_DISABLED_AI_REVIEWERS:-}" in
+    all)
+      rm -f "${REVIEW_STATE_DIR}/claude.disabled" "${REVIEW_STATE_DIR}/gemini.disabled"
+      ;;
+    claude)
+      rm -f "${REVIEW_STATE_DIR}/claude.disabled"
+      ;;
+    gemini)
+      rm -f "${REVIEW_STATE_DIR}/gemini.disabled"
+      ;;
+    "")
+      ;;
+    *)
+      echo "[review] unknown RESET_DISABLED_AI_REVIEWERS value: ${RESET_DISABLED_AI_REVIEWERS}"
+      ;;
+  esac
+}
+
+disabled_reason() {
+  local reviewer="$1"
+  local disabled_file
+  disabled_file="$(reviewer_disabled_file "${reviewer}")"
+
+  if [ ! -f "${disabled_file}" ]; then
+    return 1
+  fi
+
+  local reason details disabled_at source_run_id next_action reset_hint
+  reason="$(sed -n 's/^reason=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+  details="$(sed -n 's/^details=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+  disabled_at="$(sed -n 's/^disabled_at=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+  source_run_id="$(sed -n 's/^source_run_id=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+  next_action="$(sed -n 's/^next_action=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+  reset_hint="$(sed -n 's/^reset_hint=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+
+  echo "reason=${reason}; details=${details}; disabled_at=${disabled_at}; source_run_id=${source_run_id:-unknown}; next_action=${next_action:-user_reset_required}; reset_hint=${reset_hint:-RESET_DISABLED_AI_REVIEWERS=${reviewer} ./scripts/review-gate.sh}"
+}
+
+disabled_reviewers_summary() {
+  local found=0
+  local reviewer reason
+
+  for reviewer in claude gemini; do
+    if reason="$(disabled_reason "${reviewer}")"; then
+      found=1
+      echo "- ${reviewer}: ${reason}"
+    fi
+  done
+
+  if [ "${found}" -eq 0 ]; then
+    echo "- none"
+  fi
+}
+
+write_run_manifest() {
+  cat > "${MANIFEST_OUT}" <<MANIFEST
+# AI Review Run Manifest
+
+Generated at: $(date -Iseconds)
+
+## Run
+
+- Review run id: ${REVIEW_RUN_ID}
+- Execution mode: ${REVIEW_EXECUTION_MODE}
+- Context: ${CONTEXT_FILE}
+- Claude prompt: ${CLAUDE_PROMPT}
+- Gemini prompt: ${GEMINI_PROMPT}
+- Model routing report: ${AI_MODEL_ROUTING_REPORT}
+
+## Outputs
+
+- Claude result: ${CLAUDE_OUT}
+- Gemini result: ${GEMINI_OUT}
+- Codex architect fallback: ${CODEX_ARCHITECT_FALLBACK_OUT}
+- Codex test fallback: ${CODEX_TEST_FALLBACK_OUT}
+- Codex fallback summary: ${CODEX_FALLBACK_SUMMARY_OUT}
+- Review summary: ${SUMMARY_OUT}
+- External runner: ${EXTERNAL_RUNNER}
+- Latest external runner: ${EXTERNAL_LATEST}
+
+## Disabled Reviewers At Manifest Time
+
+$(disabled_reviewers_summary)
+MANIFEST
+}
+
+reset_disabled_reviewers
 
 write_external_runner() {
   cat > "${EXTERNAL_RUNNER}" <<SCRIPT
@@ -85,6 +184,7 @@ cd "\${repo_root}"
 : "\${AI_MODEL_DISCOVERY_DIR:=${AI_MODEL_DISCOVERY_DIR}}"
 : "\${AI_MODEL_ROUTING_ENV:=${AI_MODEL_ROUTING_ENV}}"
 : "\${AI_MODEL_ROUTING_REPORT:=${AI_MODEL_ROUTING_REPORT}}"
+: "\${REVIEW_RUN_ID:=${REVIEW_RUN_ID}}"
 
 REVIEW_EXECUTION_MODE=local \\
 OUT_DIR="\${OUT_DIR}" \\
@@ -105,6 +205,7 @@ AI_MODEL_DISCOVERY="\${AI_MODEL_DISCOVERY}" \\
 AI_MODEL_DISCOVERY_DIR="\${AI_MODEL_DISCOVERY_DIR}" \\
 AI_MODEL_ROUTING_ENV="\${AI_MODEL_ROUTING_ENV}" \\
 AI_MODEL_ROUTING_REPORT="\${AI_MODEL_ROUTING_REPORT}" \\
+REVIEW_RUN_ID="\${REVIEW_RUN_ID}" \\
 ./scripts/run-ai-reviews.sh
 
 RESULT_DIR="\${OUT_DIR}" OUT_DIR="\${OUT_DIR}" ./scripts/summarize-ai-reviews.sh
@@ -142,35 +243,22 @@ Latest external reviewer command:
 ## Notes
 
 External mode prepares the review context and prompts, then stops before invoking reviewer CLIs in this restricted agent-run context.
+
+Disabled reviewer state is shared with the generated external runner. If a reviewer is listed below, the external runner will also skip it until reset.
+
+$(disabled_reviewers_summary)
 SUMMARY
 
+  write_run_manifest
   echo "[review] external reviewer runner: ${EXTERNAL_RUNNER}"
   echo "[review] latest external reviewer runner: ${EXTERNAL_LATEST}"
+  echo "[review] run manifest: ${MANIFEST_OUT}"
   echo "[review] summary: ${SUMMARY_OUT}"
+  echo "[review] disabled reviewers for external runner:"
+  disabled_reviewers_summary
   echo "[review] external review pending"
   exit 2
 fi
-
-reset_disabled_reviewers() {
-  case "${RESET_DISABLED_AI_REVIEWERS:-}" in
-    all)
-      rm -f "${REVIEW_STATE_DIR}/claude.disabled" "${REVIEW_STATE_DIR}/gemini.disabled"
-      ;;
-    claude)
-      rm -f "${REVIEW_STATE_DIR}/claude.disabled"
-      ;;
-    gemini)
-      rm -f "${REVIEW_STATE_DIR}/gemini.disabled"
-      ;;
-    "")
-      ;;
-    *)
-      echo "[review] unknown RESET_DISABLED_AI_REVIEWERS value: ${RESET_DISABLED_AI_REVIEWERS}"
-      ;;
-  esac
-}
-
-reset_disabled_reviewers
 
 load_model_routing() {
   if [ "${AI_MODEL_DISCOVERY}" = "0" ]; then
@@ -204,10 +292,6 @@ help_supports_flag() {
   printf '%s\n' "${help_text}" | grep -Eq "(^|[^[:alnum:]_-])${flag}($|[^[:alnum:]_-])"
 }
 
-reviewer_disabled_file() {
-  echo "${REVIEW_STATE_DIR}/$1.disabled"
-}
-
 disable_reviewer() {
   local reviewer="$1"
   local reason="$2"
@@ -220,25 +304,12 @@ disable_reviewer() {
     echo "disabled_at=$(date -Iseconds)"
     echo "reason=${reason}"
     echo "details=${details}"
+    echo "source_run_id=${REVIEW_RUN_ID}"
+    echo "next_action=user_reset_required"
+    echo "reset_hint=RESET_DISABLED_AI_REVIEWERS=${reviewer} ./scripts/review-gate.sh"
   } > "${disabled_file}"
 
   echo "[review] ${reviewer} review disabled until user re-enables it: ${reason} (${details})"
-}
-
-disabled_reason() {
-  local reviewer="$1"
-  local disabled_file
-  disabled_file="$(reviewer_disabled_file "${reviewer}")"
-
-  if [ ! -f "${disabled_file}" ]; then
-    return 1
-  fi
-
-  local reason details disabled_at
-  reason="$(sed -n 's/^reason=//p' "${disabled_file}")"
-  details="$(sed -n 's/^details=//p' "${disabled_file}")"
-  disabled_at="$(sed -n 's/^disabled_at=//p' "${disabled_file}")"
-  echo "reason=${reason}; details=${details}; disabled_at=${disabled_at}"
 }
 
 write_disabled_result() {
@@ -832,5 +903,7 @@ Generated at: $(date -Iseconds)
 A reviewer failure does not fail this script. Failures are captured in the corresponding result file.
 SUMMARY
 
+write_run_manifest
+echo "[review] run manifest: ${MANIFEST_OUT}"
 echo "[review] summary: ${SUMMARY_OUT}"
 echo "[review] done"

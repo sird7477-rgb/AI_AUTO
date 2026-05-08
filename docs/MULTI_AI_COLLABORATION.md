@@ -233,14 +233,17 @@ Current handling:
 - session, weekly, quota, or rate-limit failures disable that reviewer immediately
 - other reviewer failures retry up to REVIEW_RETRY_LIMIT times before disabling that reviewer
 - disabled reviewer state is stored under .omx/reviewer-state and announced on every run until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
+- disabled reviewer markers include the source review run id, next action, and reset hint so recovery instructions remain explicit across later runs
 - disabled reviewer perspectives are not injected into the remaining external reviewer prompt
 - Codex/GPT fallback reviews run as separate degraded artifacts when reviewers are disabled, and the summary reports that coverage separately without counting it as independent external review coverage
 - Codex fallback execution uses `codex exec` when available and can be disabled for diagnostics with RUN_CODEX_FALLBACK_REVIEW=0
 - AI model routing is discovered at review-run start by `scripts/discover-ai-models.sh`; it writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`, then the runner applies provider-specific `--model` flags only when supported
 - model routing avoids dated hardcoded model names; use env overrides such as CLAUDE_REVIEW_MODEL, GEMINI_REVIEW_MODEL, CODEX_ARCHITECT_REVIEW_MODEL, CODEX_TEST_REVIEW_MODEL, or CODEX_FALLBACK_MODEL when a specific current model should be forced
+- each review run writes a `review-run-*.md` manifest linking context, prompts, outputs, fallback artifacts, model routing, and disabled reviewer state
 - REVIEW_EXECUTION_MODE=external can move reviewer execution to an unrestricted interactive terminal
 - external reviewer execution uses REVIEW_OUTPUT_MODE=tee by default so prompts and approval waits remain visible
 - external reviewer execution uses SKIP_CONTEXT_GENERATION=1 by default so it reviews the already-prepared prompts
+- external reviewer preparation shows disabled reviewers before stopping, because the generated runner shares `.omx/reviewer-state/`
 
 Future work:
 
@@ -259,6 +262,8 @@ Use:
 
 The generated `.omx/external-review/run-reviewers-latest.sh` script resolves the repository root from its own location, runs Claude/Gemini reviews with visible `tee` output against the already-prepared prompts, and then summarizes the verdicts. Generated timeout/path values are defaults, so execution-time overrides such as `CLAUDE_REVIEW_TIMEOUT_SECONDS=600 .omx/external-review/run-reviewers-latest.sh` still work.
 
+The generated runner shares `.omx/reviewer-state/` with normal review runs. If a reviewer is disabled, external preparation prints the disabled state and reset hint; reset the reviewer before running the external script if the interactive terminal should retry it.
+
 ### Codex fallback review
 
 When an independent reviewer is disabled, Codex records separate fallback review artifacts:
@@ -272,6 +277,12 @@ This fallback is explicitly marked degraded and informational-only. It reduces b
 If Codex fallback cannot run, its artifact is marked skipped or failed and the summary stays blocked when no external reviewer produced a usable result.
 
 `proceed_degraded` is an allowed review-gate success state only when the degraded trust level, missing reviewer state, and Codex fallback files are reported to the user.
+
+### Session artifact management
+
+Review context, prompts, model routing inventories, external runners, manifests, and results are ignored runtime artifacts under `.omx/`.
+
+Automation doctor reports artifact directory sizes and suggests manual cleanup when a directory grows beyond `OMX_ARTIFACT_WARN_COUNT`. It does not delete these files automatically because review artifacts may be needed for handoff, audit, or debugging.
 
 ### Command group
 
