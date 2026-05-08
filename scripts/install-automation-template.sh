@@ -50,7 +50,7 @@ if [ "${#conflicts[@]}" -gt 0 ]; then
   exit 1
 fi
 
-mkdir -p "${TARGET_DIR}/docs" "${TARGET_DIR}/scripts"
+mkdir -p "${TARGET_DIR}/.omx/reviewer-state" "${TARGET_DIR}/docs" "${TARGET_DIR}/scripts"
 
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
 cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"

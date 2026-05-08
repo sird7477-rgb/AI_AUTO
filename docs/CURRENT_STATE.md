@@ -196,6 +196,16 @@ Expected usage inside a target git repository:
 
     aiinit
 
+Alternative usage from anywhere:
+
+    aiinit /path/to/target-repo
+
+After installation, aiinit automatically runs:
+
+    DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh
+
+The installer also creates `.omx/reviewer-state` so a newly initialized repository does not need a follow-up doctor fix for reviewer state storage.
+
 Then customize:
 
     scripts/verify.sh
@@ -247,12 +257,18 @@ Default behavior:
 - prints pass, warning, and failure status lines
 - suggests repair commands
 - does not modify files
+- checks whether expected helper links exist and whether `~/bin` is on PATH when running inside ai-lab
 
 Fix behavior:
 
 - `./scripts/automation-doctor.sh --fix` applies only safe non-overwriting setup fixes
 - allowed fixes include missing automation directories, executable bits, missing template files when running in ai-lab, and expected helper symlinks
 - it does not install external tools, overwrite existing files, or run destructive git operations
+
+Verification behavior:
+
+- `./scripts/verify.sh` runs automation-doctor with `DOCTOR_SKIP_DIRTY_CHECK=1` so normal pre-commit verification does not report the active working tree as a warning
+- standalone `./scripts/automation-doctor.sh` still reports dirty working trees
 
 ## Current operating commands
 
@@ -268,7 +284,6 @@ For a new project:
 
     cd ~/workspace/new-project
     aiinit
-    ./scripts/automation-doctor.sh
 
 Then edit:
 
@@ -445,10 +460,10 @@ The project has completed:
 - reusable automation template
 - generic automation doctor
 - global helper command setup
+- aiinit doctor handoff
 - workspace scanning
 
 The next recommended stage is:
 
 1. keep this current-state document updated
-2. improve aiinit based on automation-doctor findings
-3. later add clone/bootstrap setup automation
+2. later add clone/bootstrap setup automation

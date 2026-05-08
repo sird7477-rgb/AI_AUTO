@@ -274,7 +274,7 @@ Current command group:
 
 - `자동화 진단`: run `./scripts/automation-doctor.sh` to inspect automation readiness and suggested repairs.
 - `자동화 수정`: run `./scripts/automation-doctor.sh --fix` to apply safe non-overwriting setup fixes.
-- `초기화`: run `aiinit` inside a target git repository to install the automation template.
+- `초기화`: run `aiinit` inside a target git repository, or `aiinit /path/to/repo`, to install the automation template and run the installed doctor.
 - `워크스페이스 스캔`: run `workspace-scan` to inspect repositories under `~/workspace`.
 - `리뷰 상태`: inspect `.omx/reviewer-state/` and summarize which reviewers are disabled and why.
 - `클로드 복구`: re-enable Claude review with `RESET_DISABLED_AI_REVIEWERS=claude`.

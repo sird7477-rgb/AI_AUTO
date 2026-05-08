@@ -27,7 +27,7 @@ if ! diff -u scripts/automation-doctor.sh templates/automation-base/scripts/auto
 fi
 
 echo "[verify] running automation doctor..."
-./scripts/automation-doctor.sh
+DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh
 
 echo "[verify] starting docker compose on API_PORT=${API_PORT}..."
 API_PORT="${API_PORT}" docker compose up --build -d

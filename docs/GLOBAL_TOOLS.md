@@ -6,10 +6,14 @@ This repository keeps source copies of helper commands that are linked into `~/b
 
 - `aiinit`
   - Short alias for `ai-auto-init`
-  - Installs the automation template into the current git repository
+  - Installs the automation template into the current git repository by default
+  - Accepts an optional target repository path: `aiinit /path/to/repo`
+  - Creates `.omx/reviewer-state`
+  - Runs the installed `./scripts/automation-doctor.sh` after installation with the install-time dirty-tree check skipped
 
 - `ai-auto-init`
-  - Runs `scripts/install-automation-template.sh` against the current directory
+  - Resolves the ai-lab checkout from the helper symlink target
+  - Runs `scripts/install-automation-template.sh` against the current directory or provided target path
 
 - `workspace-scan`
   - Scans git repositories under `~/workspace`
@@ -21,6 +25,7 @@ Repo-local command installed by the automation template:
   - Diagnoses whether the current repository has the expected automation foundation
   - Suggests repair commands by default
   - Applies only safe non-overwriting setup fixes with `--fix`
+  - Checks helper symlinks and whether `~/bin` is on PATH when running inside ai-lab
 
 ai-lab ships its own copy at `scripts/automation-doctor.sh`; the template copy is what gets installed into new projects.
 

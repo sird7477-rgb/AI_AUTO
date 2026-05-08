@@ -25,11 +25,14 @@ Example:
 Then customize:
 
     mv scripts/verify.example.sh scripts/verify.sh
+    mkdir -p .omx/reviewer-state
     chmod +x scripts/*.sh
 
 Check the automation setup:
 
     ./scripts/automation-doctor.sh
+
+Template-specific helper link and `~/bin` PATH checks only run when the script detects the ai-lab source tree.
 
 Update scripts/verify.sh for the target project.
 
@@ -50,6 +53,7 @@ Example:
     cp -r ~/workspace/ai-lab/templates/automation-base/* .
 
     mv scripts/verify.example.sh scripts/verify.sh
+    mkdir -p .omx/reviewer-state
     chmod +x scripts/*.sh
 
     cat > scripts/verify.sh <<'VERIFY'

@@ -1,18 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALLER="$HOME/workspace/ai-lab/scripts/install-automation-template.sh"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  case "$LINK_TARGET" in
+    /*)
+      SOURCE="$LINK_TARGET"
+      ;;
+    *)
+      SOURCE="${SOURCE_DIR}/${LINK_TARGET}"
+      ;;
+  esac
+done
+
+TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
+INSTALLER="${AI_LAB_ROOT}/scripts/install-automation-template.sh"
+TARGET_DIR="${1:-$(pwd)}"
 
 case "${1:-}" in
   -h|--help)
-    echo "Usage: aiinit"
+    echo "Usage: aiinit [target-repo]"
     echo
-    echo "Run this inside a target git repository."
-    echo "It installs the automation template from ~/workspace/ai-lab."
+    echo "Install the automation template into a target git repository."
+    echo "When target-repo is omitted, the current directory is used."
+    echo "The ai-lab checkout is resolved from this command's real path."
     echo
     echo "Example:"
     echo "  cd ~/workspace/my-project"
     echo "  aiinit"
+    echo "  aiinit ~/workspace/my-project"
     exit 0
     ;;
 esac
@@ -22,4 +41,11 @@ if [ ! -x "$INSTALLER" ]; then
   exit 1
 fi
 
-"$INSTALLER" "$(pwd)"
+"$INSTALLER" "$TARGET_DIR"
+
+echo
+echo "Running automation doctor for: ${TARGET_DIR}"
+(
+  cd "$TARGET_DIR" || exit 1
+  DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh
+)

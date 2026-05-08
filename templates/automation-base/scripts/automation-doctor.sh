@@ -2,6 +2,7 @@
 set -euo pipefail
 
 FIX=0
+SKIP_DIRTY_CHECK="${DOCTOR_SKIP_DIRTY_CHECK:-0}"
 
 usage() {
   cat <<'USAGE'
@@ -11,6 +12,10 @@ Diagnose whether this repository is ready for the ai-lab automation loop.
 
 Default mode prints status and suggested repair commands without changing files.
 With --fix, the doctor may apply safe non-overwriting automation setup fixes.
+--fix does not edit shell profile files or other user environment configuration.
+
+Environment:
+  DOCTOR_SKIP_DIRTY_CHECK=1  skip the uncommitted-changes check
 USAGE
 }
 
@@ -41,11 +46,13 @@ PASS_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
 FIX_COUNT=0
+SKIP_COUNT=0
 SUGGESTIONS=()
 
 ROOT="$(pwd)"
 TEMPLATE_DIR="${ROOT}/templates/automation-base"
 IN_AI_LAB=0
+HOME_DIR="${HOME:-}"
 
 if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
   IN_AI_LAB=1
@@ -69,6 +76,11 @@ say_fail() {
 say_fix() {
   FIX_COUNT=$((FIX_COUNT + 1))
   printf '[fix] %s\n' "$1"
+}
+
+say_skip() {
+  SKIP_COUNT=$((SKIP_COUNT + 1))
+  printf '[skip] %s\n' "$1"
 }
 
 suggest() {
@@ -232,14 +244,20 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
     say_fail "not running from git repository root: ${git_root}"
     suggest "cd ${git_root}"
     echo
-    echo "Summary: ${PASS_COUNT} passed, ${WARN_COUNT} warnings, ${FAIL_COUNT} failed"
+    printf 'Summary: %s passed, %s warnings, %s failed' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
+    if [ "$SKIP_COUNT" -gt 0 ]; then
+      printf ', %s skipped' "$SKIP_COUNT"
+    fi
+    printf '\n'
     echo
     echo "Suggested fixes:"
     echo "  cd ${git_root}"
     exit 1
   fi
 
-  if [ -n "$(git status --short 2>/dev/null)" ]; then
+  if [ "$SKIP_DIRTY_CHECK" = "1" ]; then
+    say_skip "working tree dirty check skipped (DOCTOR_SKIP_DIRTY_CHECK=1)"
+  elif [ -n "$(git status --short 2>/dev/null)" ]; then
     say_warn "working tree has uncommitted changes"
     suggest "git status --short"
   else
@@ -340,10 +358,21 @@ fi
 echo
 echo "[doctor] checking ai-lab helper links"
 
-if [ "$IN_AI_LAB" -eq 1 ]; then
-  check_helper_link "${HOME}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
-  check_helper_link "${HOME}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
-  check_helper_link "${HOME}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
+if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ]; then
+  check_helper_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
+  check_helper_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
+  check_helper_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
+  case ":${PATH}:" in
+    *":${HOME_DIR}/bin:"*)
+      say_pass "global helper directory is on PATH: ${HOME_DIR}/bin"
+      ;;
+    *)
+      say_warn "global helper directory is not on PATH: ${HOME_DIR}/bin"
+      suggest 'export PATH="$HOME/bin:$PATH"'
+      ;;
+  esac
+elif [ "$IN_AI_LAB" -eq 1 ]; then
+  say_warn "HOME is not set; ai-lab helper link checks skipped"
 else
   say_pass "not running inside ai-lab source checkout; helper link checks skipped"
 fi
@@ -352,6 +381,9 @@ echo
 printf 'Summary: %s passed, %s warnings, %s failed' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
 if [ "$FIX_COUNT" -gt 0 ]; then
   printf ', %s fixed' "$FIX_COUNT"
+fi
+if [ "$SKIP_COUNT" -gt 0 ]; then
+  printf ', %s skipped' "$SKIP_COUNT"
 fi
 printf '\n'
 

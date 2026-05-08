@@ -21,6 +21,8 @@
 
 ```bash
 ./scripts/verify.sh
+```
+
 이 명령은 다음을 확인한다.
 
 pytest 테스트
@@ -28,8 +30,11 @@ Docker Compose 실행
 / smoke check
 /todos smoke check
 Docker Compose 정리
+automation-doctor 기본 진단
 
 이 명령이 실패하면 작업은 완료된 것이 아니다.
+
+`./scripts/verify.sh`는 작업 중인 변경사항 자체를 경고로 만들지 않도록 `DOCTOR_SKIP_DIRTY_CHECK=1`로 automation-doctor를 실행한다. 단독으로 `./scripts/automation-doctor.sh`를 실행하면 dirty working tree는 계속 경고로 보고된다.
 
 완료 보고에 포함할 것
 변경 파일
