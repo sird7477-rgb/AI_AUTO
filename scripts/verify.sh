@@ -1113,6 +1113,7 @@ echo "[verify] testing global helper link repair..."
   trap cleanup_global_tmp EXIT
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
+  ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/AI_AUTO"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
@@ -1121,11 +1122,47 @@ echo "[verify] testing global helper link repair..."
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
 
+  test "$(readlink "${tmp_home}/bin/AI_AUTO")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
+  test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
+  grep -q "AI_AUTO shell integration" "${tmp_home}/.bashrc"
+  grep -q '. "$HOME/.config/ai-lab/AI_AUTO.sh"' "${tmp_home}/.bashrc"
+  grep -q "Managed by AI_AUTO" "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  grep -q 'cd "$(command AI_AUTO --path)"' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+
+  HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
+  test "$(grep -c "AI_AUTO shell integration" "${tmp_home}/.bashrc")" -eq 2
+
+  printf '%s\n' "# >>> AI_AUTO shell integration >>>" "preserve me" > "${tmp_home}/.bashrc"
+  if HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null 2>&1; then
+    echo "[verify] install-global-files edited unbalanced shell integration markers"
+    exit 1
+  fi
+  grep -q "preserve me" "${tmp_home}/.bashrc"
+)
+
+echo "[verify] testing AI_AUTO shell function unmanaged-file conflict..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_ai_auto_conflict_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_ai_auto_conflict_tmp EXIT
+
+  mkdir -p "${tmp_home}/bin" "${tmp_home}/.config/ai-lab"
+  printf 'user owned\n' > "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+
+  if HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null 2>&1; then
+    echo "[verify] install-global-files overwrote unmanaged AI_AUTO shell function file"
+    exit 1
+  fi
+  grep -q "user owned" "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
 )
 
 echo "[verify] testing global helper non-symlink conflict handling..."
@@ -1180,6 +1217,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   trap cleanup_bootstrap_fix_tmp EXIT
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
+  ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/AI_AUTO"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
@@ -1188,6 +1226,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/bootstrap-ai-lab.sh --fix >/dev/null
 
+  test "$(readlink "${tmp_home}/bin/AI_AUTO")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
@@ -1206,6 +1245,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   trap cleanup_doctor_fix_tmp EXIT
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
+  ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/AI_AUTO"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
@@ -1214,6 +1254,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
 
   DOCTOR_SKIP_DIRTY_CHECK=1 HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/automation-doctor.sh --fix >/dev/null
 
+  test "$(readlink "${tmp_home}/bin/AI_AUTO")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"

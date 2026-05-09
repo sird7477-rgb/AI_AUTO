@@ -207,6 +207,7 @@ echo
 echo "[bootstrap] checking helper links"
 
 if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
+  ensure_link "${HOME_DIR}/bin/AI_AUTO" "${ROOT}/tools/ai-home"
   ensure_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   ensure_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
   ensure_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"

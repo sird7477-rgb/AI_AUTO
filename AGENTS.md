@@ -66,9 +66,11 @@ lanes, not by claiming the leader changed models mid-session.
 When the user asks `전역파일 설치해줘`, `전역 파일 설치`, or `global files install`,
 run `./scripts/install-global-files.sh` from the repository root.
 
-This command installs or repairs only the repo-owned global helper symlinks under
-`~/bin`. It does not install external programs, edit shell profiles, configure
-credentials, run `automation-doctor --fix`, or overwrite non-symlink files.
+This command installs or repairs repo-owned global helper symlinks under
+`~/bin`, writes the `AI_AUTO` shell function to `~/.config/ai-lab/AI_AUTO.sh`,
+and adds a managed source block to `~/.bashrc`. It does not install external
+programs, configure credentials, run `automation-doctor --fix`, or overwrite
+non-symlink files.
 
 When the user asks `프로젝트 등록`, `ai-register`, or to register an existing
 project in the AI_AUTO registry, run `ai-register /path/to/repo` or `ai-register`

@@ -122,13 +122,14 @@ Use this after `aiinit` has already installed the template:
 If you are in another Ubuntu/WSL terminal and do not remember where AI_AUTO was
 cloned, use the global helper:
 
-    ai-home
-    cd "$(ai-home --path)"
-    ai-home --status
+    AI_AUTO
+    AI_AUTO --status
 
-`ai-home` is installed by `./scripts/install-global-files.sh` and points to the
-current AI_AUTO checkout. It does not change your shell directory by itself; use
-`cd "$(ai-home --path)"` or `eval "$(ai-home --cd)"` when you want to move there.
+`./scripts/install-global-files.sh` installs an `AI_AUTO` shell function through
+`~/.config/ai-lab/AI_AUTO.sh` and sources it from `~/.bashrc`. After reloading
+the shell, typing `AI_AUTO` with no arguments moves the current terminal to the
+AI_AUTO checkout. Use `AI_AUTO --path` when you only need the path, or
+`AI_AUTO --status` to inspect the checkout status.
 
 ## Project Registry
 

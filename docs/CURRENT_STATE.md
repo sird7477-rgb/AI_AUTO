@@ -280,6 +280,7 @@ Global helper tool sources are tracked in:
 
 Expected links:
 
+- ~/bin/AI_AUTO -> ~/workspace/ai-lab/tools/ai-home
 - ~/bin/ai-auto-init -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
@@ -293,9 +294,10 @@ Clone recovery command:
 When a user opens a cloned checkout and asks `전역파일 설치해줘`, AGENTS.md routes the AI
 to run this command from the repository root.
 
-It only creates or repairs safe repo-owned helper symlinks under `~/bin`; it does
-not install external programs, edit shell profiles, configure credentials, run
-`automation-doctor --fix`, or overwrite non-symlink files.
+It creates or repairs safe repo-owned helper symlinks under `~/bin`, writes the
+`AI_AUTO` shell function to `~/.config/ai-lab/AI_AUTO.sh`, and adds a managed
+source block to `~/.bashrc`; it does not install external programs, configure
+credentials, run `automation-doctor --fix`, or overwrite non-symlink files.
 
 Project registry:
 
@@ -385,6 +387,8 @@ For ai-lab itself:
     ./scripts/automation-doctor.sh
     ./scripts/review-gate.sh
     omx doctor
+    AI_AUTO
+    AI_AUTO --status
     ai-home
     ai-register
     ai-register --prune

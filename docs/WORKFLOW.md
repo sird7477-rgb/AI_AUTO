@@ -146,9 +146,8 @@ ai-lab checkout 진단:
 AI_AUTO 본진 위치 찾기:
 
 ```bash
-ai-home
-cd "$(ai-home --path)"
-ai-home --status
+AI_AUTO
+AI_AUTO --status
 ```
 
 새 프로젝트 초기화:

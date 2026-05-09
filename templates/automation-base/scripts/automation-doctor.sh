@@ -504,6 +504,7 @@ echo
 echo "[doctor] checking ai-lab helper links"
 
 if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
+  check_helper_link "${HOME_DIR}/bin/AI_AUTO" "${ROOT}/tools/ai-home"
   check_helper_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   check_helper_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
   check_helper_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"

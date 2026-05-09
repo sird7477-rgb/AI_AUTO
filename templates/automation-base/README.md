@@ -47,10 +47,14 @@ Check the automation setup:
 
 Template-specific helper link and `~/bin` PATH checks only run when the script detects the ai-lab source tree.
 
-From any terminal, use `ai-home` to find the AI_AUTO checkout:
+From any terminal, use `AI_AUTO` to jump to the AI_AUTO checkout:
 
-    ai-home
-    cd "$(ai-home --path)"
+    AI_AUTO
+    AI_AUTO --status
+
+`./scripts/install-global-files.sh` installs `AI_AUTO` through
+`~/.config/ai-lab/AI_AUTO.sh` and sources it from `~/.bashrc`; reload the shell
+or run `source ~/.bashrc` after installation.
 
 Then ask the AI:
 

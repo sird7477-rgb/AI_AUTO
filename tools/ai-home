@@ -22,6 +22,7 @@ case "${1:-}" in
   -h|--help)
     cat <<'USAGE'
 Usage: ai-home [--path|--cd|--status]
+       AI_AUTO [--path|--cd|--status]
 
 Show the local AI_AUTO / ai-lab checkout path and common commands.
 
@@ -31,6 +32,9 @@ Options:
   --status   run git status --short in the checkout
 
 Examples:
+  AI_AUTO
+  cd "$(AI_AUTO --path)"
+  AI_AUTO --status
   cd "$(ai-home --path)"
   eval "$(ai-home --cd)"
   ai-home --status
@@ -66,9 +70,9 @@ Move there:
   $(printf 'cd %q' "$AI_LAB_ROOT")
 
 Useful commands:
-  ai-home --status
+  AI_AUTO --status
   workspace-scan
   ai-register /path/to/existing-repo
-  cd "\$(ai-home --path)" && ./scripts/bootstrap-ai-lab.sh
-  cd "\$(ai-home --path)" && ./scripts/install-global-files.sh
+  cd "\$(AI_AUTO --path)" && ./scripts/bootstrap-ai-lab.sh
+  cd "\$(AI_AUTO --path)" && ./scripts/install-global-files.sh
 INFO

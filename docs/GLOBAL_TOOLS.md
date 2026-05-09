@@ -4,6 +4,15 @@ This repository keeps source copies of helper commands that are linked into `~/b
 
 ## Commands
 
+- `AI_AUTO`
+  - Shell function installed through `~/.config/ai-lab/AI_AUTO.sh` and sourced from `~/.bashrc`
+  - With no arguments, changes the current terminal directory to the AI_AUTO checkout
+  - With arguments, forwards to the global helper: `AI_AUTO --path`, `AI_AUTO --status`
+
+- `ai-home`
+  - Executable helper used by `AI_AUTO`
+  - Prints the AI_AUTO checkout path, cd command, or git status
+
 - `aiinit`
   - Short alias for `ai-auto-init`
   - Installs the automation template into the current git repository by default
@@ -40,15 +49,19 @@ ai-lab-only bootstrap command:
 - `./scripts/install-global-files.sh`
   - User-facing wrapper for cloned checkouts
   - Intended AI keyword: `전역파일 설치해줘`
-  - Creates or repairs only the safe repo-owned helper symlinks under `~/bin`
-  - Does not install external programs, edit shell profiles, configure credentials, run `automation-doctor --fix`, or overwrite non-symlink files
+  - Creates or repairs safe repo-owned helper symlinks under `~/bin`
+  - Adds a managed `AI_AUTO` shell function file under `~/.config/ai-lab` and a small source block to `~/.bashrc`
+  - Does not install external programs, configure credentials, run `automation-doctor --fix`, or overwrite non-symlink files
 
 ## Link setup
 
 Expected links:
 
+    ~/bin/AI_AUTO -> ~/workspace/ai-lab/tools/ai-home
     ~/bin/ai-auto-init -> ~/workspace/ai-lab/tools/ai-auto-init
+    ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
     ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
+    ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
 To recreate the links:
@@ -58,8 +71,11 @@ To recreate the links:
 Manual equivalent:
 
     mkdir -p ~/bin
+    ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/AI_AUTO
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/ai-auto-init
+    ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/ai-home
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
+    ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
 
 Make sure `~/bin` is in PATH:
@@ -69,3 +85,9 @@ Make sure `~/bin` is in PATH:
 For permanent setup, add this to `~/.bashrc`:
 
     export PATH="$HOME/bin:$PATH"
+
+`./scripts/install-global-files.sh` also writes the `AI_AUTO()` function to
+`~/.config/ai-lab/AI_AUTO.sh` and adds a managed source block to `~/.bashrc`.
+Reload the shell or run:
+
+    source ~/.bashrc
