@@ -70,6 +70,13 @@ This command installs or repairs only the repo-owned global helper symlinks unde
 `~/bin`. It does not install external programs, edit shell profiles, configure
 credentials, run `automation-doctor --fix`, or overwrite non-symlink files.
 
+When the user asks `프로젝트 등록`, `ai-register`, or to register an existing
+project in the AI_AUTO registry, run `ai-register /path/to/repo` or `ai-register`
+from the target repository. This records the repo in the local registry without
+installing or overwriting project automation files.
+When the user asks to clean stale project registry entries, run
+`ai-register --prune`.
+
 ## Completion Report Format
 
 When reporting completion, include:

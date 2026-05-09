@@ -155,4 +155,10 @@ Review context lists untracked files but omits their content by default. Set `RE
 
 `aiinit` adds `.omx/` to the target repository's local `.git/info/exclude` so generated review, model-routing, and reviewer-state artifacts do not become commit candidates by default.
 
+`aiinit` also registers the target repository in the local AI_AUTO project
+registry at `~/.local/state/ai-auto/projects.tsv`. Older projects can be
+registered later with `ai-register /path/to/repo`, and `workspace-scan` shows
+both workspace-discovered and registered projects. Use `ai-register --prune`
+to remove deleted or moved repository entries from the registry.
+
 `./scripts/review-gate.sh` and `./scripts/automation-doctor.sh --fix` automatically archive old `.omx/review-results` files when runtime artifacts grow beyond `OMX_REVIEW_ARCHIVE_THRESHOLD` or `OMX_ARTIFACT_WARN_COUNT`. The archive keeps recent/latest evidence active, moves older files under `.omx/review-results/archive/`, and never deletes unless `./scripts/archive-omx-artifacts.sh --delete` is explicitly used.

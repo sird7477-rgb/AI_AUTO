@@ -19,6 +19,7 @@ TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
 INSTALLER="${AI_LAB_ROOT}/scripts/install-automation-template.sh"
 TARGET_DIR="${1:-$(pwd)}"
+REGISTRAR="${TOOL_DIR}/ai-register"
 
 case "${1:-}" in
   -h|--help)
@@ -41,7 +42,14 @@ if [ ! -x "$INSTALLER" ]; then
   exit 1
 fi
 
+if [ ! -x "$REGISTRAR" ]; then
+  echo "Project registrar not found or not executable: $REGISTRAR"
+  exit 1
+fi
+
 "$INSTALLER" "$TARGET_DIR"
+
+"$REGISTRAR" "$TARGET_DIR"
 
 echo
 echo "Running automation doctor for: ${TARGET_DIR}"

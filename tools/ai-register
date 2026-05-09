@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
+PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
+MODE="register"
+TARGET_DIR="${1:-$(pwd)}"
+
+case "${1:-}" in
+  -h|--help)
+    echo "Usage: ai-register [target-repo]"
+    echo "       ai-register --prune"
+    echo
+    echo "Register an existing git repository in the local AI_AUTO project registry."
+    echo "When target-repo is omitted, the current directory is used."
+    echo "Use --prune to remove registry entries whose paths are no longer git repositories."
+    echo
+    echo "Registry:"
+    echo "  ~/.local/state/ai-auto/projects.tsv"
+    echo "  override with AI_AUTO_PROJECT_REGISTRY_FILE=/path/to/projects.tsv"
+    echo
+    echo "Examples:"
+    echo "  cd ~/workspace/my-project"
+    echo "  ai-register"
+    echo "  ai-register ~/workspace/my-project"
+    echo "  ai-register --prune"
+    exit 0
+    ;;
+  --prune)
+    MODE="prune"
+    ;;
+esac
+
+if [ -z "$PROJECT_REGISTRY" ]; then
+  echo "Project registry path is empty"
+  exit 1
+fi
+
+mkdir -p "$(dirname "$PROJECT_REGISTRY")"
+lock_dir="${PROJECT_REGISTRY}.lock"
+lock_acquired=0
+for _attempt in 1 2 3 4 5; do
+  if mkdir "$lock_dir" 2>/dev/null; then
+    lock_acquired=1
+    trap 'rm -rf "$lock_dir"' EXIT
+    break
+  fi
+  sleep 0.2
+done
+
+if [ "$lock_acquired" -ne 1 ]; then
+  echo "Could not lock project registry: ${PROJECT_REGISTRY}"
+  exit 1
+fi
+
+registry_tmp="${PROJECT_REGISTRY}.tmp.$$"
+
+if [ "$MODE" = "prune" ]; then
+  kept=0
+  removed=0
+  : > "$registry_tmp"
+  if [ -f "$PROJECT_REGISTRY" ]; then
+    while IFS=$'\t' read -r registered_at path name branch origin; do
+      [ -n "$path" ] || continue
+      if git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        printf '%s\t%s\t%s\t%s\t%s\n' "$registered_at" "$path" "$name" "$branch" "$origin" >> "$registry_tmp"
+        kept=$((kept + 1))
+      else
+        removed=$((removed + 1))
+      fi
+    done < "$PROJECT_REGISTRY"
+  fi
+  mv "$registry_tmp" "$PROJECT_REGISTRY"
+  echo "Project registry pruned:"
+  echo "  kept: ${kept}"
+  echo "  removed: ${removed}"
+  echo "  registry: ${PROJECT_REGISTRY}"
+  exit 0
+fi
+
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Target directory does not exist: ${TARGET_DIR}"
+  exit 1
+fi
+
+if ! git -C "$TARGET_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Target directory is not inside a git repository: ${TARGET_DIR}"
+  exit 1
+fi
+
+target_real="$(cd "$TARGET_DIR" && pwd -P)"
+git_root="$(git -C "$target_real" rev-parse --show-toplevel)"
+git_root="$(cd "$git_root" && pwd -P)"
+project_name="$(basename "$git_root")"
+project_branch="$(git -C "$git_root" branch --show-current 2>/dev/null || true)"
+project_origin="$(git -C "$git_root" remote get-url origin 2>/dev/null || true)"
+registered_at="$(date -Iseconds)"
+
+if [ -f "$PROJECT_REGISTRY" ]; then
+  awk -F '\t' -v path="$git_root" '$2 != path' "$PROJECT_REGISTRY" > "$registry_tmp"
+else
+  : > "$registry_tmp"
+fi
+
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$registered_at" "$git_root" "$project_name" "$project_branch" "$project_origin" >> "$registry_tmp"
+mv "$registry_tmp" "$PROJECT_REGISTRY"
+
+echo "Project registered:"
+echo "  path: ${git_root}"
+echo "  name: ${project_name}"
+echo "  branch: ${project_branch:-unknown}"
+echo "  origin: ${project_origin:-none}"
+echo "  registry: ${PROJECT_REGISTRY}"

@@ -12,7 +12,10 @@ Or from another directory:
 
     aiinit /path/to/target-repo
 
-`aiinit` installs the automation template, creates `.omx/reviewer-state`, adds `.omx/` to the target repository's local `.git/info/exclude`, and then runs the installed automation doctor with the install-time dirty-tree check skipped.
+`aiinit` installs the automation template, creates `.omx/reviewer-state`, adds
+`.omx/` to the target repository's local `.git/info/exclude`, registers the
+project in the local AI_AUTO project registry, and then runs the installed
+automation doctor with the install-time dirty-tree check skipped.
 
 After `aiinit`, ask the AI:
 
@@ -93,6 +96,29 @@ Use this after `aiinit` has already installed the template:
 
     프로젝트 초기설정 해줘
 
+## Project Registry
+
+New `aiinit` runs register the target repository in:
+
+    ~/.local/state/ai-auto/projects.tsv
+
+Override the registry path with:
+
+    AI_AUTO_PROJECT_REGISTRY_FILE=/path/to/projects.tsv
+
+Projects initialized before registry support can be registered later:
+
+    ai-register
+    ai-register /path/to/existing-repo
+
+Remove registry entries for repositories that were deleted or moved:
+
+    ai-register --prune
+
+Use `workspace-scan` from the AI_AUTO checkout or any shell with the helper on
+`PATH` to see repositories under `~/workspace` plus registered repositories.
+The `INIT` column marks repositories present in the registry.
+
 ## Domain Packs
 
 Domain packs are optional reference packs for project-specific onboarding.
@@ -150,6 +176,8 @@ Recommended adoption flow:
 - `aiinit` must be run inside a git repository.
 - `aiinit /path/to/repo` may be used from outside the target repository.
 - `aiinit` runs the installed `./scripts/automation-doctor.sh` after template installation.
+- `ai-register` can register older already-initialized projects without
+  reinstalling or overwriting automation files.
 - `./scripts/automation-doctor.sh` diagnoses automation readiness and suggests repair commands.
 - `./scripts/automation-doctor.sh --fix` may apply only safe non-overwriting setup fixes.
 - Optional `docs/*_COMPLETION.md` files are onboarding references. Delete the

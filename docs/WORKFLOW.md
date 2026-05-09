@@ -120,6 +120,13 @@ ai-lab checkout 진단:
 aiinit
 ```
 
+기존 프로젝트 레지스트리 등록:
+
+```bash
+ai-register /path/to/existing-repo
+ai-register --prune
+```
+
 Odoo 등 특정 프레임워크 검증 패턴은 별도 계획에서 다룬다.
 
 범용 템플릿은 UI, 배포, 보안, 데이터, 성능, 관측성 완료 기준이 필요한

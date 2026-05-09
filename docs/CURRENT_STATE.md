@@ -273,12 +273,14 @@ Completed.
 Global helper tool sources are tracked in:
 
 - tools/ai-auto-init
+- tools/ai-register
 - tools/workspace-scan
 
 Expected links:
 
 - ~/bin/ai-auto-init -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
+- ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
 - ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
 Clone recovery command:
@@ -291,6 +293,17 @@ to run this command from the repository root.
 It only creates or repairs safe repo-owned helper symlinks under `~/bin`; it does
 not install external programs, edit shell profiles, configure credentials, run
 `automation-doctor --fix`, or overwrite non-symlink files.
+
+Project registry:
+
+- new `aiinit` runs append/update the target repository in
+  `~/.local/state/ai-auto/projects.tsv`
+- `ai-register` registers older already-initialized projects without modifying
+  project files
+- `ai-register --prune` removes deleted or moved repositories from the local
+  registry
+- `workspace-scan` reports both repositories discovered under `~/workspace` and
+  registered repositories, with an `INIT` column for registry membership
 
 ### ai-lab bootstrap
 
@@ -316,7 +329,8 @@ Fix behavior:
 
 Completed.
 
-workspace-scan scans git repositories under ~/workspace.
+workspace-scan scans git repositories under ~/workspace and the AI_AUTO project
+registry.
 
 It reports:
 
@@ -327,6 +341,7 @@ It reports:
 - whether scripts/review-gate.sh exists
 - latest commit
 - whether origin remote exists
+- whether the repository is registered by aiinit/ai-register
 - path
 
 ### Automation doctor
@@ -363,6 +378,8 @@ For ai-lab itself:
     ./scripts/automation-doctor.sh
     ./scripts/review-gate.sh
     omx doctor
+    ai-register
+    ai-register --prune
     workspace-scan
 
 For a new project:
@@ -469,6 +486,9 @@ Current handling:
 - `REVIEW_TIMEOUT_KILL_AFTER_SECONDS` applies to both Claude and Gemini timeout cleanup
 - Claude is the current stable external reviewer
 - Gemini absence or failure is reported as incomplete review coverage
+- automation doctor reports Gemini CLI capability signals from `gemini --help`,
+  including prompt mode, approval mode, skip-trust, output format, explicit
+  model flag support, timeout default, and stdin threshold
 
 Gemini can hit a similar class of context-dependent failures as Claude, but the observed failure mode differs:
 

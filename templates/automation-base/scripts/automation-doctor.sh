@@ -61,7 +61,7 @@ if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
   HOME_READY=1
 fi
 
-if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
+if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
   IN_AI_LAB=1
 fi
 
@@ -209,6 +209,62 @@ check_command() {
   fi
 }
 
+command_help_supports() {
+  local help_text="$1"
+  local flag="$2"
+
+  printf '%s\n' "$help_text" | grep -q -- "$flag"
+}
+
+check_gemini_cli_capabilities() {
+  local gemini_help
+
+  if ! command -v gemini >/dev/null 2>&1; then
+    return
+  fi
+
+  gemini_help="$(gemini --help 2>/dev/null || true)"
+  if [ -z "$gemini_help" ]; then
+    say_warn "Gemini help output unavailable; non-interactive review mode could not be inspected"
+    suggest "run gemini --help in an interactive terminal"
+    return
+  fi
+
+  if command_help_supports "$gemini_help" "--prompt"; then
+    say_pass "Gemini supports non-interactive prompt mode (--prompt)"
+  else
+    say_warn "Gemini --prompt support not detected; review may fall back to stdin and can be affected by auth prompts"
+    suggest "check Gemini CLI version or use REVIEW_EXECUTION_MODE=external when Gemini hangs"
+  fi
+
+  if command_help_supports "$gemini_help" "--approval-mode"; then
+    say_pass "Gemini supports approval mode control"
+  else
+    say_warn "Gemini approval mode flag not detected; CLI may request interactive approvals"
+  fi
+
+  if command_help_supports "$gemini_help" "--skip-trust"; then
+    say_pass "Gemini supports skip-trust flag"
+  else
+    say_warn "Gemini skip-trust flag not detected; workspace trust prompts may appear"
+  fi
+
+  if command_help_supports "$gemini_help" "--output-format"; then
+    say_pass "Gemini supports text output format control"
+  else
+    say_warn "Gemini output format flag not detected; review parsing may be less predictable"
+  fi
+
+  if command_help_supports "$gemini_help" "--model"; then
+    say_pass "Gemini supports explicit model selection"
+  else
+    say_warn "Gemini --model flag not detected; provider default model will be used"
+  fi
+
+  printf '[doctor] Gemini review timeout default: %s seconds\n' "${GEMINI_REVIEW_TIMEOUT_SECONDS:-${REVIEW_TIMEOUT_SECONDS:-300}}"
+  printf '[doctor] Gemini large prompt stdin threshold: %s bytes\n' "${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
+}
+
 check_helper_link() {
   local link_path="$1"
   local target_path="$2"
@@ -354,6 +410,8 @@ fi
 check_command claude warn
 check_command gemini warn
 
+check_gemini_cli_capabilities
+
 echo
 echo "[doctor] checking reviewer state"
 
@@ -446,6 +504,7 @@ echo "[doctor] checking ai-lab helper links"
 if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   check_helper_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   check_helper_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
+  check_helper_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   check_helper_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)

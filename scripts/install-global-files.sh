@@ -18,6 +18,7 @@ This command may create or repair safe helper symlinks under ~/bin:
 
   ~/bin/ai-auto-init
   ~/bin/aiinit
+  ~/bin/ai-register
   ~/bin/workspace-scan
 
 It does not install external programs, edit shell profiles, configure credentials,
@@ -123,6 +124,7 @@ echo "[global-files] checkout: ${ROOT}"
 echo
 
 check_source_helper "${ROOT}/tools/ai-auto-init"
+check_source_helper "${ROOT}/tools/ai-register"
 check_source_helper "${ROOT}/tools/workspace-scan"
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
@@ -139,6 +141,7 @@ elif [ ! -d "$HOME_DIR" ]; then
 else
   install_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   install_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
+  install_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
 
   case ":${PATH}:" in

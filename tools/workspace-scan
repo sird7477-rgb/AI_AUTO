@@ -5,10 +5,14 @@ case "${1:-}" in
   -h|--help)
     echo "Usage: workspace-scan [workspace-path]"
     echo
-    echo "Scans git repositories under a workspace directory."
+    echo "Scans git repositories under a workspace directory and aiinit registry."
     echo
     echo "Default workspace:"
     echo "  ~/workspace"
+    echo
+    echo "Registry:"
+    echo "  ~/.local/state/ai-auto/projects.tsv"
+    echo "  override with AI_AUTO_PROJECT_REGISTRY_FILE=/path/to/projects.tsv"
     echo
     echo "Examples:"
     echo "  workspace-scan"
@@ -18,10 +22,22 @@ case "${1:-}" in
 esac
 
 WORKSPACE="${1:-$HOME/workspace}"
+STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
+PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
 
 if [ ! -d "$WORKSPACE" ]; then
   echo "Workspace not found: $WORKSPACE"
   exit 1
+fi
+
+declare -A REGISTERED_PATHS
+declare -A PRINTED_PATHS
+
+if [ -f "$PROJECT_REGISTRY" ]; then
+  while IFS=$'\t' read -r _registered_at path _name _branch _origin; do
+    [ -n "$path" ] || continue
+    REGISTERED_PATHS["$path"]=1
+  done < "$PROJECT_REGISTRY"
 fi
 
 shorten() {
@@ -35,14 +51,14 @@ shorten() {
   fi
 }
 
-printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %s\n" \
-  "PROJECT" "BRANCH" "STATUS" "VERIFY" "GATE" "COMMIT" "REMOTE" "PATH"
+print_repo() {
+  local repo="$1"
+  local name branch status verify gate last_commit remote initialized short_name short_branch
 
-printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %s\n" \
-  "-------" "------" "------" "------" "----" "------" "------" "----"
+  if [ ! -d "$repo/.git" ]; then
+    return
+  fi
 
-find "$WORKSPACE" -mindepth 1 -maxdepth 2 -type d -name .git | sort | while read -r gitdir; do
-  repo="$(dirname "$gitdir")"
   name="$(basename "$repo")"
 
   branch="$(git -C "$repo" branch --show-current 2>/dev/null || true)"
@@ -76,9 +92,37 @@ find "$WORKSPACE" -mindepth 1 -maxdepth 2 -type d -name .git | sort | while read
     remote="no"
   fi
 
+  if [ "${REGISTERED_PATHS[$repo]+set}" = "set" ]; then
+    initialized="yes"
+  else
+    initialized="no"
+  fi
+
   short_name="$(shorten "$name" 22)"
   short_branch="$(shorten "$branch" 10)"
 
-  printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %s\n" \
-    "$short_name" "$short_branch" "$status" "$verify" "$gate" "$last_commit" "$remote" "$repo"
-done
+  printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %-4s %s\n" \
+    "$short_name" "$short_branch" "$status" "$verify" "$gate" "$last_commit" "$remote" "$initialized" "$repo"
+}
+
+printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %-4s %s\n" \
+  "PROJECT" "BRANCH" "STATUS" "VERIFY" "GATE" "COMMIT" "REMOTE" "INIT" "PATH"
+
+printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %-4s %s\n" \
+  "-------" "------" "------" "------" "----" "------" "------" "----" "----"
+
+while read -r gitdir; do
+  repo="$(cd "$(dirname "$gitdir")" && pwd -P)"
+  PRINTED_PATHS["$repo"]=1
+  print_repo "$repo"
+done < <(find "$WORKSPACE" -mindepth 1 -maxdepth 2 -type d -name .git | sort)
+
+if [ -f "$PROJECT_REGISTRY" ]; then
+  while IFS=$'\t' read -r _registered_at path _name _branch _origin; do
+    [ -n "$path" ] || continue
+    if [ "${PRINTED_PATHS[$path]+set}" = "set" ]; then
+      continue
+    fi
+    print_repo "$path"
+  done < "$PROJECT_REGISTRY"
+fi

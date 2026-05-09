@@ -173,6 +173,13 @@ else
   suggest "chmod +x ${ROOT}/tools/ai-auto-init"
 fi
 
+if [ -x "${ROOT}/tools/ai-register" ]; then
+  say_pass "ai-register source helper is executable"
+else
+  say_fail "ai-register source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-register"
+fi
+
 if [ -x "${ROOT}/tools/workspace-scan" ]; then
   say_pass "workspace-scan source helper is executable"
 else
@@ -195,6 +202,7 @@ echo "[bootstrap] checking helper links"
 if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   ensure_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
+  ensure_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   ensure_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
 
   case ":${PATH}:" in

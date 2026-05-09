@@ -45,6 +45,9 @@ for script in \
 do
   bash -n "${script}"
 done
+bash -n tools/ai-auto-init
+bash -n tools/ai-register
+bash -n tools/workspace-scan
 
 echo "[verify] testing review summary decisions..."
 ./scripts/test-review-summary.sh
@@ -929,11 +932,69 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
 
   target_dir="${tmp_dir}/target"
   aiinit_output="${tmp_dir}/aiinit.out"
+  registry_file="${tmp_dir}/projects.tsv"
   git -c init.defaultBranch=main init -q "${target_dir}"
-  ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${aiinit_output}"
+  grep -q "Project registered" "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
+  grep -q "$(cd "${target_dir}" && pwd -P)" "${registry_file}"
+)
+
+echo "[verify] testing ai-register and workspace-scan registry integration..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_registry_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_registry_tmp EXIT
+
+  workspace_dir="${tmp_dir}/workspace"
+  target_dir="${workspace_dir}/registered-project"
+  spaced_dir="${workspace_dir}/registered project with spaces"
+  outside_dir="${tmp_dir}/outside-project"
+  missing_dir="${tmp_dir}/missing-project"
+  registry_file="${tmp_dir}/projects.tsv"
+  mkdir -p "${workspace_dir}"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  git -c init.defaultBranch=main init -q "${spaced_dir}"
+  git -c init.defaultBranch=main init -q "${outside_dir}"
+
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${target_dir}" > "${tmp_dir}/register.out"
+  grep -q "Project registered" "${tmp_dir}/register.out"
+  grep -q "$(cd "${target_dir}" && pwd -P)" "${registry_file}"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${target_dir}" >/dev/null
+  test "$(grep -F "$(cd "${target_dir}" && pwd -P)" "${registry_file}" | wc -l)" -eq 1
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${spaced_dir}" >/dev/null
+  grep -q "$(cd "${spaced_dir}" && pwd -P)" "${registry_file}"
+  printf 'old\t%s\tmissing-project\tmain\tnone\n' "${missing_dir}" >> "${registry_file}"
+  mkdir "${registry_file}.lock"
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${outside_dir}" > "${tmp_dir}/locked.out" 2>&1; then
+    echo "ai-register succeeded while registry lock was held by another process"
+    exit 1
+  fi
+  grep -q "Could not lock project registry" "${tmp_dir}/locked.out"
+  rmdir "${registry_file}.lock"
+
+  scan_output="${tmp_dir}/scan.out"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${scan_output}"
+  grep -q "INIT" "${scan_output}"
+  grep -q "registered-project" "${scan_output}"
+  grep -q "registered project wit" "${scan_output}"
+  grep -q "yes" "${scan_output}"
+
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${outside_dir}" >/dev/null
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${scan_output}"
+  grep -q "outside-project" "${scan_output}"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register --prune > "${tmp_dir}/prune.out"
+  grep -q "removed: 1" "${tmp_dir}/prune.out"
+  if grep -q "${missing_dir}" "${registry_file}"; then
+    echo "stale registry path was not pruned"
+    exit 1
+  fi
 )
 
 echo "[verify] testing global helper link repair..."
@@ -949,12 +1010,14 @@ echo "[verify] testing global helper link repair..."
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
+  ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
 
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
@@ -1012,12 +1075,14 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
+  ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/bootstrap-ai-lab.sh --fix >/dev/null
 
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
@@ -1034,12 +1099,14 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
+  ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   DOCTOR_SKIP_DIRTY_CHECK=1 HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/automation-doctor.sh --fix >/dev/null
 
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
