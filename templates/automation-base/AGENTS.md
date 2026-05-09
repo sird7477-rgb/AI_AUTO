@@ -46,6 +46,14 @@ record the project-specific operating rules.
 Clarify at minimum:
 
 - project purpose and non-goals
+- users, final deliverable, and what "done" means
+- review intensity policy: `lightweight`, `standard`, or `strict`
+- whether sanitized failure-pattern feedback may be recorded in `.omx/feedback/queue.jsonl`
+- which recurring safe commands may use narrow approved prefixes to reduce
+  approval friction, without bypassing destructive or credentialed approvals
+- whether Codex/native subagents may be used for lookup, implementation slices,
+  testing, UX review, dependency research, or critique; the leader keeps final
+  integration and completion responsibility
 - whether the final outcome includes UI, and if not, record UI as a non-goal
 - which completion packs in `docs/*_COMPLETION.md` apply or do not apply
 - which installed domain packs under `.omx/domain-packs/` apply or do not apply
@@ -79,23 +87,25 @@ Onboarding workflow:
 1. Confirm the current path and git status.
 2. Inspect existing project materials as references, including folders such as
    `(old)/`, `docs/`, `README.md`, or domain notes when present.
-3. Interview the project owner for purpose, stack, completion criteria, forbidden
-   changes, sensitive-data boundaries, required verification, and which
-   completion packs apply to the final outcome.
-4. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
+3. Interview in order: outcome and non-goals; scope and safety boundaries; stack
+   and commands; completion packs; domain packs; operating policy; verification
+   evidence. Ask only for facts that cannot be inferred safely from local files.
+4. Confirm review intensity, feedback recording, approval-friction handling, and
+   subagent usage expectations from `docs/AUTOMATION_OPERATING_POLICY.md`.
+5. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
    apply and which do not. If a pack applies, use it as reference material and
    merge only the applicable rules. Do not apply domain packs to unrelated
    projects.
-5. Update `AGENTS.md` with project-specific agent rules.
-6. Update `docs/WORKFLOW.md` with project-specific workflow and verification
+6. Update `AGENTS.md` with project-specific agent rules.
+7. Update `docs/WORKFLOW.md` with project-specific workflow and verification
    expectations.
-7. Delete unused `docs/*_COMPLETION.md` files after recording them as non-goals
+8. Delete unused `docs/*_COMPLETION.md` files after recording them as non-goals
    if they would only clutter the target project.
-8. Customize `scripts/verify.sh` with real project checks while preserving useful template safeguards.
-9. Run `./scripts/automation-doctor.sh`.
-10. Run `./scripts/verify.sh`.
-11. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
-12. Do not commit unless the user explicitly asks for a commit.
+9. Customize `scripts/verify.sh` with real project checks while preserving useful template safeguards.
+10. Run `./scripts/automation-doctor.sh`.
+11. Run `./scripts/verify.sh`.
+12. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
+13. Do not commit unless the user explicitly asks for a commit.
 
 ## Required References
 
@@ -103,6 +113,7 @@ Use these files as the workflow baseline:
 
 - `docs/WORKFLOW.md`
 - `docs/AI_MODEL_ROUTING.md`
+- `docs/AUTOMATION_OPERATING_POLICY.md`
 - `docs/SESSION_QUALITY_PLAN.md`
 - applicable completion packs from `docs/*_COMPLETION.md`
 - `scripts/verify.sh`

@@ -25,11 +25,23 @@ Equivalent detailed request:
 
     프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
     .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
+    리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준을 정하고
     AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 This should start a short onboarding interview before real work begins. Capture:
 
 - project purpose and non-goals
+- users, final deliverable, and assumptions that could not be confirmed from
+  local files
+- review intensity: `lightweight`, `standard`, or `strict`
+- whether sanitized failure patterns and improvement ideas may be recorded in
+  `.omx/feedback/queue.jsonl`
+- recurring approval/permission friction to handle with narrow approved command
+  prefixes or repo helpers, without bypassing destructive or credentialed
+  approvals
+- native subagent usage boundaries for lookup, implementation slices, testing,
+  UX review, dependency research, and critique; final integration remains with
+  the leader
 - selected and rejected completion packs from `docs/*_COMPLETION.md`
 - whether a domain pack applies, such as the Odoo pack for Odoo projects
 - stack and runtime commands
@@ -63,20 +75,27 @@ Use this request when asking Codex to initialize a new project:
     1. 현재 경로와 git 상태를 확인해.
     2. aiinit을 실행해.
     3. aiinit이 출력한 automation-doctor 결과를 확인해.
-    4. 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰해.
-    5. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
-    6. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
-    7. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
-    8. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
-    9. ./scripts/automation-doctor.sh를 실행해.
-    10. ./scripts/verify.sh를 실행해.
-    11. ./scripts/review-gate.sh를 실행해.
-    12. 커밋은 하지 말고 결과만 보고해.
+    4. 기존 README/docs/package/script를 먼저 읽고, 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위를 인터뷰해.
+    5. 리뷰 강도를 lightweight/standard/strict 중에서 확정해. 기본 추천은 standard야.
+    6. 민감정보를 제외한 실패 패턴/개선사항을 .omx/feedback/queue.jsonl에 기록할지 확인해.
+    7. 반복되는 비파괴 명령의 승인 마찰을 줄일 approved prefix/helper 기준을 정해. 단 destructive/credential/production 작업은 승인 대상으로 유지해.
+    8. 서브에이전트 사용 기준을 정해. repo 탐색, 분리 가능한 구현, 테스트/UX/의존성 검토, critique는 위임 가능하지만 최종 통합과 완료 주장은 leader 책임으로 둬.
+    9. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
+    10. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
+    11. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
+    12. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
+    13. ./scripts/automation-doctor.sh를 실행해.
+    14. ./scripts/verify.sh를 실행해.
+    15. 확정한 리뷰 강도에 맞춰 ./scripts/review-gate.sh를 실행해.
+    16. 커밋은 하지 말고 결과만 보고해.
 
     완료 보고에는 아래를 포함해:
     - 변경 파일
     - automation-doctor 결과
     - 인터뷰에서 확정한 운영 지침
+    - 리뷰 강도와 승인 마찰 관리 기준
+    - 실패 패턴/개선사항 기록 여부
+    - 서브에이전트 사용 기준
     - 선택/제외한 완료팩과 선택한 팩의 완료/검증 기준
     - verify.sh에 넣은 검증 기준
     - verify 결과
@@ -88,13 +107,28 @@ Use this request when asking Codex to initialize a new project:
 
 ## Short request
 
-    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 프로젝트 목적, 스택, 완료 기준, 금지 범위, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 기존 파일을 먼저 읽고 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위, 리뷰 강도(lightweight/standard/strict), 실패 패턴/개선사항 기록 여부, 승인 마찰 관리 기준, 서브에이전트 사용 기준, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, 확정한 리뷰 강도에 따른 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
 
 ## Post-aiinit request
 
 Use this after `aiinit` has already installed the template:
 
     프로젝트 초기설정 해줘
+
+## Project Registry
+
+## Finding AI_AUTO Again
+
+If you are in another Ubuntu/WSL terminal and do not remember where AI_AUTO was
+cloned, use the global helper:
+
+    ai-home
+    cd "$(ai-home --path)"
+    ai-home --status
+
+`ai-home` is installed by `./scripts/install-global-files.sh` and points to the
+current AI_AUTO checkout. It does not change your shell directory by itself; use
+`cd "$(ai-home --path)"` or `eval "$(ai-home --cd)"` when you want to move there.
 
 ## Project Registry
 
@@ -117,7 +151,13 @@ Remove registry entries for repositories that were deleted or moved:
 
 Use `workspace-scan` from the AI_AUTO checkout or any shell with the helper on
 `PATH` to see repositories under `~/workspace` plus registered repositories.
-The `INIT` column marks repositories present in the registry.
+The `INIT` column marks repositories present in the registry. Normal
+repositories and linked worktrees are both recognized.
+
+Registry writes use a local lock. On Linux/WSL, `flock` releases the lock when
+the process exits, so stale lock deletion is not needed. The default wait is 10
+seconds; override with `AI_AUTO_PROJECT_REGISTRY_LOCK_TIMEOUT_SECONDS` only when
+needed.
 
 ## Domain Packs
 

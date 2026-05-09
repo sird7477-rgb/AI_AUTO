@@ -3,6 +3,7 @@ set -euo pipefail
 
 STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
 PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
+LOCK_TIMEOUT_SECONDS="${AI_AUTO_PROJECT_REGISTRY_LOCK_TIMEOUT_SECONDS:-10}"
 MODE="register"
 TARGET_DIR="${1:-$(pwd)}"
 
@@ -37,19 +38,38 @@ if [ -z "$PROJECT_REGISTRY" ]; then
 fi
 
 mkdir -p "$(dirname "$PROJECT_REGISTRY")"
+lock_file="${PROJECT_REGISTRY}.lockfile"
 lock_dir="${PROJECT_REGISTRY}.lock"
 lock_acquired=0
-for _attempt in 1 2 3 4 5; do
-  if mkdir "$lock_dir" 2>/dev/null; then
+
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$lock_file"
+  if flock -w "$LOCK_TIMEOUT_SECONDS" 9; then
     lock_acquired=1
-    trap 'rm -rf "$lock_dir"' EXIT
-    break
+    trap 'flock -u 9 2>/dev/null || true' EXIT
   fi
-  sleep 0.2
-done
+else
+  lock_deadline=$(( $(date +%s) + LOCK_TIMEOUT_SECONDS ))
+  while [ "$(date +%s)" -le "$lock_deadline" ]; do
+    if mkdir "$lock_dir" 2>/dev/null; then
+      lock_acquired=1
+      trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+      break
+    fi
+    sleep 0.2
+  done
+fi
 
 if [ "$lock_acquired" -ne 1 ]; then
   echo "Could not lock project registry: ${PROJECT_REGISTRY}"
+  if command -v flock >/dev/null 2>&1; then
+    echo "Lock path: ${lock_file}"
+  else
+    echo "Lock path: ${lock_dir}"
+    echo "Automatic stale lock removal is disabled without flock."
+    echo "If no aiinit or ai-register process is running, remove the lock directory and retry."
+  fi
+  echo "Waited: ${LOCK_TIMEOUT_SECONDS}s"
   exit 1
 fi
 

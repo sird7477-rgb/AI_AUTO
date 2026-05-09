@@ -24,6 +24,7 @@ for script in \
   scripts/install-global-files.sh \
   scripts/install-automation-template.sh \
   scripts/make-review-prompts.sh \
+  scripts/record-feedback.sh \
   scripts/record-project-memory.sh \
   scripts/review-gate.sh \
   scripts/run-ai-reviews.sh \
@@ -35,6 +36,7 @@ for script in \
   templates/automation-base/scripts/collect-review-context.sh \
   templates/automation-base/scripts/discover-ai-models.sh \
   templates/automation-base/scripts/make-review-prompts.sh \
+  templates/automation-base/scripts/record-feedback.sh \
   templates/automation-base/scripts/record-project-memory.sh \
   templates/automation-base/scripts/review-gate.sh \
   templates/automation-base/scripts/run-ai-reviews.sh \
@@ -46,6 +48,7 @@ do
   bash -n "${script}"
 done
 bash -n tools/ai-auto-init
+bash -n tools/ai-home
 bash -n tools/ai-register
 bash -n tools/workspace-scan
 
@@ -599,6 +602,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
+  printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
   printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
@@ -614,6 +618,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     collect-review-context.sh \
     discover-ai-models.sh \
     make-review-prompts.sh \
+    record-feedback.sh \
     record-project-memory.sh \
     review-gate.sh \
     run-ai-reviews.sh \
@@ -661,6 +666,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
+  printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
   printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
@@ -676,6 +682,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     collect-review-context.sh \
     discover-ai-models.sh \
     make-review-prompts.sh \
+    record-feedback.sh \
     record-project-memory.sh \
     review-gate.sh \
     run-ai-reviews.sh \
@@ -721,6 +728,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   mkdir -p docs scripts .omx/reviewer-state
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
+  printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
   printf '# Workflow\n' > docs/WORKFLOW.md
 
@@ -730,6 +738,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     collect-review-context.sh \
     discover-ai-models.sh \
     make-review-prompts.sh \
+    record-feedback.sh \
     record-project-memory.sh \
     review-gate.sh \
     run-ai-reviews.sh \
@@ -801,6 +810,55 @@ PY
   grep -q "claude: usage_limit" .omx/state/session-checkpoint.md
 )
 
+echo "[verify] testing feedback helper..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_feedback_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_feedback_tmp EXIT
+
+  cd "${tmp_dir}"
+  git -c init.defaultBranch=main init -q
+
+  "${repo_root}/scripts/record-feedback.sh" \
+    --type failure_pattern \
+    --repeat-key git:index-lock-permission \
+    --summary ".git/index.lock permission denied during commit" \
+    --resolution "Use approved escalated git commit path" \
+    --surface git \
+    --severity medium >/dev/null
+  python3 - <<'PY'
+import json
+from pathlib import Path
+items = [json.loads(line) for line in Path(".omx/feedback/queue.jsonl").read_text(encoding="utf-8").splitlines()]
+assert items[-1]["type"] == "failure_pattern"
+assert items[-1]["repeat_key"] == "git:index-lock-permission"
+assert items[-1]["surface"] == "git"
+PY
+
+  "${repo_root}/scripts/record-feedback.sh" \
+    --type improvement \
+    --repeat-key review:intensity-too-high \
+    --summary "Small documentation changes triggered unnecessary external reviews" \
+    --severity low >/dev/null
+
+  if "${repo_root}/scripts/record-feedback.sh" --repeat-key secret --summary "token=abc" >/dev/null 2>&1; then
+    echo "[verify] feedback helper accepted secret-like content"
+    exit 1
+  fi
+  "${repo_root}/scripts/record-feedback.sh" \
+    --repeat-key parser:ast-token \
+    --summary "AST token handling needed a clearer parser note" \
+    --severity low >/dev/null
+  if "${repo_root}/scripts/record-feedback.sh" --repeat-key bad --summary "ok" --severity severe >/dev/null 2>&1; then
+    echo "[verify] feedback helper accepted invalid severity"
+    exit 1
+  fi
+)
+
 echo "[verify] testing automation template installer..."
 (
   tmp_dir="$(mktemp -d)"
@@ -817,10 +875,12 @@ echo "[verify] testing automation template installer..."
   ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
   test -x "${target_dir}/scripts/archive-omx-artifacts.sh"
   test -x "${target_dir}/scripts/discover-ai-models.sh"
+  test -x "${target_dir}/scripts/record-feedback.sh"
   test -x "${target_dir}/scripts/record-project-memory.sh"
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
   test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
+  test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
   test -f "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
   test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
@@ -830,6 +890,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
+  grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
   grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
@@ -838,18 +899,29 @@ echo "[verify] testing automation template installer..."
   grep -q "Session Quality Plan" "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
   grep -q "UI Completion Pack" "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "UI가 필요하면" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "Subagent Utilization" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q "Onboarding Interview Structure" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q "Native subagents" "${target_dir}/docs/AI_MODEL_ROUTING.md"
+  grep -q "서브에이전트 사용 기준" "${target_dir}/docs/WORKFLOW.md"
   grep -q "Do not present guesses" "${target_dir}/AGENTS.md"
+  grep -q "review intensity policy" "${target_dir}/AGENTS.md"
+  grep -q "subagent usage expectations" "${target_dir}/AGENTS.md"
   grep -q "applicable completion packs from" "${target_dir}/AGENTS.md"
   grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
   grep -q "Delete unused" "${target_dir}/AGENTS.md"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "templates/automation-base/README.md"
+  grep -q "Review intensity" "templates/automation-base/README.md"
+  grep -q "Subagents" "templates/automation-base/README.md"
   grep -q "unused completion pack" "templates/automation-base/README.md"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "review intensity" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "서브에이전트 사용 기준" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "rejected as non-goals" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "프로젝트 초기설정 해줘" "${installer_output}"
   grep -q "docs/\\*_COMPLETION.md" "${installer_output}"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${installer_output}"
+  grep -q "서브에이전트 사용 기준" "${installer_output}"
   test ! -e "${target_dir}/templates/domain-packs/odoo/README.md"
   test -f "${target_dir}/.omx/domain-packs/odoo/README.md"
   grep -q "Optional domain packs installed for onboarding reference" "${installer_output}"
@@ -873,6 +945,8 @@ grep -q "Data Completion Pack" "templates/automation-base/docs/DATA_COMPLETION.m
 grep -q "Performance Completion Pack" "templates/automation-base/docs/PERFORMANCE_COMPLETION.md"
 grep -q "Observability Completion Pack" "templates/automation-base/docs/OBSERVABILITY_COMPLETION.md"
 grep -q "UI Completion Pack" "templates/automation-base/docs/UI_COMPLETION.md"
+grep -q "Approval Friction" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
+grep -q "실패 패턴 피드백" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "필요한 완료팩" "docs/NEW_PROJECT_GUIDE.md"
 
 echo "[verify] testing domain pack copy preserves existing references..."
@@ -937,6 +1011,7 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${aiinit_output}"
+  grep -q "서브에이전트 사용 기준" "${aiinit_output}"
   grep -q "Project registered" "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
   grep -q "$(cd "${target_dir}" && pwd -P)" "${registry_file}"
@@ -955,11 +1030,18 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   workspace_dir="${tmp_dir}/workspace"
   target_dir="${workspace_dir}/registered-project"
   spaced_dir="${workspace_dir}/registered project with spaces"
+  linked_dir="${workspace_dir}/linked-worktree"
   outside_dir="${tmp_dir}/outside-project"
   missing_dir="${tmp_dir}/missing-project"
   registry_file="${tmp_dir}/projects.tsv"
   mkdir -p "${workspace_dir}"
   git -c init.defaultBranch=main init -q "${target_dir}"
+  git -C "${target_dir}" config user.email "verify@example.invalid"
+  git -C "${target_dir}" config user.name "Verify"
+  touch "${target_dir}/README.md"
+  git -C "${target_dir}" add README.md
+  git -C "${target_dir}" commit -q -m "seed"
+  git -C "${target_dir}" worktree add -q "${linked_dir}" HEAD
   git -c init.defaultBranch=main init -q "${spaced_dir}"
   git -c init.defaultBranch=main init -q "${outside_dir}"
 
@@ -970,13 +1052,36 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   test "$(grep -F "$(cd "${target_dir}" && pwd -P)" "${registry_file}" | wc -l)" -eq 1
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${spaced_dir}" >/dev/null
   grep -q "$(cd "${spaced_dir}" && pwd -P)" "${registry_file}"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${linked_dir}" >/dev/null
+  grep -q "$(cd "${linked_dir}" && pwd -P)" "${registry_file}"
   printf 'old\t%s\tmissing-project\tmain\tnone\n' "${missing_dir}" >> "${registry_file}"
-  mkdir "${registry_file}.lock"
-  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${outside_dir}" > "${tmp_dir}/locked.out" 2>&1; then
-    echo "ai-register succeeded while registry lock was held by another process"
-    exit 1
+  if command -v flock >/dev/null 2>&1; then
+    (
+      exec 8>"${registry_file}.lockfile"
+      flock 8
+      sleep 3
+    ) &
+    lock_holder=$!
+    sleep 0.2
+    if AI_AUTO_PROJECT_REGISTRY_LOCK_TIMEOUT_SECONDS=1 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${outside_dir}" > "${tmp_dir}/locked.out" 2>&1; then
+      kill "$lock_holder" 2>/dev/null || true
+      echo "ai-register succeeded while registry lock was held by another process"
+      exit 1
+    fi
+    wait "$lock_holder"
+  else
+    mkdir "${registry_file}.lock"
+    if AI_AUTO_PROJECT_REGISTRY_LOCK_TIMEOUT_SECONDS=1 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${outside_dir}" > "${tmp_dir}/locked.out" 2>&1; then
+      echo "ai-register succeeded while registry lock was held by another process"
+      exit 1
+    fi
+    rmdir "${registry_file}.lock"
   fi
   grep -q "Could not lock project registry" "${tmp_dir}/locked.out"
+  mkdir "${registry_file}.lock"
+  touch -d '20 minutes ago' "${registry_file}.lock"
+  AI_AUTO_PROJECT_REGISTRY_LOCK_TIMEOUT_SECONDS=1 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${outside_dir}" > "${tmp_dir}/legacy-lock-dir.out"
+  grep -q "Project registered" "${tmp_dir}/legacy-lock-dir.out"
   rmdir "${registry_file}.lock"
 
   scan_output="${tmp_dir}/scan.out"
@@ -984,9 +1089,9 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   grep -q "INIT" "${scan_output}"
   grep -q "registered-project" "${scan_output}"
   grep -q "registered project wit" "${scan_output}"
+  grep -q "linked-worktree" "${scan_output}"
   grep -q "yes" "${scan_output}"
 
-  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${outside_dir}" >/dev/null
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${scan_output}"
   grep -q "outside-project" "${scan_output}"
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register --prune > "${tmp_dir}/prune.out"
@@ -1009,6 +1114,7 @@ echo "[verify] testing global helper link repair..."
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
+  ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
@@ -1016,6 +1122,7 @@ echo "[verify] testing global helper link repair..."
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
 
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
@@ -1074,6 +1181,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
+  ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
@@ -1081,6 +1189,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/bootstrap-ai-lab.sh --fix >/dev/null
 
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
@@ -1098,6 +1207,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
+  ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
@@ -1105,6 +1215,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   DOCTOR_SKIP_DIRTY_CHECK=1 HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/automation-doctor.sh --fix >/dev/null
 
   test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
@@ -1117,6 +1228,7 @@ for script in \
   collect-review-context.sh \
   discover-ai-models.sh \
   make-review-prompts.sh \
+  record-feedback.sh \
   record-project-memory.sh \
   review-gate.sh \
   run-ai-reviews.sh \

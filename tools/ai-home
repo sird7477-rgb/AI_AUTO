@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  case "$LINK_TARGET" in
+    /*)
+      SOURCE="$LINK_TARGET"
+      ;;
+    *)
+      SOURCE="${SOURCE_DIR}/${LINK_TARGET}"
+      ;;
+  esac
+done
+
+TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'USAGE'
+Usage: ai-home [--path|--cd|--status]
+
+Show the local AI_AUTO / ai-lab checkout path and common commands.
+
+Options:
+  --path     print only the checkout path
+  --cd       print a shell command that moves to the checkout
+  --status   run git status --short in the checkout
+
+Examples:
+  cd "$(ai-home --path)"
+  eval "$(ai-home --cd)"
+  ai-home --status
+USAGE
+    exit 0
+    ;;
+  --path)
+    printf '%s\n' "$AI_LAB_ROOT"
+    exit 0
+    ;;
+  --cd)
+    printf 'cd %q\n' "$AI_LAB_ROOT"
+    exit 0
+    ;;
+  --status)
+    git -C "$AI_LAB_ROOT" status --short
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    echo "Unknown option: $1"
+    echo "Run ai-home --help for usage."
+    exit 2
+    ;;
+esac
+
+cat <<INFO
+AI_AUTO checkout:
+  ${AI_LAB_ROOT}
+
+Move there:
+  $(printf 'cd %q' "$AI_LAB_ROOT")
+
+Useful commands:
+  ai-home --status
+  workspace-scan
+  ai-register /path/to/existing-repo
+  cd "\$(ai-home --path)" && ./scripts/bootstrap-ai-lab.sh
+  cd "\$(ai-home --path)" && ./scripts/install-global-files.sh
+INFO

@@ -33,6 +33,10 @@ explicit model override only when a lane has a concrete reason and current
 runtime evidence supports that model. Prefer role and `reasoning_effort`
 selection over hardcoded model names.
 
+For detailed subagent delegation boundaries, use
+`docs/AUTOMATION_OPERATING_POLICY.md` as the source of truth. Native subagents
+are throughput and focus lanes, not independent external reviewer coverage.
+
 ## Role Profiles
 
 | Role | Target Capability | Default Runtime Mapping |

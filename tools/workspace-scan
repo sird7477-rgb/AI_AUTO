@@ -55,7 +55,7 @@ print_repo() {
   local repo="$1"
   local name branch status verify gate last_commit remote initialized short_name short_branch
 
-  if [ ! -d "$repo/.git" ]; then
+  if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     return
   fi
 
@@ -111,11 +111,11 @@ printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %-4s %s\n" \
 printf "%-22s %-10s %-7s %-6s %-6s %-8s %-6s %-4s %s\n" \
   "-------" "------" "------" "------" "----" "------" "------" "----" "----"
 
-while read -r gitdir; do
+while IFS= read -r gitdir; do
   repo="$(cd "$(dirname "$gitdir")" && pwd -P)"
   PRINTED_PATHS["$repo"]=1
   print_repo "$repo"
-done < <(find "$WORKSPACE" -mindepth 1 -maxdepth 2 -type d -name .git | sort)
+done < <(find "$WORKSPACE" -mindepth 1 -maxdepth 2 \( -type d -o -type f \) -name .git | sort)
 
 if [ -f "$PROJECT_REGISTRY" ]; then
   while IFS=$'\t' read -r _registered_at path _name _branch _origin; do

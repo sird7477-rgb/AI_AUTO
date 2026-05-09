@@ -150,8 +150,9 @@ This is the current final check before presenting a commit candidate.
 
 Current behavior:
 
-- exits successfully only when the final review decision is proceed
-- exits non-zero for revise, blocked, or review_manually
+- exits successfully when the final review decision is `proceed` or `proceed_degraded`
+- treats `proceed_degraded` as an allowed but explicitly reported degraded pass, usually because at least one optional reviewer was unavailable
+- exits non-zero for `revise`, `blocked`, or `review_manually`
 - exits with the external review preparation status when REVIEW_EXECUTION_MODE=external is used
 - prints the review verdict summary before exiting
 
@@ -273,12 +274,14 @@ Completed.
 Global helper tool sources are tracked in:
 
 - tools/ai-auto-init
+- tools/ai-home
 - tools/ai-register
 - tools/workspace-scan
 
 Expected links:
 
 - ~/bin/ai-auto-init -> ~/workspace/ai-lab/tools/ai-auto-init
+- ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
 - ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
@@ -303,7 +306,11 @@ Project registry:
 - `ai-register --prune` removes deleted or moved repositories from the local
   registry
 - `workspace-scan` reports both repositories discovered under `~/workspace` and
-  registered repositories, with an `INIT` column for registry membership
+  registered repositories, with an `INIT` column for registry membership; it
+  recognizes normal `.git/` directories and linked-worktree `.git` files
+- registry writes wait up to 10 seconds by default; on Linux/WSL, `flock`
+  releases the lock when the process exits, so stale lock deletion is not used;
+  override the wait with `AI_AUTO_PROJECT_REGISTRY_LOCK_TIMEOUT_SECONDS`
 
 ### ai-lab bootstrap
 
@@ -378,6 +385,7 @@ For ai-lab itself:
     ./scripts/automation-doctor.sh
     ./scripts/review-gate.sh
     omx doctor
+    ai-home
     ai-register
     ai-register --prune
     workspace-scan

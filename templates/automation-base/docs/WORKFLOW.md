@@ -9,34 +9,50 @@
 ## 초기 온보딩
 
 1. `aiinit`으로 자동화 템플릿을 설치한다.
-2. 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰한다.
-3. 최종 산출물에 적용할 완료팩을 확인한다. 적용하지 않는 항목은
+2. 기존 README, docs, package/script 파일, 과거 메모를 먼저 읽고 로컬 증거로
+   알 수 없는 항목만 인터뷰한다.
+3. 프로젝트 목적, 사용자, 최종 산출물, non-goal을 확정한다.
+4. 허용/금지 변경, 데이터/secret/credential 경계, destructive 작업 승인
+   규칙을 확정한다.
+5. 스택, setup/test/build/lint/smoke/deploy 명령을 확인한다.
+6. 리뷰 강도를 `lightweight`, `standard`, `strict` 중 하나로 확정한다.
+   기본값은 `standard`이며, 상세 기준은
+   `docs/AUTOMATION_OPERATING_POLICY.md`를 따른다.
+7. 민감정보를 제외한 실패 패턴/개선사항을 `.omx/feedback/queue.jsonl`에
+   기록할지 확인한다. raw log, token, 고객정보, secret은 기록하지 않는다.
+8. 반복되는 비파괴 명령의 승인 마찰을 줄일 방식을 확인한다. 단,
+   destructive, credential, 외부 production, scope 변경 작업은 승인 대상이다.
+9. 서브에이전트 사용 기준을 확인한다. repo lookup, 분리 가능한 구현 slice,
+   테스트/UX/의존성 검토, 독립 critique는 위임 가능하지만, 최종 통합과 완료
+   주장은 leader 책임이다.
+10. 최종 산출물에 적용할 완료팩을 확인한다. 적용하지 않는 항목은
    non-goal로 기록하고, 프로젝트 문서에 불필요하면 해당
    `docs/*_COMPLETION.md` 파일은 삭제해도 된다.
-4. UI가 필요하면 `docs/UI_COMPLETION.md`를 기준으로 UI 완료/검증 조건을
+11. UI가 필요하면 `docs/UI_COMPLETION.md`를 기준으로 UI 완료/검증 조건을
    정한다.
-5. 배포/운영이 필요하면 `docs/DEPLOYMENT_COMPLETION.md`를 기준으로
+12. 배포/운영이 필요하면 `docs/DEPLOYMENT_COMPLETION.md`를 기준으로
    release artifact, smoke check, rollback 조건을 정한다.
-6. 보안/인증/secret/개인정보가 범위에 있으면
+13. 보안/인증/secret/개인정보가 범위에 있으면
    `docs/SECURITY_COMPLETION.md`를 기준으로 trust boundary와 검증 조건을
    정한다.
-7. 영속 데이터, 마이그레이션, seed/import/export가 범위에 있으면
+14. 영속 데이터, 마이그레이션, seed/import/export가 범위에 있으면
    `docs/DATA_COMPLETION.md`를 기준으로 데이터 완료/검증 조건을 정한다.
-8. 성능 목표가 있으면 `docs/PERFORMANCE_COMPLETION.md`를 기준으로 baseline,
+15. 성능 목표가 있으면 `docs/PERFORMANCE_COMPLETION.md`를 기준으로 baseline,
    target, 측정 명령을 정한다.
-9. 운영 진단, 로그, health check, metrics, traces, audit가 범위에 있으면
+16. 운영 진단, 로그, health check, metrics, traces, audit가 범위에 있으면
    `docs/OBSERVABILITY_COMPLETION.md`를 기준으로 관측성 완료/검증 조건을
    정한다.
-10. `.omx/domain-packs/`에 설치된 선택 적용 도메인팩을 확인한다.
-11. 인터뷰로 적용할 표준팩과 제외할 표준팩을 확정한다.
-12. 적용 대상 도메인팩이 있으면 필요한 항목만 프로젝트 지침에 병합한다.
-13. `AGENTS.md`에 프로젝트별 에이전트 활동 지침을 반영한다.
-14. `docs/WORKFLOW.md`에 실제 개발 루프와 검증 기준을 반영한다.
-15. `scripts/verify.sh`를 프로젝트별 검증 명령으로 교체한다.
-16. `./scripts/automation-doctor.sh`를 실행해 자동화 파일 상태를 확인한다.
-17. `./scripts/verify.sh`를 실행해 프로젝트 검증이 통과하는지 확인한다.
-18. `./scripts/review-gate.sh`를 실행해 검증과 AI 리뷰 게이트를 통과시킨다.
-19. 필요하면 사용자 승인 후 baseline 커밋을 만든다.
+17. `.omx/domain-packs/`에 설치된 선택 적용 도메인팩을 확인한다.
+18. 인터뷰로 적용할 표준팩과 제외할 표준팩을 확정한다.
+19. 적용 대상 도메인팩이 있으면 필요한 항목만 프로젝트 지침에 병합한다.
+20. `AGENTS.md`에 프로젝트별 에이전트 활동 지침을 반영한다.
+21. `docs/WORKFLOW.md`에 실제 개발 루프와 검증 기준을 반영한다.
+22. `scripts/verify.sh`를 프로젝트별 검증 명령으로 교체한다.
+23. `./scripts/automation-doctor.sh`를 실행해 자동화 파일 상태를 확인한다.
+24. `./scripts/verify.sh`를 실행해 프로젝트 검증이 통과하는지 확인한다.
+25. 확정한 리뷰 강도에 따라 `./scripts/review-gate.sh`를 실행한다. 초기
+   baseline은 가능한 한 review-gate까지 통과시킨다.
+26. 필요하면 사용자 승인 후 baseline 커밋을 만든다.
 
 ## 도메인팩
 
@@ -64,6 +80,83 @@
 7. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
 8. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
 9. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+
+## 리뷰 강도
+
+기본값은 `standard`다. 프로젝트 온보딩에서 아래 중 하나를 선택하고
+`AGENTS.md`와 이 문서에 기록한다.
+
+- `lightweight`: 문서, 로컬 설정, 작고 되돌리기 쉬운 변경은
+  `./scripts/verify.sh`만 기본으로 한다. 공유 자동화, 동작 변경, 배포,
+  보안, 데이터, UI workflow 변경에는 review-gate를 실행한다.
+- `standard`: 일반 기본값. 작업 중에는 `./scripts/verify.sh`를 우선하고,
+  커밋 후보 또는 위험도 있는 변경에는 review-gate를 실행한다.
+- `strict`: 금융, 보안, 배포, 데이터 손실, 규제, 고위험 자동화는 커밋
+  후보마다 `./scripts/verify.sh`와 `./scripts/review-gate.sh`를 실행한다.
+
+공유 자동화, 검증/리뷰 스크립트, 모델 라우팅, 데이터, 배포, 보안, 사용자
+가시 workflow를 건드리면 한 단계 더 강하게 운영한다. 리뷰를 생략한 경우
+완료 보고에 선택한 리뷰 강도와 생략 이유를 명시한다.
+
+## 실패 패턴 피드백
+
+반복 가능한 실패나 공통 개선 아이디어는 raw log 대신 짧은 요약으로만
+기록한다.
+
+```bash
+./scripts/record-feedback.sh \
+  --type failure_pattern \
+  --repeat-key verify:docker-socket-permission \
+  --summary "Docker socket permission blocked verify" \
+  --resolution "Retry approved external execution when Docker access is required" \
+  --surface verify \
+  --severity medium
+```
+
+기록 기준:
+
+- 같은 repeat key가 2회 이상 반복된다.
+- verify, review, commit, push, deploy, onboarding을 막았다.
+- 사용자 수동 개입이 필요했다.
+- AI의 잘못된 추측으로 재작업이 발생했다.
+- 프로젝트 local fix를 AI_AUTO 템플릿 개선 후보로 올릴 가치가 있다.
+
+금지:
+
+- token, secret, credential, 고객정보, private log, raw stack trace 전문
+- 단순 오타나 일회성 에러
+- 사용자가 채택하지 않은 추측성 아이디어
+
+`.omx/feedback/queue.jsonl`은 git에 올리지 않는 로컬 queue다. AI_AUTO가
+나중에 여러 프로젝트의 queue를 취합하더라도, 원본 로그가 아니라 정제된
+패턴만 공통 지침 후보로 승격한다.
+
+## 권한 승인 마찰 관리
+
+승인 자체를 우회하지 않는다. 대신 안전한 반복 작업은 프로젝트 지침에 명확히
+기록해 같은 승인을 반복하지 않도록 한다.
+
+- 검증, 리뷰 게이트, helper 설치, 커밋, 푸시처럼 반복되는 비파괴 명령은
+  좁은 approved prefix 또는 repo helper를 사용한다.
+- Docker socket, git index lock, reviewer CLI write/network 제한처럼 반복되는
+  권한 문제는 `automation-doctor` 또는 feedback queue에 기록한다.
+- agent runtime에서 reviewer CLI가 막히고 사용자 터미널에서는 동작하면
+  `REVIEW_EXECUTION_MODE=external ./scripts/review-gate.sh`를 사용한다.
+- destructive 명령, dependency 설치, credential/SSH/production/deploy 작업,
+  프로젝트 지침 덮어쓰기는 계속 명시 승인 대상이다.
+
+## 서브에이전트 사용 기준
+
+서브에이전트는 leader의 판단을 대체하지 않는다. 병렬로 좁고 독립적인 일을
+맡길 때만 사용한다.
+
+- 사용 가능: repo 탐색, 파일/심볼 매핑, 분리 가능한 구현 slice, 테스트 전략,
+  UX/UI 검토, 의존성/공식문서 조사, 위험한 diff에 대한 독립 critique
+- 사용 금지: destructive 작업, credential/production 작업, commit/push,
+  사용자 판단이 필요한 범위 결정, 최종 통합 판단, 완료 주장
+- Claude/Gemini가 비활성화되어 Codex fallback 리뷰를 쓰는 경우, 이는
+  외부 리뷰어를 대체한 독립 승인으로 보지 않고 degraded/informational
+  coverage로 보고한다.
 
 ## 필수 검증
 

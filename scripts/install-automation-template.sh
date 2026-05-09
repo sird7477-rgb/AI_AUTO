@@ -29,6 +29,7 @@ conflicts=()
 for path in \
   "AGENTS.md" \
   "docs/AI_MODEL_ROUTING.md" \
+  "docs/AUTOMATION_OPERATING_POLICY.md" \
   "docs/DATA_COMPLETION.md" \
   "docs/DEPLOYMENT_COMPLETION.md" \
   "docs/OBSERVABILITY_COMPLETION.md" \
@@ -42,6 +43,7 @@ for path in \
   "scripts/collect-review-context.sh" \
   "scripts/discover-ai-models.sh" \
   "scripts/make-review-prompts.sh" \
+  "scripts/record-feedback.sh" \
   "scripts/record-project-memory.sh" \
   "scripts/run-ai-reviews.sh" \
   "scripts/summarize-ai-reviews.sh" \
@@ -83,6 +85,7 @@ fi
 
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
 cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTING.md"
+cp "${TEMPLATE_DIR}/docs/AUTOMATION_OPERATING_POLICY.md" "${TARGET_DIR}/docs/AUTOMATION_OPERATING_POLICY.md"
 cp "${TEMPLATE_DIR}/docs/DATA_COMPLETION.md" "${TARGET_DIR}/docs/DATA_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/DEPLOYMENT_COMPLETION.md" "${TARGET_DIR}/docs/DEPLOYMENT_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/OBSERVABILITY_COMPLETION.md" "${TARGET_DIR}/docs/OBSERVABILITY_COMPLETION.md"
@@ -97,6 +100,7 @@ cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automat
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
 cp "${TEMPLATE_DIR}/scripts/discover-ai-models.sh" "${TARGET_DIR}/scripts/discover-ai-models.sh"
 cp "${TEMPLATE_DIR}/scripts/make-review-prompts.sh" "${TARGET_DIR}/scripts/make-review-prompts.sh"
+cp "${TEMPLATE_DIR}/scripts/record-feedback.sh" "${TARGET_DIR}/scripts/record-feedback.sh"
 cp "${TEMPLATE_DIR}/scripts/record-project-memory.sh" "${TARGET_DIR}/scripts/record-project-memory.sh"
 cp "${TEMPLATE_DIR}/scripts/run-ai-reviews.sh" "${TARGET_DIR}/scripts/run-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/summarize-ai-reviews.sh" "${TARGET_DIR}/scripts/summarize-ai-reviews.sh"
@@ -134,11 +138,12 @@ fi
 echo
 echo "Next steps:"
 echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
-echo "2. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
-echo "3. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
-echo "4. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "5. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
-echo "6. Run:"
+echo "2. Confirm review intensity, feedback recording, approval-friction handling, and subagent usage policy."
+echo "3. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
+echo "4. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
+echo "5. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
+echo "6. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
+echo "7. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"
@@ -150,4 +155,5 @@ echo
 echo "Equivalent detailed request:"
 echo "  프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과"
 echo "  .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,"
+echo "  리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준을 정하고"
 echo "  AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘"

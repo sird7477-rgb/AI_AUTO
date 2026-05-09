@@ -46,6 +46,11 @@ ai-lab bootstrap 진단
 ./scripts/review-gate.sh
 ```
 
+이 ai-lab 본진은 공유 자동화와 검증/리뷰 스크립트를 직접 관리하므로
+기본 리뷰 강도는 `strict`에 가깝게 운영한다. 단순 커밋/푸시처럼 이미
+검증이 끝난 절차만 재실행하는 경우에는 사용자가 명시한 범위 안에서 추가
+리뷰어 호출을 생략할 수 있다.
+
 이 명령은 다음을 실행한다.
 
 ./scripts/verify.sh
@@ -64,9 +69,33 @@ Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로
 - 리더가 작업 중 스스로 모델을 바꿨다고 표현하지 않는다.
 - 비용/속도 최적화가 필요하면 탐색, 파일 매핑, 가벼운 합성처럼 범위가
   좁은 작업만 역할별 서브에이전트나 OMX lane에 위임한다.
+- 세부 위임 기준은 `docs/AUTOMATION_OPERATING_POLICY.md`의
+  `Subagent Utilization`을 따른다.
 - Claude/Gemini는 독립 외부 리뷰어다.
 - Codex/GPT fallback 리뷰는 연속성을 위한 degraded 보강이며 독립
   Claude/Gemini 승인으로 세지 않는다.
+
+## 실패 패턴과 승인 마찰
+
+반복 가능한 실패나 공통 개선 아이디어는 raw log 대신 sanitized feedback으로
+남긴다.
+
+```bash
+./scripts/record-feedback.sh \
+  --type failure_pattern \
+  --repeat-key git:index-lock-permission \
+  --summary ".git/index.lock permission denied during commit" \
+  --resolution "Use approved escalated git commit path" \
+  --surface git \
+  --severity medium
+```
+
+기록 기준은 `docs/AUTOMATION_OPERATING_POLICY.md`를 따른다. `.omx/feedback/`
+아래 queue는 로컬 런타임 데이터이며 원격 커밋 대상이 아니다.
+
+권한 승인은 우회하지 않는다. 반복되는 비파괴 명령은 approved prefix나
+repo helper로 마찰을 줄이고, destructive/credential/production 작업은 계속
+명시 승인 대상으로 둔다.
 
 완료 보고에 포함할 것
 변경 파일
@@ -112,6 +141,14 @@ ai-lab checkout 진단:
 
 ```bash
 ./scripts/bootstrap-ai-lab.sh
+```
+
+AI_AUTO 본진 위치 찾기:
+
+```bash
+ai-home
+cd "$(ai-home --path)"
+ai-home --status
 ```
 
 새 프로젝트 초기화:

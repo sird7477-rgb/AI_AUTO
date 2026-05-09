@@ -6,6 +6,7 @@ This template contains the base files for a CLI-based AI development workflow.
 
 - AGENTS.md: repo-local agent operating rules
 - docs/WORKFLOW.md: project workflow documentation
+- docs/AUTOMATION_OPERATING_POLICY.md: review-intensity and feedback policy
 - docs/DEPLOYMENT_COMPLETION.md: optional deployment/release completion pack
 - docs/SECURITY_COMPLETION.md: optional security/auth completion pack
 - docs/DATA_COMPLETION.md: optional data/migration completion pack
@@ -18,6 +19,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/collect-review-context.sh: collects git diff and workflow context
 - scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
 - scripts/make-review-prompts.sh: generates reviewer prompts
+- scripts/record-feedback.sh: appends sanitized failure/improvement feedback
 - scripts/record-project-memory.sh: appends sanitized durable memory entries
 - scripts/run-ai-reviews.sh: runs available AI reviewers
 - scripts/summarize-ai-reviews.sh: summarizes reviewer verdicts
@@ -45,6 +47,11 @@ Check the automation setup:
 
 Template-specific helper link and `~/bin` PATH checks only run when the script detects the ai-lab source tree.
 
+From any terminal, use `ai-home` to find the AI_AUTO checkout:
+
+    ai-home
+    cd "$(ai-home --path)"
+
 Then ask the AI:
 
     프로젝트 초기설정 해줘
@@ -53,6 +60,7 @@ Equivalent detailed request:
 
     프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
     .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
+    리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준을 정하고
     AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 The AI should interview the project owner, then update the generated files for the target project:
@@ -62,6 +70,19 @@ The AI should interview the project owner, then update the generated files for t
     scripts/verify.sh
 
 During the interview, decide which completion dimensions apply:
+
+- Outcome: confirm purpose, users, final deliverable, and non-goals after
+  reading local evidence first
+- Review intensity: choose `lightweight`, `standard`, or `strict` using
+  `docs/AUTOMATION_OPERATING_POLICY.md`
+- Feedback: decide whether sanitized failure patterns and common improvement
+  ideas may be written to `.omx/feedback/queue.jsonl`
+- Approval friction: decide which recurring safe commands should use narrow
+  approved prefixes or repo helpers; do not bypass approval for destructive,
+  credentialed, or production actions
+- Subagents: decide when native subagents may be used for bounded lookup,
+  implementation slices, testing, UX, dependency research, or critique; the
+  leader keeps final integration and completion responsibility
 
 - UI: use `docs/UI_COMPLETION.md` when the final outcome includes a UI
 - Deployment: use `docs/DEPLOYMENT_COMPLETION.md` when release or operations
@@ -159,6 +180,9 @@ Review context lists untracked files but omits their content by default. Set `RE
 registry at `~/.local/state/ai-auto/projects.tsv`. Older projects can be
 registered later with `ai-register /path/to/repo`, and `workspace-scan` shows
 both workspace-discovered and registered projects. Use `ai-register --prune`
-to remove deleted or moved repository entries from the registry.
+to remove deleted or moved repository entries from the registry. The scan
+supports normal repositories and linked worktrees, and registry writes use a
+local lock. On Linux/WSL, `flock` releases the lock when the process exits, so
+stale lock deletion is not needed.
 
 `./scripts/review-gate.sh` and `./scripts/automation-doctor.sh --fix` automatically archive old `.omx/review-results` files when runtime artifacts grow beyond `OMX_REVIEW_ARCHIVE_THRESHOLD` or `OMX_ARTIFACT_WARN_COUNT`. The archive keeps recent/latest evidence active, moves older files under `.omx/review-results/archive/`, and never deletes unless `./scripts/archive-omx-artifacts.sh --delete` is explicitly used.
