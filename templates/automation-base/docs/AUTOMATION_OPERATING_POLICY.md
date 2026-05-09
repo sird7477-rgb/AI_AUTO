@@ -101,6 +101,43 @@ Prefer role selection and reasoning effort over hardcoded model overrides.
 Inherit the current runtime model unless a concrete, current runtime-supported
 reason exists to override it.
 
+## Planning And Interview Escalation
+
+Default posture: act directly when the request is clear, narrow, and reversible.
+Do not interview for routine edits, small fixes, local documentation updates,
+or commands the user already requested.
+
+Escalate to a short interview when one decision would materially change the
+result. Ask one concise question, then proceed from the answer.
+
+Escalate to a plan-first interview when the task involves any of these:
+
+- broad words such as foundation, standard, strategy, architecture, workflow,
+  policy, automation, onboarding, or hardening
+- long-lived guidance files such as `AGENTS.md`, `docs/WORKFLOW.md`,
+  `scripts/verify.sh`, templates, completion packs, or domain packs
+- multiple valid approaches with different cost, safety, or maintenance impact
+- data loss, security, credentials, deployment, production, billing, or
+  irreversible behavior
+- unclear success criteria, unknown users, or final deliverables that cannot be
+  inferred from local evidence
+- a user explicitly asks for recommendation, review, discussion, interview,
+  planning, or "don't assume"
+
+Use this intensity scale:
+
+| Intensity | Use When | Expected Behavior |
+| --- | --- | --- |
+| `none` | Small, clear, reversible task | Execute, verify, report |
+| `light` | One material branch or missing fact | Ask one question, then execute |
+| `standard` | Several choices shape the outcome | Inspect evidence, ask 2-4 focused questions, write a short plan, then execute |
+| `deep` | High-risk, long-lived, or strategic work | Run a staged interview, produce a plan/test shape, optionally request reviewer/subagent critique, then execute only the approved/safe slice |
+
+When interviewing, first inspect local files and ask only for facts that cannot
+be inferred safely. Label assumptions explicitly. If the user says "바로 진행",
+skip interview only for safe and reversible work; keep approval gates for
+destructive, credentialed, production, or materially scope-changing actions.
+
 ## Onboarding Interview Structure
 
 After `aiinit`, interview before feature work. Keep the interview short but

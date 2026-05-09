@@ -38,6 +38,16 @@ Not allowed without a new explicit plan:
 - large architecture rewrites
 - deployment hardening
 
+## Planning And Interview Escalation
+
+Use `docs/AUTOMATION_OPERATING_POLICY.md` for the full policy. In short:
+
+- execute directly for clear, small, reversible work
+- ask one focused question when a single missing decision materially changes the result
+- use a plan-first interview for broad, strategic, high-risk, or long-lived workflow changes
+- inspect local evidence before asking, and label assumptions instead of presenting guesses as facts
+- do not let "바로 진행" bypass destructive, credentialed, production, or materially scope-changing approval gates
+
 ## Onboarding Rule
 
 After `aiinit`, interview the project owner before the first real task and
@@ -54,6 +64,8 @@ Clarify at minimum:
 - whether Codex/native subagents may be used for lookup, implementation slices,
   testing, UX review, dependency research, or critique; the leader keeps final
   integration and completion responsibility
+- planning/interview intensity expectations for future work: `none`, `light`,
+  `standard`, or `deep`
 - whether the final outcome includes UI, and if not, record UI as a non-goal
 - which completion packs in `docs/*_COMPLETION.md` apply or do not apply
 - which installed domain packs under `.omx/domain-packs/` apply or do not apply
@@ -88,10 +100,12 @@ Onboarding workflow:
 2. Inspect existing project materials as references, including folders such as
    `(old)/`, `docs/`, `README.md`, or domain notes when present.
 3. Interview in order: outcome and non-goals; scope and safety boundaries; stack
-   and commands; completion packs; domain packs; operating policy; verification
-   evidence. Ask only for facts that cannot be inferred safely from local files.
-4. Confirm review intensity, feedback recording, approval-friction handling, and
-   subagent usage expectations from `docs/AUTOMATION_OPERATING_POLICY.md`.
+   and commands; planning/interview intensity; completion packs; domain packs;
+   operating policy; verification evidence. Ask only for facts that cannot be
+   inferred safely from local files.
+4. Confirm review intensity, feedback recording, approval-friction handling,
+   subagent usage, and planning/interview intensity expectations from
+   `docs/AUTOMATION_OPERATING_POLICY.md`.
 5. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
    apply and which do not. If a pack applies, use it as reference material and
    merge only the applicable rules. Do not apply domain packs to unrelated

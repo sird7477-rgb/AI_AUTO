@@ -246,6 +246,16 @@ interview the project owner, inspect existing reference materials, customize
 AGENTS.md, docs/WORKFLOW.md, and scripts/verify.sh, then run automation-doctor,
 verify, and review-gate before reporting.
 
+The onboarding workflow now also asks for planning/interview intensity
+expectations. The reusable default is:
+
+- clear, small, reversible work -> execute directly
+- one material branch -> ask one focused question
+- several outcome-shaping choices -> inspect evidence, ask 2-4 focused
+  questions, and write a short plan
+- long-lived policy, architecture, security, deployment, data, or verification
+  work -> use a plan-first interview before execution
+
 The installer also creates `.omx/reviewer-state` and adds `.omx/` to the target repository's local `.git/info/exclude` so generated reviewer, review, and model-routing artifacts stay out of commit candidates by default.
 
 If target automation files already exist, aiinit refuses to overwrite them. The
@@ -597,6 +607,8 @@ Completed capabilities:
 - generic aiinit onboarding defaults with no Flask todo/testbed assumption
 - optional completion packs for UI, deployment, security, data, performance,
   and observability
+- planning/interview escalation policy for in-progress work and aiinit
+  onboarding
 
 No additional generic automation implementation is planned unless a real first-time setup or target-project initialization gap appears.
 

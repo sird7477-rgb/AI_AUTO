@@ -25,34 +25,37 @@
 9. 서브에이전트 사용 기준을 확인한다. repo lookup, 분리 가능한 구현 slice,
    테스트/UX/의존성 검토, 독립 critique는 위임 가능하지만, 최종 통합과 완료
    주장은 leader 책임이다.
-10. 최종 산출물에 적용할 완료팩을 확인한다. 적용하지 않는 항목은
+10. 작업 중 플랜/인터뷰 강도 기준을 확인한다. 기본값은 작은 작업은 즉시
+   실행, 방향이 갈리는 작업은 짧은 질문, 장기 정책/아키텍처/검증 체계는
+   plan-first interview다.
+11. 최종 산출물에 적용할 완료팩을 확인한다. 적용하지 않는 항목은
    non-goal로 기록하고, 프로젝트 문서에 불필요하면 해당
    `docs/*_COMPLETION.md` 파일은 삭제해도 된다.
-11. UI가 필요하면 `docs/UI_COMPLETION.md`를 기준으로 UI 완료/검증 조건을
+12. UI가 필요하면 `docs/UI_COMPLETION.md`를 기준으로 UI 완료/검증 조건을
    정한다.
-12. 배포/운영이 필요하면 `docs/DEPLOYMENT_COMPLETION.md`를 기준으로
+13. 배포/운영이 필요하면 `docs/DEPLOYMENT_COMPLETION.md`를 기준으로
    release artifact, smoke check, rollback 조건을 정한다.
-13. 보안/인증/secret/개인정보가 범위에 있으면
+14. 보안/인증/secret/개인정보가 범위에 있으면
    `docs/SECURITY_COMPLETION.md`를 기준으로 trust boundary와 검증 조건을
    정한다.
-14. 영속 데이터, 마이그레이션, seed/import/export가 범위에 있으면
+15. 영속 데이터, 마이그레이션, seed/import/export가 범위에 있으면
    `docs/DATA_COMPLETION.md`를 기준으로 데이터 완료/검증 조건을 정한다.
-15. 성능 목표가 있으면 `docs/PERFORMANCE_COMPLETION.md`를 기준으로 baseline,
+16. 성능 목표가 있으면 `docs/PERFORMANCE_COMPLETION.md`를 기준으로 baseline,
    target, 측정 명령을 정한다.
-16. 운영 진단, 로그, health check, metrics, traces, audit가 범위에 있으면
+17. 운영 진단, 로그, health check, metrics, traces, audit가 범위에 있으면
    `docs/OBSERVABILITY_COMPLETION.md`를 기준으로 관측성 완료/검증 조건을
    정한다.
-17. `.omx/domain-packs/`에 설치된 선택 적용 도메인팩을 확인한다.
-18. 인터뷰로 적용할 표준팩과 제외할 표준팩을 확정한다.
-19. 적용 대상 도메인팩이 있으면 필요한 항목만 프로젝트 지침에 병합한다.
-20. `AGENTS.md`에 프로젝트별 에이전트 활동 지침을 반영한다.
-21. `docs/WORKFLOW.md`에 실제 개발 루프와 검증 기준을 반영한다.
-22. `scripts/verify.sh`를 프로젝트별 검증 명령으로 교체한다.
-23. `./scripts/automation-doctor.sh`를 실행해 자동화 파일 상태를 확인한다.
-24. `./scripts/verify.sh`를 실행해 프로젝트 검증이 통과하는지 확인한다.
-25. 확정한 리뷰 강도에 따라 `./scripts/review-gate.sh`를 실행한다. 초기
+18. `.omx/domain-packs/`에 설치된 선택 적용 도메인팩을 확인한다.
+19. 인터뷰로 적용할 표준팩과 제외할 표준팩을 확정한다.
+20. 적용 대상 도메인팩이 있으면 필요한 항목만 프로젝트 지침에 병합한다.
+21. `AGENTS.md`에 프로젝트별 에이전트 활동 지침을 반영한다.
+22. `docs/WORKFLOW.md`에 실제 개발 루프와 검증 기준을 반영한다.
+23. `scripts/verify.sh`를 프로젝트별 검증 명령으로 교체한다.
+24. `./scripts/automation-doctor.sh`를 실행해 자동화 파일 상태를 확인한다.
+25. `./scripts/verify.sh`를 실행해 프로젝트 검증이 통과하는지 확인한다.
+26. 확정한 리뷰 강도에 따라 `./scripts/review-gate.sh`를 실행한다. 초기
    baseline은 가능한 한 review-gate까지 통과시킨다.
-26. 필요하면 사용자 승인 후 baseline 커밋을 만든다.
+27. 필요하면 사용자 승인 후 baseline 커밋을 만든다.
 
 ## 도메인팩
 
@@ -72,14 +75,34 @@
 ## 현재 루프
 
 1. 요청 내용을 정리한다.
-2. 작업 범위를 작게 고정한다.
-3. 최소 변경만 수행한다.
-4. 완료를 주장하기 전에 diff를 확인한다.
-5. `./scripts/verify.sh`를 실행한다.
-6. 실패하면 수정 후 다시 검증한다.
-7. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
-8. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
-9. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+2. 플랜/인터뷰 강도를 판단한다.
+3. 작은 작업은 바로 실행하고, 방향이 갈리는 작업은 짧은 질문을 먼저 한다.
+4. 장기 정책, 표준, 아키텍처, 검증 체계, 배포/보안/데이터 작업은
+   plan-first interview 후 진행한다.
+5. 작업 범위를 작게 고정한다.
+6. 최소 변경만 수행한다.
+7. 완료를 주장하기 전에 diff를 확인한다.
+8. `./scripts/verify.sh`를 실행한다.
+9. 실패하면 수정 후 다시 검증한다.
+10. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
+11. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
+12. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+
+## 플랜/인터뷰 강도
+
+기본은 속도를 위해 즉시 실행이다. 단, 아래 기준으로 AI가 자체 판단해
+인터뷰를 요청할 수 있다.
+
+- `none`: 명확하고 작고 되돌리기 쉬운 작업. 바로 실행한다.
+- `light`: 결과를 바꾸는 결정이 하나 있다. 질문 하나로 확인하고 진행한다.
+- `standard`: 여러 선택지가 결과를 바꾼다. 로컬 증거를 먼저 읽고 2-4개
+  질문으로 확정한 뒤 짧은 플랜을 만든다.
+- `deep`: 장기 정책, 표준, 아키텍처, 보안, 배포, 데이터, 검증 체계처럼
+  실패 비용이 크다. 단계별 인터뷰, 플랜, 필요 시 리뷰어/서브에이전트
+  검토를 거친다.
+
+사용자가 "바로 진행"이라고 해도 destructive, credential, production,
+scope 변경 작업의 승인 게이트는 유지한다.
 
 ## 리뷰 강도
 

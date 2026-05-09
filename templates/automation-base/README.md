@@ -64,7 +64,8 @@ Equivalent detailed request:
 
     프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
     .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
-    리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준을 정하고
+    리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준,
+    플랜/인터뷰 강도 기준을 정하고
     AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 The AI should interview the project owner, then update the generated files for the target project:
@@ -87,6 +88,9 @@ During the interview, decide which completion dimensions apply:
 - Subagents: decide when native subagents may be used for bounded lookup,
   implementation slices, testing, UX, dependency research, or critique; the
   leader keeps final integration and completion responsibility
+- Planning/interview intensity: choose when to execute directly, ask one short
+  question, or run a plan-first interview. Use `none`, `light`, `standard`, or
+  `deep`.
 
 - UI: use `docs/UI_COMPLETION.md` when the final outcome includes a UI
 - Deployment: use `docs/DEPLOYMENT_COMPLETION.md` when release or operations

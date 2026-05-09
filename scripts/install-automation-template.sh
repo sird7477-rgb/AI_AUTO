@@ -138,7 +138,7 @@ fi
 echo
 echo "Next steps:"
 echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
-echo "2. Confirm review intensity, feedback recording, approval-friction handling, and subagent usage policy."
+echo "2. Confirm review intensity, feedback recording, approval-friction handling, subagent usage, and planning/interview intensity."
 echo "3. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
 echo "4. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
 echo "5. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
@@ -155,5 +155,6 @@ echo
 echo "Equivalent detailed request:"
 echo "  프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과"
 echo "  .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,"
-echo "  리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준을 정하고"
+echo "  리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준,"
+echo "  플랜/인터뷰 강도 기준을 정하고"
 echo "  AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘"
