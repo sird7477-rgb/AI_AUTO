@@ -89,7 +89,9 @@ Completed.
 Current behavior:
 
 - before the first AI reviewer call in a run, `scripts/discover-ai-models.sh` inspects local CLI capabilities and writes `.omx/model-routing/latest.env` plus `.omx/model-routing/latest.md`
-- model routing avoids dated hardcoded model names; it prefers explicit env overrides, advertised CLI aliases, or the OMX model contract, then falls back to provider defaults
+- model routing avoids dated hardcoded model names; it is role-first, then resolves against explicit env overrides, advertised CLI aliases, the current OMX/Codex model contract, or provider defaults
+- model availability inferred from local help/config must be reported as inferred; do not present uncertain provider/model availability as fact
+- long-session quality management draft is in `docs/SESSION_QUALITY_PLAN.md`; it covers model routing cache, working memory, checkpoints, and token/context hygiene
 - Claude review runs automatically if claude is available.
 - Gemini review runs automatically if gemini is available.
 - Gemini can be disabled for a specific run with RUN_GEMINI_REVIEW=0.
@@ -425,7 +427,14 @@ Current interpretation:
 - each AI review run now writes a `review-run-*.md` manifest that links the context, prompts, outputs, fallback artifacts, external runner, model routing report, and disabled reviewer state for that run
 - disabled reviewer markers include `source_run_id`, `next_action`, and `reset_hint` fields so doctor/external runs can show the recovery path without guessing
 - external review mode reports current disabled reviewers before stopping, because the generated external runner shares `.omx/reviewer-state/` and will skip disabled reviewers until reset
-- automation doctor reports `.omx` session artifact directory sizes and suggests manual archive/delete cleanup when a directory exceeds `OMX_ARTIFACT_WARN_COUNT`; it does not delete artifacts automatically
+- review-gate and automation doctor `--fix` archive old `.omx/review-results`
+  files when retention thresholds are exceeded; latest run evidence remains
+  active, and deletion still requires explicit `archive-omx-artifacts.sh --delete`
+- `scripts/record-project-memory.sh` appends sanitized durable entries to
+  `.omx/project-memory.json`
+- `scripts/write-session-checkpoint.sh` writes `.omx/state/session-checkpoint.md`;
+  review-gate runs it automatically after successful summary unless
+  `OMX_AUTO_CHECKPOINT=0`
 
 ### Explore Harness warning
 
@@ -498,18 +507,32 @@ This is the preferred workaround when API-key based bare mode is intentionally e
 
 ### Odoo-specific workflow
 
-Deferred.
+Partially addressed as an optional domain pack.
 
-Future work should define an Odoo-specific scripts/verify.sh pattern.
+The reusable Odoo pack lives under `templates/domain-packs/odoo/` and is copied
+by `aiinit` as an ignored onboarding reference under `.omx/domain-packs/odoo/`.
+It is not blindly merged into project instructions. During project onboarding,
+the agent should confirm that the target is Odoo-based, then adapt only the
+version, addon scope, localization baseline, verification patterns, and review
+checklist that match the target project.
 
-Possible checks:
+Current pack coverage:
 
-- Python syntax check
-- module manifest check
-- addon path validation
-- import smoke checks
-- Odoo test database module install
-- optional Docker-based Odoo test run
+- Odoo version and major-version lock prompts
+- addon scope and upstream `odoo/` / `enterprise/` reference-only guidance
+- Korean localization prompt examples: `ko_KR`, KRW, and 10% VAT
+- static syntax/XML verification examples
+- module install/update/test command shapes
+- Docker Compose runtime pattern
+- review checklist for runtime, data model, security, localization, and
+  project-specific rule separation
+
+Remaining work:
+
+- dogfood the pack on a real Odoo project
+- harden the generated `scripts/verify.sh` shape from that real project
+- keep customer-specific odoo.sh, SSH, branch, commit, and access rules in the
+  target project instructions instead of the reusable pack
 
 ### Gemini non-interactive mode
 

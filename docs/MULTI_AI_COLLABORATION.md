@@ -238,8 +238,12 @@ Current handling:
 - Codex/GPT fallback reviews run as separate degraded artifacts when reviewers are disabled, and the summary reports that coverage separately without counting it as independent external review coverage
 - Codex fallback execution uses `codex exec` when available and can be disabled for diagnostics with RUN_CODEX_FALLBACK_REVIEW=0
 - AI model routing is discovered at review-run start by `scripts/discover-ai-models.sh`; it writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`, then the runner applies provider-specific `--model` flags only when supported
-- model routing avoids dated hardcoded model names; use env overrides such as CLAUDE_REVIEW_MODEL, GEMINI_REVIEW_MODEL, CODEX_ARCHITECT_REVIEW_MODEL, CODEX_TEST_REVIEW_MODEL, or CODEX_FALLBACK_MODEL when a specific current model should be forced
+- model routing is role-first: choose the role/capability first, then resolve it against the current local CLI/runtime/account surface
+- model routing avoids dated hardcoded model names; use env overrides such as CLAUDE_REVIEW_ROLE, GEMINI_REVIEW_ROLE, CLAUDE_REVIEW_MODEL, GEMINI_REVIEW_MODEL, CODEX_ARCHITECT_REVIEW_MODEL, CODEX_TEST_REVIEW_MODEL, or CODEX_FALLBACK_MODEL when a specific current route should be forced
+- provider docs are reference material only; local CLI support, account access, and OMX/Codex runtime metadata are the operational source of truth
+- when model availability is inferred rather than verified, report it as inferred and fall back to provider default instead of presenting a guess as fact
 - each review run writes a `review-run-*.md` manifest linking context, prompts, outputs, fallback artifacts, model routing, and disabled reviewer state
+- long-running sessions should checkpoint durable decisions and use `docs/SESSION_QUALITY_PLAN.md` for memory, routing-cache, and token/context hygiene rules
 - REVIEW_EXECUTION_MODE=external can move reviewer execution to an unrestricted interactive terminal
 - external reviewer execution uses REVIEW_OUTPUT_MODE=tee by default so prompts and approval waits remain visible
 - external reviewer execution uses SKIP_CONTEXT_GENERATION=1 by default so it reviews the already-prepared prompts
@@ -282,7 +286,7 @@ If Codex fallback cannot run, its artifact is marked skipped or failed and the s
 
 Review context, prompts, model routing inventories, external runners, manifests, and results are ignored runtime artifacts under `.omx/`.
 
-Automation doctor reports artifact directory sizes and suggests manual cleanup when a directory grows beyond `OMX_ARTIFACT_WARN_COUNT`. It does not delete these files automatically because review artifacts may be needed for handoff, audit, or debugging.
+Review-gate and `automation-doctor.sh --fix` automatically archive old `.omx/review-results` files when retention thresholds are exceeded. Latest run evidence and referenced reviewer files remain active; older files move under `.omx/review-results/archive/`. Deletion requires the explicit `archive-omx-artifacts.sh --delete` option because review artifacts may be needed for handoff, audit, or debugging.
 
 ### Command group
 

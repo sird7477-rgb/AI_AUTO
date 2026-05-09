@@ -45,6 +45,11 @@ odoo-bin \
   --stop-after-init
 ```
 
+For localized projects, set up the test database/company with the confirmed
+country, language, currency, and tax baseline before treating business-flow
+verification as complete. For Korean projects this usually means `ko_KR`, KRW,
+and 10% VAT.
+
 ## Odoo Tests
 
 Example shape:
@@ -74,6 +79,8 @@ docker compose run --rm odoo odoo-bin -d "${ODOO_TEST_DB}" -i "${ODOO_MODULE}" -
 - Fail fast on missing required environment variables.
 - Never target a production database.
 - Print the Odoo version, module name, and database name before running tests.
+- Print the localization baseline when business data, taxes, currency, or demo
+  data are part of the verification.
 - Clean up disposable test databases only when the project defines a safe cleanup
   command.
 - If runtime verification is unavailable, report the skipped reason clearly and

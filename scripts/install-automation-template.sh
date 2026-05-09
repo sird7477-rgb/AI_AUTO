@@ -28,15 +28,20 @@ conflicts=()
 
 for path in \
   "AGENTS.md" \
+  "docs/AI_MODEL_ROUTING.md" \
+  "docs/SESSION_QUALITY_PLAN.md" \
   "docs/WORKFLOW.md" \
+  "scripts/archive-omx-artifacts.sh" \
   "scripts/automation-doctor.sh" \
   "scripts/collect-review-context.sh" \
   "scripts/discover-ai-models.sh" \
   "scripts/make-review-prompts.sh" \
+  "scripts/record-project-memory.sh" \
   "scripts/run-ai-reviews.sh" \
   "scripts/summarize-ai-reviews.sh" \
   "scripts/test-review-summary.sh" \
   "scripts/review-gate.sh" \
+  "scripts/write-session-checkpoint.sh" \
   "scripts/verify.sh"
 do
   if [ -e "${TARGET_DIR}/${path}" ]; then
@@ -71,16 +76,21 @@ if ! grep -Eq '^[.]omx/?$' "${exclude_file}" 2>/dev/null; then
 fi
 
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
+cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTING.md"
+cp "${TEMPLATE_DIR}/docs/SESSION_QUALITY_PLAN.md" "${TARGET_DIR}/docs/SESSION_QUALITY_PLAN.md"
 cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 
+cp "${TEMPLATE_DIR}/scripts/archive-omx-artifacts.sh" "${TARGET_DIR}/scripts/archive-omx-artifacts.sh"
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
 cp "${TEMPLATE_DIR}/scripts/discover-ai-models.sh" "${TARGET_DIR}/scripts/discover-ai-models.sh"
 cp "${TEMPLATE_DIR}/scripts/make-review-prompts.sh" "${TARGET_DIR}/scripts/make-review-prompts.sh"
+cp "${TEMPLATE_DIR}/scripts/record-project-memory.sh" "${TARGET_DIR}/scripts/record-project-memory.sh"
 cp "${TEMPLATE_DIR}/scripts/run-ai-reviews.sh" "${TARGET_DIR}/scripts/run-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/summarize-ai-reviews.sh" "${TARGET_DIR}/scripts/summarize-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/test-review-summary.sh" "${TARGET_DIR}/scripts/test-review-summary.sh"
 cp "${TEMPLATE_DIR}/scripts/review-gate.sh" "${TARGET_DIR}/scripts/review-gate.sh"
+cp "${TEMPLATE_DIR}/scripts/write-session-checkpoint.sh" "${TARGET_DIR}/scripts/write-session-checkpoint.sh"
 cp "${TEMPLATE_DIR}/scripts/verify.example.sh" "${TARGET_DIR}/scripts/verify.sh"
 
 domain_packs_dir="$(dirname "${TEMPLATE_DIR}")/domain-packs"

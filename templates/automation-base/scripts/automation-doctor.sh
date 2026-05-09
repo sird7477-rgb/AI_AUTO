@@ -297,13 +297,16 @@ ensure_dir "scripts"
 REQUIRED_FILES=(
   "AGENTS.md"
   "docs/WORKFLOW.md"
+  "scripts/archive-omx-artifacts.sh"
   "scripts/review-gate.sh"
   "scripts/collect-review-context.sh"
   "scripts/discover-ai-models.sh"
   "scripts/make-review-prompts.sh"
+  "scripts/record-project-memory.sh"
   "scripts/run-ai-reviews.sh"
   "scripts/summarize-ai-reviews.sh"
   "scripts/test-review-summary.sh"
+  "scripts/write-session-checkpoint.sh"
 )
 
 for path in "${REQUIRED_FILES[@]}"; do
@@ -403,8 +406,18 @@ if [ -d ".omx" ]; then
 
     artifact_count="$(find "$artifact_dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
     if [ "$artifact_count" -gt "$OMX_ARTIFACT_WARN_COUNT" ]; then
-      say_warn "session artifact directory has ${artifact_count} files: ${artifact_dir}"
-      suggest "review ${artifact_dir} and archive or delete old ignored .omx artifacts when they are no longer needed"
+      if [ "$FIX" -eq 1 ] && [ "$artifact_dir" = ".omx/review-results" ] && [ -x "scripts/archive-omx-artifacts.sh" ]; then
+        if OMX_REVIEW_ARCHIVE_THRESHOLD="$OMX_ARTIFACT_WARN_COUNT" ./scripts/archive-omx-artifacts.sh; then
+          say_fix "archived old review artifacts from ${artifact_dir}"
+        else
+          say_warn "review artifact archive failed for ${artifact_dir}"
+          suggest "OMX_REVIEW_ARCHIVE_THRESHOLD=${OMX_ARTIFACT_WARN_COUNT} ./scripts/archive-omx-artifacts.sh --dry-run"
+        fi
+      else
+        say_warn "session artifact directory has ${artifact_count} files: ${artifact_dir}"
+        suggest "./scripts/archive-omx-artifacts.sh --dry-run"
+        suggest "./scripts/automation-doctor.sh --fix"
+      fi
     else
       say_pass "session artifact directory size ok: ${artifact_dir} (${artifact_count} files)"
     fi

@@ -26,4 +26,14 @@ if ! ./scripts/summarize-ai-reviews.sh; then
   exit 1
 fi
 
+if [ "${OMX_AUTO_ARCHIVE:-1}" != "0" ] && [ -x "./scripts/archive-omx-artifacts.sh" ]; then
+  echo "[gate] archiving old review artifacts when retention thresholds are exceeded..."
+  ./scripts/archive-omx-artifacts.sh
+fi
+
+if [ "${OMX_AUTO_CHECKPOINT:-1}" != "0" ] && [ -x "./scripts/write-session-checkpoint.sh" ]; then
+  echo "[gate] writing session checkpoint..."
+  ./scripts/write-session-checkpoint.sh
+fi
+
 echo "[gate] complete"

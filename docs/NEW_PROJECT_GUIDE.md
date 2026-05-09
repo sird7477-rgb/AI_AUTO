@@ -128,6 +128,19 @@ The AI should preserve existing project instructions and verification behavior,
 then add only the missing automation files or guidance needed for the Codex/OMX
 workflow.
 
+Recommended adoption flow:
+
+1. Read the existing `AGENTS.md`, workflow docs, and verification scripts.
+2. List what the existing project already covers.
+3. Compare against the current automation template.
+4. Propose a small merge plan before editing.
+5. Copy only missing automation scripts or docs that do not overwrite project
+   rules.
+6. Preserve project-specific instructions as the source of truth when they are
+   stricter than the reusable template.
+7. Run `./scripts/automation-doctor.sh`, the project verification command, and
+   `./scripts/review-gate.sh`.
+
 ## Notes
 
 - `aiinit` must be run inside a git repository.

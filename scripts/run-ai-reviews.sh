@@ -133,6 +133,9 @@ Generated at: $(date -Iseconds)
 - Claude prompt: ${CLAUDE_PROMPT}
 - Gemini prompt: ${GEMINI_PROMPT}
 - Model routing report: ${AI_MODEL_ROUTING_REPORT}
+- Model routing cache status: ${AI_MODEL_ROUTING_CACHE_STATUS:-unknown}
+- Model routing cache age seconds: ${AI_MODEL_ROUTING_CACHE_AGE_SECONDS:-unknown}
+- Model routing cache TTL seconds: ${AI_MODEL_ROUTING_CACHE_TTL_SECONDS:-unknown}
 
 ## Outputs
 
@@ -184,6 +187,8 @@ cd "\${repo_root}"
 : "\${AI_MODEL_DISCOVERY_DIR:=${AI_MODEL_DISCOVERY_DIR}}"
 : "\${AI_MODEL_ROUTING_ENV:=${AI_MODEL_ROUTING_ENV}}"
 : "\${AI_MODEL_ROUTING_REPORT:=${AI_MODEL_ROUTING_REPORT}}"
+: "\${AI_MODEL_DISCOVERY_REFRESH:=${AI_MODEL_DISCOVERY_REFRESH:-0}}"
+: "\${AI_MODEL_ROUTING_TTL_SECONDS:=${AI_MODEL_ROUTING_TTL_SECONDS:-43200}}"
 : "\${REVIEW_RUN_ID:=${REVIEW_RUN_ID}}"
 
 REVIEW_EXECUTION_MODE=local \\
@@ -205,6 +210,8 @@ AI_MODEL_DISCOVERY="\${AI_MODEL_DISCOVERY}" \\
 AI_MODEL_DISCOVERY_DIR="\${AI_MODEL_DISCOVERY_DIR}" \\
 AI_MODEL_ROUTING_ENV="\${AI_MODEL_ROUTING_ENV}" \\
 AI_MODEL_ROUTING_REPORT="\${AI_MODEL_ROUTING_REPORT}" \\
+AI_MODEL_DISCOVERY_REFRESH="\${AI_MODEL_DISCOVERY_REFRESH}" \\
+AI_MODEL_ROUTING_TTL_SECONDS="\${AI_MODEL_ROUTING_TTL_SECONDS}" \\
 REVIEW_RUN_ID="\${REVIEW_RUN_ID}" \\
 ./scripts/run-ai-reviews.sh
 
@@ -279,7 +286,13 @@ load_model_routing() {
     # shellcheck disable=SC1090
     . "${AI_MODEL_ROUTING_ENV}"
     echo "[review] model routing report: ${AI_MODEL_ROUTING_REPORT}"
-    echo "[review] selected models: claude=${CLAUDE_REVIEW_MODEL:-provider-default} gemini=${GEMINI_REVIEW_MODEL:-provider-default} codex_architect=${CODEX_ARCHITECT_REVIEW_MODEL:-provider-default} codex_test=${CODEX_TEST_REVIEW_MODEL:-provider-default}"
+    if [ -n "${AI_MODEL_ROUTING_DISCOVERED_EPOCH:-}" ] && printf '%s\n' "${AI_MODEL_ROUTING_DISCOVERED_EPOCH}" | grep -Eq '^[0-9]+$'; then
+      routing_age=$(( $(date +%s) - AI_MODEL_ROUTING_DISCOVERED_EPOCH ))
+      if [ "${routing_age}" -ge 0 ]; then
+        echo "[review] model routing cache: ${AI_MODEL_ROUTING_CACHE_STATUS:-unknown}, age=${routing_age}s, ttl=${AI_MODEL_ROUTING_CACHE_TTL_SECONDS:-unknown}s"
+      fi
+    fi
+    echo "[review] selected models: claude(${CLAUDE_REVIEW_ROLE:-review})=${CLAUDE_REVIEW_MODEL:-provider-default} gemini(${GEMINI_REVIEW_ROLE:-review})=${GEMINI_REVIEW_MODEL:-provider-default} codex_architect(${CODEX_ARCHITECT_REVIEW_ROLE:-fallback})=${CODEX_ARCHITECT_REVIEW_MODEL:-provider-default} codex_test(${CODEX_TEST_REVIEW_ROLE:-fallback})=${CODEX_TEST_REVIEW_MODEL:-provider-default}"
   else
     echo "[review] AI model discovery failed; using provider defaults"
   fi

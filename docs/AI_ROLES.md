@@ -8,6 +8,7 @@ This repository is a stable sample target for CLI-based AI development workflows
 - preserve the Flask + pytest + Docker + Postgres stack
 - keep diffs small enough to review directly
 - run the documented verification commands before claiming completion
+- use the current Codex/OMX runtime contract for repo-local implementation and debugging work instead of public API model names
 
 ## Planner / Architect
 
@@ -15,6 +16,7 @@ This repository is a stable sample target for CLI-based AI development workflows
 - reject app expansion and broad architecture rewrites
 - keep the Flask app framed as a sample target
 - identify the smallest reliability fix that supports the workflow
+- route high-risk plan/design review through the `architect_review` profile when external review is available
 
 ## Critic / Reviewer
 
@@ -22,6 +24,7 @@ This repository is a stable sample target for CLI-based AI development workflows
 - verify that README and docs only claim commands that were tested
 - inspect whether code changes are reliability fixes rather than feature work
 - require evidence from pytest, Docker Compose, and smoke checks
+- distinguish facts from assumptions; do not present inferred model availability or undocumented behavior as verified fact
 
 ## Verifier
 
@@ -29,3 +32,14 @@ This repository is a stable sample target for CLI-based AI development workflows
 - confirm Docker Compose starts API + Postgres
 - confirm `/` and `/todos` smoke checks work
 - confirm visible docs keep the repo framed as an AI CLI workflow testbed
+
+## Model Routing Reference
+
+Use `docs/AI_MODEL_ROUTING.md` for role-to-model routing policy. The default
+principle is role-first and runtime-surface-first: decide the capability needed,
+then resolve it against the current local CLI/account/runtime evidence.
+
+## Session Quality Reference
+
+Use `docs/SESSION_QUALITY_PLAN.md` for long-session operation, memory capture,
+model-routing cache behavior, and token/context hygiene.

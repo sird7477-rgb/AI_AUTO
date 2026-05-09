@@ -7,14 +7,17 @@ This template contains the base files for a CLI-based AI development workflow.
 - AGENTS.md: repo-local agent operating rules
 - docs/WORKFLOW.md: project workflow documentation
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
+- scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
 - scripts/verify.example.sh: onboarding placeholder; replace with project-specific verification
 - scripts/collect-review-context.sh: collects git diff and workflow context
 - scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
 - scripts/make-review-prompts.sh: generates reviewer prompts
+- scripts/record-project-memory.sh: appends sanitized durable memory entries
 - scripts/run-ai-reviews.sh: runs available AI reviewers
 - scripts/summarize-ai-reviews.sh: summarizes reviewer verdicts
 - scripts/test-review-summary.sh: fixture tests for review verdict decisions
 - scripts/review-gate.sh: runs verification, reviews, and verdict summary
+- scripts/write-session-checkpoint.sh: writes resume checkpoints after review gates
 
 ## How to use in a new project
 
@@ -100,7 +103,13 @@ Reviewer failures are stateful. Session, weekly, quota, or rate-limit failures d
 
 Each review run writes a `review-run-*.md` manifest under `.omx/review-results/` linking the context, prompts, outputs, model routing report, fallback artifacts, external runner, and disabled reviewer state for that run.
 
-Before the first AI reviewer invocation in a run, `scripts/discover-ai-models.sh` writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`. The review runner sources that env file and applies model selectors only when the installed CLI supports `--model`. Use `CLAUDE_REVIEW_MODEL`, `GEMINI_REVIEW_MODEL`, `CODEX_ARCHITECT_REVIEW_MODEL`, `CODEX_TEST_REVIEW_MODEL`, or `CODEX_FALLBACK_MODEL` to override routing without editing scripts. Set `AI_MODEL_DISCOVERY=0` to use provider defaults.
+Before the first AI reviewer invocation in a run, `scripts/discover-ai-models.sh` writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`. The review runner sources that env file and applies model selectors only when the installed CLI supports `--model`.
+
+Model routing is role-first: choose the role/capability first, then resolve it against the current local CLI/runtime/account surface. Provider docs are reference material, not proof that this local CLI can use a model. Use `CLAUDE_REVIEW_ROLE`, `GEMINI_REVIEW_ROLE`, `CODEX_ARCHITECT_REVIEW_ROLE`, `CODEX_TEST_REVIEW_ROLE`, `CLAUDE_REVIEW_MODEL`, `GEMINI_REVIEW_MODEL`, `CODEX_ARCHITECT_REVIEW_MODEL`, `CODEX_TEST_REVIEW_MODEL`, or `CODEX_FALLBACK_MODEL` to override routing without editing scripts. Set `AI_MODEL_DISCOVERY=0` to use provider defaults.
+
+Long-running session operation is described in `docs/SESSION_QUALITY_PLAN.md`.
+Use it for model-routing cache policy, working memory capture, checkpoints, and
+token/context hygiene.
 
 When a reviewer is disabled, the remaining external reviewer prompt stays focused on its own role. The disabled lane is covered by a separate Codex/GPT fallback review artifact, such as `codex-architect-fallback-*.md` or `codex-test-fallback-*.md`. If both external reviewers are disabled, both fallback reviewers are required and the verdict is reported as degraded coverage such as `codex_only_degraded`; it does not count as independent Claude/Gemini approval. Codex fallback uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics.
 
@@ -116,4 +125,4 @@ Review context lists untracked files but omits their content by default. Set `RE
 
 `aiinit` adds `.omx/` to the target repository's local `.git/info/exclude` so generated review, model-routing, and reviewer-state artifacts do not become commit candidates by default.
 
-`./scripts/automation-doctor.sh` reports `.omx` artifact directory sizes and suggests manual cleanup when runtime artifacts grow beyond `OMX_ARTIFACT_WARN_COUNT`; it never deletes review artifacts automatically.
+`./scripts/review-gate.sh` and `./scripts/automation-doctor.sh --fix` automatically archive old `.omx/review-results` files when runtime artifacts grow beyond `OMX_REVIEW_ARCHIVE_THRESHOLD` or `OMX_ARTIFACT_WARN_COUNT`. The archive keeps recent/latest evidence active, moves older files under `.omx/review-results/archive/`, and never deletes unless `./scripts/archive-omx-artifacts.sh --delete` is explicitly used.

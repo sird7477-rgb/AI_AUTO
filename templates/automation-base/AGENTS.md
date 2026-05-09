@@ -14,7 +14,7 @@ Before claiming a task is complete, the agent must:
 3. run `./scripts/verify.sh` for basic verification
 4. run `./scripts/review-gate.sh` before presenting a commit candidate
 5. report the verification and review results
-5. mention any remaining warnings or limitations
+6. mention any remaining warnings or limitations
 
 If `./scripts/verify.sh` fails, the task is not complete.
 If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
@@ -96,8 +96,17 @@ Onboarding workflow:
 Use these files as the workflow baseline:
 
 - `docs/WORKFLOW.md`
+- `docs/AI_MODEL_ROUTING.md`
+- `docs/SESSION_QUALITY_PLAN.md`
 - `scripts/verify.sh`
 - `scripts/review-gate.sh`
+
+## Evidence And Uncertainty
+
+- Do not present guesses, inferred model availability, undocumented behavior, or unverified project assumptions as facts.
+- If something is unclear, say what is known, what is inferred, and what evidence would confirm it.
+- Prefer local runtime evidence for CLI/model availability; provider documentation is reference material unless the current task explicitly asks for external research.
+- When forced to proceed with an assumption, label it as an assumption and keep the change reversible.
 
 ## Completion Report Format
 
