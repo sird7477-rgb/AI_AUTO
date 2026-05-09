@@ -9,6 +9,9 @@ This repository is a stable sample target for CLI-based AI development workflows
 - keep diffs small enough to review directly
 - run the documented verification commands before claiming completion
 - use the current Codex/OMX runtime contract for repo-local implementation and debugging work instead of public API model names
+- do not claim to switch the active leader model mid-session; delegate bounded
+  low-cost or fast-scan work to role-appropriate subagents when that improves
+  throughput without weakening final responsibility
 
 ## Planner / Architect
 
@@ -38,6 +41,11 @@ This repository is a stable sample target for CLI-based AI development workflows
 Use `docs/AI_MODEL_ROUTING.md` for role-to-model routing policy. The default
 principle is role-first and runtime-surface-first: decide the capability needed,
 then resolve it against the current local CLI/account/runtime evidence.
+
+The leader/subagent boundary is part of that policy: Codex remains responsible
+for orchestration, integration, verification, and completion claims, while
+delegated lanes can optimize cost or latency for bounded lookup, scanning, and
+secondary review work.
 
 ## Session Quality Reference
 

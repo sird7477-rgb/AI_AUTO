@@ -57,6 +57,11 @@ Model routing cache and reviewer availability are separate. A reviewer may have
 a valid routing candidate but still be skipped because `.omx/reviewer-state`
 marks it disabled.
 
+Leader routing is also separate from delegated routing. The active Codex/GPT
+leader should be treated as runtime-selected for the session; cost and latency
+optimization should be done by routing bounded work to child agents or OMX lanes
+with explicit role, reasoning, and trust boundaries.
+
 ## 2. Working Memory
 
 Status: active guidance with a repo helper. Use
@@ -128,6 +133,7 @@ Checkpoint content:
 - latest verification evidence
 - reviewer state
 - model routing snapshot
+- leader/delegated lane ownership and any degraded fallback coverage
 - known warnings and blockers
 
 Quality drift triggers:

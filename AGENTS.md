@@ -46,6 +46,13 @@ Use these files as the workflow baseline:
 - `scripts/verify.sh`
 - `scripts/review-gate.sh`
 
+## Model And Delegation Boundary
+
+Use `docs/AI_MODEL_ROUTING.md` as the source of truth for leader-vs-subagent
+model routing. The active Codex/GPT leader is runtime-selected; optimize
+cost/latency by delegating bounded work to role-appropriate child agents or OMX
+lanes, not by claiming the leader changed models mid-session.
+
 ## Evidence And Uncertainty
 
 - Do not present guesses, inferred model availability, undocumented behavior, or unverified project assumptions as facts.

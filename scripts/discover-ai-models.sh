@@ -4,8 +4,10 @@ set -euo pipefail
 OUT_DIR="${AI_MODEL_DISCOVERY_DIR:-.omx/model-routing}"
 ENV_OUT="${AI_MODEL_ROUTING_ENV:-${OUT_DIR}/latest.env}"
 REPORT_OUT="${AI_MODEL_ROUTING_REPORT:-${OUT_DIR}/latest.md}"
+OBSERVATIONS_OUT="${AI_MODEL_ROUTING_OBSERVATIONS:-${OUT_DIR}/observations.tsv}"
 AI_MODEL_ROUTING_TTL_SECONDS="${AI_MODEL_ROUTING_TTL_SECONDS:-43200}"
 AI_MODEL_DISCOVERY_REFRESH="${AI_MODEL_DISCOVERY_REFRESH:-0}"
+CLAUDE_REVIEW_MODEL_AUTO="${CLAUDE_REVIEW_MODEL_AUTO:-0}"
 
 mkdir -p "${OUT_DIR}" "$(dirname "${ENV_OUT}")" "$(dirname "${REPORT_OUT}")"
 
@@ -52,12 +54,13 @@ codex_exec_help_text() {
 override_fingerprint() {
   # Keep this list in sync with all routing-affecting env vars and cheap
   # runtime facts. Any new selector must be added here to avoid stale cache.
-  printf 'CLAUDE_REVIEW_ROLE=%s|GEMINI_REVIEW_ROLE=%s|CODEX_ARCHITECT_REVIEW_ROLE=%s|CODEX_TEST_REVIEW_ROLE=%s|CLAUDE_REVIEW_MODEL=%s|GEMINI_REVIEW_MODEL=%s|CODEX_ARCHITECT_REVIEW_MODEL=%s|CODEX_TEST_REVIEW_MODEL=%s|CODEX_FALLBACK_MODEL=%s|OMX_DEFAULT_FRONTIER_MODEL=%s|CLAUDE_CLI_VERSION=%s|GEMINI_CLI_VERSION=%s|CODEX_CLI_VERSION=%s|CLAUDE_HELP=%s|GEMINI_HELP=%s|CODEX_EXEC_HELP=%s' \
+  printf 'CLAUDE_REVIEW_ROLE=%s|GEMINI_REVIEW_ROLE=%s|CODEX_ARCHITECT_REVIEW_ROLE=%s|CODEX_TEST_REVIEW_ROLE=%s|CLAUDE_REVIEW_MODEL=%s|CLAUDE_REVIEW_MODEL_AUTO=%s|GEMINI_REVIEW_MODEL=%s|CODEX_ARCHITECT_REVIEW_MODEL=%s|CODEX_TEST_REVIEW_MODEL=%s|CODEX_FALLBACK_MODEL=%s|OMX_DEFAULT_FRONTIER_MODEL=%s|CLAUDE_CLI_VERSION=%s|GEMINI_CLI_VERSION=%s|CODEX_CLI_VERSION=%s|CLAUDE_HELP=%s|GEMINI_HELP=%s|CODEX_EXEC_HELP=%s' \
     "${CLAUDE_REVIEW_ROLE:-}" \
     "${GEMINI_REVIEW_ROLE:-}" \
     "${CODEX_ARCHITECT_REVIEW_ROLE:-}" \
     "${CODEX_TEST_REVIEW_ROLE:-}" \
     "${CLAUDE_REVIEW_MODEL:-}" \
+    "${CLAUDE_REVIEW_MODEL_AUTO:-0}" \
     "${GEMINI_REVIEW_MODEL:-}" \
     "${CODEX_ARCHITECT_REVIEW_MODEL:-}" \
     "${CODEX_TEST_REVIEW_MODEL:-}" \
@@ -85,6 +88,7 @@ override_fingerprint_digest() {
 
 update_cached_report_status() {
   local cache_age="$1"
+  local observation_status="${2:-not_updated_cache_reused}"
 
   if [ ! -f "${REPORT_OUT}" ]; then
     return 0
@@ -95,6 +99,8 @@ update_cached_report_status() {
     -e "s/^- Cache status: .*/- Cache status: reused/" \
     -e "s/^- Cache age seconds: .*/- Cache age seconds: ${cache_age}/" \
     -e "s/^- TTL seconds: .*/- TTL seconds: ${AI_MODEL_ROUTING_TTL_SECONDS}/" \
+    -e "s|^- Observation log: .*|- Observation log: ${OBSERVATIONS_OUT}|" \
+    -e "s/^- Observation log status: .*/- Observation log status: ${observation_status}/" \
     "${REPORT_OUT}" > "${tmp_report}"
   mv "${tmp_report}" "${REPORT_OUT}"
 }
@@ -121,12 +127,14 @@ if [ "${AI_MODEL_DISCOVERY_REFRESH}" != "1" ] && [ -f "${ENV_OUT}" ] && [ -f "${
   cache_age=$((now_epoch - cached_epoch))
   if [ "${cached_override_fingerprint}" = "${current_override_fingerprint}" ] && [ "${cache_age}" -ge 0 ] && [ "${cache_age}" -le "${AI_MODEL_ROUTING_TTL_SECONDS}" ]; then
     tmp_env="${ENV_OUT}.tmp.$$"
-    grep -v -E "^(AI_MODEL_ROUTING_CACHE_STATUS|AI_MODEL_ROUTING_CACHE_AGE_SECONDS|AI_MODEL_ROUTING_CACHE_TTL_SECONDS)=" "${ENV_OUT}" > "${tmp_env}" || true
+    grep -v -E "^(AI_MODEL_ROUTING_CACHE_STATUS|AI_MODEL_ROUTING_CACHE_AGE_SECONDS|AI_MODEL_ROUTING_CACHE_TTL_SECONDS|AI_MODEL_ROUTING_OBSERVATIONS|AI_MODEL_ROUTING_OBSERVATIONS_STATUS)=" "${ENV_OUT}" > "${tmp_env}" || true
     mv "${tmp_env}" "${ENV_OUT}"
     write_env "AI_MODEL_ROUTING_CACHE_TTL_SECONDS" "${AI_MODEL_ROUTING_TTL_SECONDS}"
     write_env "AI_MODEL_ROUTING_CACHE_STATUS" "reused"
     write_env "AI_MODEL_ROUTING_CACHE_AGE_SECONDS" "${cache_age}"
-    update_cached_report_status "${cache_age}"
+    write_env "AI_MODEL_ROUTING_OBSERVATIONS" "${OBSERVATIONS_OUT}"
+    write_env "AI_MODEL_ROUTING_OBSERVATIONS_STATUS" "not_updated_cache_reused"
+    update_cached_report_status "${cache_age}" "not_updated_cache_reused"
     echo "${ENV_OUT}"
     exit 0
   fi
@@ -224,14 +232,21 @@ codex_architect_role="${CODEX_ARCHITECT_REVIEW_ROLE:-architect_fallback}"
 codex_test_role="${CODEX_TEST_REVIEW_ROLE:-test_alternative}"
 
 claude_review_model="${CLAUDE_REVIEW_MODEL:-}"
-claude_review_model_source="env:CLAUDE_REVIEW_MODEL"
-if [ -z "${claude_review_model}" ] && [ "${claude_supports_model}" -eq 1 ]; then
-  claude_role_alias="$(select_claude_alias_for_role "${claude_review_role}")"
-  if [ -n "${claude_role_alias}" ]; then
+claude_review_model_source="provider-default"
+if [ -n "${claude_review_model}" ]; then
+  claude_review_model_source="env:CLAUDE_REVIEW_MODEL"
+fi
+claude_suggested_model=""
+if [ "${claude_supports_model}" -eq 1 ]; then
+  claude_suggested_model="$(select_claude_alias_for_role "${claude_review_role}")"
+fi
+if [ -z "${claude_review_model}" ]; then
+  if [ "${CLAUDE_REVIEW_MODEL_AUTO}" = "1" ] && [ -n "${claude_suggested_model}" ]; then
+    claude_role_alias="${claude_suggested_model}"
     claude_review_model="${claude_role_alias}"
-    claude_review_model_source="inferred:claude-cli-alias:${claude_role_alias};role:${claude_review_role}"
+    claude_review_model_source="auto:claude-cli-alias:${claude_role_alias};role:${claude_review_role}"
   else
-    claude_review_model_source="default"
+    claude_review_model_source="provider-default"
   fi
 fi
 
@@ -289,6 +304,7 @@ discovered_at="$(date -Iseconds)"
 write_env "AI_MODEL_ROUTING_DISCOVERED_AT" "${discovered_at}"
 write_env "AI_MODEL_ROUTING_DISCOVERED_EPOCH" "${now_epoch}"
 write_env "AI_MODEL_ROUTING_REPORT" "${REPORT_OUT}"
+write_env "AI_MODEL_ROUTING_OBSERVATIONS" "${OBSERVATIONS_OUT}"
 write_env "AI_MODEL_ROUTING_POLICY" "role-capability-runtime-surface-v1"
 write_env "AI_MODEL_ROUTING_CACHE_TTL_SECONDS" "${AI_MODEL_ROUTING_TTL_SECONDS}"
 write_env "AI_MODEL_ROUTING_CACHE_STATUS" "refreshed"
@@ -297,6 +313,7 @@ write_env "AI_MODEL_ROUTING_OVERRIDE_FINGERPRINT" "${current_override_fingerprin
 write_env "CLAUDE_REVIEW_ROLE" "${claude_review_role}"
 write_env "CLAUDE_REVIEW_MODEL" "${claude_review_model}"
 write_env "CLAUDE_REVIEW_MODEL_SOURCE" "${claude_review_model_source}"
+write_env "CLAUDE_REVIEW_SUGGESTED_MODEL" "${claude_suggested_model}"
 write_env "GEMINI_REVIEW_ROLE" "${gemini_review_role}"
 write_env "GEMINI_REVIEW_MODEL" "${gemini_review_model}"
 write_env "GEMINI_REVIEW_MODEL_SOURCE" "${gemini_review_model_source}"
@@ -306,6 +323,55 @@ write_env "CODEX_ARCHITECT_REVIEW_MODEL_SOURCE" "${codex_architect_model_source}
 write_env "CODEX_TEST_REVIEW_ROLE" "${codex_test_role}"
 write_env "CODEX_TEST_REVIEW_MODEL" "${codex_test_model}"
 write_env "CODEX_TEST_REVIEW_MODEL_SOURCE" "${codex_test_model_source}"
+
+write_observations() {
+  local observation_dir
+  observation_dir="$(dirname "${OBSERVATIONS_OUT}")"
+
+  if ! mkdir -p "${observation_dir}" 2>/dev/null; then
+    echo "[model-routing] observation log unavailable: cannot create ${observation_dir}" >&2
+    return 1
+  fi
+
+  if ! touch "${OBSERVATIONS_OUT}" 2>/dev/null; then
+    echo "[model-routing] observation log unavailable: cannot write ${OBSERVATIONS_OUT}" >&2
+    return 1
+  fi
+
+  if [ ! -s "${OBSERVATIONS_OUT}" ]; then
+    printf 'timestamp\tcache_status\tlane\trole\tmodel\tsource\n' > "${OBSERVATIONS_OUT}"
+  fi
+
+  {
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "claude_review" "${claude_review_role}" "${claude_review_model:-provider-default}" "${claude_review_model_source}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "gemini_review" "${gemini_review_role}" "${gemini_review_model:-provider-default}" "${gemini_review_model_source}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "codex_architect_fallback" "${codex_architect_role}" "${codex_architect_model:-provider-default}" "${codex_architect_model_source}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "codex_test_fallback" "${codex_test_role}" "${codex_test_model:-provider-default}" "${codex_test_model_source}"
+  } >> "${OBSERVATIONS_OUT}" || return 1
+
+  line_count="$(wc -l < "${OBSERVATIONS_OUT}" 2>/dev/null || echo 0)"
+  case "${line_count}" in
+    ''|*[!0-9]*)
+      return 0
+      ;;
+  esac
+
+  if [ "${line_count}" -gt 1001 ]; then
+    {
+      printf 'timestamp\tcache_status\tlane\trole\tmodel\tsource\n'
+      tail -n 1000 "${OBSERVATIONS_OUT}"
+    } > "${OBSERVATIONS_OUT}.tmp.$$" && mv "${OBSERVATIONS_OUT}.tmp.$$" "${OBSERVATIONS_OUT}" || {
+      rm -f "${OBSERVATIONS_OUT}.tmp.$$" 2>/dev/null || true
+      return 1
+    }
+  fi
+}
+
+observations_status="written"
+if ! write_observations; then
+  observations_status="unavailable"
+fi
+write_env "AI_MODEL_ROUTING_OBSERVATIONS_STATUS" "${observations_status}"
 
 cat > "${REPORT_OUT}" <<REPORT
 # AI Model Routing Inventory
@@ -318,6 +384,8 @@ Generated at: ${discovered_at}
 - Cache age seconds: 0
 - Discovery epoch: ${now_epoch}
 - TTL seconds: ${AI_MODEL_ROUTING_TTL_SECONDS}
+- Observation log: ${OBSERVATIONS_OUT}
+- Observation log status: ${observations_status}
 - Refresh with: AI_MODEL_DISCOVERY_REFRESH=1 ./scripts/review-gate.sh
 - Disable discovery with: AI_MODEL_DISCOVERY=0 ./scripts/review-gate.sh
 
@@ -342,7 +410,7 @@ Generated at: ${discovered_at}
 
 | Role | Capability Target | Preferred Runtime Mapping |
 |---|---|---|
-| architect_review | deep reasoning, long-context risk review, maintainability judgment | Claude opus alias, then sonnet; Codex architect fallback |
+| architect_review | deep reasoning, long-context risk review, maintainability judgment | Claude provider default with suggested alias recorded; Codex architect fallback |
 | alternative_review | independent second opinion, missed cases, simpler alternatives | Gemini provider default/pro-class when explicitly configured; Codex test fallback |
 | implementation | repo-local code edits and test fixes | Codex executor/current runtime default |
 | debug | logs, reproduction, root cause, regression isolation | Codex debugger/current runtime default |
@@ -365,6 +433,16 @@ Generated at: ${discovered_at}
 | Gemini review | ${gemini_review_role} | ${gemini_review_model:-provider-default} | ${gemini_review_model_source} |
 | Codex architect fallback | ${codex_architect_role} | ${codex_architect_model:-provider-default} | ${codex_architect_model_source} |
 | Codex test fallback | ${codex_test_role} | ${codex_test_model:-provider-default} | ${codex_test_model_source} |
+
+## Tuning Evidence
+
+Repeated selections are appended to ${OBSERVATIONS_OUT} as TSV. Use that file
+to tune role selectors only after observing real local CLI behavior across
+several runs. Do not change defaults based on a single provider announcement.
+The observation log is capped to the header plus the latest 1000 rows.
+Claude suggested model for this role: ${claude_suggested_model:-none}. It is
+not applied unless CLAUDE_REVIEW_MODEL is set explicitly or
+CLAUDE_REVIEW_MODEL_AUTO=1 is used for the run.
 
 ## Override Variables
 

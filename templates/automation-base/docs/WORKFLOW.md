@@ -104,6 +104,16 @@ disabled 역할은 별도 Codex/GPT fallback 리뷰가 담당한다. 두 외부 
 `proceed_degraded`는 진행 가능한 gate 결과지만 완료 보고에 degraded trust
 level과 누락 리뷰어 상태를 반드시 포함한다.
 
+루프 내 역할 경계:
+
+- Codex/GPT 리더는 구현, 조율, 검증, 완료 보고를 책임진다.
+- 리더가 작업 중 스스로 모델을 바꿨다고 표현하지 않는다.
+- 비용/속도 최적화가 필요하면 탐색, 파일 매핑, 가벼운 합성처럼 범위가
+  좁은 작업만 역할별 서브에이전트나 OMX lane에 위임한다.
+- Claude/Gemini는 독립 외부 리뷰어다.
+- Codex/GPT fallback 리뷰는 연속성을 위한 degraded 보강이며 독립
+  Claude/Gemini 승인으로 세지 않는다.
+
 ## 완료 보고
 
 완료 보고에 포함할 것:

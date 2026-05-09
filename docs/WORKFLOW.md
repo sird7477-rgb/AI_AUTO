@@ -58,6 +58,16 @@ Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로
 
 한 리뷰어가 disabled 상태이면 남은 외부 리뷰어 프롬프트는 그대로 유지하고, disabled 역할은 별도 Codex/GPT fallback 리뷰가 담당한다. 두 외부 리뷰어가 모두 disabled 상태이면 `codex-architect-review`와 `codex-test-alternative-review` fallback 리뷰가 모두 필요하다. 이 결과는 `proceed_degraded`, `single_external_plus_codex_fallback`, 또는 `codex_only_degraded`로 표시되며 독립 Claude/Gemini 승인으로 세지 않는다. `proceed_degraded`는 진행 가능한 gate 결과지만 완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
 
+루프 내 역할 경계:
+
+- Codex/GPT 리더는 구현, 조율, 검증, 완료 보고를 책임진다.
+- 리더가 작업 중 스스로 모델을 바꿨다고 표현하지 않는다.
+- 비용/속도 최적화가 필요하면 탐색, 파일 매핑, 가벼운 합성처럼 범위가
+  좁은 작업만 역할별 서브에이전트나 OMX lane에 위임한다.
+- Claude/Gemini는 독립 외부 리뷰어다.
+- Codex/GPT fallback 리뷰는 연속성을 위한 degraded 보강이며 독립
+  Claude/Gemini 승인으로 세지 않는다.
+
 완료 보고에 포함할 것
 변경 파일
 diff 요약

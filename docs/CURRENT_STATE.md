@@ -90,6 +90,7 @@ Current behavior:
 
 - before the first AI reviewer call in a run, `scripts/discover-ai-models.sh` inspects local CLI capabilities and writes `.omx/model-routing/latest.env` plus `.omx/model-routing/latest.md`
 - model routing avoids dated hardcoded model names; it is role-first, then resolves against explicit env overrides, advertised CLI aliases, the current OMX/Codex model contract, or provider defaults
+- the active Codex/GPT leader is treated as runtime-selected; cost/latency optimization is handled by bounded delegated subagent or OMX lanes instead of claiming the leader changed models mid-session
 - model availability inferred from local help/config must be reported as inferred; do not present uncertain provider/model availability as fact
 - long-session quality management draft is in `docs/SESSION_QUALITY_PLAN.md`; it covers model routing cache, working memory, checkpoints, and token/context hygiene
 - Claude review runs automatically if claude is available.
@@ -423,6 +424,7 @@ Current interpretation:
 - Codex/GPT writes separate fallback review artifacts such as `codex-architect-fallback-*.md` and `codex-test-fallback-*.md`; summaries mark this as degraded/informational coverage and never count it as independent Claude/Gemini approval
 - Codex fallback execution uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics, because both external reviewers disabled plus skipped fallback remains blocked
 - Codex fallback model selection can use `CODEX_ARCHITECT_REVIEW_MODEL`, `CODEX_TEST_REVIEW_MODEL`, `CODEX_FALLBACK_MODEL`, or `OMX_DEFAULT_FRONTIER_MODEL`
+- Codex/GPT fallback lanes and native subagents are delegated lanes with explicit trust boundaries; they do not make the main leader equivalent to an external reviewer or imply a leader model switch
 - the most stable non-API-key workaround is `REVIEW_EXECUTION_MODE=external`, which prepares a runner for an unrestricted interactive terminal
 - each AI review run now writes a `review-run-*.md` manifest that links the context, prompts, outputs, fallback artifacts, external runner, model routing report, and disabled reviewer state for that run
 - disabled reviewer markers include `source_run_id`, `next_action`, and `reset_hint` fields so doctor/external runs can show the recovery path without guessing

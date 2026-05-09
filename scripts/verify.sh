@@ -66,6 +66,7 @@ echo "[verify] testing AI model discovery..."
   unset CODEX_ARCHITECT_REVIEW_ROLE
   unset CODEX_TEST_REVIEW_ROLE
   unset CLAUDE_REVIEW_MODEL
+  unset CLAUDE_REVIEW_MODEL_AUTO
   unset GEMINI_REVIEW_MODEL
   unset CODEX_ARCHITECT_REVIEW_MODEL
   unset CODEX_TEST_REVIEW_MODEL
@@ -88,9 +89,15 @@ echo "[verify] testing AI model discovery..."
   grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='refreshed'$" "${tmp_dir}/latest.env"
   grep -q "^AI_MODEL_ROUTING_CACHE_AGE_SECONDS='0'$" "${tmp_dir}/latest.env"
   grep -q "^AI_MODEL_ROUTING_OVERRIDE_FINGERPRINT=" "${tmp_dir}/latest.env"
+  grep -q "^AI_MODEL_ROUTING_OBSERVATIONS=" "${tmp_dir}/latest.env"
+  grep -q "^AI_MODEL_ROUTING_OBSERVATIONS_STATUS='written'$" "${tmp_dir}/latest.env"
   grep -q "AI Model Routing Inventory" "${tmp_dir}/latest.md"
   grep -q "Role Profiles" "${tmp_dir}/latest.md"
   grep -q "Cache Policy" "${tmp_dir}/latest.md"
+  grep -q "Tuning Evidence" "${tmp_dir}/latest.md"
+  grep -q "Observation log status: written" "${tmp_dir}/latest.md"
+  test -f "${tmp_dir}/observations.tsv"
+  grep -q $'timestamp\tcache_status\tlane\trole\tmodel\tsource' "${tmp_dir}/observations.tsv"
 
   custom_dir="${tmp_dir}/custom-routing"
   AI_MODEL_DISCOVERY_DIR="${tmp_dir}/base-routing" \
@@ -99,6 +106,7 @@ echo "[verify] testing AI model discovery..."
     ./scripts/discover-ai-models.sh >/dev/null
   test -f "${custom_dir}/env/latest.env"
   test -f "${custom_dir}/report/latest.md"
+  test -f "${tmp_dir}/base-routing/observations.tsv"
 
   fake_bin="${tmp_dir}/fake-bin"
   mkdir -p "${fake_bin}"
@@ -159,22 +167,36 @@ STUB
     AI_MODEL_DISCOVERY_DIR="${role_default_dir}" \
     ./scripts/discover-ai-models.sh >/dev/null
   grep -q "^CLAUDE_REVIEW_ROLE='architect_review'$" "${role_default_dir}/latest.env"
-  grep -q "^CLAUDE_REVIEW_MODEL='opus'$" "${role_default_dir}/latest.env"
-  grep -q "^CLAUDE_REVIEW_MODEL_SOURCE='inferred:claude-cli-alias:opus;role:architect_review'$" "${role_default_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL=''$" "${role_default_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL_SOURCE='provider-default'$" "${role_default_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_SUGGESTED_MODEL='opus'$" "${role_default_dir}/latest.env"
   grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='refreshed'$" "${role_default_dir}/latest.env"
+  grep -q $'claude_review\tarchitect_review\tprovider-default\tprovider-default' "${role_default_dir}/observations.tsv"
 
   PATH="${fake_bin}:${PATH}" \
     MODEL_STUB_MODE=supported \
     AI_MODEL_DISCOVERY_DIR="${role_default_dir}" \
     ./scripts/discover-ai-models.sh >/dev/null
-  grep -q "^CLAUDE_REVIEW_MODEL='opus'$" "${role_default_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL=''$" "${role_default_dir}/latest.env"
   grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='reused'$" "${role_default_dir}/latest.env"
   grep -q "^AI_MODEL_ROUTING_CACHE_AGE_SECONDS=" "${role_default_dir}/latest.env"
+  grep -q "^AI_MODEL_ROUTING_OBSERVATIONS_STATUS='not_updated_cache_reused'$" "${role_default_dir}/latest.env"
   grep -q "^- Cache status: reused$" "${role_default_dir}/latest.md"
   grep -q "^- Cache age seconds: " "${role_default_dir}/latest.md"
+  grep -q "^- Observation log status: not_updated_cache_reused$" "${role_default_dir}/latest.md"
 
   PATH="${fake_bin}:${PATH}" \
     MODEL_STUB_MODE=supported \
+    CLAUDE_REVIEW_MODEL_AUTO=1 \
+    AI_MODEL_DISCOVERY_DIR="${role_default_dir}" \
+    ./scripts/discover-ai-models.sh >/dev/null
+  grep -q "^CLAUDE_REVIEW_MODEL='opus'$" "${role_default_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL_SOURCE='auto:claude-cli-alias:opus;role:architect_review'$" "${role_default_dir}/latest.env"
+  grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='refreshed'$" "${role_default_dir}/latest.env"
+
+  PATH="${fake_bin}:${PATH}" \
+    MODEL_STUB_MODE=supported \
+    CLAUDE_REVIEW_MODEL_AUTO=1 \
     AI_MODEL_ROUTING_TTL_SECONDS=86400 \
     AI_MODEL_DISCOVERY_DIR="${role_default_dir}" \
     ./scripts/discover-ai-models.sh >/dev/null
@@ -238,15 +260,27 @@ STUB
     AI_MODEL_DISCOVERY_DIR="${role_override_dir}" \
     ./scripts/discover-ai-models.sh >/dev/null
   grep -q "^CLAUDE_REVIEW_ROLE='code_review'$" "${role_override_dir}/latest.env"
-  grep -q "^CLAUDE_REVIEW_MODEL='sonnet'$" "${role_override_dir}/latest.env"
-  grep -q "^CLAUDE_REVIEW_MODEL_SOURCE='inferred:claude-cli-alias:sonnet;role:code_review'$" "${role_override_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL=''$" "${role_override_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL_SOURCE='provider-default'$" "${role_override_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_SUGGESTED_MODEL='sonnet'$" "${role_override_dir}/latest.env"
 
   PATH="${fake_bin}:${PATH}" \
     MODEL_STUB_MODE=supported \
     AI_MODEL_DISCOVERY_DIR="${role_override_dir}" \
     ./scripts/discover-ai-models.sh >/dev/null
   grep -q "^CLAUDE_REVIEW_ROLE='architect_review'$" "${role_override_dir}/latest.env"
-  grep -q "^CLAUDE_REVIEW_MODEL='opus'$" "${role_override_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL=''$" "${role_override_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_SUGGESTED_MODEL='opus'$" "${role_override_dir}/latest.env"
+
+  auto_role_override_dir="${tmp_dir}/auto-role-override"
+  PATH="${fake_bin}:${PATH}" \
+    MODEL_STUB_MODE=supported \
+    CLAUDE_REVIEW_MODEL_AUTO=1 \
+    CLAUDE_REVIEW_ROLE=code_review \
+    AI_MODEL_DISCOVERY_DIR="${auto_role_override_dir}" \
+    ./scripts/discover-ai-models.sh >/dev/null
+  grep -q "^CLAUDE_REVIEW_MODEL='sonnet'$" "${auto_role_override_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL_SOURCE='auto:claude-cli-alias:sonnet;role:code_review'$" "${auto_role_override_dir}/latest.env"
 
   model_override_dir="${tmp_dir}/model-override"
   PATH="${fake_bin}:${PATH}" \
@@ -258,9 +292,11 @@ STUB
   PATH="${fake_bin}:${PATH}" \
     MODEL_STUB_MODE=supported \
     CLAUDE_REVIEW_MODEL=opus \
+    CLAUDE_REVIEW_MODEL_AUTO=1 \
     AI_MODEL_DISCOVERY_DIR="${model_override_dir}" \
     ./scripts/discover-ai-models.sh >/dev/null
   grep -q "^CLAUDE_REVIEW_MODEL='opus'$" "${model_override_dir}/latest.env"
+  grep -q "^CLAUDE_REVIEW_MODEL_SOURCE='env:CLAUDE_REVIEW_MODEL'$" "${model_override_dir}/latest.env"
   grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='refreshed'$" "${model_override_dir}/latest.env"
 
   provider_role_dir="${tmp_dir}/provider-role"
@@ -312,9 +348,24 @@ STUB
   grep -q "^CODEX_TEST_REVIEW_MODEL=''$" "${unsupported_dir}/latest.env"
   grep -q "^CODEX_TEST_REVIEW_MODEL_SOURCE='unsupported'$" "${unsupported_dir}/latest.env"
 
+  observation_blocked_dir="${tmp_dir}/observation-blocked"
+  mkdir -p "${observation_blocked_dir}"
+  printf "blocked" > "${observation_blocked_dir}/not-a-dir"
+  PATH="${fake_bin}:${PATH}" \
+    MODEL_STUB_MODE=supported \
+    AI_MODEL_DISCOVERY_DIR="${observation_blocked_dir}/routing" \
+    AI_MODEL_ROUTING_OBSERVATIONS="${observation_blocked_dir}/not-a-dir/observations.tsv" \
+    ./scripts/discover-ai-models.sh >/dev/null 2>"${observation_blocked_dir}/stderr.log"
+  grep -q "^AI_MODEL_ROUTING_OBSERVATIONS_STATUS='unavailable'$" "${observation_blocked_dir}/routing/latest.env"
+  grep -q "observation log unavailable" "${observation_blocked_dir}/stderr.log"
+  if grep -q "Permission denied" "${observation_blocked_dir}/stderr.log"; then
+    echo "[verify] unexpected raw permission warning in model routing observation log" >&2
+    exit 1
+  fi
+
   core_bin="${tmp_dir}/core-bin"
   mkdir -p "${core_bin}"
-  for tool in bash cat date dirname grep head mkdir sed; do
+  for tool in bash cat date dirname grep head mkdir mv rm sed tail touch wc; do
     ln -s "$(command -v "${tool}")" "${core_bin}/${tool}"
   done
 
@@ -507,7 +558,8 @@ echo "[verify] testing .omx archive custom result directory preservation..."
     printf 'old %s\n' "${index}" > "custom-results/old-${index}.md"
   done
   printf '# claude\n' > custom-results/claude-review-latest.md
-  printf '# run\n\n## Outputs\n\n- Claude result: custom-results/claude-review-latest.md\n' > custom-results/review-run-latest.md
+  printf '# gemini\n' > custom-results/gemini-review-20260509T000000.md
+  printf '# run\n\n* Review run id: 20260509T000000\n\n## Outputs\n\n* Claude result:   custom-results/claude-review-latest.md   \n' > custom-results/review-run-latest.md
   printf '# summary\n' > custom-results/review-summary-latest.md
   printf '# verdict\n' > custom-results/review-verdict-latest.md
   printf 'unsafe\n' > "custom-results/old unsafe.md"
@@ -522,6 +574,7 @@ echo "[verify] testing .omx archive custom result directory preservation..."
   test -f custom-results/review-summary-latest.md
   test -f custom-results/review-verdict-latest.md
   test -f custom-results/claude-review-latest.md
+  test -f custom-results/gemini-review-20260509T000000.md
   test -f "custom-results/old unsafe.md"
   test -d custom-results/archive
   grep -q "leaving unsafe artifact filename active" "${tmp_dir}/archive.err"

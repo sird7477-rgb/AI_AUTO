@@ -107,6 +107,11 @@ Before the first AI reviewer invocation in a run, `scripts/discover-ai-models.sh
 
 Model routing is role-first: choose the role/capability first, then resolve it against the current local CLI/runtime/account surface. Provider docs are reference material, not proof that this local CLI can use a model. Use `CLAUDE_REVIEW_ROLE`, `GEMINI_REVIEW_ROLE`, `CODEX_ARCHITECT_REVIEW_ROLE`, `CODEX_TEST_REVIEW_ROLE`, `CLAUDE_REVIEW_MODEL`, `GEMINI_REVIEW_MODEL`, `CODEX_ARCHITECT_REVIEW_MODEL`, `CODEX_TEST_REVIEW_MODEL`, or `CODEX_FALLBACK_MODEL` to override routing without editing scripts. Set `AI_MODEL_DISCOVERY=0` to use provider defaults.
 
+The active Codex/GPT leader is runtime-selected and should not claim to switch
+itself to another model mid-session. Use bounded child-agent or OMX lanes for
+cost/latency optimization, and keep final integration, verification, and
+completion claims with the leader or stronger reviewer roles.
+
 Long-running session operation is described in `docs/SESSION_QUALITY_PLAN.md`.
 Use it for model-routing cache policy, working memory capture, checkpoints, and
 token/context hygiene.

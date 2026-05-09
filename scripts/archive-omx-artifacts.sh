@@ -126,8 +126,23 @@ add_referenced_outputs() {
   while IFS= read -r referenced; do
     add_preserved_file "$referenced"
   done < <(
-    sed -n 's/^- .*: \(.*\.md\)$/\1/p' "$source_file"
+    sed -n 's/^[[:space:]]*[-*][[:space:]][^:][^:]*:[[:space:]]*\([^[:space:]]*\.md\)[[:space:]]*$/\1/p' "$source_file"
   )
+}
+
+add_run_id_outputs() {
+  local source_file="$1"
+  local run_id
+  local candidate
+
+  [ -f "$source_file" ] || return 0
+
+  run_id="$(sed -n 's/^[[:space:]]*[-*][[:space:]]Review run id:[[:space:]]*\([0-9]\{8\}T[0-9]\{6\}\)$/\1/p' "$source_file" | head -1)"
+  [ -n "$run_id" ] || return 0
+
+  while IFS= read -r -d '' candidate; do
+    add_preserved_file "$candidate"
+  done < <(find "$RESULT_DIR" -maxdepth 1 -type f -name "*-${run_id}.md" -print0 2>/dev/null)
 }
 
 latest_run="$(latest_file 'review-run-*.md')"
@@ -139,6 +154,7 @@ add_preserved_file "$latest_summary"
 add_preserved_file "$latest_verdict"
 add_referenced_outputs "$latest_run"
 add_referenced_outputs "$latest_summary"
+add_run_id_outputs "$latest_run"
 
 is_preserved_file() {
   local path="$1"

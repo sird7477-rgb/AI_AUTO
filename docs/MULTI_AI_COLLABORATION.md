@@ -73,6 +73,10 @@ Codex is the primary implementation agent.
 Responsibilities:
 
 - make small scoped code or documentation changes
+- orchestrate delegated child-agent lanes without claiming the active leader
+  model changed mid-session
+- use fast or lower-cost delegated lanes only for bounded lookup, scan, or
+  synthesis tasks, not final authority
 - follow repository instructions
 - avoid unrelated edits
 - run or respect the fixed verification command
@@ -237,7 +241,7 @@ Current handling:
 - disabled reviewer perspectives are not injected into the remaining external reviewer prompt
 - Codex/GPT fallback reviews run as separate degraded artifacts when reviewers are disabled, and the summary reports that coverage separately without counting it as independent external review coverage
 - Codex fallback execution uses `codex exec` when available and can be disabled for diagnostics with RUN_CODEX_FALLBACK_REVIEW=0
-- AI model routing is discovered at review-run start by `scripts/discover-ai-models.sh`; it writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`, then the runner applies provider-specific `--model` flags only when supported
+- AI model routing is discovered at review-run start by `scripts/discover-ai-models.sh`; it writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`, then the runner applies provider-specific `--model` flags only for explicit overrides or opt-in auto routing when supported
 - model routing is role-first: choose the role/capability first, then resolve it against the current local CLI/runtime/account surface
 - model routing avoids dated hardcoded model names; use env overrides such as CLAUDE_REVIEW_ROLE, GEMINI_REVIEW_ROLE, CLAUDE_REVIEW_MODEL, GEMINI_REVIEW_MODEL, CODEX_ARCHITECT_REVIEW_MODEL, CODEX_TEST_REVIEW_MODEL, or CODEX_FALLBACK_MODEL when a specific current route should be forced
 - provider docs are reference material only; local CLI support, account access, and OMX/Codex runtime metadata are the operational source of truth
