@@ -29,7 +29,13 @@ conflicts=()
 for path in \
   "AGENTS.md" \
   "docs/AI_MODEL_ROUTING.md" \
+  "docs/DATA_COMPLETION.md" \
+  "docs/DEPLOYMENT_COMPLETION.md" \
+  "docs/OBSERVABILITY_COMPLETION.md" \
+  "docs/PERFORMANCE_COMPLETION.md" \
+  "docs/SECURITY_COMPLETION.md" \
   "docs/SESSION_QUALITY_PLAN.md" \
+  "docs/UI_COMPLETION.md" \
   "docs/WORKFLOW.md" \
   "scripts/archive-omx-artifacts.sh" \
   "scripts/automation-doctor.sh" \
@@ -77,7 +83,13 @@ fi
 
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
 cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTING.md"
+cp "${TEMPLATE_DIR}/docs/DATA_COMPLETION.md" "${TARGET_DIR}/docs/DATA_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/DEPLOYMENT_COMPLETION.md" "${TARGET_DIR}/docs/DEPLOYMENT_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/OBSERVABILITY_COMPLETION.md" "${TARGET_DIR}/docs/OBSERVABILITY_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/PERFORMANCE_COMPLETION.md" "${TARGET_DIR}/docs/PERFORMANCE_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/SECURITY_COMPLETION.md" "${TARGET_DIR}/docs/SECURITY_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/SESSION_QUALITY_PLAN.md" "${TARGET_DIR}/docs/SESSION_QUALITY_PLAN.md"
+cp "${TEMPLATE_DIR}/docs/UI_COMPLETION.md" "${TARGET_DIR}/docs/UI_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 
 cp "${TEMPLATE_DIR}/scripts/archive-omx-artifacts.sh" "${TARGET_DIR}/scripts/archive-omx-artifacts.sh"
@@ -122,10 +134,11 @@ fi
 echo
 echo "Next steps:"
 echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
-echo "2. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
-echo "3. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "4. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
-echo "5. Run:"
+echo "2. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
+echo "3. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
+echo "4. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
+echo "5. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
+echo "6. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"
@@ -135,6 +148,6 @@ echo "Next AI request:"
 echo "  프로젝트 초기설정 해줘"
 echo
 echo "Equivalent detailed request:"
-echo "  프로젝트 요구사항을 인터뷰하고, .omx/domain-packs/에 설치된 선택 적용 표준팩 중"
-echo "  적용할 항목이 있는지 확정한 뒤, AGENTS.md, docs/WORKFLOW.md,"
-echo "  scripts/verify.sh를 프로젝트에 맞게 설정해줘"
+echo "  프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과"
+echo "  .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,"
+echo "  AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘"

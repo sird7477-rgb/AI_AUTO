@@ -6,6 +6,12 @@ This template contains the base files for a CLI-based AI development workflow.
 
 - AGENTS.md: repo-local agent operating rules
 - docs/WORKFLOW.md: project workflow documentation
+- docs/DEPLOYMENT_COMPLETION.md: optional deployment/release completion pack
+- docs/SECURITY_COMPLETION.md: optional security/auth completion pack
+- docs/DATA_COMPLETION.md: optional data/migration completion pack
+- docs/PERFORMANCE_COMPLETION.md: optional performance completion pack
+- docs/OBSERVABILITY_COMPLETION.md: optional observability/operations completion pack
+- docs/UI_COMPLETION.md: optional UI completion and verification pack
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
 - scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
 - scripts/verify.example.sh: onboarding placeholder; replace with project-specific verification
@@ -45,15 +51,34 @@ Then ask the AI:
 
 Equivalent detailed request:
 
-    프로젝트 요구사항을 인터뷰하고, .omx/domain-packs/에 설치된 선택 적용 표준팩 중
-    적용할 항목이 있는지 확정한 뒤, AGENTS.md, docs/WORKFLOW.md,
-    scripts/verify.sh를 프로젝트에 맞게 설정해줘
+    프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
+    .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
+    AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 The AI should interview the project owner, then update the generated files for the target project:
 
     AGENTS.md
     docs/WORKFLOW.md
     scripts/verify.sh
+
+During the interview, decide which completion dimensions apply:
+
+- UI: use `docs/UI_COMPLETION.md` when the final outcome includes a UI
+- Deployment: use `docs/DEPLOYMENT_COMPLETION.md` when release or operations
+  outside local development are in scope
+- Security: use `docs/SECURITY_COMPLETION.md` when auth, secrets, personal
+  data, privileged operations, or external integrations are in scope
+- Data: use `docs/DATA_COMPLETION.md` when persistent data, migrations, seed
+  data, import/export, or recovery are in scope
+- Performance: use `docs/PERFORMANCE_COMPLETION.md` when latency, throughput,
+  scale, cost, or resource targets are in scope
+- Observability: use `docs/OBSERVABILITY_COMPLETION.md` when health checks,
+  logs, metrics, traces, audits, or support diagnostics are in scope
+
+For dimensions that do not apply, record them as non-goals instead of merging
+their checks into the project workflow. After onboarding, unused completion pack
+files may be deleted from `docs/` to keep the target project documentation
+small; `automation-doctor` does not require optional completion packs to remain.
 
 The installed `scripts/verify.sh` is intentionally not project-ready. It exits
 non-zero until it is replaced with real checks for the target repository.

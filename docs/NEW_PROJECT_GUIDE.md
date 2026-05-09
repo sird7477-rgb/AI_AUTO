@@ -20,18 +20,20 @@ After `aiinit`, ask the AI:
 
 Equivalent detailed request:
 
-    프로젝트 요구사항을 인터뷰하고, .omx/domain-packs/에 설치된 선택 적용 표준팩 중
-    적용할 항목이 있는지 확정한 뒤, AGENTS.md, docs/WORKFLOW.md,
-    scripts/verify.sh를 프로젝트에 맞게 설정해줘
+    프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
+    .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
+    AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 This should start a short onboarding interview before real work begins. Capture:
 
 - project purpose and non-goals
+- selected and rejected completion packs from `docs/*_COMPLETION.md`
 - whether a domain pack applies, such as the Odoo pack for Odoo projects
 - stack and runtime commands
 - allowed and forbidden change types
 - required verification commands
 - smoke checks that prove the final result works
+- completion checks from selected completion packs
 - project-specific docs or domain constraints
 
 Then customize:
@@ -59,18 +61,20 @@ Use this request when asking Codex to initialize a new project:
     2. aiinit을 실행해.
     3. aiinit이 출력한 automation-doctor 결과를 확인해.
     4. 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰해.
-    5. .omx/domain-packs/에 설치된 선택 적용 표준팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
-    6. 적용하기로 확정한 표준팩이 있으면 필요한 항목만 반영해.
-    7. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
-    8. ./scripts/automation-doctor.sh를 실행해.
-    9. ./scripts/verify.sh를 실행해.
-    10. ./scripts/review-gate.sh를 실행해.
-    11. 커밋은 하지 말고 결과만 보고해.
+    5. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
+    6. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
+    7. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
+    8. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
+    9. ./scripts/automation-doctor.sh를 실행해.
+    10. ./scripts/verify.sh를 실행해.
+    11. ./scripts/review-gate.sh를 실행해.
+    12. 커밋은 하지 말고 결과만 보고해.
 
     완료 보고에는 아래를 포함해:
     - 변경 파일
     - automation-doctor 결과
     - 인터뷰에서 확정한 운영 지침
+    - 선택/제외한 완료팩과 선택한 팩의 완료/검증 기준
     - verify.sh에 넣은 검증 기준
     - verify 결과
     - review-gate 결과
@@ -81,7 +85,7 @@ Use this request when asking Codex to initialize a new project:
 
 ## Short request
 
-    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정하고, ./scripts/automation-doctor.sh, ./scripts/verify.sh, ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 프로젝트 목적, 스택, 완료 기준, 금지 범위, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
 
 ## Post-aiinit request
 
@@ -148,6 +152,8 @@ Recommended adoption flow:
 - `aiinit` runs the installed `./scripts/automation-doctor.sh` after template installation.
 - `./scripts/automation-doctor.sh` diagnoses automation readiness and suggests repair commands.
 - `./scripts/automation-doctor.sh --fix` may apply only safe non-overwriting setup fixes.
+- Optional `docs/*_COMPLETION.md` files are onboarding references. Delete the
+  packs rejected as non-goals if they would clutter the target project.
 - Project-specific agent instructions belong in `AGENTS.md`.
 - Project-specific workflow notes belong in `docs/WORKFLOW.md`.
 - Project-specific checks belong in `scripts/verify.sh`.

@@ -595,6 +595,14 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   cd "${target_dir}"
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
+  printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
+  printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
+  printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
+  printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
+  printf '# Performance Completion Pack\n' > docs/PERFORMANCE_COMPLETION.md
+  printf '# Security Completion Pack\n' > docs/SECURITY_COMPLETION.md
+  printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
+  printf '# UI Completion Pack\n' > docs/UI_COMPLETION.md
   printf '# Workflow\n' > docs/WORKFLOW.md
 
   for script in \
@@ -649,6 +657,14 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   cd "${target_dir}"
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
+  printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
+  printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
+  printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
+  printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
+  printf '# Performance Completion Pack\n' > docs/PERFORMANCE_COMPLETION.md
+  printf '# Security Completion Pack\n' > docs/SECURITY_COMPLETION.md
+  printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
+  printf '# UI Completion Pack\n' > docs/UI_COMPLETION.md
   printf '# Workflow\n' > docs/WORKFLOW.md
 
   for script in \
@@ -684,6 +700,49 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   test -d .omx/review-results/archive
   active_count="$(find .omx/review-results -maxdepth 1 -type f | wc -l | tr -d ' ')"
   test "${active_count}" -le 50
+)
+
+echo "[verify] testing automation-doctor allows missing optional completion packs..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_doctor_optional_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_doctor_optional_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  mkdir -p docs scripts .omx/reviewer-state
+  printf '# Agents\n' > AGENTS.md
+  printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
+  printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
+  printf '# Workflow\n' > docs/WORKFLOW.md
+
+  for script in \
+    archive-omx-artifacts.sh \
+    automation-doctor.sh \
+    collect-review-context.sh \
+    discover-ai-models.sh \
+    make-review-prompts.sh \
+    record-project-memory.sh \
+    review-gate.sh \
+    run-ai-reviews.sh \
+    summarize-ai-reviews.sh \
+    test-review-summary.sh \
+    write-session-checkpoint.sh
+  do
+    cp "${repo_root}/scripts/${script}" "scripts/${script}"
+  done
+  printf '#!/usr/bin/env bash\nexit 0\n' > scripts/verify.sh
+  chmod +x scripts/*.sh
+
+  DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh > "${tmp_dir}/doctor.out"
+  grep -q "Summary:" "${tmp_dir}/doctor.out"
+  ! grep -q "DATA_COMPLETION.md" "${tmp_dir}/doctor.out"
+  ! grep -q "UI_COMPLETION.md" "${tmp_dir}/doctor.out"
 )
 
 echo "[verify] testing project memory helper and session checkpoint..."
@@ -759,17 +818,35 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
   test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
+  test -f "${target_dir}/docs/DATA_COMPLETION.md"
+  test -f "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
+  test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
+  test -f "${target_dir}/docs/SECURITY_COMPLETION.md"
   test -f "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
+  test -f "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
+  grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
+  grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
+  grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
+  grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
   grep -q "Session Quality Plan" "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
+  grep -q "UI Completion Pack" "${target_dir}/docs/UI_COMPLETION.md"
+  grep -q "UI가 필요하면" "${target_dir}/docs/WORKFLOW.md"
   grep -q "Do not present guesses" "${target_dir}/AGENTS.md"
+  grep -q "applicable completion packs from" "${target_dir}/AGENTS.md"
   grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
-  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "templates/automation-base/README.md"
-  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "Delete unused" "${target_dir}/AGENTS.md"
+  grep -q ".omx/domain-packs/에 설치된 도메인팩" "templates/automation-base/README.md"
+  grep -q "unused completion pack" "templates/automation-base/README.md"
+  grep -q ".omx/domain-packs/에 설치된 도메인팩" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "rejected as non-goals" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "프로젝트 초기설정 해줘" "${installer_output}"
-  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "${installer_output}"
+  grep -q "docs/\\*_COMPLETION.md" "${installer_output}"
+  grep -q ".omx/domain-packs/에 설치된 도메인팩" "${installer_output}"
   test ! -e "${target_dir}/templates/domain-packs/odoo/README.md"
   test -f "${target_dir}/.omx/domain-packs/odoo/README.md"
   grep -q "Optional domain packs installed for onboarding reference" "${installer_output}"
@@ -787,6 +864,13 @@ grep -q "Project-Specific Rules" "templates/domain-packs/odoo/WORKFLOW.md"
 grep -q "localization baseline" "templates/domain-packs/odoo/verify-patterns.md"
 grep -Fq 'Path("custom_addons").rglob("*.xml")' "templates/domain-packs/odoo/verify-patterns.md"
 grep -q "도메인팩" "templates/automation-base/docs/WORKFLOW.md"
+grep -q "Deployment Completion Pack" "templates/automation-base/docs/DEPLOYMENT_COMPLETION.md"
+grep -q "Security Completion Pack" "templates/automation-base/docs/SECURITY_COMPLETION.md"
+grep -q "Data Completion Pack" "templates/automation-base/docs/DATA_COMPLETION.md"
+grep -q "Performance Completion Pack" "templates/automation-base/docs/PERFORMANCE_COMPLETION.md"
+grep -q "Observability Completion Pack" "templates/automation-base/docs/OBSERVABILITY_COMPLETION.md"
+grep -q "UI Completion Pack" "templates/automation-base/docs/UI_COMPLETION.md"
+grep -q "필요한 완료팩" "docs/NEW_PROJECT_GUIDE.md"
 
 echo "[verify] testing domain pack copy preserves existing references..."
 (
@@ -848,7 +932,7 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   git -c init.defaultBranch=main init -q "${target_dir}"
   ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
-  grep -q ".omx/domain-packs/에 설치된 선택 적용 표준팩" "${aiinit_output}"
+  grep -q ".omx/domain-packs/에 설치된 도메인팩" "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
 )
 

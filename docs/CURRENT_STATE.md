@@ -563,6 +563,8 @@ Completed capabilities:
 - ai-lab bootstrap first slice
 - workspace scanning
 - generic aiinit onboarding defaults with no Flask todo/testbed assumption
+- optional completion packs for UI, deployment, security, data, performance,
+  and observability
 
 No additional generic automation implementation is planned unless a real first-time setup or target-project initialization gap appears.
 

@@ -10,16 +10,33 @@
 
 1. `aiinit`으로 자동화 템플릿을 설치한다.
 2. 프로젝트 목적, 스택, 완료 기준, 금지 범위를 인터뷰한다.
-3. `.omx/domain-packs/`에 설치된 선택 적용 표준팩을 확인한다.
-4. 인터뷰로 적용할 표준팩과 제외할 표준팩을 확정한다.
-5. 적용 대상 도메인팩이 있으면 필요한 항목만 프로젝트 지침에 병합한다.
-6. `AGENTS.md`에 프로젝트별 에이전트 활동 지침을 반영한다.
-7. `docs/WORKFLOW.md`에 실제 개발 루프와 검증 기준을 반영한다.
-8. `scripts/verify.sh`를 프로젝트별 검증 명령으로 교체한다.
-9. `./scripts/automation-doctor.sh`를 실행해 자동화 파일 상태를 확인한다.
-10. `./scripts/verify.sh`를 실행해 프로젝트 검증이 통과하는지 확인한다.
-11. `./scripts/review-gate.sh`를 실행해 검증과 AI 리뷰 게이트를 통과시킨다.
-12. 필요하면 사용자 승인 후 baseline 커밋을 만든다.
+3. 최종 산출물에 적용할 완료팩을 확인한다. 적용하지 않는 항목은
+   non-goal로 기록하고, 프로젝트 문서에 불필요하면 해당
+   `docs/*_COMPLETION.md` 파일은 삭제해도 된다.
+4. UI가 필요하면 `docs/UI_COMPLETION.md`를 기준으로 UI 완료/검증 조건을
+   정한다.
+5. 배포/운영이 필요하면 `docs/DEPLOYMENT_COMPLETION.md`를 기준으로
+   release artifact, smoke check, rollback 조건을 정한다.
+6. 보안/인증/secret/개인정보가 범위에 있으면
+   `docs/SECURITY_COMPLETION.md`를 기준으로 trust boundary와 검증 조건을
+   정한다.
+7. 영속 데이터, 마이그레이션, seed/import/export가 범위에 있으면
+   `docs/DATA_COMPLETION.md`를 기준으로 데이터 완료/검증 조건을 정한다.
+8. 성능 목표가 있으면 `docs/PERFORMANCE_COMPLETION.md`를 기준으로 baseline,
+   target, 측정 명령을 정한다.
+9. 운영 진단, 로그, health check, metrics, traces, audit가 범위에 있으면
+   `docs/OBSERVABILITY_COMPLETION.md`를 기준으로 관측성 완료/검증 조건을
+   정한다.
+10. `.omx/domain-packs/`에 설치된 선택 적용 도메인팩을 확인한다.
+11. 인터뷰로 적용할 표준팩과 제외할 표준팩을 확정한다.
+12. 적용 대상 도메인팩이 있으면 필요한 항목만 프로젝트 지침에 병합한다.
+13. `AGENTS.md`에 프로젝트별 에이전트 활동 지침을 반영한다.
+14. `docs/WORKFLOW.md`에 실제 개발 루프와 검증 기준을 반영한다.
+15. `scripts/verify.sh`를 프로젝트별 검증 명령으로 교체한다.
+16. `./scripts/automation-doctor.sh`를 실행해 자동화 파일 상태를 확인한다.
+17. `./scripts/verify.sh`를 실행해 프로젝트 검증이 통과하는지 확인한다.
+18. `./scripts/review-gate.sh`를 실행해 검증과 AI 리뷰 게이트를 통과시킨다.
+19. 필요하면 사용자 승인 후 baseline 커밋을 만든다.
 
 ## 도메인팩
 
@@ -63,6 +80,12 @@
 - typecheck
 - build
 - CLI/API/UI smoke check
+- UI가 범위에 있으면 build, browser smoke, screenshot 또는 viewport check
+- 배포가 범위에 있으면 artifact build, config validation, post-deploy smoke 또는 rollback check
+- 보안이 범위에 있으면 allowed/denied path, secret/log redaction, dependency audit check
+- 데이터가 범위에 있으면 migration, seed, CRUD, import/export, backup/rollback check
+- 성능이 범위에 있으면 baseline/target 측정과 correctness regression check
+- 관측성이 범위에 있으면 health/readiness, log/error, metric/trace/audit smoke check
 - Docker 또는 서비스 부팅 확인
 - 프로젝트별 산출물 확인
 - `DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh`

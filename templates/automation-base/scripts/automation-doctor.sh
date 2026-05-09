@@ -296,6 +296,8 @@ ensure_dir "scripts"
 
 REQUIRED_FILES=(
   "AGENTS.md"
+  "docs/AI_MODEL_ROUTING.md"
+  "docs/SESSION_QUALITY_PLAN.md"
   "docs/WORKFLOW.md"
   "scripts/archive-omx-artifacts.sh"
   "scripts/review-gate.sh"
@@ -312,6 +314,10 @@ REQUIRED_FILES=(
 for path in "${REQUIRED_FILES[@]}"; do
   check_required_file "$path"
 done
+
+if [ "${IN_AI_LAB}" -eq 1 ]; then
+  check_required_file "docs/AI_ROLES.md"
+fi
 
 if [ -f "scripts/verify.sh" ]; then
   say_pass "required file exists: scripts/verify.sh"

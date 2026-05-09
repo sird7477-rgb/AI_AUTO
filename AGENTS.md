@@ -43,6 +43,7 @@ Use these files as the workflow baseline:
 - `docs/AI_ROLES.md`
 - `docs/AI_MODEL_ROUTING.md`
 - `docs/SESSION_QUALITY_PLAN.md`
+- applicable completion packs from `docs/*_COMPLETION.md`
 - `scripts/verify.sh`
 - `scripts/review-gate.sh`
 
