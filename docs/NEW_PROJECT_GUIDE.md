@@ -43,6 +43,9 @@ This should start a short onboarding interview before real work begins. Capture:
 - native subagent usage boundaries for lookup, implementation slices, testing,
   UX review, dependency research, and critique; final integration remains with
   the leader
+- resource-aware parallelism expectations: inspect local CPU, memory, disk, and
+  load first; then ask about shutdown history, concurrent heavy sessions,
+  thermal limits, and maximum acceptable parallelism
 - planning/interview intensity expectations for future work: `none`, `light`,
   `standard`, or `deep`
 - selected and rejected completion packs from `docs/*_COMPLETION.md`
@@ -83,15 +86,16 @@ Use this request when asking Codex to initialize a new project:
     6. 민감정보를 제외한 실패 패턴/개선사항을 .omx/feedback/queue.jsonl에 기록할지 확인해.
     7. 반복되는 비파괴 명령의 승인 마찰을 줄일 approved prefix/helper 기준을 정해. 단 destructive/credential/production 작업은 승인 대상으로 유지해.
     8. 서브에이전트 사용 기준을 정해. repo 탐색, 분리 가능한 구현, 테스트/UX/의존성 검토, critique는 위임 가능하지만 최종 통합과 완료 주장은 leader 책임으로 둬.
-    9. 작업 중 플랜/인터뷰 강도 기준을 정해. 작은 작업은 즉시 실행, 방향이 갈리는 작업은 짧은 질문, 장기 정책/아키텍처/검증 체계는 plan-first interview를 기본으로 해.
-    10. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
-    11. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
-    12. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
-    13. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
-    14. ./scripts/automation-doctor.sh를 실행해.
-    15. ./scripts/verify.sh를 실행해.
-    16. 확정한 리뷰 강도에 맞춰 ./scripts/review-gate.sh를 실행해.
-    17. 커밋은 하지 말고 결과만 보고해.
+    9. CPU/메모리/디스크/로드를 가능한 범위에서 직접 확인한 뒤, 우분투/WSL 강제 종료 이력, 동시에 돌아가는 무거운 세션, 발열 한계, 최대 병렬 작업 수를 인터뷰해서 resource-aware parallelism 기준을 정해.
+    10. 작업 중 플랜/인터뷰 강도 기준을 정해. 작은 작업은 즉시 실행, 방향이 갈리는 작업은 짧은 질문, 장기 정책/아키텍처/검증 체계는 plan-first interview를 기본으로 해.
+    11. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
+    12. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
+    13. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
+    14. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
+    15. ./scripts/automation-doctor.sh를 실행해.
+    16. ./scripts/verify.sh를 실행해.
+    17. 확정한 리뷰 강도에 맞춰 ./scripts/review-gate.sh를 실행해.
+    18. 커밋은 하지 말고 결과만 보고해.
 
     완료 보고에는 아래를 포함해:
     - 변경 파일

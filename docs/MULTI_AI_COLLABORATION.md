@@ -272,6 +272,29 @@ The generated `.omx/external-review/run-reviewers-latest.sh` script resolves the
 
 The generated runner shares `.omx/reviewer-state/` with normal review runs. If a reviewer is disabled, external preparation prints the disabled state and reset hint; reset the reviewer before running the external script if the interactive terminal should retry it.
 
+### Advisory warm reviewer sessions
+
+Warm Claude/Gemini sessions may be used during local development to reduce
+iteration cost, especially when the same change is being revised several times.
+This is an advisory lane only.
+
+Operational rule:
+
+- clear the reviewer context before each advisory request when the CLI supports
+  it, for example with `/clear`
+- send compact changed-file or question prompts instead of full review context
+  when possible
+- copy useful findings into tracked work, `.omx/feedback/queue.jsonl`, or the
+  next stateless review context if they should influence completion
+- do not count warm-session feedback as independent external review coverage
+- do not use warm-session feedback as a `review-gate` substitute for commit
+  candidates
+
+The final gate remains `./scripts/review-gate.sh`, which uses fresh
+non-interactive reviewer calls and writes reproducible artifacts under `.omx/`.
+Warm sessions optimize development feedback; they do not define the project
+trust boundary.
+
 ### Codex fallback review
 
 When an independent reviewer is disabled, Codex records separate fallback review artifacts:

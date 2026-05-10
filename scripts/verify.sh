@@ -804,8 +804,22 @@ PY
     --content "tokenizer behavior is documented without credentials" \
     --source verify-test >/dev/null
 
-  "${repo_root}/scripts/write-session-checkpoint.sh" >/dev/null
+  OMX_SESSION_OBJECTIVE="verify checkpoint progress capture" \
+    OMX_PLAN_FILE=".omx/plans/example.md" \
+    OMX_PLAN_STEP="axis 2" \
+    OMX_COMPLETED_STEPS="axis 1: no valid candidate" \
+    OMX_NEXT_STEP="pivot to defensive screen" \
+    OMX_CONTINUE_OR_ESCALATE="continue" \
+    OMX_CONTINUATION_REASON="within delegated scope" \
+    OMX_RESOURCE_PROFILE="constrained" \
+    OMX_PARALLELISM_NOTES="single lane while another review is active" \
+    "${repo_root}/scripts/write-session-checkpoint.sh" >/dev/null
   grep -q "Session Checkpoint" .omx/state/session-checkpoint.md
+  grep -q "Current Work" .omx/state/session-checkpoint.md
+  grep -q "Plan file: .omx/plans/example.md" .omx/state/session-checkpoint.md
+  grep -q "Current step: axis 2" .omx/state/session-checkpoint.md
+  grep -q "Decision: continue" .omx/state/session-checkpoint.md
+  grep -q "Mode: constrained" .omx/state/session-checkpoint.md
   grep -q "review-run-latest.md" .omx/state/session-checkpoint.md
   grep -q "claude: usage_limit" .omx/state/session-checkpoint.md
 )
@@ -905,7 +919,7 @@ echo "[verify] testing automation template installer..."
   grep -q "서브에이전트 사용 기준" "${target_dir}/docs/WORKFLOW.md"
   grep -q "Do not present guesses" "${target_dir}/AGENTS.md"
   grep -q "review intensity policy" "${target_dir}/AGENTS.md"
-  grep -q "subagent usage, and planning/interview intensity expectations" "${target_dir}/AGENTS.md"
+  grep -q "resource-aware parallelism" "${target_dir}/AGENTS.md"
   grep -q "Planning And Interview Escalation" "${target_dir}/AGENTS.md"
   grep -q '`none`' "${target_dir}/AGENTS.md"
   grep -q '`light`' "${target_dir}/AGENTS.md"

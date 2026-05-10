@@ -138,7 +138,7 @@ fi
 echo
 echo "Next steps:"
 echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
-echo "2. Confirm review intensity, feedback recording, approval-friction handling, subagent usage, and planning/interview intensity."
+echo "2. Confirm review intensity, feedback recording, approval-friction handling, subagent usage, resource-aware parallelism, and planning/interview intensity."
 echo "3. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
 echo "4. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
 echo "5. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."

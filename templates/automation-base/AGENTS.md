@@ -64,6 +64,9 @@ Clarify at minimum:
 - whether Codex/native subagents may be used for lookup, implementation slices,
   testing, UX review, dependency research, or critique; the leader keeps final
   integration and completion responsibility
+- resource-aware parallelism expectations: inspect local CPU, memory, disk, and
+  load evidence first, then ask about shutdown history, concurrent heavy
+  sessions, thermal limits, and maximum acceptable parallelism
 - planning/interview intensity expectations for future work: `none`, `light`,
   `standard`, or `deep`
 - whether the final outcome includes UI, and if not, record UI as a non-goal
@@ -101,11 +104,11 @@ Onboarding workflow:
    `(old)/`, `docs/`, `README.md`, or domain notes when present.
 3. Interview in order: outcome and non-goals; scope and safety boundaries; stack
    and commands; planning/interview intensity; completion packs; domain packs;
-   operating policy; verification evidence. Ask only for facts that cannot be
-   inferred safely from local files.
+   operating policy; resource constraints; verification evidence. Ask only for
+   facts that cannot be inferred safely from local files or runtime evidence.
 4. Confirm review intensity, feedback recording, approval-friction handling,
-   subagent usage, and planning/interview intensity expectations from
-   `docs/AUTOMATION_OPERATING_POLICY.md`.
+   subagent usage, resource-aware parallelism, and planning/interview intensity
+   expectations from `docs/AUTOMATION_OPERATING_POLICY.md`.
 5. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
    apply and which do not. If a pack applies, use it as reference material and
    merge only the applicable rules. Do not apply domain packs to unrelated

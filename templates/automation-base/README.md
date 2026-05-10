@@ -85,9 +85,16 @@ During the interview, decide which completion dimensions apply:
 - Approval friction: decide which recurring safe commands should use narrow
   approved prefixes or repo helpers; do not bypass approval for destructive,
   credentialed, or production actions
+- Advisory reviewers: decide whether warm Claude/Gemini sessions may be used
+  for local iteration. If allowed, they are advisory only, should be cleared
+  before each request when supported, and never replace stateless
+  `review-gate` for commit candidates.
 - Subagents: decide when native subagents may be used for bounded lookup,
   implementation slices, testing, UX, dependency research, or critique; the
   leader keeps final integration and completion responsibility
+- Resource-aware parallelism: inspect local CPU, memory, disk, and load first,
+  then ask about shutdown history, active heavy sessions, thermal limits, and
+  maximum acceptable parallelism
 - Planning/interview intensity: choose when to execute directly, ask one short
   question, or run a plan-first interview. Use `none`, `light`, `standard`, or
   `deep`.

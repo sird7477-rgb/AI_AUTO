@@ -33,6 +33,30 @@ De-escalate one level only when all are true:
 - the completion report explicitly states that `review-gate` was intentionally
   skipped under the project's review-intensity policy
 
+## Advisory Reviewer Sessions
+
+External reviewers may be kept open during local development only as an
+advisory optimization. This is useful for repeated small iterations where a
+human or agent wants fast feedback before the final gate.
+
+Rules:
+
+- Treat warm reviewer sessions as advisory only, not as commit-candidate
+  approval.
+- Clear the reviewer context before each advisory request when the CLI supports
+  it, for example with `/clear`.
+- Send a compact prompt or changed-file summary rather than the full review
+  context whenever possible.
+- Save any useful advisory finding in the work notes, diff, or feedback queue;
+  do not rely on hidden reviewer session memory as evidence.
+- Run the normal stateless `./scripts/review-gate.sh` for final commit-candidate
+  judgment whenever the project's review-intensity policy requires it.
+
+The final gate remains stateless because `review-gate` writes review context,
+prompts, manifests, outputs, disabled reviewer state, and summaries as
+reproducible artifacts. A warm session with `/clear` can reduce iteration cost,
+but it does not replace those artifacts.
+
 ## Failure-Pattern Feedback
 
 Record a feedback item when it has reuse value, not for every transient mistake.
@@ -101,6 +125,25 @@ Prefer role selection and reasoning effort over hardcoded model overrides.
 Inherit the current runtime model unless a concrete, current runtime-supported
 reason exists to override it.
 
+### Resource-Aware Parallelism
+
+Parallelism is adaptive, not a fixed target. Use fewer or no subagents when the
+host is resource constrained, another session is running heavy review or
+backtest work, or the environment has shown instability such as forced
+Ubuntu/WSL shutdowns.
+
+At onboarding time, inspect local resource evidence before asking the user:
+CPU count, memory, disk space, load average, and whether obvious heavy
+processes are already running. Then ask only for constraints the agent cannot
+reliably infer, such as prior Ubuntu/WSL forced shutdowns, thermal limits,
+concurrent long-running sessions, and the user's preferred maximum parallelism.
+
+Default to one lane for small edits and documentation updates. Increase
+parallelism only when the work is independent, bounded, and worth the extra CPU,
+memory, and I/O load. Record the chosen resource profile in
+`.omx/state/session-checkpoint.md` when a long-running workflow continues after
+a checkpoint.
+
 ## Planning And Interview Escalation
 
 Default posture: act directly when the request is clear, narrow, and reversible.
@@ -138,6 +181,28 @@ be inferred safely. Label assumptions explicitly. If the user says "바로 진�
 skip interview only for safe and reversible work; keep approval gates for
 destructive, credentialed, production, or materially scope-changing actions.
 
+## Autonomous Checkpoint Continuation
+
+Long-running autonomous workflows, including Ralph-style execution loops, should
+distinguish a useful checkpoint from a stop condition.
+
+If the user has already supplied the objective, boundaries, and decision
+principles, a failed search axis or empty candidate set is normally a pivot
+point. Record the result, choose the next reasonable axis, and continue within
+the delegated scope.
+
+Escalate to the user only when:
+
+- the next axis requires a new business or product decision
+- the next action exceeds the delegated scope or accepted principles
+- the action is destructive, credentialed, production-facing, or materially
+  riskier than the approved lane
+- configured time, cost, or resource limits are reached
+- the reasonable search space is exhausted and no useful fallback remains
+
+For strategy or research tasks, "no valid candidate found" means "change the
+search axis" unless one of the escalation conditions above is true.
+
 ## Onboarding Interview Structure
 
 After `aiinit`, interview before feature work. Keep the interview short but
@@ -157,7 +222,10 @@ Use this order:
    performance, and observability packs.
 6. Domain packs: select or reject installed `.omx/domain-packs/` references.
 7. Operating policy: review intensity, feedback recording, approval-friction
-   handling, and subagent usage expectations.
+   handling, subagent usage expectations, and resource-aware parallelism. Before
+   asking, inspect local CPU, memory, disk, and load evidence; then ask about
+   unknown hardware/runtime constraints such as WSL shutdown history or other
+   active heavy sessions.
 8. Verification contract: exact `scripts/verify.sh` checks and evidence needed
    before claiming completion.
 9. Decision record: write confirmed rules into `AGENTS.md`, `docs/WORKFLOW.md`,

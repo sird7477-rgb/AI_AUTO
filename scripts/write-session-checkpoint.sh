@@ -17,6 +17,18 @@ latest_manifest="$(latest_file ".omx/review-results" "review-run-*.md")"
 latest_verdict="$(latest_file ".omx/review-results" "review-verdict-*.md")"
 latest_routing=".omx/model-routing/latest.md"
 
+write_field() {
+  local label="$1"
+  local value="$2"
+  local fallback="$3"
+
+  if [ -n "$value" ]; then
+    echo "- ${label}: ${value}"
+  else
+    echo "- ${label}: ${fallback}"
+  fi
+}
+
 {
   echo "# Session Checkpoint"
   echo
@@ -31,6 +43,25 @@ latest_routing=".omx/model-routing/latest.md"
   else
     echo "- Not inside a git repository"
   fi
+  echo
+  echo "## Current Work"
+  echo
+  write_field "Objective" "${OMX_SESSION_OBJECTIVE:-}" "not set"
+  write_field "Plan file" "${OMX_PLAN_FILE:-}" "not set"
+  write_field "Current step" "${OMX_PLAN_STEP:-}" "not set"
+  write_field "Completed steps" "${OMX_COMPLETED_STEPS:-}" "not set"
+  write_field "Next step" "${OMX_NEXT_STEP:-}" "not set"
+  write_field "Blockers" "${OMX_BLOCKERS:-}" "none recorded"
+  echo
+  echo "## Continue Or Escalate"
+  echo
+  write_field "Decision" "${OMX_CONTINUE_OR_ESCALATE:-}" "continue"
+  write_field "Reason" "${OMX_CONTINUATION_REASON:-}" "within current scope unless a blocker is recorded"
+  echo
+  echo "## Resource Profile"
+  echo
+  write_field "Mode" "${OMX_RESOURCE_PROFILE:-}" "normal"
+  write_field "Parallelism notes" "${OMX_PARALLELISM_NOTES:-}" "not set"
   echo
   echo "## Latest Review Evidence"
   echo
