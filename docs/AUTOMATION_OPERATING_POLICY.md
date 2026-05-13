@@ -91,6 +91,19 @@ Use:
 Feedback is written to `.omx/feedback/queue.jsonl`. `.omx/` is ignored by git,
 so raw project feedback stays local by default.
 
+When a feedback item has been handled, mark it instead of deleting it:
+
+```bash
+./scripts/resolve-feedback.sh \
+  --repeat-key git:index-lock-permission \
+  --note "Template guidance updated"
+```
+
+Use `status=resolved` for accepted and completed work, `ignored` for items that
+were reviewed and intentionally rejected, and `deferred` when the item remains
+valid but is not in the current implementation scope. Missing status on older
+queue entries is treated as `open`.
+
 ## Subagent Utilization
 
 The leader owns scope, integration, final verification, and user-facing claims.
@@ -149,6 +162,13 @@ a checkpoint.
 Default posture: act directly when the request is clear, narrow, and reversible.
 Do not interview for routine edits, small fixes, local documentation updates,
 or commands the user already requested.
+
+Before implementation, inspect the expected command, module, and domain shape.
+If the work is likely to span multiple command groups, business domains, or
+long-lived maintenance areas, document the module boundaries in the plan before
+writing code. A single entrypoint is acceptable for small surfaces, but do not
+grow a monolithic command file when complexity is already visible during
+planning.
 
 Escalate to a short interview when one decision would materially change the
 result. Ask one concise question, then proceed from the answer.

@@ -26,6 +26,7 @@ for script in \
   scripts/make-review-prompts.sh \
   scripts/record-feedback.sh \
   scripts/record-project-memory.sh \
+  scripts/resolve-feedback.sh \
   scripts/review-gate.sh \
   scripts/run-ai-reviews.sh \
   scripts/summarize-ai-reviews.sh \
@@ -38,6 +39,7 @@ for script in \
   templates/automation-base/scripts/make-review-prompts.sh \
   templates/automation-base/scripts/record-feedback.sh \
   templates/automation-base/scripts/record-project-memory.sh \
+  templates/automation-base/scripts/resolve-feedback.sh \
   templates/automation-base/scripts/review-gate.sh \
   templates/automation-base/scripts/run-ai-reviews.sh \
   templates/automation-base/scripts/summarize-ai-reviews.sh \
@@ -50,6 +52,7 @@ done
 bash -n tools/ai-auto-init
 bash -n tools/ai-home
 bash -n tools/ai-register
+bash -n tools/feedback-collect
 bash -n tools/workspace-scan
 
 echo "[verify] testing review summary decisions..."
@@ -417,6 +420,14 @@ echo "[verify] testing review context edge cases..."
     exit 1
   fi
   grep -q "No staged or unstaged tracked diff detected" .omx/review-context/latest-review-context.md
+
+  mkdir -p .omx/plans
+  printf '# PRD Fixture\n\nModule boundaries are documented here.\n' > .omx/plans/prd-fixture.md
+  printf '# Test Spec Fixture\n\nRun focused verification.\n' > .omx/plans/test-spec-fixture.md
+  "${context_script}" >/dev/null
+  grep -q "Local Planning Artifacts" .omx/review-context/latest-review-context.md
+  grep -q "prd-fixture.md" .omx/review-context/latest-review-context.md
+  grep -q "test-spec-fixture.md" .omx/review-context/latest-review-context.md
 )
 
 echo "[verify] testing review run manifest and external disabled guidance..."
@@ -475,6 +486,210 @@ MARKER
   grep -q "claude: reason=usage_limit" "${tmp_dir}/results/review-run-fixture_run_id.md"
   grep -q "disabled reviewers for external runner" "${tmp_dir}/external.out"
   grep -q "RESET_DISABLED_AI_REVIEWERS=claude ./scripts/review-gate.sh" "${tmp_dir}/external.out"
+)
+
+echo "[verify] testing reviewer prompt safeguards and diagnostics..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_reviewer_safeguard_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_reviewer_safeguard_tmp EXIT
+
+  fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}" "${tmp_dir}/context" "${tmp_dir}/prompts" "${tmp_dir}/results" "${tmp_dir}/state"
+
+  cat > "${fake_bin}/claude" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --help)
+    echo "--print"
+    exit 0
+    ;;
+esac
+if grep -q "LONG_CLAUDE_PROMPT_MARKER"; then
+  printf '## Verdict\n\napprove\n'
+  exit 0
+fi
+printf 'missing stdin marker\n'
+exit 1
+STUB
+
+  cat > "${fake_bin}/gemini" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --help)
+    echo "--prompt"
+    exit 0
+    ;;
+esac
+if grep -q "Truncation Notice"; then
+  printf 'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n'
+  exit 1
+fi
+printf 'expected capped prompt on stdin\n'
+exit 1
+STUB
+
+  cat > "${fake_bin}/codex" <<'STUB'
+#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      out="${2:-}"
+      shift
+      ;;
+  esac
+  shift
+done
+cat >/dev/null
+if [ -n "$out" ]; then
+  printf '## Verdict\n\napprove_with_notes\n' > "$out"
+else
+  printf '## Verdict\n\napprove_with_notes\n'
+fi
+STUB
+
+  chmod +x "${fake_bin}/claude" "${fake_bin}/gemini" "${fake_bin}/codex"
+
+  printf '# Context\n' > "${tmp_dir}/context/latest-review-context.md"
+  {
+    printf '## Prompt\n\n'
+    printf 'LONG_CLAUDE_PROMPT_MARKER\n'
+    printf 'padding %.0s' $(seq 1 40)
+    printf '\n\n## Verdict\n\napprove\n'
+  } > "${tmp_dir}/prompts/claude-review.md"
+  {
+    printf '## Prompt\n\n'
+    printf 'GEMINI_PROMPT_BODY\n'
+    printf 'padding %.0s' $(seq 1 80)
+    printf '\n\n## Verdict\n\napprove\n'
+  } > "${tmp_dir}/prompts/gemini-review.md"
+
+  PATH="${fake_bin}:${PATH}" \
+    SKIP_CONTEXT_GENERATION=1 \
+    AI_MODEL_DISCOVERY=0 \
+    OUT_DIR="${tmp_dir}/results" \
+    CONTEXT_DIR="${tmp_dir}/context" \
+    PROMPT_DIR="${tmp_dir}/prompts" \
+    REVIEW_STATE_DIR="${tmp_dir}/state" \
+    CLAUDE_PROMPT_ARG_MAX_BYTES=10 \
+    GEMINI_PROMPT_ARG_MAX_BYTES=10 \
+    GEMINI_PROMPT_MAX_BYTES=120 \
+    REVIEW_RETRY_LIMIT=1 \
+    ./scripts/run-ai-reviews.sh > "${tmp_dir}/reviews.out"
+
+  test -f "${tmp_dir}/prompts/gemini-review-capped-"*.md
+  grep -q "reason=retry_exhausted" "${tmp_dir}/state/gemini.disabled"
+  grep -q "class=oom" "${tmp_dir}/state/gemini.disabled"
+  grep -q "exit_status=1" "${tmp_dir}/state/gemini.disabled"
+  grep -q "preflight=prompt_bytes=" "${tmp_dir}/state/gemini.disabled"
+  grep -q "prompt_flag=yes" "${tmp_dir}/state/gemini.disabled"
+  grep -q "api_env=missing" "${tmp_dir}/state/gemini.disabled"
+)
+
+echo "[verify] testing focused review context budgeting..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_prompt_budget_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_prompt_budget_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}/repo"
+  cd "${tmp_dir}/repo"
+  printf 'tracked\n' > README.md
+  git add README.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m seed
+  printf 'changed\n' > README.md
+  printf 'new file\n' > new.txt
+  mkdir -p .omx/review-context .omx/review-prompts
+  {
+    printf '# Large Context\n\n'
+    printf 'context padding %.0s\n' $(seq 1 300)
+  } > .omx/review-context/latest-review-context.md
+
+  REVIEW_CONTEXT_MAX_BYTES=200 OUT_DIR=.omx/review-prompts "${repo_root}/scripts/make-review-prompts.sh" .omx/review-context/latest-review-context.md >/dev/null
+
+  test -f .omx/review-prompts/focused-review-context.md
+  grep -q "Focused Review Context" .omx/review-prompts/focused-review-context.md
+  grep -q "new.txt" .omx/review-prompts/focused-review-context.md
+  grep -q "exceeded REVIEW_CONTEXT_MAX_BYTES=200" .omx/review-prompts/focused-review-context.md
+  grep -q "Bounded Actual Diff" .omx/review-prompts/focused-review-context.md
+  grep -q "diff --git a/README.md b/README.md" .omx/review-prompts/focused-review-context.md
+  grep -q "+changed" .omx/review-prompts/focused-review-context.md
+  grep -q "+new file" .omx/review-prompts/focused-review-context.md
+)
+
+echo "[verify] testing reviewer network failure classification..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_reviewer_network_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_reviewer_network_tmp EXIT
+
+  fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}" "${tmp_dir}/context" "${tmp_dir}/prompts" "${tmp_dir}/results" "${tmp_dir}/state"
+
+  cat > "${fake_bin}/claude" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --help)
+    echo "--print --permission-mode"
+    exit 0
+    ;;
+esac
+printf 'ECONNREFUSED while connecting to reviewer API\n'
+exit 1
+STUB
+
+  cat > "${fake_bin}/codex" <<'STUB'
+#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      out="${2:-}"
+      shift
+      ;;
+  esac
+  shift
+done
+cat >/dev/null
+if [ -n "$out" ]; then
+  printf '## Verdict\n\napprove_with_notes\n' > "$out"
+else
+  printf '## Verdict\n\napprove_with_notes\n'
+fi
+STUB
+
+  chmod +x "${fake_bin}/claude" "${fake_bin}/codex"
+  printf '# Context\n' > "${tmp_dir}/context/latest-review-context.md"
+  printf '## Prompt\n\nreview me\n' > "${tmp_dir}/prompts/claude-review.md"
+  printf '## Prompt\n\nreview me\n' > "${tmp_dir}/prompts/gemini-review.md"
+
+  PATH="${fake_bin}:${PATH}" \
+    SKIP_CONTEXT_GENERATION=1 \
+    AI_MODEL_DISCOVERY=0 \
+    OUT_DIR="${tmp_dir}/results" \
+    CONTEXT_DIR="${tmp_dir}/context" \
+    PROMPT_DIR="${tmp_dir}/prompts" \
+    REVIEW_STATE_DIR="${tmp_dir}/state" \
+    RUN_GEMINI_REVIEW=0 \
+    REVIEW_RETRY_LIMIT=1 \
+    ./scripts/run-ai-reviews.sh > "${tmp_dir}/reviews.out"
+
+  grep -q "reason=retry_exhausted" "${tmp_dir}/state/claude.disabled"
+  grep -q "class=network_or_sandbox" "${tmp_dir}/state/claude.disabled"
+  grep -q "print_flag=yes" "${tmp_dir}/state/claude.disabled"
 )
 
 echo "[verify] testing .omx review artifact archiving..."
@@ -617,10 +832,11 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     automation-doctor.sh \
     collect-review-context.sh \
     discover-ai-models.sh \
-    make-review-prompts.sh \
-    record-feedback.sh \
-    record-project-memory.sh \
-    review-gate.sh \
+      make-review-prompts.sh \
+      record-feedback.sh \
+      record-project-memory.sh \
+      resolve-feedback.sh \
+      review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -681,10 +897,11 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     automation-doctor.sh \
     collect-review-context.sh \
     discover-ai-models.sh \
-    make-review-prompts.sh \
-    record-feedback.sh \
-    record-project-memory.sh \
-    review-gate.sh \
+      make-review-prompts.sh \
+      record-feedback.sh \
+      record-project-memory.sh \
+      resolve-feedback.sh \
+      review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -737,10 +954,11 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     automation-doctor.sh \
     collect-review-context.sh \
     discover-ai-models.sh \
-    make-review-prompts.sh \
-    record-feedback.sh \
-    record-project-memory.sh \
-    review-gate.sh \
+      make-review-prompts.sh \
+      record-feedback.sh \
+      record-project-memory.sh \
+      resolve-feedback.sh \
+      review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -851,6 +1069,23 @@ items = [json.loads(line) for line in Path(".omx/feedback/queue.jsonl").read_tex
 assert items[-1]["type"] == "failure_pattern"
 assert items[-1]["repeat_key"] == "git:index-lock-permission"
 assert items[-1]["surface"] == "git"
+assert items[-1]["status"] == "open"
+PY
+
+  "${repo_root}/scripts/resolve-feedback.sh" \
+    --repeat-key git:index-lock-permission \
+    --note "Template guidance updated" \
+    --source verify-test >/dev/null
+  python3 - <<'PY'
+import json
+from pathlib import Path
+items = [json.loads(line) for line in Path(".omx/feedback/queue.jsonl").read_text(encoding="utf-8").splitlines()]
+item = items[-1]
+assert item["repeat_key"] == "git:index-lock-permission"
+assert item["status"] == "resolved"
+assert item["status_note"] == "Template guidance updated"
+assert item["status_source"] == "verify-test"
+assert "resolved_at" in item
 PY
 
   "${repo_root}/scripts/record-feedback.sh" \
@@ -859,19 +1094,55 @@ PY
     --summary "Small documentation changes triggered unnecessary external reviews" \
     --severity low >/dev/null
 
+  if command -v flock >/dev/null 2>&1; then
+    (
+      exec 8>".omx/feedback/queue.jsonl.lockfile"
+      flock 8
+      sleep 3
+    ) &
+    lock_holder=$!
+    sleep 0.2
+    if OMX_FEEDBACK_QUEUE_LOCK_TIMEOUT_SECONDS=1 "${repo_root}/scripts/resolve-feedback.sh" \
+      --repeat-key review:intensity-too-high > "${tmp_dir}/feedback-lock.out" 2>&1; then
+      kill "$lock_holder" 2>/dev/null || true
+      echo "[verify] resolve-feedback succeeded while queue lock was held"
+      exit 1
+    fi
+    wait "$lock_holder"
+  else
+    mkdir .omx/feedback/queue.jsonl.lock
+    if OMX_FEEDBACK_QUEUE_LOCK_TIMEOUT_SECONDS=1 "${repo_root}/scripts/resolve-feedback.sh" \
+      --repeat-key review:intensity-too-high > "${tmp_dir}/feedback-lock.out" 2>&1; then
+      echo "[verify] resolve-feedback succeeded while queue lock was held"
+      exit 1
+    fi
+    rmdir .omx/feedback/queue.jsonl.lock
+  fi
+  grep -q "could not lock feedback queue" "${tmp_dir}/feedback-lock.out"
+
   if "${repo_root}/scripts/record-feedback.sh" --repeat-key secret --summary "token=abc" >/dev/null 2>&1; then
     echo "[verify] feedback helper accepted secret-like content"
     exit 1
   fi
-  "${repo_root}/scripts/record-feedback.sh" \
-    --repeat-key parser:ast-token \
-    --summary "AST token handling needed a clearer parser note" \
-    --severity low >/dev/null
-  if "${repo_root}/scripts/record-feedback.sh" --repeat-key bad --summary "ok" --severity severe >/dev/null 2>&1; then
-    echo "[verify] feedback helper accepted invalid severity"
-    exit 1
-  fi
-)
+    "${repo_root}/scripts/record-feedback.sh" \
+      --repeat-key parser:ast-token \
+      --summary "AST token handling needed a clearer parser note" \
+      --severity low >/dev/null
+    if "${repo_root}/scripts/record-feedback.sh" --repeat-key bad --summary "ok" --severity severe >/dev/null 2>&1; then
+      echo "[verify] feedback helper accepted invalid severity"
+      exit 1
+    fi
+    cp .omx/feedback/queue.jsonl "${tmp_dir}/queue.before"
+    printf '{bad json\n' >> .omx/feedback/queue.jsonl
+    if "${repo_root}/scripts/resolve-feedback.sh" --repeat-key review:intensity-too-high >/dev/null 2>&1; then
+      echo "[verify] resolve-feedback accepted malformed queue JSON"
+      exit 1
+    fi
+    if cmp -s .omx/feedback/queue.jsonl "${tmp_dir}/queue.before"; then
+      echo "[verify] malformed queue fixture was not appended"
+      exit 1
+    fi
+  )
 
 echo "[verify] testing automation template installer..."
 (
@@ -905,6 +1176,7 @@ echo "[verify] testing automation template installer..."
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
   grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
@@ -1059,6 +1331,7 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   target_dir="${workspace_dir}/registered-project"
   spaced_dir="${workspace_dir}/registered project with spaces"
   linked_dir="${workspace_dir}/linked-worktree"
+  nested_dir="${workspace_dir}/groups/team/product/nested-project"
   outside_dir="${tmp_dir}/outside-project"
   missing_dir="${tmp_dir}/missing-project"
   registry_file="${tmp_dir}/projects.tsv"
@@ -1071,6 +1344,7 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   git -C "${target_dir}" commit -q -m "seed"
   git -C "${target_dir}" worktree add -q "${linked_dir}" HEAD
   git -c init.defaultBranch=main init -q "${spaced_dir}"
+  git -c init.defaultBranch=main init -q "${nested_dir}"
   git -c init.defaultBranch=main init -q "${outside_dir}"
 
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register "${target_dir}" > "${tmp_dir}/register.out"
@@ -1122,6 +1396,41 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
 
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${scan_output}"
   grep -q "outside-project" "${scan_output}"
+  if grep -q "nested-project" "${scan_output}"; then
+    echo "workspace-scan found deep nested project at default depth"
+    exit 1
+  fi
+  AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=5 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${scan_output}"
+  grep -q "nested-project" "${scan_output}"
+  if AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=0 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${tmp_dir}/invalid-depth.out" 2>&1; then
+    echo "workspace-scan accepted invalid discovery depth"
+    exit 1
+  fi
+  grep -q "must be a positive integer" "${tmp_dir}/invalid-depth.out"
+  mkdir -p "${target_dir}/.omx/feedback" "${outside_dir}/.omx/feedback"
+  mkdir -p "${nested_dir}/.omx/feedback"
+  printf '%s\n' '{"created_at":"2026-05-11T00:00:00Z","repeat_key":"registered:item","severity":"high","summary":"registered queue item","type":"improvement"}' > "${target_dir}/.omx/feedback/queue.jsonl"
+  printf '%s\n' '{"created_at":"2026-05-11T00:00:01Z","repeat_key":"outside:item","severity":"medium","status":"resolved","summary":"outside queue item","type":"failure_pattern"}' > "${outside_dir}/.omx/feedback/queue.jsonl"
+  printf '%s\n' '{"created_at":"2026-05-11T00:00:02Z","repeat_key":"nested:item","severity":"low","summary":"nested queue item","type":"improvement"}' > "${nested_dir}/.omx/feedback/queue.jsonl"
+  feedback_output="${tmp_dir}/feedback.out"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-collect "${workspace_dir}" > "${feedback_output}"
+  grep -q "registered:item" "${feedback_output}"
+  grep -q "outside:item" "${feedback_output}"
+  if grep -q "nested:item" "${feedback_output}"; then
+    echo "feedback-collect found deep nested project at default depth"
+    exit 1
+  fi
+  AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=5 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-collect "${workspace_dir}" > "${feedback_output}"
+  grep -q "nested:item" "${feedback_output}"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${tmp_dir}/empty-registry.tsv" ./tools/feedback-collect "${nested_dir}" > "${tmp_dir}/feedback-single-repo.out"
+  grep -q "nested:item" "${tmp_dir}/feedback-single-repo.out"
+  if AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=bad AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-collect "${workspace_dir}" > "${tmp_dir}/feedback-invalid-depth.out" 2>&1; then
+    echo "feedback-collect accepted invalid discovery depth"
+    exit 1
+  fi
+  grep -q "must be a positive integer" "${tmp_dir}/feedback-invalid-depth.out"
+  grep -q "open" "${feedback_output}"
+  grep -q "resolved" "${feedback_output}"
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-register --prune > "${tmp_dir}/prune.out"
   grep -q "removed: 1" "${tmp_dir}/prune.out"
   if grep -q "${missing_dir}" "${registry_file}"; then
@@ -1146,6 +1455,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
+  ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
@@ -1155,6 +1465,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
+  test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
   test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
   grep -q "AI_AUTO shell integration" "${tmp_home}/.bashrc"
@@ -1250,6 +1561,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
+  ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/bootstrap-ai-lab.sh --fix >/dev/null
@@ -1259,6 +1571,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
+  test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
@@ -1278,6 +1591,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
+  ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   DOCTOR_SKIP_DIRTY_CHECK=1 HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/automation-doctor.sh --fix >/dev/null
@@ -1287,6 +1601,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
+  test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
@@ -1299,6 +1614,7 @@ for script in \
   make-review-prompts.sh \
   record-feedback.sh \
   record-project-memory.sh \
+  resolve-feedback.sh \
   review-gate.sh \
   run-ai-reviews.sh \
   summarize-ai-reviews.sh \

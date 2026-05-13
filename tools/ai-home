@@ -71,6 +71,7 @@ Move there:
 
 Useful commands:
   AI_AUTO --status
+  feedback-collect
   workspace-scan
   ai-register /path/to/existing-repo
   cd "\$(AI_AUTO --path)" && ./scripts/bootstrap-ai-lab.sh

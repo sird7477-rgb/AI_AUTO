@@ -26,7 +26,13 @@ This repository keeps source copies of helper commands that are linked into `~/b
 
 - `workspace-scan`
   - Scans git repositories under `~/workspace`
+  - Set `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=N` to discover repositories nested deeper than the default depth of 2
   - Shows branch, dirty status, automation script availability, latest commit, remote presence, and path
+
+- `feedback-collect`
+  - Lists local `.omx/feedback/queue.jsonl` items from `OMX_FEEDBACK_QUEUE_FILE`, the current git root, registered projects, and workspace-discovered repositories
+  - Uses the same `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH` setting for workspace discovery
+  - Treats missing item status as `open`
 
 Repo-local command installed by the automation template:
 
@@ -62,6 +68,7 @@ Expected links:
     ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
     ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
+    ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
 To recreate the links:
@@ -76,6 +83,7 @@ Manual equivalent:
     ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/ai-home
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
+    ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
 
 Make sure `~/bin` is in PATH:

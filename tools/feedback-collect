@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
+PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
+WORKSPACE="${1:-${HOME:-}/workspace}"
+WORKSPACE_SCAN_MAX_DEPTH="${AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH:-2}"
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'USAGE'
+Usage: feedback-collect [workspace-path] [repo-path...]
+
+Collect project-local AI_AUTO feedback queue items from:
+  - OMX_FEEDBACK_QUEUE_FILE when set
+  - the current git root
+  - repositories registered in ~/.local/state/ai-auto/projects.tsv
+  - git repositories discovered under the workspace path
+  - explicit repo paths passed after the workspace path
+
+Set AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH to discover repositories nested deeper
+under the workspace path. The default is 2.
+
+Output columns:
+  STATUS CREATED SEVERITY TYPE REPEAT_KEY QUEUE_PATH SUMMARY
+
+Missing item status is treated as open.
+USAGE
+    exit 0
+    ;;
+esac
+
+case "$WORKSPACE_SCAN_MAX_DEPTH" in
+  ''|*[!0-9]*|0)
+    echo "AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH must be a positive integer"
+    exit 2
+    ;;
+esac
+
+declare -A QUEUE_PATHS
+
+add_queue_file() {
+  local queue_file="$1"
+  [ -n "$queue_file" ] || return 0
+  [ -f "$queue_file" ] || return 0
+  queue_file="$(cd "$(dirname "$queue_file")" && pwd -P)/$(basename "$queue_file")"
+  QUEUE_PATHS["$queue_file"]=1
+}
+
+add_repo() {
+  local repo="$1"
+  [ -n "$repo" ] || return 0
+  if git -C "$repo" rev-parse --show-toplevel >/dev/null 2>&1; then
+    repo="$(git -C "$repo" rev-parse --show-toplevel)"
+    add_queue_file "${repo}/.omx/feedback/queue.jsonl"
+  fi
+}
+
+if [ -n "${OMX_FEEDBACK_QUEUE_FILE:-}" ]; then
+  add_queue_file "${OMX_FEEDBACK_QUEUE_FILE}"
+fi
+
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+  add_repo "$(git rev-parse --show-toplevel)"
+fi
+
+add_repo "$WORKSPACE"
+
+if [ -f "$PROJECT_REGISTRY" ]; then
+  while IFS=$'\t' read -r _registered_at path _name _branch _origin; do
+    add_repo "$path"
+  done < "$PROJECT_REGISTRY"
+fi
+
+if [ -d "$WORKSPACE" ]; then
+  while IFS= read -r gitdir; do
+    add_repo "$(dirname "$gitdir")"
+  done < <(find "$WORKSPACE" -mindepth 1 -maxdepth "$WORKSPACE_SCAN_MAX_DEPTH" \( -type d -o -type f \) -name .git 2>/dev/null | sort)
+fi
+
+shift || true
+for repo in "$@"; do
+  add_repo "$repo"
+done
+
+if [ "${#QUEUE_PATHS[@]}" -eq 0 ]; then
+  echo "No feedback queue files found."
+  exit 0
+fi
+
+python3 - "${!QUEUE_PATHS[@]}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+print("STATUS\tCREATED\tSEVERITY\tTYPE\tREPEAT_KEY\tQUEUE_PATH\tSUMMARY")
+
+rows = []
+for queue_path in sys.argv[1:]:
+    path = Path(queue_path)
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as exc:
+            rows.append(("invalid", "", "", "", f"line:{lineno}", str(path), f"invalid JSON: {exc}"))
+            continue
+        rows.append(
+            (
+                item.get("status", "open"),
+                item.get("created_at", ""),
+                item.get("severity", ""),
+                item.get("type", ""),
+                item.get("repeat_key", ""),
+                str(path),
+                item.get("summary", ""),
+            )
+        )
+
+for row in sorted(rows, key=lambda value: (value[1], value[4], value[5])):
+    print("\t".join(str(field).replace("\t", " ") for field in row))
+PY

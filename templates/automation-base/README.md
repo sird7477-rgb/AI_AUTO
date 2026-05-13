@@ -21,6 +21,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/make-review-prompts.sh: generates reviewer prompts
 - scripts/record-feedback.sh: appends sanitized failure/improvement feedback
 - scripts/record-project-memory.sh: appends sanitized durable memory entries
+- scripts/resolve-feedback.sh: marks feedback queue items resolved, ignored, or deferred
 - scripts/run-ai-reviews.sh: runs available AI reviewers
 - scripts/summarize-ai-reviews.sh: summarizes reviewer verdicts
 - scripts/test-review-summary.sh: fixture tests for review verdict decisions

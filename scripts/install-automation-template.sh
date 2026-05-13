@@ -45,6 +45,7 @@ for path in \
   "scripts/make-review-prompts.sh" \
   "scripts/record-feedback.sh" \
   "scripts/record-project-memory.sh" \
+  "scripts/resolve-feedback.sh" \
   "scripts/run-ai-reviews.sh" \
   "scripts/summarize-ai-reviews.sh" \
   "scripts/test-review-summary.sh" \
@@ -102,6 +103,7 @@ cp "${TEMPLATE_DIR}/scripts/discover-ai-models.sh" "${TARGET_DIR}/scripts/discov
 cp "${TEMPLATE_DIR}/scripts/make-review-prompts.sh" "${TARGET_DIR}/scripts/make-review-prompts.sh"
 cp "${TEMPLATE_DIR}/scripts/record-feedback.sh" "${TARGET_DIR}/scripts/record-feedback.sh"
 cp "${TEMPLATE_DIR}/scripts/record-project-memory.sh" "${TARGET_DIR}/scripts/record-project-memory.sh"
+cp "${TEMPLATE_DIR}/scripts/resolve-feedback.sh" "${TARGET_DIR}/scripts/resolve-feedback.sh"
 cp "${TEMPLATE_DIR}/scripts/run-ai-reviews.sh" "${TARGET_DIR}/scripts/run-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/summarize-ai-reviews.sh" "${TARGET_DIR}/scripts/summarize-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/test-review-summary.sh" "${TARGET_DIR}/scripts/test-review-summary.sh"

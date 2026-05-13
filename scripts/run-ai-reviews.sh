@@ -12,7 +12,10 @@ REVIEW_TIMEOUT_KILL_AFTER_SECONDS="${REVIEW_TIMEOUT_KILL_AFTER_SECONDS:-5}"
 CLAUDE_REVIEW_TIMEOUT_SECONDS="${CLAUDE_REVIEW_TIMEOUT_SECONDS:-300}"
 GEMINI_REVIEW_TIMEOUT_SECONDS="${GEMINI_REVIEW_TIMEOUT_SECONDS:-${REVIEW_TIMEOUT_SECONDS}}"
 CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS="${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS:-300}"
+CLAUDE_PROMPT_ARG_MAX_BYTES="${CLAUDE_PROMPT_ARG_MAX_BYTES:-100000}"
 GEMINI_PROMPT_ARG_MAX_BYTES="${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
+GEMINI_PROMPT_MAX_BYTES="${GEMINI_PROMPT_MAX_BYTES:-750000}"
+REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-750000}"
 REVIEW_RETRY_LIMIT="${REVIEW_RETRY_LIMIT:-3}"
 REVIEW_OUTPUT_MODE="${REVIEW_OUTPUT_MODE:-file}"
 SKIP_CONTEXT_GENERATION="${SKIP_CONTEXT_GENERATION:-0}"
@@ -33,7 +36,7 @@ else
   CONTEXT_FILE="$(OUT_DIR="${CONTEXT_DIR}" INCLUDE_UNTRACKED_CONTENT="${REVIEW_INCLUDE_UNTRACKED_CONTENT}" ./scripts/collect-review-context.sh)"
 
   echo "[review] generating review prompts..."
-  OUT_DIR="${PROMPT_DIR}" ./scripts/make-review-prompts.sh "${CONTEXT_FILE}" >/dev/null
+  OUT_DIR="${PROMPT_DIR}" REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES}" ./scripts/make-review-prompts.sh "${CONTEXT_FILE}" >/dev/null
 fi
 
 CLAUDE_PROMPT="${PROMPT_DIR}/claude-review.md"
@@ -178,7 +181,10 @@ cd "\${repo_root}"
 : "\${CLAUDE_REVIEW_TIMEOUT_SECONDS:=${CLAUDE_REVIEW_TIMEOUT_SECONDS}}"
 : "\${GEMINI_REVIEW_TIMEOUT_SECONDS:=${GEMINI_REVIEW_TIMEOUT_SECONDS}}"
 : "\${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS:=${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}}"
+: "\${CLAUDE_PROMPT_ARG_MAX_BYTES:=${CLAUDE_PROMPT_ARG_MAX_BYTES}}"
 : "\${GEMINI_PROMPT_ARG_MAX_BYTES:=${GEMINI_PROMPT_ARG_MAX_BYTES}}"
+: "\${GEMINI_PROMPT_MAX_BYTES:=${GEMINI_PROMPT_MAX_BYTES}}"
+: "\${REVIEW_CONTEXT_MAX_BYTES:=${REVIEW_CONTEXT_MAX_BYTES}}"
 : "\${REVIEW_RETRY_LIMIT:=${REVIEW_RETRY_LIMIT}}"
 : "\${REVIEW_OUTPUT_MODE:=tee}"
 : "\${SKIP_CONTEXT_GENERATION:=1}"
@@ -203,7 +209,10 @@ REVIEW_TIMEOUT_KILL_AFTER_SECONDS="\${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" \\
 CLAUDE_REVIEW_TIMEOUT_SECONDS="\${CLAUDE_REVIEW_TIMEOUT_SECONDS}" \\
 GEMINI_REVIEW_TIMEOUT_SECONDS="\${GEMINI_REVIEW_TIMEOUT_SECONDS}" \\
 CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS="\${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}" \\
+CLAUDE_PROMPT_ARG_MAX_BYTES="\${CLAUDE_PROMPT_ARG_MAX_BYTES}" \\
 GEMINI_PROMPT_ARG_MAX_BYTES="\${GEMINI_PROMPT_ARG_MAX_BYTES}" \\
+GEMINI_PROMPT_MAX_BYTES="\${GEMINI_PROMPT_MAX_BYTES}" \\
+REVIEW_CONTEXT_MAX_BYTES="\${REVIEW_CONTEXT_MAX_BYTES}" \\
 REVIEW_RETRY_LIMIT="\${REVIEW_RETRY_LIMIT}" \\
 REVIEW_OUTPUT_MODE="\${REVIEW_OUTPUT_MODE}" \\
 SKIP_CONTEXT_GENERATION="\${SKIP_CONTEXT_GENERATION}" \\
@@ -329,6 +338,79 @@ disable_reviewer() {
   echo "[review] ${reviewer} review disabled until user re-enables it: ${reason} (${details})"
 }
 
+failure_details() {
+  local output_file="$1"
+  local status="$2"
+  local class="unknown"
+  local tail_text
+
+  if grep -qiE 'heap out of memory|JavaScript heap|allocation failed|out of memory|ENOMEM' "${output_file}" 2>/dev/null; then
+    class="oom"
+  elif grep -qiE 'trust folder|trusted folder|trust.*workspace|workspace.*trust|skip-trust' "${output_file}" 2>/dev/null; then
+    class="trust_required"
+  elif grep -qiE 'ECONNREFUSED|ConnectionRefused|connection refused|network.*blocked|sandbox|read-only file system|EROFS' "${output_file}" 2>/dev/null; then
+    class="network_or_sandbox"
+  elif grep -qiE 'timed out|timeout|SIGTERM|Killed' "${output_file}" 2>/dev/null; then
+    class="timeout_or_killed"
+  elif grep -qiE 'auth|login|credential|permission denied|unauthorized|forbidden' "${output_file}" 2>/dev/null; then
+    class="auth_or_permission"
+  elif is_limit_failure "${output_file}"; then
+    class="usage_limit"
+  elif [ "${status}" -eq 0 ]; then
+    class="no_usable_verdict"
+  else
+    class="command_failed"
+  fi
+
+  tail_text="$(tail -20 "${output_file}" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' | cut -c1-500)"
+  printf 'class=%s; exit_status=%s; tail=%s' "${class}" "${status}" "${tail_text:-none}"
+  if [ -n "${REVIEWER_PREFLIGHT_DETAILS:-}" ]; then
+    printf '; preflight=%s' "${REVIEWER_PREFLIGHT_DETAILS}"
+  fi
+}
+
+preflight_details() {
+  local reviewer="$1"
+  local help_text="$2"
+  local prompt_file="$3"
+  local prompt_bytes
+  prompt_bytes="$(wc -c < "${prompt_file}")"
+
+  case "${reviewer}" in
+    gemini)
+      printf 'prompt_bytes=%s' "${prompt_bytes}"
+      if printf '%s\n' "${help_text}" | grep -q -- '--prompt'; then
+        printf ',prompt_flag=yes'
+      else
+        printf ',prompt_flag=no'
+      fi
+      if printf '%s\n' "${help_text}" | grep -q -- '--skip-trust'; then
+        printf ',skip_trust=yes'
+      else
+        printf ',skip_trust=no'
+      fi
+      if [ -n "${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}" ]; then
+        printf ',api_env=present'
+      else
+        printf ',api_env=missing'
+      fi
+      ;;
+    claude)
+      printf 'prompt_bytes=%s' "${prompt_bytes}"
+      if printf '%s\n' "${help_text}" | grep -q -- '--print'; then
+        printf ',print_flag=yes'
+      else
+        printf ',print_flag=no'
+      fi
+      if printf '%s\n' "${help_text}" | grep -q -- '--permission-mode'; then
+        printf ',permission_mode=yes'
+      else
+        printf ',permission_mode=no'
+      fi
+      ;;
+  esac
+}
+
 write_disabled_result() {
   local reviewer="$1"
   local output_file="$2"
@@ -418,7 +500,7 @@ run_with_retries() {
     fi
 
     if is_limit_failure "${output_file}"; then
-      disable_reviewer "${reviewer}" "usage_limit" "reviewer reported a session, weekly, quota, or rate limit"
+      disable_reviewer "${reviewer}" "usage_limit" "$(failure_details "${output_file}" "${status}")"
       return "${status}"
     fi
 
@@ -431,7 +513,7 @@ run_with_retries() {
     attempt=$((attempt + 1))
   done
 
-  disable_reviewer "${reviewer}" "retry_exhausted" "no usable response after ${REVIEW_RETRY_LIMIT} attempts"
+  disable_reviewer "${reviewer}" "retry_exhausted" "$(failure_details "${output_file}" "${status}")"
   return "${status}"
 }
 
@@ -466,8 +548,10 @@ MSG
 
   set +e
   claude_help="$(claude --help 2>/dev/null)"
+  REVIEWER_PREFLIGHT_DETAILS="$(preflight_details claude "${claude_help}" "${CLAUDE_PROMPT}")"
   if printf '%s\n' "${claude_help}" | grep -q -- '--print'; then
     claude_args=(--print)
+    claude_prompt_bytes="$(wc -c < "${CLAUDE_PROMPT}")"
 
     if printf '%s\n' "${claude_help}" | grep -q -- '--no-session-persistence'; then
       claude_args+=(--no-session-persistence)
@@ -481,7 +565,11 @@ MSG
       claude_args+=(--model "${CLAUDE_REVIEW_MODEL}")
     fi
 
-    run_with_retries "claude" "${CLAUDE_OUT}" run_review_command "${CLAUDE_OUT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}" "$(cat "${CLAUDE_PROMPT}")"
+    if [ "${claude_prompt_bytes}" -gt "${CLAUDE_PROMPT_ARG_MAX_BYTES}" ]; then
+      run_with_retries "claude" "${CLAUDE_OUT}" run_review_command_stdin "${CLAUDE_OUT}" "${CLAUDE_PROMPT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}"
+    else
+      run_with_retries "claude" "${CLAUDE_OUT}" run_review_command "${CLAUDE_OUT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}" "$(cat "${CLAUDE_PROMPT}")"
+    fi
   else
     run_with_retries "claude" "${CLAUDE_OUT}" run_review_command_stdin "${CLAUDE_OUT}" "${CLAUDE_PROMPT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude
   fi
@@ -545,14 +633,42 @@ MSG
 
   set +e
   gemini_help="$(gemini --help 2>/dev/null)"
+  gemini_prompt_file="${GEMINI_PROMPT}"
+  gemini_prompt_bytes="$(wc -c < "${GEMINI_PROMPT}")"
+  REVIEWER_PREFLIGHT_DETAILS="$(preflight_details gemini "${gemini_help}" "${GEMINI_PROMPT}")"
+  if [ "${gemini_prompt_bytes}" -gt "${GEMINI_PROMPT_MAX_BYTES}" ]; then
+    gemini_prompt_file="${PROMPT_DIR}/gemini-review-capped-${TIMESTAMP}.md"
+    {
+      echo "# Gemini Review Prompt"
+      echo
+      echo "The original Gemini prompt was ${gemini_prompt_bytes} bytes and exceeded GEMINI_PROMPT_MAX_BYTES=${GEMINI_PROMPT_MAX_BYTES}."
+      echo "The review context below is truncated to avoid Gemini CLI Node/V8 heap exhaustion."
+      echo "If the truncated context is insufficient, return request_changes with the missing context noted."
+      echo
+      python3 - "${GEMINI_PROMPT}" "${GEMINI_PROMPT_MAX_BYTES}" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+limit = int(sys.argv[2])
+sys.stdout.write(path.read_bytes()[:limit].decode("utf-8", errors="ignore"))
+PY
+      echo
+      echo
+      echo "## Truncation Notice"
+      echo
+      echo "Gemini prompt truncated by run-ai-reviews.sh. Required output remains: ## Verdict with approve, approve_with_notes, or request_changes."
+    } > "${gemini_prompt_file}"
+    echo "[review] Gemini prompt capped: ${gemini_prompt_file}"
+  fi
   if printf '%s\n' "${gemini_help}" | grep -q -- '--prompt'; then
-    gemini_prompt_bytes="$(wc -c < "${GEMINI_PROMPT}")"
+    gemini_prompt_bytes="$(wc -c < "${gemini_prompt_file}")"
 
     if [ "${gemini_prompt_bytes}" -gt "${GEMINI_PROMPT_ARG_MAX_BYTES}" ]; then
       gemini_args=(--prompt "Review the Markdown prompt provided on stdin.")
       gemini_stdin_mode=1
     else
-      gemini_args=(--prompt "$(cat "${GEMINI_PROMPT}")")
+      gemini_args=(--prompt "$(cat "${gemini_prompt_file}")")
       gemini_stdin_mode=0
     fi
 
@@ -573,12 +689,12 @@ MSG
     fi
 
     if [ "${gemini_stdin_mode}" -eq 1 ]; then
-      run_with_retries "gemini" "${GEMINI_OUT}" run_review_command_stdin "${GEMINI_OUT}" "${GEMINI_PROMPT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini "${gemini_args[@]}"
+      run_with_retries "gemini" "${GEMINI_OUT}" run_review_command_stdin "${GEMINI_OUT}" "${gemini_prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini "${gemini_args[@]}"
     else
       run_with_retries "gemini" "${GEMINI_OUT}" run_review_command "${GEMINI_OUT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini "${gemini_args[@]}"
     fi
   else
-    run_with_retries "gemini" "${GEMINI_OUT}" run_review_command_stdin "${GEMINI_OUT}" "${GEMINI_PROMPT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini
+    run_with_retries "gemini" "${GEMINI_OUT}" run_review_command_stdin "${GEMINI_OUT}" "${gemini_prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini
   fi
   status=$?
   set -e

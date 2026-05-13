@@ -14,6 +14,10 @@ case "${1:-}" in
     echo "  ~/.local/state/ai-auto/projects.tsv"
     echo "  override with AI_AUTO_PROJECT_REGISTRY_FILE=/path/to/projects.tsv"
     echo
+    echo "Discovery depth:"
+    echo "  default: 2"
+    echo "  override with AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=N"
+    echo
     echo "Examples:"
     echo "  workspace-scan"
     echo "  workspace-scan ~/workspace"
@@ -24,6 +28,14 @@ esac
 WORKSPACE="${1:-$HOME/workspace}"
 STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
 PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
+WORKSPACE_SCAN_MAX_DEPTH="${AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH:-2}"
+
+case "$WORKSPACE_SCAN_MAX_DEPTH" in
+  ''|*[!0-9]*|0)
+    echo "AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH must be a positive integer"
+    exit 2
+    ;;
+esac
 
 if [ ! -d "$WORKSPACE" ]; then
   echo "Workspace not found: $WORKSPACE"
@@ -115,7 +127,7 @@ while IFS= read -r gitdir; do
   repo="$(cd "$(dirname "$gitdir")" && pwd -P)"
   PRINTED_PATHS["$repo"]=1
   print_repo "$repo"
-done < <(find "$WORKSPACE" -mindepth 1 -maxdepth 2 \( -type d -o -type f \) -name .git | sort)
+done < <(find "$WORKSPACE" -mindepth 1 -maxdepth "$WORKSPACE_SCAN_MAX_DEPTH" \( -type d -o -type f \) -name .git | sort)
 
 if [ -f "$PROJECT_REGISTRY" ]; then
   while IFS=$'\t' read -r _registered_at path _name _branch _origin; do

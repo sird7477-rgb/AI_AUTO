@@ -175,20 +175,45 @@ write_diff() {
     echo '```'
   fi
   echo
-  if [ -f "${OUT_DIR}/latest-verify-output.txt" ]; then
-    echo "## Latest Verification Output"
-    echo
-    echo '```text'
-    sed -n '1,240p' "${OUT_DIR}/latest-verify-output.txt"
-    echo '```'
-    echo
-  fi
+    if [ -f "${OUT_DIR}/latest-verify-output.txt" ]; then
+      echo "## Latest Verification Output"
+      echo
+      echo '```text'
+      echo "### Head"
+      sed -n '1,160p' "${OUT_DIR}/latest-verify-output.txt"
+      echo
+      echo "### Tail"
+      tail -120 "${OUT_DIR}/latest-verify-output.txt"
+      echo '```'
+      echo
+    fi
   echo "## Workflow Rule"
   echo
   echo "- Before completion, run ./scripts/verify.sh"
   echo "- If verification fails, the task is not complete."
   echo "- Do not commit without user approval."
   echo
+  echo "## Local Planning Artifacts"
+  echo
+  plan_files=()
+  if [ -d ".omx/plans" ]; then
+    while IFS= read -r file; do
+      plan_files+=("$file")
+    done < <(find .omx/plans -maxdepth 1 -type f \( -name 'prd-*.md' -o -name 'test-spec-*.md' \) | sort | tail -6)
+  fi
+  if [ "${#plan_files[@]}" -eq 0 ]; then
+    echo "No local PRD or test-spec planning artifacts found."
+    echo
+  else
+    for file in "${plan_files[@]}"; do
+      echo "### $file"
+      echo
+      echo '```markdown'
+      sed -n '1,180p' "$file"
+      echo '```'
+      echo
+    done
+  fi
   echo "## Relevant Files"
   echo
   for file in AGENTS.md docs/WORKFLOW.md docs/AI_ROLES.md; do
