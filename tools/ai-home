@@ -73,6 +73,7 @@ Useful commands:
   AI_AUTO --status
   ai-auto-template-status /path/to/project
   ai-refactor-scan /path/to/project
+  ai-rebuild-plan /path/to/project
   feedback-collect
   workspace-scan
   ai-register /path/to/existing-repo

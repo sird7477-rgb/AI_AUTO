@@ -163,6 +163,10 @@ Default posture: act directly when the request is clear, narrow, and reversible.
 Do not interview for routine edits, small fixes, local documentation updates,
 or commands the user already requested.
 
+Use `docs/INTERVIEW_PLAN_LAYER.md` as the contract for interview and planning
+work. Its core rule is decision-width minimization: do not minimize user
+questions by increasing hidden AI assumptions.
+
 Autonomy applies only after the user has clearly requested execution. Do not
 treat feasibility questions, advice requests, recommendations, brainstorming,
 or "could we/should we/how would we" prompts as permission to edit files, run
@@ -201,8 +205,12 @@ Escalate to a plan-first interview when the task involves any of these:
   irreversible behavior
 - unclear success criteria, unknown users, or final deliverables that cannot be
   inferred from local evidence
-- a user explicitly asks for recommendation, review, discussion, interview,
-  planning, or "don't assume"
+- a user explicitly asks for interview, planning, or "don't assume"
+
+Recommendation, review, discussion, and brainstorming requests are answer-only
+by default. Escalate them to interview/planning only when a user decision is
+required to change outcome, risk, cost, durability, approval boundary, or
+execution scope.
 
 Use this intensity scale:
 
@@ -214,9 +222,15 @@ Use this intensity scale:
 | `deep` | High-risk, long-lived, or strategic work | Run a staged interview, produce a plan/test shape, optionally request reviewer/subagent critique, then execute only the approved/safe slice |
 
 When interviewing, first inspect local files and ask only for facts that cannot
-be inferred safely. Label assumptions explicitly. If the user says "바로 진행",
-skip interview only for safe and reversible work; keep approval gates for
-destructive, credentialed, production, or materially scope-changing actions.
+be inferred safely. Prefer many narrow, concrete questions over a few broad
+questions. Map answers into concrete plan fields, track ambiguity with the
+`docs/INTERVIEW_PLAN_LAYER.md` ambiguity rules, and apply its
+`ready_to_execute` gate only for full-schema lanes such as initial onboarding,
+`deep` interviews, rebuild planning, migration, production, credentialed, data,
+or materially scope-changing work. Label assumptions explicitly. If the user
+says "바로 진행", skip interview only for safe and reversible work; keep
+approval gates for destructive, credentialed, production, or materially
+scope-changing actions.
 
 ## Autonomous Checkpoint Continuation
 
@@ -342,9 +356,15 @@ instead of continuing to append every operational lesson directly.
 
 ## Onboarding Interview Structure
 
-After `aiinit`, interview before feature work. Keep the interview short but
+For new template installation, run `aiinit` when requested, then use
+`docs/INTERVIEW_PLAN_LAYER.md` before feature work. For existing initialized
+projects or registry-only onboarding, start from local evidence and the
+interview layer without reinstalling the template. Keep the interview narrow but
 complete enough to replace the template placeholders with project-specific
-rules.
+rules. Inspect local evidence first, ask one decision at a time, map each answer
+to the target project baseline, and stop at a plan/report boundary before
+commits, pushes, destructive actions, credentials, production, or materially
+scope-changing execution.
 
 Use this order:
 

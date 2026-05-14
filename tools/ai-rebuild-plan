@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_DIR=""
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-rebuild-plan [target-repo]
+
+Create a read-only rebuild preflight report for a repository.
+
+This command does not modify files. It checks the target repository, reports
+automation/template/domain-pack status, runs ai-refactor-scan, and prints the
+minimum gates that must be satisfied before any rebuild execution.
+
+Examples:
+  ai-rebuild-plan
+  ai-rebuild-plan ~/workspace/trading-bot
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      echo
+      usage
+      exit 2
+      ;;
+    *)
+      if [ -n "$TARGET_DIR" ]; then
+        echo "Unexpected extra argument: $1"
+        echo
+        usage
+        exit 2
+      fi
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ "$#" -gt 0 ]; then
+  if [ -n "$TARGET_DIR" ]; then
+    echo "Unexpected extra argument: $1"
+    echo
+    usage
+    exit 2
+  elif [ "$#" -gt 1 ]; then
+    echo "Unexpected extra argument: $2"
+    echo
+    usage
+    exit 2
+  fi
+  TARGET_DIR="$1"
+fi
+
+TARGET_DIR="${TARGET_DIR:-$(pwd)}"
+
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Target directory does not exist: ${TARGET_DIR}"
+  exit 1
+fi
+
+target_abs="$(cd "$TARGET_DIR" && pwd -P)"
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  case "$LINK_TARGET" in
+    /*)
+      SOURCE="$LINK_TARGET"
+      ;;
+    *)
+      SOURCE="${SOURCE_DIR}/${LINK_TARGET}"
+      ;;
+  esac
+done
+
+TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
+
+if ! git_root="$(git -C "$target_abs" rev-parse --show-toplevel 2>/dev/null)"; then
+  echo "Target is not inside a git repository: ${target_abs}"
+  exit 1
+fi
+
+git_root="$(cd "$git_root" && pwd -P)"
+
+echo "AI_AUTO Rebuild Plan"
+echo "target: ${git_root}"
+echo
+
+echo "1. Trigger decision"
+echo "- 리빌드 플랜 / rebuild plan: read-only diagnosis and planning only."
+echo "- 리빌드 실행 / rebuild run: not started by this command."
+echo "- Do not treat a domain pack as execution approval."
+echo
+
+echo "2. Repository preflight"
+branch="$(git -C "$git_root" branch --show-current 2>/dev/null || true)"
+if [ -n "$branch" ]; then
+  echo "- branch: ${branch}"
+else
+  echo "- branch: detached or unavailable"
+fi
+
+if [ -n "$(git -C "$git_root" status --short)" ]; then
+  echo "- worktree: dirty"
+  git -C "$git_root" status --short
+else
+  echo "- worktree: clean"
+fi
+
+for required_path in AGENTS.md docs/WORKFLOW.md scripts/verify.sh scripts/review-gate.sh; do
+  if [ -f "${git_root}/${required_path}" ]; then
+    echo "- present: ${required_path}"
+  else
+    echo "- missing: ${required_path}"
+  fi
+done
+echo
+
+echo "3. Automation template status"
+if [ -x "${AI_LAB_ROOT}/tools/ai-auto-template-status" ]; then
+  "${AI_LAB_ROOT}/tools/ai-auto-template-status" "$git_root" || true
+else
+  echo "- skipped: ai-auto-template-status is not executable"
+fi
+echo
+
+echo "4. Domain pack status"
+if [ -d "${git_root}/.omx/domain-packs" ]; then
+  echo "- installed references:"
+  find "${git_root}/.omx/domain-packs" -mindepth 1 -maxdepth 1 -type d -printf '  - %f\n' | sort
+else
+  echo "- installed references: none"
+fi
+
+if [ -d "${AI_LAB_ROOT}/templates/domain-packs" ]; then
+  echo "- available source packs:"
+  find "${AI_LAB_ROOT}/templates/domain-packs" -mindepth 1 -maxdepth 1 -type d -printf '  - %f\n' | sort
+else
+  echo "- available source packs: none"
+fi
+echo "- required decision: selected / rejected / deferred domain packs must be named in the plan."
+echo
+
+echo "5. Refactor scan"
+if [ -x "${AI_LAB_ROOT}/tools/ai-refactor-scan" ]; then
+  "${AI_LAB_ROOT}/tools/ai-refactor-scan" --top 10 "$git_root" || true
+else
+  echo "- skipped: ai-refactor-scan is not executable"
+fi
+echo
+
+echo "6. Execution gates"
+echo "- Stop here unless the user explicitly asks for 리빌드 실행 / rebuild run."
+echo "- Before execution: update/validate domain pack assumptions, lock existing behavior with tests or smoke checks, define module boundaries, and state non-goals."
+echo "- During execution: keep diffs small and reversible."
+echo "- Before completion: inspect diff, run ./scripts/verify.sh, and run ./scripts/review-gate.sh for structural/workflow changes."

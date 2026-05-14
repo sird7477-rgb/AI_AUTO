@@ -106,6 +106,7 @@ Out of scope:
 
 - `docs/AI_ROLES.md` describes the AI roles used when exercising the workflow.
 - `docs/WORKFLOW.md` describes the required Codex/OMX verification and review-gate loop.
+- `docs/INTERVIEW_PLAN_LAYER.md` defines the reusable interview, plan, ambiguity, and execution-gate contract.
 - `docs/CURRENT_STATE.md` is the current handoff document for completed automation capabilities, known limitations, and next-stage boundaries.
 - `docs/GLOBAL_TOOLS.md` describes `aiinit`, `workspace-scan`, and bootstrap helper setup.
 - `docs/NEW_PROJECT_GUIDE.md` explains how to apply the generic automation template to another repository.

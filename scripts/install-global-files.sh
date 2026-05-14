@@ -23,6 +23,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/ai-register
   ~/bin/ai-auto-template-status
   ~/bin/ai-refactor-scan
+  ~/bin/ai-rebuild-plan
   ~/bin/feedback-collect
   ~/bin/workspace-scan
 
@@ -244,6 +245,7 @@ check_source_helper "${ROOT}/tools/ai-home"
 check_source_helper "${ROOT}/tools/ai-register"
 check_source_helper "${ROOT}/tools/ai-auto-template-status"
 check_source_helper "${ROOT}/tools/ai-refactor-scan"
+check_source_helper "${ROOT}/tools/ai-rebuild-plan"
 check_source_helper "${ROOT}/tools/feedback-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
 
@@ -266,6 +268,7 @@ else
   install_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   install_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   install_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
+  install_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"
   install_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_shell_function

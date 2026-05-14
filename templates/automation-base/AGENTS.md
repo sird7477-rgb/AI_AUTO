@@ -51,43 +51,12 @@ Use `docs/AUTOMATION_OPERATING_POLICY.md` for the full policy. In short:
 
 ## Onboarding Rule
 
-After `aiinit`, interview the project owner before the first real task and
-record the project-specific operating rules.
-
-Clarify at minimum:
-
-- project purpose and non-goals
-- users, final deliverable, and what "done" means
-- review intensity policy: `lightweight`, `standard`, or `strict`
-- whether sanitized failure-pattern feedback may be recorded in `.omx/feedback/queue.jsonl`
-- which recurring safe commands may use narrow approved prefixes to reduce
-  approval friction, without bypassing destructive or credentialed approvals
-- whether Codex/native subagents may be used for lookup, implementation slices,
-  testing, UX review, dependency research, or critique; the leader keeps final
-  integration and completion responsibility
-- resource-aware parallelism expectations: inspect local CPU, memory, disk, and
-  load evidence first, then ask about shutdown history, concurrent heavy
-  sessions, thermal limits, and maximum acceptable parallelism
-- planning/interview intensity expectations for future work: `none`, `light`,
-  `standard`, or `deep`
-- operational readiness rules: required inputs, fail-closed blockers, accepted
-  operating artifacts, read-only/auth/network preflight, sandbox-vs-real-network
-  evidence, and analysis-only fallback boundaries
-- Incident Ops rules from `docs/INCIDENT_OPS.md`: dry-run/field-test monitoring,
-  automatic action classes, incident log fields, UI field-test evidence, and
-  heartbeat/quiet/active-incident reporting intervals
-- plan management rules: current plan index, TODO reconciliation, checkpoint
-  update expectations, and where detailed runbooks or long checklists should live
-- guidance context budget: what belongs in `AGENTS.md` versus linked docs
-- whether the final outcome includes UI, and if not, record UI as a non-goal
-- which completion packs in `docs/*_COMPLETION.md` apply or do not apply
-- which installed domain packs under `.omx/domain-packs/` apply or do not apply
-- stack and runtime commands
-- allowed and forbidden change types
-- required verification commands
-- smoke checks that prove the final result works
-- completion criteria from selected `docs/*_COMPLETION.md` packs
-- project-specific documentation or domain constraints
+After template installation or existing-project onboarding, interview the
+project owner before the first real task and record project-specific operating
+rules. The canonical onboarding checklist is in
+`docs/AUTOMATION_OPERATING_POLICY.md`; question shape, answer mapping,
+ambiguity, and plan/run boundaries are governed by
+`docs/INTERVIEW_PLAN_LAYER.md`.
 
 Optional domain packs may be available under `.omx/domain-packs/` after
 `aiinit`. They are onboarding references only and are ignored by git by default.
@@ -97,6 +66,13 @@ Then update:
 - `AGENTS.md`
 - `docs/WORKFLOW.md`
 - `scripts/verify.sh`
+
+Record at minimum the review intensity policy, resource-aware parallelism
+expectations, planning/interview intensity expectations (`none`, `light`,
+`standard`, or `deep`), and any project-specific completion-pack decisions in
+those files. Include sandbox-vs-real-network evidence, Incident Ops rules, and
+plan index/TODO reconciliation boundaries when the project may run dry-run,
+field-test, networked, or long-running work.
 
 Run `./scripts/automation-doctor.sh`, `./scripts/verify.sh`, and
 `./scripts/review-gate.sh` before treating the automation baseline as ready.
@@ -112,19 +88,13 @@ Onboarding workflow:
 1. Confirm the current path and git status.
 2. Inspect existing project materials as references, including folders such as
    `(old)/`, `docs/`, `README.md`, or domain notes when present.
-3. Interview in order: outcome and non-goals; scope and safety boundaries; stack
-   and commands; planning/interview intensity; operational readiness and
-   fail-closed inputs; Incident Ops monitoring/logging/reporting expectations;
-   plan index/TODO reconciliation; AGENTS-vs-linked-docs guidance budget;
-   completion packs; domain packs; operating policy; resource constraints;
-   verification evidence. Ask only for facts that cannot be inferred safely from
-   local files or runtime evidence.
+3. Run the canonical onboarding checklist from
+   `docs/AUTOMATION_OPERATING_POLICY.md` using the interview mechanics in
+   `docs/INTERVIEW_PLAN_LAYER.md`. Ask only for facts that cannot be inferred
+   safely from local files or runtime evidence.
 4. Confirm review intensity, feedback recording, approval-friction handling,
-   subagent usage, resource-aware parallelism, planning/interview intensity,
-   operational readiness fail-closed rules, external API sandbox-vs-real-network
-   evidence rules, Incident Ops automatic action and periodic reporting
-   expectations, and plan/TODO reconciliation expectations from
-   `docs/AUTOMATION_OPERATING_POLICY.md` and `docs/INCIDENT_OPS.md`.
+   subagent usage, resource-aware parallelism, operational readiness,
+   Incident Ops, and plan/TODO reconciliation expectations from the linked docs.
 5. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
    apply and which do not. If a pack applies, use it as reference material and
    merge only the applicable rules. Do not apply domain packs to unrelated
@@ -140,6 +110,16 @@ Onboarding workflow:
 12. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
 13. Do not commit unless the user explicitly asks for a commit.
 
+When the user asks for `리빌드 플랜`, `리빌딩 플랜`, `rebuild plan`, or
+`ai-rebuild-plan`, treat it as read-only planning. Inspect the repository,
+template drift, domain-pack references, refactoring candidates, and behavior
+locking gaps, then stop at a plan/report boundary. Do not modify files.
+
+When the user asks for `리빌드 실행`, `리빌딩 실행`, or `rebuild run`, require
+an approved rebuild plan, refreshed domain-pack assumptions, behavior-locking
+tests or smoke checks, explicit module boundaries, and the normal verify/review
+gates before execution.
+
 ## Required References
 
 Use these files as the workflow baseline:
@@ -148,6 +128,7 @@ Use these files as the workflow baseline:
 - `docs/AI_MODEL_ROUTING.md`
 - `docs/AUTOMATION_OPERATING_POLICY.md`
 - `docs/DOMAIN_PACKS.md`
+- `docs/INTERVIEW_PLAN_LAYER.md`
 - `docs/SESSION_QUALITY_PLAN.md`
 - applicable completion packs from `docs/*_COMPLETION.md`
 - `scripts/verify.sh`

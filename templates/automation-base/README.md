@@ -10,6 +10,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - docs/AUTOMATION_OPERATING_POLICY.md: review-intensity and feedback policy
 - docs/DEPLOYMENT_COMPLETION.md: optional deployment/release completion pack
 - docs/DOMAIN_PACKS.md: domain-pack lifecycle, selection, and application rules
+- docs/INTERVIEW_PLAN_LAYER.md: reusable interview, plan, ambiguity, and execution-gate contract
 - docs/INCIDENT_OPS.md: dry-run and field-test incident operations policy
 - docs/SECURITY_COMPLETION.md: optional security/auth completion pack
 - docs/DATA_COMPLETION.md: optional data/migration completion pack
@@ -67,6 +68,14 @@ manually before copying or editing files. Use `--record-feedback` only when the
 detected drift should become a project queue item; feedback is written through
 AI_AUTO's trusted helper, not by executing scripts from the inspected project.
 
+Use `ai-rebuild-plan /path/to/project` for `리빌드 플랜`, `리빌딩 플랜`, or
+`rebuild plan` requests. This is read-only: it checks git state, automation
+template drift, domain-pack references, and refactoring candidates, then stops
+at a plan/report boundary. `리빌드 실행`, `리빌딩 실행`, or `rebuild run` is a
+separate execution request and requires an approved plan artifact, refreshed
+domain-pack assumptions, behavior-locking tests or smoke checks, and explicit
+module boundaries.
+
 Then ask the AI:
 
     프로젝트 초기설정 해줘
@@ -108,7 +117,8 @@ During the interview, decide which completion dimensions apply:
   maximum acceptable parallelism
 - Planning/interview intensity: choose when to execute directly, ask one short
   question, or run a plan-first interview. Use `none`, `light`, `standard`, or
-  `deep`.
+  `deep`. Use `docs/INTERVIEW_PLAN_LAYER.md` to keep questions narrow, map
+  answers into plan fields, and preserve plan/run boundaries.
 - Operational readiness: define required inputs, fail-closed blockers, accepted
   operating artifacts, read-only/auth/network preflight,
   sandbox-vs-real-network evidence, and analysis-only fallback boundaries.

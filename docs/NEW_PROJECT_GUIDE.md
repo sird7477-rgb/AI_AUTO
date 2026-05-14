@@ -32,7 +32,10 @@ Equivalent detailed request:
     작업 중 플랜/인터뷰 강도와 Incident Ops 감시/장애대응 기준까지 정한 뒤,
     AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
-This should start a short onboarding interview before real work begins. Capture:
+This should start the `docs/INTERVIEW_PLAN_LAYER.md` onboarding interview before
+real work begins. Keep questions narrow, inspect local evidence first, map each
+answer into the project baseline, and track ambiguity instead of hiding
+assumptions. Capture:
 
 - project purpose and non-goals
 - users, final deliverable, and assumptions that could not be confirmed from
@@ -99,7 +102,7 @@ Use this request when asking Codex to initialize a new project:
     7. 반복되는 비파괴 명령의 승인 마찰을 줄일 approved prefix/helper 기준을 정해. 단 destructive/credential/production 작업은 승인 대상으로 유지해.
     8. 서브에이전트 사용 기준을 정해. repo 탐색, 분리 가능한 구현, 테스트/UX/의존성 검토, critique는 위임 가능하지만 최종 통합과 완료 주장은 leader 책임으로 둬.
     9. CPU/메모리/디스크/로드를 가능한 범위에서 직접 확인한 뒤, 우분투/WSL 강제 종료 이력, 동시에 돌아가는 무거운 세션, 발열 한계, 최대 병렬 작업 수를 인터뷰해서 resource-aware parallelism 기준을 정해.
-    10. 작업 중 플랜/인터뷰 강도 기준을 정해. 작은 작업은 즉시 실행, 방향이 갈리는 작업은 짧은 질문, 장기 정책/아키텍처/검증 체계는 plan-first interview를 기본으로 해.
+    10. 작업 중 플랜/인터뷰 강도 기준을 docs/INTERVIEW_PLAN_LAYER.md에 맞춰 정해. 작은 작업은 즉시 실행, 방향이 갈리는 작업은 좁은 질문, 장기 정책/아키텍처/검증 체계는 plan-first interview를 기본으로 해.
     11. 운영 준비 규칙을 정해. 필수 입력이 missing/stale/incomplete/degraded이면 fail-closed로 막고, partial success는 진단으로만 남기며 accepted operating artifact로 저장하지 않게 해.
     12. operational dry-run/deployment 전에 read-only/auth/network 권한, DB, token, cooldown, output path, API budget, side-effect boundary preflight 기준을 정해. sandboxed external API probe 실패와 승인된 real-network path 결과를 구분해.
     13. Incident Ops 기준을 정해. dry-run/field-test 감시, 자동 조치 class, incident log 필드, UI field-test evidence, heartbeat/quiet/active-incident 보고 주기를 docs/INCIDENT_OPS.md 기준으로 프로젝트에 맞게 확정해.
@@ -120,7 +123,7 @@ Use this request when asking Codex to initialize a new project:
     - 리뷰 강도와 승인 마찰 관리 기준
     - 실패 패턴/개선사항 기록 여부
     - 서브에이전트 사용 기준
-    - 플랜/인터뷰 강도 기준
+    - docs/INTERVIEW_PLAN_LAYER.md 기준의 플랜/인터뷰 강도와 질문 범위 최소화 기준
     - 운영 준비 fail-closed 기준
     - Incident Ops 감시/장애대응/주기보고 기준
     - plan index/TODO reconciliation 기준

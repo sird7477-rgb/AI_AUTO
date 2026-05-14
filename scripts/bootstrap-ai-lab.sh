@@ -201,6 +201,13 @@ else
   suggest "chmod +x ${ROOT}/tools/ai-refactor-scan"
 fi
 
+if [ -x "${ROOT}/tools/ai-rebuild-plan" ]; then
+  say_pass "ai-rebuild-plan source helper is executable"
+else
+  say_fail "ai-rebuild-plan source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-rebuild-plan"
+fi
+
 if [ -x "${ROOT}/tools/feedback-collect" ]; then
   say_pass "feedback-collect source helper is executable"
 else
@@ -235,6 +242,7 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   ensure_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   ensure_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
+  ensure_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"
   ensure_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   ensure_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
 

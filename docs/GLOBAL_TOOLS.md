@@ -35,6 +35,12 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Highlights large source files, long Python functions/classes, and import-heavy files
   - Useful before asking AI_AUTO/Codex to split monolithic trading automation code into modules
 
+- `ai-rebuild-plan`
+  - Read-only rebuild preflight for `리빌드 플랜`, `리빌딩 플랜`, or `rebuild plan` requests
+  - Checks target repo status, automation template status, installed/source domain packs, and refactoring candidates
+  - Does not modify files and does not start rebuild execution
+  - `리빌드 실행`, `리빌딩 실행`, or `rebuild run` must remain a separate execution request backed by an approved plan artifact
+
 - `workspace-scan`
   - Scans git repositories under `~/workspace`
   - Set `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=N` to discover repositories nested deeper than the default depth of 2
@@ -81,6 +87,7 @@ Expected links:
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
     ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
     ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
+    ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
     ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
@@ -98,6 +105,7 @@ Manual equivalent:
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
     ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
     ln -sf ~/workspace/ai-lab/tools/ai-refactor-scan ~/bin/ai-refactor-scan
+    ln -sf ~/workspace/ai-lab/tools/ai-rebuild-plan ~/bin/ai-rebuild-plan
     ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
 

@@ -55,6 +55,7 @@ Use these files as the workflow baseline:
 - `docs/AI_MODEL_ROUTING.md`
 - `docs/AUTOMATION_OPERATING_POLICY.md`
 - `docs/DOMAIN_PACKS.md`
+- `docs/INTERVIEW_PLAN_LAYER.md`
 - `docs/SESSION_QUALITY_PLAN.md`
 - applicable completion packs from `docs/*_COMPLETION.md`
 - `scripts/verify.sh`
@@ -91,6 +92,17 @@ from the target repository. This records the repo in the local registry without
 installing or overwriting project automation files.
 When the user asks to clean stale project registry entries, run
 `ai-register --prune`.
+
+When the user asks for `리빌드 플랜`, `리빌딩 플랜`, `rebuild plan`, or
+`ai-rebuild-plan`, run `ai-rebuild-plan /path/to/repo` or `ai-rebuild-plan`
+from the target repository. This is a read-only planning surface: it may inspect
+git state, template drift, domain-pack references, and refactoring candidates,
+but it must not modify files or start rebuild execution.
+
+When the user asks for `리빌드 실행`, `리빌딩 실행`, or `rebuild run`, do not
+treat the phrase as approval to improvise a rebuild. Execution requires an
+approved rebuild plan, refreshed domain-pack assumptions, behavior-locking tests
+or smoke checks, explicit module boundaries, and the normal verify/review gates.
 
 ## Completion Report Format
 

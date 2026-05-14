@@ -54,6 +54,7 @@ bash -n tools/ai-home
 bash -n tools/ai-register
 bash -n tools/ai-auto-template-status
 bash -n tools/ai-refactor-scan
+bash -n tools/ai-rebuild-plan
 bash -n tools/feedback-collect
 bash -n tools/workspace-scan
 
@@ -91,6 +92,46 @@ echo "[verify] testing ai-refactor-scan..."
     echo "[verify] ai-refactor-scan accepted invalid --top"
     exit 1
   fi
+)
+
+echo "[verify] testing ai-rebuild-plan..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_rebuild_plan_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_rebuild_plan_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  mkdir -p "${target_dir}/docs" "${target_dir}/scripts" "${target_dir}/src" "${target_dir}/.omx/domain-packs/sample"
+  git -C "${tmp_dir}" init target >/dev/null
+  printf '# Agent\n' > "${target_dir}/AGENTS.md"
+  printf '# Workflow\n' > "${target_dir}/docs/WORKFLOW.md"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${target_dir}/scripts/verify.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${target_dir}/scripts/review-gate.sh"
+  {
+    printf 'import os\nimport sys\n\n'
+    printf 'def oversized():\n'
+    for i in $(seq 1 12); do
+      printf '    value_%s = %s\n' "$i" "$i"
+    done
+    printf '    return value_12\n'
+  } > "${target_dir}/src/monolith.py"
+
+  ./tools/ai-rebuild-plan "${target_dir}" > "${tmp_dir}/rebuild-plan.out"
+  grep -q "AI_AUTO Rebuild Plan" "${tmp_dir}/rebuild-plan.out"
+  grep -q "read-only diagnosis and planning only" "${tmp_dir}/rebuild-plan.out"
+  grep -q "리빌드 실행" "${tmp_dir}/rebuild-plan.out"
+  grep -q "selected / rejected / deferred domain packs" "${tmp_dir}/rebuild-plan.out"
+  grep -q "AI_AUTO Refactor Scan:" "${tmp_dir}/rebuild-plan.out"
+
+  if ./tools/ai-rebuild-plan -- "${target_dir}" extra > "${tmp_dir}/invalid-extra.out" 2>&1; then
+    echo "[verify] ai-rebuild-plan accepted an extra argument after --"
+    exit 1
+  fi
+  grep -q "Unexpected extra argument: extra" "${tmp_dir}/invalid-extra.out"
 )
 
 echo "[verify] testing AI model discovery..."
@@ -859,6 +900,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
+  printf '# Interview Plan Layer\n' > docs/INTERVIEW_PLAN_LAYER.md
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
   printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
@@ -924,6 +966,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
+  printf '# Interview Plan Layer\n' > docs/INTERVIEW_PLAN_LAYER.md
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
   printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
@@ -987,6 +1030,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
+  printf '# Interview Plan Layer\n' > docs/INTERVIEW_PLAN_LAYER.md
   printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
   printf '# Workflow\n' > docs/WORKFLOW.md
 
@@ -1224,6 +1268,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
   test -f "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
   test -f "${target_dir}/docs/DOMAIN_PACKS.md"
+  test -f "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   test -f "${target_dir}/docs/INCIDENT_OPS.md"
   test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
   test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
@@ -1238,6 +1283,8 @@ echo "[verify] testing automation template installer..."
   grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
   grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
   grep -q "There is no generic domain pack" "${target_dir}/docs/DOMAIN_PACKS.md"
+  grep -q "decision width" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
+  grep -q "ready_to_execute" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
   grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
@@ -1253,6 +1300,7 @@ echo "[verify] testing automation template installer..."
   grep -q "review intensity policy" "${target_dir}/AGENTS.md"
   grep -q "resource-aware parallelism" "${target_dir}/AGENTS.md"
   grep -q "Planning And Interview Escalation" "${target_dir}/AGENTS.md"
+  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${target_dir}/AGENTS.md"
   grep -q '`none`' "${target_dir}/AGENTS.md"
   grep -q '`light`' "${target_dir}/AGENTS.md"
   grep -q '`standard`' "${target_dir}/AGENTS.md"
@@ -1265,6 +1313,7 @@ echo "[verify] testing automation template installer..."
   grep -q "Review intensity" "templates/automation-base/README.md"
   grep -q "Subagents" "templates/automation-base/README.md"
   grep -q "Planning/interview intensity" "templates/automation-base/README.md"
+  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "templates/automation-base/README.md"
   grep -q "Operational readiness" "templates/automation-base/README.md"
   grep -q "Incident Ops" "templates/automation-base/README.md"
   grep -q "heartbeat/quiet/active" "templates/automation-base/README.md"
@@ -1274,6 +1323,7 @@ echo "[verify] testing automation template installer..."
   grep -q "ai-auto-template-status" "templates/automation-base/README.md"
   grep -q "unused completion pack" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACKS.md" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "review intensity" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "서브에이전트 사용 기준" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "플랜/인터뷰 강도 기준" "docs/NEW_PROJECT_GUIDE.md"
@@ -1309,6 +1359,7 @@ echo "[verify] testing automation template installer..."
 
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-current.out"
   grep -q "status: current" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
 
@@ -1575,6 +1626,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1587,6 +1639,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
+  test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
   test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
@@ -1685,6 +1738,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1697,6 +1751,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
+  test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
@@ -1719,6 +1774,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1731,6 +1787,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
+  test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )

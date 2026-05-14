@@ -8,64 +8,30 @@
 
 ## 초기 온보딩
 
-1. `aiinit`으로 자동화 템플릿을 설치한다.
+초기 온보딩의 상세 체크리스트는 `docs/AUTOMATION_OPERATING_POLICY.md`가
+권위 문서다. 질문 방식, 답변 매핑, ambiguity, plan/run boundary는
+`docs/INTERVIEW_PLAN_LAYER.md`를 따른다.
+
+요약 절차:
+
+1. 템플릿 설치가 필요한 새 프로젝트에서는 `aiinit`을 실행한다. 이미
+   초기화된 프로젝트나 레지스트리 등록만 필요한 프로젝트는 재설치하지 않는다.
 2. 기존 README, docs, package/script 파일, 과거 메모를 먼저 읽고 로컬 증거로
-   알 수 없는 항목만 인터뷰한다.
-3. 프로젝트 목적, 사용자, 최종 산출물, non-goal을 확정한다.
-4. 허용/금지 변경, 데이터/secret/credential 경계, destructive 작업 승인
-   규칙을 확정한다.
-5. 스택, setup/test/build/lint/smoke/deploy 명령을 확인한다.
-6. 리뷰 강도를 `lightweight`, `standard`, `strict` 중 하나로 확정한다.
-   기본값은 `standard`이며, 상세 기준은
-   `docs/AUTOMATION_OPERATING_POLICY.md`를 따른다.
-7. 민감정보를 제외한 실패 패턴/개선사항을 `.omx/feedback/queue.jsonl`에
-   기록할지 확인한다. raw log, token, 고객정보, secret은 기록하지 않는다.
-8. 반복되는 비파괴 명령의 승인 마찰을 줄일 방식을 확인한다. 단,
-   destructive, credential, 외부 production, scope 변경 작업은 승인 대상이다.
-9. 서브에이전트 사용 기준을 확인한다. repo lookup, 분리 가능한 구현 slice,
-   테스트/UX/의존성 검토, 독립 critique는 위임 가능하지만, 최종 통합과 완료
-   주장은 leader 책임이다.
-10. 작업 중 플랜/인터뷰 강도 기준을 확인한다. 기본값은 작은 작업은 즉시
-   실행, 방향이 갈리는 작업은 짧은 질문, 장기 정책/아키텍처/검증 체계는
-   plan-first interview다.
-11. 운영 준비 규칙을 확인한다. 필수 입력, fail-closed blocker, accepted
-   operating artifact, read-only/auth/network preflight,
-   sandbox-vs-real-network evidence, analysis-only fallback boundary를 정한다.
-12. Incident Ops 기준을 확인한다. dry-run/field-test 감시, 자동 조치 class,
+   알 수 없는 항목만 좁은 질문으로 인터뷰한다.
+3. `docs/AUTOMATION_OPERATING_POLICY.md`의 온보딩 체크리스트에 따라
+   프로젝트 운영 규칙, 완료팩, 도메인팩, 검증 기준을 확정한다.
+   UI가 필요하면 `docs/UI_COMPLETION.md`를 기준으로 UI 완료/검증 조건을
+   정한다.
+   Incident Ops 기준을 확인한다. dry-run/field-test 감시, 자동 조치 class,
    incident log 필드, UI field-test evidence, heartbeat/quiet/active-incident
-   보고 주기를 `docs/INCIDENT_OPS.md` 기준으로 정한다.
-13. plan index/TODO reconciliation 기준과 checkpoint update 기대치를 정한다.
-14. `AGENTS.md`와 linked docs 분리 기준을 정해 긴 runbook/checklist가
-   instruction surface를 비대하게 만들지 않게 한다.
-15. 최종 산출물에 적용할 완료팩을 확인한다. 적용하지 않는 항목은
-   non-goal로 기록하고, 프로젝트 문서에 불필요하면 해당
-   `docs/*_COMPLETION.md` 파일은 삭제해도 된다.
-16. UI가 필요하면 `docs/UI_COMPLETION.md`를 기준으로 UI 완료/검증 조건을
-   정한다.
-17. 배포/운영이 필요하면 `docs/DEPLOYMENT_COMPLETION.md`를 기준으로
-   release artifact, smoke check, rollback 조건을 정한다.
-18. 보안/인증/secret/개인정보가 범위에 있으면
-   `docs/SECURITY_COMPLETION.md`를 기준으로 trust boundary와 검증 조건을
-   정한다.
-19. 영속 데이터, 마이그레이션, seed/import/export가 범위에 있으면
-   `docs/DATA_COMPLETION.md`를 기준으로 데이터 완료/검증 조건을 정한다.
-20. 성능 목표가 있으면 `docs/PERFORMANCE_COMPLETION.md`를 기준으로 baseline,
-   target, 측정 명령을 정한다.
-21. 운영 진단, 로그, health check, metrics, traces, audit가 범위에 있으면
-   `docs/OBSERVABILITY_COMPLETION.md`를 기준으로 관측성 완료/검증 조건을
-   정한다.
-22. `docs/DOMAIN_PACKS.md`를 기준으로 `.omx/domain-packs/`에 설치된 선택
-   적용 도메인팩을 확인한다.
-23. 인터뷰로 적용할 표준팩과 제외할 표준팩을 확정한다.
-24. 적용 대상 도메인팩이 있으면 필요한 항목만 프로젝트 지침에 병합한다.
-25. `AGENTS.md`에 프로젝트별 에이전트 활동 지침을 반영한다.
-26. `docs/WORKFLOW.md`에 실제 개발 루프와 검증 기준을 반영한다.
-27. `scripts/verify.sh`를 프로젝트별 검증 명령으로 교체한다.
-28. `./scripts/automation-doctor.sh`를 실행해 자동화 파일 상태를 확인한다.
-29. `./scripts/verify.sh`를 실행해 프로젝트 검증이 통과하는지 확인한다.
-30. 확정한 리뷰 강도에 따라 `./scripts/review-gate.sh`를 실행한다. 초기
-   baseline은 가능한 한 review-gate까지 통과시킨다.
-31. 필요하면 사용자 승인 후 baseline 커밋을 만든다.
+   보고 기준을 정한다.
+   sandbox-vs-real-network evidence 기준과 plan index/TODO reconciliation
+   ownership도 함께 확정한다.
+4. `AGENTS.md`, `docs/WORKFLOW.md`, `scripts/verify.sh`를 프로젝트에 맞게
+   반영한다.
+5. `./scripts/automation-doctor.sh`, `./scripts/verify.sh`, 필요한
+   `./scripts/review-gate.sh`를 실행한다.
+6. 커밋/푸시는 별도 사용자 승인이 있을 때만 진행한다.
 
 ## 도메인팩
 
@@ -99,6 +65,11 @@
 기본은 속도를 위해 즉시 실행이다. 단, 아래 기준으로 AI가 자체 판단해
 인터뷰를 요청할 수 있다.
 
+인터뷰와 플랜은 `docs/INTERVIEW_PLAN_LAYER.md`를 따른다. 목표는 질문 수
+최소화가 아니라 질문 범위 최소화다. AI는 로컬 증거를 먼저 읽고, 한
+질문에 하나의 결정만 담으며, 답변을 플랜 필드와 검증/정지 게이트에
+연결한다.
+
 - `none`: 명확하고 작고 되돌리기 쉬운 작업. 바로 실행한다.
 - `light`: 결과를 바꾸는 결정이 하나 있다. 질문 하나로 확인하고 진행한다.
 - `standard`: 여러 선택지가 결과를 바꾼다. 로컬 증거를 먼저 읽고 2-4개
@@ -109,6 +80,13 @@
 
 사용자가 "바로 진행"이라고 해도 destructive, credential, production,
 scope 변경 작업의 승인 게이트는 유지한다.
+
+프로젝트 초기 환경 구축에서는 템플릿 설치가 필요할 때만 `aiinit`을
+실행한다. 이미 초기화된 프로젝트나 레지스트리 등록만 필요한 프로젝트는
+재설치하지 않고 README/docs/scripts/package 파일을 먼저 확인한다. 이후
+목적, 사용자, 산출물, non-goal, 스택, 검증, 리뷰 강도, 완료팩, 도메인팩,
+운영 준비, plan/TODO ownership을 좁은 질문으로 확정한다. 이 단계의
+플랜이 완료되어도 커밋/푸시/운영/파괴적 작업 승인은 별도로 받아야 한다.
 
 ## 리뷰 강도
 
