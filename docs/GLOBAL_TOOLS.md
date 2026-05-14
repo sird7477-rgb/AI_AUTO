@@ -30,6 +30,11 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Does not merge or patch files
   - With `--record-feedback`, records a sanitized project queue item through the trusted AI_AUTO feedback helper only when drift exists
 
+- `ai-refactor-scan`
+  - Scans a repository without modifying files and reports likely refactoring candidates
+  - Highlights large source files, long Python functions/classes, and import-heavy files
+  - Useful before asking AI_AUTO/Codex to split monolithic trading automation code into modules
+
 - `workspace-scan`
   - Scans git repositories under `~/workspace`
   - Set `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=N` to discover repositories nested deeper than the default depth of 2
@@ -75,6 +80,7 @@ Expected links:
     ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
     ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
+    ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
     ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
@@ -91,6 +97,7 @@ Manual equivalent:
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
     ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
+    ln -sf ~/workspace/ai-lab/tools/ai-refactor-scan ~/bin/ai-refactor-scan
     ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
 

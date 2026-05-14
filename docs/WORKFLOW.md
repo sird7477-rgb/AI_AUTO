@@ -213,7 +213,19 @@ ai-register /path/to/existing-repo
 ai-register --prune
 ```
 
-Odoo 등 특정 프레임워크 검증 패턴은 별도 계획에서 다룬다.
+리팩터링 후보 스캔:
+
+```bash
+ai-refactor-scan /path/to/project
+```
+
+이 명령은 대상 저장소를 수정하지 않고 큰 파일, 긴 Python 함수/클래스,
+import가 많은 파일을 출력한다. 주식자동매매처럼 코드가 한 파일에 뭉친
+프로젝트에서는 이 결과를 기준으로 먼저 동작 고정 테스트를 만들고,
+도메인/입출력/전략/어댑터 경계로 작은 모듈 분리를 계획한다.
+
+Odoo 등 특정 프레임워크 검증 패턴은 `docs/DOMAIN_PACKS.md`와 설치된
+`.omx/domain-packs/` 참고자료를 기준으로 적용 여부를 먼저 확정한 뒤 다룬다.
 
 범용 템플릿은 UI, 배포, 보안, 데이터, 성능, 관측성 완료 기준이 필요한
 프로젝트를 위해 `docs/*_COMPLETION.md` 완료팩을 함께 설치한다. 단, 이

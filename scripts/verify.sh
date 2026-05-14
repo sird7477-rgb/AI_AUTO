@@ -53,11 +53,45 @@ bash -n tools/ai-auto-init
 bash -n tools/ai-home
 bash -n tools/ai-register
 bash -n tools/ai-auto-template-status
+bash -n tools/ai-refactor-scan
 bash -n tools/feedback-collect
 bash -n tools/workspace-scan
 
 echo "[verify] testing review summary decisions..."
 ./scripts/test-review-summary.sh
+
+echo "[verify] testing ai-refactor-scan..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_refactor_scan_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_refactor_scan_tmp EXIT
+
+  mkdir -p "${tmp_dir}/src"
+  {
+    printf 'import os\nimport sys\n\n'
+    printf 'def compact():\n    return 1\n\n'
+    printf 'def oversized():\n'
+    for i in $(seq 1 12); do
+      printf '    value_%s = %s\n' "$i" "$i"
+    done
+    printf '    return value_12\n'
+  } > "${tmp_dir}/src/monolith.py"
+
+  ./tools/ai-refactor-scan --top 5 --min-lines 5 --min-block-lines 10 "${tmp_dir}" > "${tmp_dir}/scan.out"
+  grep -q "AI_AUTO Refactor Scan:" "${tmp_dir}/scan.out"
+  grep -q "Large Files" "${tmp_dir}/scan.out"
+  grep -q "src/monolith.py" "${tmp_dir}/scan.out"
+  grep -q "oversized" "${tmp_dir}/scan.out"
+
+  if ./tools/ai-refactor-scan --top 0 "${tmp_dir}" > "${tmp_dir}/invalid.out" 2>&1; then
+    echo "[verify] ai-refactor-scan accepted invalid --top"
+    exit 1
+  fi
+)
 
 echo "[verify] testing AI model discovery..."
 (
@@ -1189,6 +1223,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
   test -f "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  test -f "${target_dir}/docs/DOMAIN_PACKS.md"
   test -f "${target_dir}/docs/INCIDENT_OPS.md"
   test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
   test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
@@ -1202,6 +1237,7 @@ echo "[verify] testing automation template installer..."
   grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
   grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  grep -q "There is no generic domain pack" "${target_dir}/docs/DOMAIN_PACKS.md"
   grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
   grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
@@ -1225,7 +1261,7 @@ echo "[verify] testing automation template installer..."
   grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
   grep -q "Delete unused" "${target_dir}/AGENTS.md"
-  grep -q ".omx/domain-packs/에 설치된 도메인팩" "templates/automation-base/README.md"
+  grep -q "docs/DOMAIN_PACKS.md" "templates/automation-base/README.md"
   grep -q "Review intensity" "templates/automation-base/README.md"
   grep -q "Subagents" "templates/automation-base/README.md"
   grep -q "Planning/interview intensity" "templates/automation-base/README.md"
@@ -1237,7 +1273,7 @@ echo "[verify] testing automation template installer..."
   grep -q "Guidance context budget" "templates/automation-base/README.md"
   grep -q "ai-auto-template-status" "templates/automation-base/README.md"
   grep -q "unused completion pack" "templates/automation-base/README.md"
-  grep -q ".omx/domain-packs/에 설치된 도메인팩" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "docs/DOMAIN_PACKS.md" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "review intensity" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "서브에이전트 사용 기준" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "플랜/인터뷰 강도 기준" "docs/NEW_PROJECT_GUIDE.md"
@@ -1248,6 +1284,7 @@ echo "[verify] testing automation template installer..."
   grep -q "rejected as non-goals" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "프로젝트 초기설정 해줘" "${installer_output}"
   grep -q "docs/\\*_COMPLETION.md" "${installer_output}"
+  grep -q "docs/DOMAIN_PACKS.md" "${installer_output}"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${installer_output}"
   grep -q "서브에이전트 사용 기준" "${installer_output}"
   grep -q "플랜/인터뷰 강도 기준" "${installer_output}"
@@ -1273,6 +1310,7 @@ echo "[verify] testing automation template installer..."
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-current.out"
   grep -q "status: current" "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
 
   printf '\nproject-specific customization\n' >> "${target_dir}/docs/WORKFLOW.md"
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-drift.out"
@@ -1296,11 +1334,14 @@ test -f "templates/domain-packs/odoo/WORKFLOW.md"
 test -f "templates/domain-packs/odoo/verify-patterns.md"
 test -f "templates/domain-packs/odoo/review-checklist.md"
 grep -q "ignored onboarding reference under" "templates/domain-packs/odoo/README.md"
+grep -q "docs/DOMAIN_PACKS.md" "templates/domain-packs/odoo/README.md"
 grep -q "ko_KR" "templates/domain-packs/odoo/README.md"
 grep -q "Project-Specific Rules" "templates/domain-packs/odoo/WORKFLOW.md"
 grep -q "localization baseline" "templates/domain-packs/odoo/verify-patterns.md"
 grep -Fq 'Path("custom_addons").rglob("*.xml")' "templates/domain-packs/odoo/verify-patterns.md"
 grep -q "도메인팩" "templates/automation-base/docs/WORKFLOW.md"
+grep -q "There is no generic domain pack" "templates/automation-base/docs/DOMAIN_PACKS.md"
+cmp -s "docs/DOMAIN_PACKS.md" "templates/automation-base/docs/DOMAIN_PACKS.md"
 grep -q "Deployment Completion Pack" "templates/automation-base/docs/DEPLOYMENT_COMPLETION.md"
 grep -q "Security Completion Pack" "templates/automation-base/docs/SECURITY_COMPLETION.md"
 grep -q "Data Completion Pack" "templates/automation-base/docs/DATA_COMPLETION.md"
@@ -1376,6 +1417,8 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   git -c init.defaultBranch=main init -q "${target_dir}"
   AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
+  grep -q "docs/\\*_COMPLETION.md" "${aiinit_output}"
+  grep -q "docs/DOMAIN_PACKS.md" "${aiinit_output}"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${aiinit_output}"
   grep -q "서브에이전트 사용 기준" "${aiinit_output}"
   grep -q "플랜/인터뷰 강도 기준" "${aiinit_output}"
@@ -1531,6 +1574,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1542,6 +1586,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
   test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
@@ -1639,6 +1684,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1650,6 +1696,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
@@ -1671,6 +1718,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1682,6 +1730,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )

@@ -40,6 +40,7 @@ Not allowed without a new explicit plan:
 Use `docs/AUTOMATION_OPERATING_POLICY.md` for the full policy. In short:
 
 - execute directly for clear, small, reversible work
+- treat feasibility, advice, recommendation, and brainstorming questions as answer-only unless the user explicitly asks for execution
 - ask one focused question when a single missing decision materially changes the result
 - use a plan-first interview for broad, strategic, high-risk, or long-lived workflow changes
 - inspect local evidence before asking, and label assumptions instead of presenting guesses as facts
@@ -53,6 +54,7 @@ Use these files as the workflow baseline:
 - `docs/AI_ROLES.md`
 - `docs/AI_MODEL_ROUTING.md`
 - `docs/AUTOMATION_OPERATING_POLICY.md`
+- `docs/DOMAIN_PACKS.md`
 - `docs/SESSION_QUALITY_PLAN.md`
 - applicable completion packs from `docs/*_COMPLETION.md`
 - `scripts/verify.sh`

@@ -218,6 +218,11 @@ Domain packs are optional reference packs for project-specific onboarding.
 references under `.omx/domain-packs/`. It does not merge them into project
 instructions automatically.
 
+Use `docs/DOMAIN_PACKS.md` for the domain-pack lifecycle, selection, rejection,
+and application rules. Generic projects do not need a generic domain pack;
+continue with `automation-base` and any applicable completion packs when no
+installed domain pack matches.
+
 Source packs in this repository:
 
     templates/domain-packs/odoo/

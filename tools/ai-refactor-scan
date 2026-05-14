@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_DIR=""
+TOP_LIMIT=20
+MIN_FILE_LINES=300
+MIN_BLOCK_LINES=80
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-refactor-scan [--top N] [--min-lines N] [--min-block-lines N] [target-repo]
+
+Find likely refactoring candidates in a repository without modifying files.
+
+The scan highlights:
+  - large source files
+  - long Python functions/classes
+  - files with many imports
+
+Options:
+  --top N              number of rows per section, default: 20
+  --min-lines N        minimum file length to report, default: 300
+  --min-block-lines N  minimum Python block length to report, default: 80
+  -h, --help           show this help
+
+Examples:
+  ai-refactor-scan
+  ai-refactor-scan ~/workspace/trading-bot
+  ai-refactor-scan --top 10 --min-lines 500 /path/to/project
+USAGE
+}
+
+require_positive_int() {
+  local name="$1"
+  local value="$2"
+
+  case "$value" in
+    ''|*[!0-9]*|0)
+      echo "${name} must be a positive integer"
+      exit 2
+      ;;
+  esac
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --top)
+      [ "$#" -ge 2 ] || { echo "--top requires a value"; exit 2; }
+      TOP_LIMIT="$2"
+      require_positive_int "--top" "$TOP_LIMIT"
+      shift 2
+      ;;
+    --min-lines)
+      [ "$#" -ge 2 ] || { echo "--min-lines requires a value"; exit 2; }
+      MIN_FILE_LINES="$2"
+      require_positive_int "--min-lines" "$MIN_FILE_LINES"
+      shift 2
+      ;;
+    --min-block-lines)
+      [ "$#" -ge 2 ] || { echo "--min-block-lines requires a value"; exit 2; }
+      MIN_BLOCK_LINES="$2"
+      require_positive_int "--min-block-lines" "$MIN_BLOCK_LINES"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      echo
+      usage
+      exit 2
+      ;;
+    *)
+      if [ -n "$TARGET_DIR" ]; then
+        echo "Unexpected extra argument: $1"
+        echo
+        usage
+        exit 2
+      fi
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ "$#" -gt 0 ]; then
+  if [ -n "$TARGET_DIR" ]; then
+    echo "Unexpected extra argument: $1"
+    echo
+    usage
+    exit 2
+  fi
+  TARGET_DIR="$1"
+fi
+
+TARGET_DIR="${TARGET_DIR:-$(pwd)}"
+
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Target directory does not exist: ${TARGET_DIR}"
+  exit 1
+fi
+
+target_abs="$(cd "$TARGET_DIR" && pwd -P)"
+
+python3 - "$target_abs" "$TOP_LIMIT" "$MIN_FILE_LINES" "$MIN_BLOCK_LINES" <<'PY'
+import ast
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+top_limit = int(sys.argv[2])
+min_file_lines = int(sys.argv[3])
+min_block_lines = int(sys.argv[4])
+
+SOURCE_SUFFIXES = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".cs",
+    ".cpp",
+    ".cc",
+    ".c",
+    ".h",
+    ".hpp",
+    ".sh",
+}
+
+SKIP_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "__pycache__",
+}
+
+def rel(path: Path) -> str:
+    return str(path.relative_to(root))
+
+def iter_source_files():
+    for current_root, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        base = Path(current_root)
+        for name in files:
+            path = base / name
+            if path.suffix.lower() in SOURCE_SUFFIXES:
+                yield path
+
+def read_text(path: Path):
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        try:
+            return path.read_text(encoding="latin-1")
+        except OSError:
+            return None
+    except OSError:
+        return None
+
+def import_count(lines: list[str], suffix: str) -> int:
+    count = 0
+    for line in lines:
+        stripped = line.strip()
+        if suffix == ".py" and (stripped.startswith("import ") or stripped.startswith("from ")):
+            count += 1
+        elif suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"} and (
+            stripped.startswith("import ") or stripped.startswith("const ") and " require(" in stripped
+        ):
+            count += 1
+    return count
+
+def python_blocks(path: Path, text: str):
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+
+    rows = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            end_lineno = getattr(node, "end_lineno", None)
+            if not end_lineno:
+                continue
+            size = end_lineno - node.lineno + 1
+            if size >= min_block_lines:
+                kind = "class" if isinstance(node, ast.ClassDef) else "function"
+                rows.append((size, rel(path), node.lineno, kind, node.name))
+    return rows
+
+files = []
+blocks = []
+imports = []
+
+for path in iter_source_files():
+    text = read_text(path)
+    if text is None:
+        continue
+    lines = text.splitlines()
+    loc = len(lines)
+    nonblank = sum(1 for line in lines if line.strip())
+    imps = import_count(lines, path.suffix.lower())
+    files.append((loc, nonblank, imps, rel(path)))
+    if imps:
+        imports.append((imps, loc, rel(path)))
+    if path.suffix.lower() == ".py":
+        blocks.extend(python_blocks(path, text))
+
+large_files = [row for row in sorted(files, reverse=True) if row[0] >= min_file_lines]
+long_blocks = sorted(blocks, reverse=True)
+dense_imports = sorted(imports, reverse=True)
+
+print(f"AI_AUTO Refactor Scan: {root}")
+print(f"source_files: {len(files)}")
+print(f"thresholds: file_lines>={min_file_lines}, python_block_lines>={min_block_lines}, top={top_limit}")
+print()
+
+print("Large Files")
+print("LINES\tNONBLANK\tIMPORTS\tPATH")
+for loc, nonblank, imps, path in large_files[:top_limit]:
+    print(f"{loc}\t{nonblank}\t{imps}\t{path}")
+if not large_files:
+    print("(none)")
+print()
+
+print("Long Python Blocks")
+print("LINES\tPATH:LINE\tKIND\tNAME")
+for size, path, lineno, kind, name in long_blocks[:top_limit]:
+    print(f"{size}\t{path}:{lineno}\t{kind}\t{name}")
+if not long_blocks:
+    print("(none)")
+print()
+
+print("Import-Heavy Files")
+print("IMPORTS\tLINES\tPATH")
+for imps, loc, path in dense_imports[:top_limit]:
+    print(f"{imps}\t{loc}\t{path}")
+if not dense_imports:
+    print("(none)")
+print()
+
+print("Suggested AI_AUTO prompt")
+print("  이 결과를 기준으로 동작을 바꾸지 않는 모듈 분리 계획을 세워줘.")
+print("  먼저 테스트로 기존 동작을 고정하고, 큰 파일을 도메인/입출력/전략/어댑터 경계로 나누는 순서로 진행해줘.")
+PY

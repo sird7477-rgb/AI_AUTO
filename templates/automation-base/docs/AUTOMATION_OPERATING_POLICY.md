@@ -163,6 +163,13 @@ Default posture: act directly when the request is clear, narrow, and reversible.
 Do not interview for routine edits, small fixes, local documentation updates,
 or commands the user already requested.
 
+Autonomy applies only after the user has clearly requested execution. Do not
+treat feasibility questions, advice requests, recommendations, brainstorming,
+or "could we/should we/how would we" prompts as permission to edit files, run
+verification, install helpers, or start long-running commands. For those
+prompts, answer with the likely approach, expected scope, verification plan, and
+the explicit command or instruction that would start execution.
+
 Before implementation, inspect the expected command, module, and domain shape.
 If the work is likely to span multiple command groups, business domains, or
 long-lived maintenance areas, document the module boundaries in the plan before
@@ -350,7 +357,8 @@ Use this order:
    commands.
 5. Completion packs: select or reject UI, deployment, security, data,
    performance, and observability packs.
-6. Domain packs: select or reject installed `.omx/domain-packs/` references.
+6. Domain packs: follow `docs/DOMAIN_PACKS.md` to select, reject, or defer
+   installed `.omx/domain-packs/` references.
 7. Operating policy: review intensity, feedback recording, approval-friction
    handling, subagent usage expectations, and resource-aware parallelism. Before
    asking, inspect local CPU, memory, disk, and load evidence; then ask about

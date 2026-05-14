@@ -9,6 +9,10 @@ automatically. During project onboarding, inspect the target project first,
 confirm that it is an Odoo project, then apply only the parts that match the
 project version, deployment model, and test environment.
 
+Use the installed `docs/DOMAIN_PACKS.md` as the common lifecycle and application
+contract for all domain packs. This README contains only Odoo-specific
+applicability and onboarding guidance.
+
 ## When To Use
 
 Use this pack when the project includes one or more of:

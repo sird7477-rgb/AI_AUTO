@@ -33,6 +33,7 @@ for path in \
   "docs/AUTOMATION_OPERATING_POLICY.md" \
   "docs/DATA_COMPLETION.md" \
   "docs/DEPLOYMENT_COMPLETION.md" \
+  "docs/DOMAIN_PACKS.md" \
   "docs/INCIDENT_OPS.md" \
   "docs/OBSERVABILITY_COMPLETION.md" \
   "docs/PERFORMANCE_COMPLETION.md" \
@@ -92,6 +93,7 @@ cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTI
 cp "${TEMPLATE_DIR}/docs/AUTOMATION_OPERATING_POLICY.md" "${TARGET_DIR}/docs/AUTOMATION_OPERATING_POLICY.md"
 cp "${TEMPLATE_DIR}/docs/DATA_COMPLETION.md" "${TARGET_DIR}/docs/DATA_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/DEPLOYMENT_COMPLETION.md" "${TARGET_DIR}/docs/DEPLOYMENT_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/DOMAIN_PACKS.md" "${TARGET_DIR}/docs/DOMAIN_PACKS.md"
 cp "${TEMPLATE_DIR}/docs/INCIDENT_OPS.md" "${TARGET_DIR}/docs/INCIDENT_OPS.md"
 cp "${TEMPLATE_DIR}/docs/OBSERVABILITY_COMPLETION.md" "${TARGET_DIR}/docs/OBSERVABILITY_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/PERFORMANCE_COMPLETION.md" "${TARGET_DIR}/docs/PERFORMANCE_COMPLETION.md"
@@ -148,7 +150,7 @@ echo "2. Confirm review intensity, feedback recording, approval-friction handlin
 echo "3. Confirm operational readiness fail-closed rules, sandbox-vs-real-network evidence, Incident Ops monitoring/reporting, plan/TODO reconciliation, and AGENTS.md vs linked-docs split."
 echo "4. Use ai-auto-template-status later to compare this project with newer AI_AUTO templates; review differences manually before patching."
 echo "5. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
-echo "6. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
+echo "6. Use ${TARGET_DIR}/docs/DOMAIN_PACKS.md to check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
 echo "7. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
 echo "8. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
 echo "9. Run:"

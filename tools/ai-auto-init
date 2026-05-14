@@ -64,12 +64,14 @@ Next AI request:
   프로젝트 초기설정 해줘
 
 Equivalent detailed request:
-  기존 파일을 먼저 읽고 프로젝트 요구사항을 인터뷰한 뒤, 리뷰 강도,
-  실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준, 운영 준비
+  기존 파일을 먼저 읽고 프로젝트 요구사항을 인터뷰한 뒤, docs/*_COMPLETION.md
+  완료팩과 docs/DOMAIN_PACKS.md 기준의 .omx/domain-packs/에 설치된 도메인팩
+  중 적용/거절/보류할 항목을 확정하고, 리뷰 강도, 실패 패턴 기록, 승인 마찰
+  관리, 서브에이전트 사용 기준, 플랜/인터뷰 강도 기준, 운영 준비
   fail-closed 기준, sandbox-vs-real-network evidence 기준, Incident Ops
-  감시/주기보고 기준, plan index/TODO reconciliation 기준,
-  AGENTS.md와 linked docs 분리 기준을 정해서
-  AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
+  감시/주기보고 기준, plan index/TODO reconciliation 기준, AGENTS.md와
+  linked docs 분리 기준을 정해서 AGENTS.md, docs/WORKFLOW.md,
+  scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 This starts the required onboarding pass: interview the project owner, treat
 existing materials as references when relevant, update the generated automation
