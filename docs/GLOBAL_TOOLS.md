@@ -26,9 +26,15 @@ This repository keeps source copies of helper commands that are linked into `~/b
 
 - `ai-auto-template-status`
   - Compares a project against the current AI_AUTO automation template
-  - Reports installed template version, current template version, overall status, and per-managed-file states
+  - Reports installed template version, current template version, overall status, per-managed-file states, ownership, and patch policy
+  - Excludes generated/runtime project files such as `.omx/` artifacts from the managed-file manifest
+  - Use template `docs/PATCH_NOTES.md` first to review version-level changes before patching a project
   - Does not merge or patch files
   - With `--record-feedback`, records a sanitized project queue item through the trusted AI_AUTO feedback helper only when drift exists
+
+AI review context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked diffs
+use a lightweight diff-centered context; set `REVIEW_CONTEXT_DETAIL=full` for
+reviews that need planning artifacts or full workflow reference file excerpts.
 
 - `ai-refactor-scan`
   - Scans a repository without modifying files and reports likely refactoring candidates

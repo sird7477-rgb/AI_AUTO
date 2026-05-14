@@ -4,6 +4,9 @@ set -euo pipefail
 OUT_DIR="${OUT_DIR:-.omx/review-context}"
 INCLUDE_UNTRACKED_CONTENT="${INCLUDE_UNTRACKED_CONTENT:-0}"
 MAX_UNTRACKED_BYTES="${MAX_UNTRACKED_BYTES:-102400}"
+REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
+REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
+REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
 REPO_STATUS_BEFORE_CONTEXT="$(git status --porcelain 2>/dev/null || true)"
 OUT_FILE="${OUT_DIR}/latest-review-context.md"
 
@@ -55,6 +58,43 @@ has_head_commit() {
 
 is_status_clean() {
   [ -z "${REPO_STATUS_BEFORE_CONTEXT}" ]
+}
+
+is_positive_integer() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+$'
+}
+
+tracked_diff_bytes() {
+  {
+    git diff 2>/dev/null || true
+    git diff --cached 2>/dev/null || true
+  } | wc -c | tr -d ' '
+}
+
+use_lightweight_context() {
+  case "${REVIEW_CONTEXT_DETAIL}" in
+    light)
+      return 0
+      ;;
+    full)
+      return 1
+      ;;
+    auto)
+      ;;
+    *)
+      echo "Unknown REVIEW_CONTEXT_DETAIL=${REVIEW_CONTEXT_DETAIL}; expected auto, light, or full" >&2
+      exit 2
+      ;;
+  esac
+
+  has_worktree_diff || return 1
+  is_positive_integer "${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES}" || return 1
+
+  local diff_bytes
+  diff_bytes="$(tracked_diff_bytes)"
+  is_positive_integer "${diff_bytes}" || return 1
+  [ "${diff_bytes}" -gt 0 ] || return 1
+  [ "${diff_bytes}" -le "${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES}" ]
 }
 
 write_diff_stat() {
@@ -125,10 +165,28 @@ write_diff() {
   echo "No staged or unstaged tracked diff detected. Untracked files, if any, are shown in the Untracked Files section."
 }
 
+LIGHTWEIGHT_CONTEXT=0
+if use_lightweight_context; then
+  LIGHTWEIGHT_CONTEXT=1
+fi
+
 {
   echo "# Review Context"
   echo
   echo "Generated at: $(date -Iseconds)"
+  echo
+  echo "## Context Mode"
+  echo
+  if [ "${LIGHTWEIGHT_CONTEXT}" -eq 1 ]; then
+    echo "lightweight"
+    echo
+    echo "Small staged/unstaged tracked diff detected. This context keeps reviewer input focused on the patch, git state, and verification tail."
+    echo "Set REVIEW_CONTEXT_DETAIL=full to include planning artifacts and reference files."
+  else
+    echo "full"
+    echo
+    echo "Full context includes planning artifacts and repository workflow reference files."
+  fi
   echo
   echo "## Repository"
   echo
@@ -179,11 +237,16 @@ write_diff() {
       echo "## Latest Verification Output"
       echo
       echo '```text'
-      echo "### Head"
-      sed -n '1,160p' "${OUT_DIR}/latest-verify-output.txt"
-      echo
-      echo "### Tail"
-      tail -120 "${OUT_DIR}/latest-verify-output.txt"
+      if [ "${LIGHTWEIGHT_CONTEXT}" -eq 1 ]; then
+        echo "### Tail"
+        tail -"${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES}" "${OUT_DIR}/latest-verify-output.txt"
+      else
+        echo "### Head"
+        sed -n '1,160p' "${OUT_DIR}/latest-verify-output.txt"
+        echo
+        echo "### Tail"
+        tail -120 "${OUT_DIR}/latest-verify-output.txt"
+      fi
       echo '```'
       echo
     fi
@@ -195,6 +258,10 @@ write_diff() {
   echo
   echo "## Local Planning Artifacts"
   echo
+  if [ "${LIGHTWEIGHT_CONTEXT}" -eq 1 ]; then
+    echo "Omitted in lightweight context. Set REVIEW_CONTEXT_DETAIL=full when planning artifacts are relevant to the review."
+    echo
+  else
   plan_files=()
   if [ -d ".omx/plans" ]; then
     while IFS= read -r file; do
@@ -214,8 +281,13 @@ write_diff() {
       echo
     done
   fi
+  fi
   echo "## Relevant Files"
   echo
+  if [ "${LIGHTWEIGHT_CONTEXT}" -eq 1 ]; then
+    echo "Omitted in lightweight context. Set REVIEW_CONTEXT_DETAIL=full when AGENTS.md, docs/WORKFLOW.md, or docs/AI_ROLES.md content is needed."
+    echo
+  else
   for file in AGENTS.md docs/WORKFLOW.md docs/AI_ROLES.md; do
     if [ -f "$file" ]; then
       echo "### $file"
@@ -226,6 +298,7 @@ write_diff() {
       echo
     fi
   done
+  fi
 } > "${OUT_FILE}"
 
 echo "${OUT_FILE}"

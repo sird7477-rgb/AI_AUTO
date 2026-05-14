@@ -199,10 +199,21 @@ AI_AUTO template:
 
     ai-auto-template-status /path/to/project
 
+First review `docs/PATCH_NOTES.md` in the AI_AUTO template or installed project
+to understand what changed in each template version.
+
 The command reports the installed template version, current template version,
-overall status, and per-managed-file states. It is status-only and never
-auto-merges. Treat `different` as "customized or outdated" until a human or AI
-reviews the file in context.
+overall status, per-managed-file states, ownership, and patch policy. It is
+status-only and never auto-merges. Generated/runtime files such as `.omx/`
+review artifacts are outside the managed-file manifest. Treat `different` as
+"customized or outdated" until a human or AI reviews the file in context.
+Patch policies mean:
+
+- `update`: template-owned file; a newer template can normally replace or patch
+  it after review.
+- `review-merge`: hybrid file; preserve project-specific rules and merge only
+  applicable template guidance.
+- `inspect-only`: project-owned file; report drift, but do not overwrite it.
 
 When the drift should become a queued follow-up for that project, record it
 explicitly:

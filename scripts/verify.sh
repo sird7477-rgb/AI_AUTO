@@ -938,6 +938,7 @@ echo "[verify] testing review context edge cases..."
     echo "[verify] review context showed latest commit diff for untracked-only state"
     exit 1
   fi
+  grep -qx "full" .omx/review-context/latest-review-context.md
   grep -q "No staged or unstaged tracked diff detected" .omx/review-context/latest-review-context.md
 
   mkdir -p .omx/plans
@@ -947,6 +948,28 @@ echo "[verify] testing review context edge cases..."
   grep -q "Local Planning Artifacts" .omx/review-context/latest-review-context.md
   grep -q "prd-fixture.md" .omx/review-context/latest-review-context.md
   grep -q "test-spec-fixture.md" .omx/review-context/latest-review-context.md
+
+  printf 'small tracked edit\n' >> staged.txt
+  mkdir -p .omx/review-context
+  for line in $(seq 1 100); do
+    printf 'verify line %s\n' "${line}"
+  done > .omx/review-context/latest-verify-output.txt
+  "${context_script}" >/dev/null
+  grep -q "lightweight" .omx/review-context/latest-review-context.md
+  grep -q "Omitted in lightweight context" .omx/review-context/latest-review-context.md
+  grep -q "verify line 100" .omx/review-context/latest-review-context.md
+  if grep -qx "verify line 1" .omx/review-context/latest-review-context.md; then
+    echo "[verify] lightweight review context included full verification head"
+    exit 1
+  fi
+  if grep -q "Module boundaries are documented here" .omx/review-context/latest-review-context.md; then
+    echo "[verify] lightweight review context included planning artifact body"
+    exit 1
+  fi
+
+  REVIEW_CONTEXT_DETAIL=full "${context_script}" >/dev/null
+  grep -qx "full" .omx/review-context/latest-review-context.md
+  grep -q "Module boundaries are documented here" .omx/review-context/latest-review-context.md
 )
 
 echo "[verify] testing review run manifest and external disabled guidance..."
@@ -1718,6 +1741,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   test -f "${target_dir}/docs/INCIDENT_OPS.md"
   test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
+  test -f "${target_dir}/docs/PATCH_NOTES.md"
   test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
   test -f "${target_dir}/docs/SECURITY_COMPLETION.md"
   test -f "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
@@ -1738,6 +1762,7 @@ echo "[verify] testing automation template installer..."
   grep -q "ready_to_execute" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
+  grep -q "AI_AUTO Patch Notes" "${target_dir}/docs/PATCH_NOTES.md"
   grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
   grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
   grep -q "Session Quality Plan" "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
@@ -1818,14 +1843,20 @@ echo "[verify] testing automation template installer..."
   grep -q "status: current" "${tmp_dir}/template-status-current.out"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/PATCH_NOTES.md" "${tmp_dir}/template-status-current.out"
+  grep -q $'STATE\tPATH\tTEMPLATE_PATH\tOWNERSHIP\tPATCH_POLICY' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/PATCH_NOTES.md\tdocs/PATCH_NOTES.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tscripts/verify.sh\tscripts/verify.example.sh\tproject-owned\tinspect-only' "${tmp_dir}/template-status-current.out"
 
   printf '\nproject-specific customization\n' >> "${target_dir}/docs/WORKFLOW.md"
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-drift.out"
   grep -q "status: customized_or_outdated" "${tmp_dir}/template-status-drift.out"
   grep -q $'different\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-drift.out"
+  grep -q $'different\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-drift.out"
   test ! -e "${target_dir}/.omx/feedback/queue.jsonl"
 
   "${repo_root}/tools/ai-auto-template-status" --record-feedback "${target_dir}" > "${tmp_dir}/template-status-feedback.out"

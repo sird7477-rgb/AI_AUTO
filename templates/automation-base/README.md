@@ -17,6 +17,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - docs/DATA_COMPLETION.md: optional data/migration completion pack
 - docs/PERFORMANCE_COMPLETION.md: optional performance completion pack
 - docs/OBSERVABILITY_COMPLETION.md: optional observability/operations completion pack
+- docs/PATCH_NOTES.md: template version changes to review before patching
 - docs/UI_COMPLETION.md: optional UI completion and verification pack
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
 - scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
@@ -64,10 +65,18 @@ From any terminal, use `AI_AUTO` to jump to the AI_AUTO checkout:
 or run `source ~/.bashrc` after installation.
 
 `ai-auto-template-status` compares a project against the current template and
-prints version and per-file states. It is status-only: review differences
-manually before copying or editing files. Use `--record-feedback` only when the
-detected drift should become a project queue item; feedback is written through
-AI_AUTO's trusted helper, not by executing scripts from the inspected project.
+prints version, per-file states, ownership, and patch policy. Generated/runtime
+files such as `.omx/` review artifacts are outside the managed-file manifest.
+Review `docs/PATCH_NOTES.md` first to understand version-level changes. The
+status command is status-only: review differences manually before copying or
+editing files. Use `--record-feedback` only when the detected drift should
+become a project queue item; feedback is written through AI_AUTO's trusted
+helper, not by executing scripts from the inspected project.
+
+AI reviewer context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked
+diffs use a lightweight context focused on the patch, git state, and
+verification tail. Set `REVIEW_CONTEXT_DETAIL=full` when planning artifacts or
+full workflow reference excerpts are needed for the review.
 
 Use `ai-rebuild-plan /path/to/project` for `리빌드 플랜`, `리빌딩 플랜`, or
 `rebuild plan` requests. This is read-only: it checks git state, automation

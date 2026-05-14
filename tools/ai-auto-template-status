@@ -29,6 +29,8 @@ Usage: ai-auto-template-status [--record-feedback] [target-repo]
 Compare a project against the current AI_AUTO automation template.
 
 This command reports status only. It does not merge or patch files.
+Generated/runtime files such as .omx/ logs, reviewer state, and external review
+artifacts are intentionally outside the managed-file manifest.
 
 Options:
   --record-feedback   record a sanitized feedback queue item when drift exists
@@ -118,36 +120,37 @@ rows=""
 
 managed_files() {
   cat <<'FILES'
-AI_AUTO_TEMPLATE_VERSION|AI_AUTO_TEMPLATE_VERSION
-AGENTS.md|AGENTS.md
-docs/AI_MODEL_ROUTING.md|docs/AI_MODEL_ROUTING.md
-docs/AUTOMATION_OPERATING_POLICY.md|docs/AUTOMATION_OPERATING_POLICY.md
-docs/DATA_COMPLETION.md|docs/DATA_COMPLETION.md
-docs/DEPLOYMENT_COMPLETION.md|docs/DEPLOYMENT_COMPLETION.md
-docs/DOMAIN_PACK_AUTHORING_GUIDE.md|docs/DOMAIN_PACK_AUTHORING_GUIDE.md
-docs/DOMAIN_PACKS.md|docs/DOMAIN_PACKS.md
-docs/INTERVIEW_PLAN_LAYER.md|docs/INTERVIEW_PLAN_LAYER.md
-docs/INCIDENT_OPS.md|docs/INCIDENT_OPS.md
-docs/OBSERVABILITY_COMPLETION.md|docs/OBSERVABILITY_COMPLETION.md
-docs/PERFORMANCE_COMPLETION.md|docs/PERFORMANCE_COMPLETION.md
-docs/SECURITY_COMPLETION.md|docs/SECURITY_COMPLETION.md
-docs/SESSION_QUALITY_PLAN.md|docs/SESSION_QUALITY_PLAN.md
-docs/UI_COMPLETION.md|docs/UI_COMPLETION.md
-docs/WORKFLOW.md|docs/WORKFLOW.md
-scripts/archive-omx-artifacts.sh|scripts/archive-omx-artifacts.sh
-scripts/automation-doctor.sh|scripts/automation-doctor.sh
-scripts/collect-review-context.sh|scripts/collect-review-context.sh
-scripts/discover-ai-models.sh|scripts/discover-ai-models.sh
-scripts/make-review-prompts.sh|scripts/make-review-prompts.sh
-scripts/record-feedback.sh|scripts/record-feedback.sh
-scripts/record-project-memory.sh|scripts/record-project-memory.sh
-scripts/resolve-feedback.sh|scripts/resolve-feedback.sh
-scripts/run-ai-reviews.sh|scripts/run-ai-reviews.sh
-scripts/summarize-ai-reviews.sh|scripts/summarize-ai-reviews.sh
-scripts/test-review-summary.sh|scripts/test-review-summary.sh
-scripts/review-gate.sh|scripts/review-gate.sh
-scripts/write-session-checkpoint.sh|scripts/write-session-checkpoint.sh
-scripts/verify.sh|scripts/verify.example.sh
+AI_AUTO_TEMPLATE_VERSION|AI_AUTO_TEMPLATE_VERSION|template-owned|update
+AGENTS.md|AGENTS.md|hybrid|review-merge
+docs/AI_MODEL_ROUTING.md|docs/AI_MODEL_ROUTING.md|template-owned|update
+docs/AUTOMATION_OPERATING_POLICY.md|docs/AUTOMATION_OPERATING_POLICY.md|template-owned|update
+docs/DATA_COMPLETION.md|docs/DATA_COMPLETION.md|template-owned|update
+docs/DEPLOYMENT_COMPLETION.md|docs/DEPLOYMENT_COMPLETION.md|template-owned|update
+docs/DOMAIN_PACK_AUTHORING_GUIDE.md|docs/DOMAIN_PACK_AUTHORING_GUIDE.md|template-owned|update
+docs/DOMAIN_PACKS.md|docs/DOMAIN_PACKS.md|template-owned|update
+docs/INTERVIEW_PLAN_LAYER.md|docs/INTERVIEW_PLAN_LAYER.md|template-owned|update
+docs/INCIDENT_OPS.md|docs/INCIDENT_OPS.md|template-owned|update
+docs/OBSERVABILITY_COMPLETION.md|docs/OBSERVABILITY_COMPLETION.md|template-owned|update
+docs/PATCH_NOTES.md|docs/PATCH_NOTES.md|template-owned|update
+docs/PERFORMANCE_COMPLETION.md|docs/PERFORMANCE_COMPLETION.md|template-owned|update
+docs/SECURITY_COMPLETION.md|docs/SECURITY_COMPLETION.md|template-owned|update
+docs/SESSION_QUALITY_PLAN.md|docs/SESSION_QUALITY_PLAN.md|template-owned|update
+docs/UI_COMPLETION.md|docs/UI_COMPLETION.md|template-owned|update
+docs/WORKFLOW.md|docs/WORKFLOW.md|hybrid|review-merge
+scripts/archive-omx-artifacts.sh|scripts/archive-omx-artifacts.sh|template-owned|update
+scripts/automation-doctor.sh|scripts/automation-doctor.sh|template-owned|update
+scripts/collect-review-context.sh|scripts/collect-review-context.sh|template-owned|update
+scripts/discover-ai-models.sh|scripts/discover-ai-models.sh|template-owned|update
+scripts/make-review-prompts.sh|scripts/make-review-prompts.sh|template-owned|update
+scripts/record-feedback.sh|scripts/record-feedback.sh|template-owned|update
+scripts/record-project-memory.sh|scripts/record-project-memory.sh|template-owned|update
+scripts/resolve-feedback.sh|scripts/resolve-feedback.sh|template-owned|update
+scripts/run-ai-reviews.sh|scripts/run-ai-reviews.sh|template-owned|update
+scripts/summarize-ai-reviews.sh|scripts/summarize-ai-reviews.sh|template-owned|update
+scripts/test-review-summary.sh|scripts/test-review-summary.sh|template-owned|update
+scripts/review-gate.sh|scripts/review-gate.sh|template-owned|update
+scripts/write-session-checkpoint.sh|scripts/write-session-checkpoint.sh|template-owned|update
+scripts/verify.sh|scripts/verify.example.sh|project-owned|inspect-only
 FILES
 }
 
@@ -155,8 +158,10 @@ hash_file() {
   sha256sum "$1" | awk '{print $1}'
 }
 
-while IFS='|' read -r target_path template_path; do
+while IFS='|' read -r target_path template_path ownership patch_policy; do
   [ -n "$target_path" ] || continue
+  ownership="${ownership:-template-owned}"
+  patch_policy="${patch_policy:-update}"
 
   total_count=$((total_count + 1))
   source_path="${TEMPLATE_DIR}/${template_path}"
@@ -178,7 +183,7 @@ while IFS='|' read -r target_path template_path; do
     different_count=$((different_count + 1))
   fi
 
-  rows="${rows}${state}	${target_path}	${template_path}
+  rows="${rows}${state}	${target_path}	${template_path}	${ownership}	${patch_policy}
 "
 done <<EOF
 $(managed_files)
@@ -203,7 +208,7 @@ same: ${same_count}
 different: ${different_count}
 missing: ${missing_count}
 
-STATE	PATH	TEMPLATE_PATH
+STATE	PATH	TEMPLATE_PATH	OWNERSHIP	PATCH_POLICY
 ${rows}
 REPORT
 
