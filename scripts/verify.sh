@@ -52,6 +52,7 @@ done
 bash -n tools/ai-auto-init
 bash -n tools/ai-home
 bash -n tools/ai-register
+bash -n tools/ai-auto-template-status
 bash -n tools/feedback-collect
 bash -n tools/workspace-scan
 
@@ -709,6 +710,7 @@ echo "[verify] testing .omx review artifact archiving..."
   for index in 1 2 3 4 5 6; do
     printf 'old %s\n' "${index}" > ".omx/review-results/old-${index}.md"
   done
+  printf 'old log\n' > ".omx/review-results/old-log.md.log"
 
   cat > .omx/review-results/claude-review-latest.md <<'REVIEW'
 ## Verdict
@@ -750,6 +752,8 @@ RUN
   test -f .omx/review-results/claude-review-latest.md
   test -f .omx/review-results/gemini-review-latest.md
   test ! -f .omx/review-results/old-1.md
+  test ! -f .omx/review-results/old-log.md.log
+  test -f .omx/review-results/archive/*/old-log.md.log
   test -d .omx/review-results/archive
 
   after_count="$(find .omx/review-results -type f | wc -l | tr -d ' ')"
@@ -783,6 +787,7 @@ echo "[verify] testing .omx archive custom result directory preservation..."
   printf '# run\n\n* Review run id: 20260509T000000\n\n## Outputs\n\n* Claude result:   custom-results/claude-review-latest.md   \n' > custom-results/review-run-latest.md
   printf '# summary\n' > custom-results/review-summary-latest.md
   printf '# verdict\n' > custom-results/review-verdict-latest.md
+  printf 'old log\n' > custom-results/old-log.md.log
   printf 'unsafe\n' > "custom-results/old unsafe.md"
 
   OMX_REVIEW_RESULTS_DIR=custom-results \
@@ -796,6 +801,8 @@ echo "[verify] testing .omx archive custom result directory preservation..."
   test -f custom-results/review-verdict-latest.md
   test -f custom-results/claude-review-latest.md
   test -f custom-results/gemini-review-20260509T000000.md
+  test ! -f custom-results/old-log.md.log
+  test -f custom-results/archive/*/old-log.md.log
   test -f "custom-results/old unsafe.md"
   test -d custom-results/archive
   grep -q "leaving unsafe artifact filename active" "${tmp_dir}/archive.err"
@@ -1040,6 +1047,19 @@ PY
   grep -q "Mode: constrained" .omx/state/session-checkpoint.md
   grep -q "review-run-latest.md" .omx/state/session-checkpoint.md
   grep -q "claude: usage_limit" .omx/state/session-checkpoint.md
+
+  git add .omx
+  git -c user.name=verify -c user.email=verify@example.invalid -c commit.gpgsign=false commit -q -m "checkpoint fixture"
+
+  for index in $(seq 1 5); do
+    printf 'overflow %s\n' "${index}" > "overflow-${index}.txt"
+  done
+  OMX_SESSION_CHECKPOINT_STATUS_LIMIT=2 \
+    OMX_SESSION_CHECKPOINT_FIELD_LIMIT=12 \
+    OMX_COMPLETED_STEPS="this field should be truncated for token hygiene" \
+    "${repo_root}/scripts/write-session-checkpoint.sh" >/dev/null
+  grep -q "truncated .* additional status lines" .omx/state/session-checkpoint.md
+  grep -q "this field s... \\[truncated\\]" .omx/state/session-checkpoint.md
 )
 
 echo "[verify] testing feedback helper..."
@@ -1164,21 +1184,25 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/record-project-memory.sh"
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
+  test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
   test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
   test -f "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  test -f "${target_dir}/docs/INCIDENT_OPS.md"
   test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
   test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
   test -f "${target_dir}/docs/SECURITY_COMPLETION.md"
   test -f "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
   test -f "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
+  cmp -s "templates/automation-base/AI_AUTO_TEMPLATE_VERSION" "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
   grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
   grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
   grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
@@ -1205,25 +1229,64 @@ echo "[verify] testing automation template installer..."
   grep -q "Review intensity" "templates/automation-base/README.md"
   grep -q "Subagents" "templates/automation-base/README.md"
   grep -q "Planning/interview intensity" "templates/automation-base/README.md"
+  grep -q "Operational readiness" "templates/automation-base/README.md"
+  grep -q "Incident Ops" "templates/automation-base/README.md"
+  grep -q "heartbeat/quiet/active" "templates/automation-base/README.md"
+  grep -q "sandbox-vs-real-network evidence" "templates/automation-base/README.md"
+  grep -q "Plan management" "templates/automation-base/README.md"
+  grep -q "Guidance context budget" "templates/automation-base/README.md"
+  grep -q "ai-auto-template-status" "templates/automation-base/README.md"
   grep -q "unused completion pack" "templates/automation-base/README.md"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "review intensity" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "서브에이전트 사용 기준" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "플랜/인터뷰 강도 기준" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "none/light/standard/deep" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "Incident Ops 감시/장애대응/주기보고 기준" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "Template Status Comparison" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "ai-auto-template-status" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "rejected as non-goals" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "프로젝트 초기설정 해줘" "${installer_output}"
   grep -q "docs/\\*_COMPLETION.md" "${installer_output}"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${installer_output}"
   grep -q "서브에이전트 사용 기준" "${installer_output}"
   grep -q "플랜/인터뷰 강도 기준" "${installer_output}"
+  grep -q "fail-closed 기준" "${installer_output}"
+  grep -q "sandbox-vs-real-network evidence 기준" "${installer_output}"
+  grep -q "Incident Ops 감시/주기보고 기준" "${installer_output}"
+  grep -q "plan index/TODO reconciliation 기준" "${installer_output}"
+  grep -q "linked docs 분리 기준" "${installer_output}"
   grep -q '`none`' "${target_dir}/docs/WORKFLOW.md"
   grep -q '`light`' "${target_dir}/docs/WORKFLOW.md"
   grep -q '`standard`' "${target_dir}/docs/WORKFLOW.md"
   grep -q '`deep`' "${target_dir}/docs/WORKFLOW.md"
+  grep -q "sandbox-vs-real-network evidence" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "Incident Ops 기준을 확인한다" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "Incident Ops 정책" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "heartbeat, quiet, active-incident 보고" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "plan index/TODO reconciliation" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "linked docs" "${target_dir}/docs/WORKFLOW.md"
   test ! -e "${target_dir}/templates/domain-packs/odoo/README.md"
   test -f "${target_dir}/.omx/domain-packs/odoo/README.md"
   grep -q "Optional domain packs installed for onboarding reference" "${installer_output}"
+
+  "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-current.out"
+  grep -q "status: current" "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
+
+  printf '\nproject-specific customization\n' >> "${target_dir}/docs/WORKFLOW.md"
+  "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-drift.out"
+  grep -q "status: customized_or_outdated" "${tmp_dir}/template-status-drift.out"
+  grep -q $'different\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-drift.out"
+  test ! -e "${target_dir}/.omx/feedback/queue.jsonl"
+
+  "${repo_root}/tools/ai-auto-template-status" --record-feedback "${target_dir}" > "${tmp_dir}/template-status-feedback.out"
+  grep -q "feedback: recorded automation-template:update-available" "${tmp_dir}/template-status-feedback.out"
+  grep -q '"repeat_key": "automation-template:update-available"' "${target_dir}/.omx/feedback/queue.jsonl"
+
+  rm "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
+  "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-missing-version.out"
+  grep -q "status: missing_version" "${tmp_dir}/template-status-missing-version.out"
 )
 
 echo "[verify] checking optional domain pack structure..."
@@ -1244,6 +1307,10 @@ grep -q "Data Completion Pack" "templates/automation-base/docs/DATA_COMPLETION.m
 grep -q "Performance Completion Pack" "templates/automation-base/docs/PERFORMANCE_COMPLETION.md"
 grep -q "Observability Completion Pack" "templates/automation-base/docs/OBSERVABILITY_COMPLETION.md"
 grep -q "UI Completion Pack" "templates/automation-base/docs/UI_COMPLETION.md"
+grep -q "Incident Ops For Dry-run And Field-test" "templates/automation-base/docs/INCIDENT_OPS.md"
+grep -q "Periodic Status Reporting" "templates/automation-base/docs/INCIDENT_OPS.md"
+grep -q "Incident Ops During Dry-run And Field-test" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
+grep -q "field-test incident evidence" "templates/automation-base/docs/UI_COMPLETION.md"
 grep -q "Approval Friction" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "실패 패턴 피드백" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "필요한 완료팩" "docs/NEW_PROJECT_GUIDE.md"
@@ -1312,8 +1379,16 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${aiinit_output}"
   grep -q "서브에이전트 사용 기준" "${aiinit_output}"
   grep -q "플랜/인터뷰 강도 기준" "${aiinit_output}"
+  grep -q "fail-closed 기준" "${aiinit_output}"
+  grep -q "sandbox-vs-real-network evidence 기준" "${aiinit_output}"
+  grep -q "Incident Ops" "${aiinit_output}"
+  grep -q "plan index/TODO" "${aiinit_output}"
+  grep -q "linked docs 분리 기준" "${aiinit_output}"
   grep -q "Project registered" "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
+  grep -q "sandbox-vs-real-network" "${target_dir}/AGENTS.md"
+  grep -q "Incident Ops rules" "${target_dir}/AGENTS.md"
+  grep -q "plan index/TODO reconciliation" "${target_dir}/AGENTS.md"
   grep -q "$(cd "${target_dir}" && pwd -P)" "${registry_file}"
 )
 
@@ -1455,6 +1530,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1465,6 +1541,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
+  test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
   test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
@@ -1561,6 +1638,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1571,6 +1649,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
+  test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
@@ -1591,6 +1670,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
+  ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1601,6 +1681,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
+  test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )

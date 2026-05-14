@@ -11,14 +11,18 @@
 3. 작은 작업은 바로 실행하고, 방향이 갈리는 작업은 짧은 질문을 먼저 한다.
 4. 장기 정책, 표준, 아키텍처, 검증 체계, 배포/보안/데이터 작업은
    plan-first interview 후 진행한다.
-5. 작업 범위를 작게 고정한다.
-6. 최소 변경만 수행한다.
-7. 완료를 주장하기 전에 diff를 확인한다.
-8. `./scripts/verify.sh`를 실행한다.
-9. 실패하면 수정 후 다시 검증한다.
-10. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
-11. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
-12. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+5. 요청/입력/승인 경계가 애매하고 잘못 추측하면 결과가 달라지는 경우 먼저
+   확인한다.
+6. 운영 준비, dry-run, 배포, promotion, field evidence 작업은 필수 입력이
+   missing/stale/incomplete/degraded이면 fail-closed로 멈춘다.
+7. 작업 범위를 작게 고정한다.
+8. 최소 변경만 수행한다.
+9. 완료를 주장하기 전에 diff와 plan/TODO index 상태를 확인한다.
+10. `./scripts/verify.sh`를 실행한다.
+11. 실패하면 수정 후 다시 검증한다.
+12. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
+13. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
+14. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
 
 ## 플랜/인터뷰 강도
 
@@ -116,6 +120,32 @@ Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로
 권한 승인은 우회하지 않는다. 반복되는 비파괴 명령은 approved prefix나
 repo helper로 마찰을 줄이고, destructive/credential/production 작업은 계속
 명시 승인 대상으로 둔다.
+
+운영 산출물 규칙:
+
+- operational readiness, dry-run validity, promotion readiness, field-start
+  evidence를 주장하는 작업은 필수 입력이 degraded이면 분석 전용으로만
+  계속할 수 있다.
+- partial/degraded run은 진단 리포트는 남길 수 있지만 accepted operating
+  artifact나 downstream input으로 저장하지 않는다.
+- operational dry-run/deployment 전에는 read-only/auth/network 권한, DB,
+  token, cooldown, output path, API budget, side-effect boundary를 preflight로
+  확인한다.
+- sandboxed external API probe 실패는 provider/user network 실패로 단정하지
+  않고, 승인된 real-network path로 1회 재시도한 증거를 함께 남긴다.
+- dry-run/field-test 중 이상 로그가 발견되면 `docs/INCIDENT_OPS.md`의
+  Incident Ops 정책에 따라 observe/diagnose/safe_recover는 선조치하고,
+  guarded_recover는 정책상 1회만 허용하며, ask_required/blocked 조치는
+  증거를 남긴 뒤 사용자 승인 경계에서 멈춘다.
+- 장시간 감시 작업은 프로젝트별 heartbeat, quiet, active-incident 보고
+  주기를 정하고, 주기 보고에는 현재 phase, 마지막 정상 체크, 자동 조치,
+  차단/승인 필요 조치, 다음 체크 시각을 포함한다.
+- UI field-test에서는 route/viewport/screenshot, console error, network
+  status, operator flow step, 다음 조작 가능 여부를 incident log에 남긴다.
+- 작업 완료 전 plan index 또는 TODO source of truth를 갱신하거나 변경 없음
+  이유를 기록한다.
+- 긴 runbook/checklist/detail은 `AGENTS.md`에 계속 붙이지 말고 linked docs로
+  분리한다.
 
 완료 보고에 포함할 것
 변경 파일

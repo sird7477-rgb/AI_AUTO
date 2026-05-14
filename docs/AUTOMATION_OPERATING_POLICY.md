@@ -173,6 +173,16 @@ planning.
 Escalate to a short interview when one decision would materially change the
 result. Ask one concise question, then proceed from the answer.
 
+Fail closed on material ambiguity:
+
+- If the user request, operating input, target project, or approval boundary is
+  ambiguous and a wrong assumption would change behavior, risk, cost, or
+  persistence, ask before acting.
+- Do not hide an assumption inside best-effort execution when the missing answer
+  determines whether work should proceed, stop, or be analysis-only.
+- Proceed from a labeled assumption only for safe, reversible work where the
+  assumption does not change the user's intended outcome.
+
 Escalate to a plan-first interview when the task involves any of these:
 
 - broad words such as foundation, standard, strategy, architecture, workflow,
@@ -223,6 +233,106 @@ Escalate to the user only when:
 For strategy or research tasks, "no valid candidate found" means "change the
 search axis" unless one of the escalation conditions above is true.
 
+## Operational Readiness Fail-Closed
+
+Operational workflows must distinguish analysis from accepted operating output.
+Once a workflow claims dry-run validity, promotion readiness, field-start
+evidence, or production/operations readiness, required inputs are fail-closed.
+
+Stop the operational path when required inputs are missing, stale, incomplete,
+contract-invalid, permission-blocked, or produced by a degraded run. The command
+should return a non-ready/non-zero status when practical and persist
+machine-readable blocker flags or status artifacts.
+
+Do not silently continue through:
+
+- stale cache reuse
+- narrowed scope
+- reduced cadence
+- placeholder/default values
+- restricted or best-effort mode
+- partial success from a larger required input set
+
+These fallbacks may be used only when explicitly labeled analysis-only or
+diagnostic. Diagnostic reports may be written for partial or degraded runs, but
+accepted operating artifacts such as CSV inputs, universe files, promotion
+evidence, readiness outputs, or downstream execution inputs must not be written
+unless the full required input contract passes.
+
+## Plan Index And TODO Reconciliation
+
+Multi-document plans must designate one current index document as the first
+navigation surface. The index should hold active status, immediate next actions,
+future work queues, promotion/fallback gates, and links to detailed contracts,
+runbooks, matrices, or evidence documents.
+
+When agents split or extend a plan, they should update the index instead of
+duplicating full criteria across documents. Answer plan-location questions from
+the index first.
+
+Before final reporting from Ralph/team/review-gate/checkpoint workflows, inspect
+the current plan index or TODO source of truth. Update changed TODO/status/evidence
+or explicitly record that the index is unchanged and why. Do not let a checkpoint
+claim completion while the plan index still advertises stale next actions.
+
+## Operational Deployment Preflight
+
+Production, field dry-run, or operational deployment workflows must use
+preconfigured read-only network/auth permissions where possible instead of
+depending on interactive ad hoc approval mid-run.
+
+Before the operational path begins, preflight the side-effect boundary and the
+minimum required inputs, including the relevant database, token/auth state,
+cooldowns, output paths, API budget, and read/write permissions. Permission or
+preflight failure should fail closed with status artifacts rather than continuing
+as if the run were operationally valid.
+
+For external API checks, classify sandbox/network restrictions separately from
+provider or user-network failures. If a sandboxed probe reports connection
+refusal, timeout, or auth transport noise, retry once through the preconfigured
+approved real-network path before blaming the provider, credentials, or local
+network. Preserve both sandbox and real-network evidence in status artifacts.
+
+## Incident Ops During Dry-run And Field-test
+
+Use `docs/INCIDENT_OPS.md` when Ralph, team, QA, or a direct agent monitors a
+dry-run, field-test, or operational rehearsal. Treat it as a policy layer for
+anomaly response, not as permission to mutate external state.
+
+Allowed automatic work is limited to observe, diagnose, safe reversible recovery,
+and configured one-shot guarded recovery. Credential changes, production writes,
+deployments, repeated external calls, orders, cancellations, position changes,
+payments, deletion, or unknown side-effectful actions require approval or are
+blocked by policy.
+
+Every incident response must write an incident log with the trigger, phase,
+severity, action class, decision, exact automatic action, pre/post evidence,
+sandbox and approved real-network evidence when relevant, UI evidence when UI is
+in scope, next approval boundary, and remaining risk.
+
+Long-running monitoring must report status on a project-specific cadence instead
+of staying silent until completion. Define heartbeat, quiet, and active-incident
+reporting intervals during onboarding or before the run starts.
+
+## Failure-Mode Inventory Before Expansion
+
+Before broadening operational dry-run, deployment, collector, or scheduler
+behavior, list plausible failure modes and map current defenses, blocker flags,
+runbook coverage, and targeted-test needs. Defer live or chaos-style tests until
+affected modules are split enough to observe safely, existing defenses are
+verified, and the test scope is explicit.
+
+## Guidance And Context Budget
+
+Keep durable operating principles in `AGENTS.md`, but move detailed procedures,
+examples, long checklists, volatile runbooks, and domain-specific matrices into
+linked docs. When users repeatedly ask to add project instructions, check whether
+the guidance belongs in a split document before appending to `AGENTS.md`.
+
+Track context budget qualitatively during long sessions. If the main instruction
+surface is becoming hard to scan, add a cleanup TODO or linked guidance document
+instead of continuing to append every operational lesson directly.
+
 ## Onboarding Interview Structure
 
 After `aiinit`, interview before feature work. Keep the interview short but
@@ -246,9 +356,17 @@ Use this order:
    asking, inspect local CPU, memory, disk, and load evidence; then ask about
    unknown hardware/runtime constraints such as WSL shutdown history or other
    active heavy sessions.
-8. Verification contract: exact `scripts/verify.sh` checks and evidence needed
+8. Operational readiness: required inputs, fail-closed blockers, accepted
+   operating artifacts, read-only/auth/network preflight, and analysis-only
+   fallback rules.
+9. Incident Ops: dry-run/field-test monitoring policy, incident log contract,
+   automatic action classes, UI field-test evidence, and periodic reporting
+   cadence.
+10. Plan management: current plan index, TODO reconciliation expectations, and
+   where detailed runbooks/checklists live.
+11. Verification contract: exact `scripts/verify.sh` checks and evidence needed
    before claiming completion.
-9. Decision record: write confirmed rules into `AGENTS.md`, `docs/WORKFLOW.md`,
+12. Decision record: write confirmed rules into `AGENTS.md`, `docs/WORKFLOW.md`,
    and `scripts/verify.sh`; record rejected packs as non-goals.
 
 Ask only for information that cannot be inferred safely from local evidence.

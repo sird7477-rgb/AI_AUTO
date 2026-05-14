@@ -23,6 +23,8 @@ Clarify these before implementing UI work:
   local product conventions
 - frontend stack and package commands
 - screenshot or browser smoke checks that prove completion
+- field-test incident evidence: route, viewport, screenshot, console status,
+  network status, operator flow step, and whether the next action is possible
 
 ## Workflow Additions
 
@@ -35,7 +37,9 @@ When UI is in scope, add these steps to the project workflow:
 5. run frontend lint/typecheck/build/test commands when available
 6. run browser or screenshot smoke checks for the main journey
 7. inspect the UI at the required viewports before claiming completion
-8. include screenshots, browser check results, or exact smoke evidence in the
+8. when UI is part of field-test monitoring, write incident evidence according
+   to `docs/INCIDENT_OPS.md`
+9. include screenshots, browser check results, or exact smoke evidence in the
    completion report
 
 ## Verification Patterns
@@ -82,6 +86,8 @@ UI work is complete only when:
 - browser console errors are checked when a browser test or manual browser smoke
   is part of the project workflow
 - screenshots or browser test results are captured for the changed main path
+- field-test UI incidents include route, viewport, screenshot, console/network
+  status, operator flow step, and recoverability evidence
 - `./scripts/verify.sh` and `./scripts/review-gate.sh` pass, or any degraded
   trust state is reported explicitly
 

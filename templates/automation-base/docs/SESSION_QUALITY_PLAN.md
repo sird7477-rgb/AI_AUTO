@@ -194,6 +194,8 @@ Preferred artifacts:
 Avoid repeatedly loading:
 
 - all `.omx/review-results/*`
+- `.omx/review-results/archive/*` unless investigating a specific historical run
+- `.omx/logs/*` unless the current failure requires runtime trace evidence
 - large historical logs
 - old prompt files unless investigating a specific run
 - full provider documentation when local runtime evidence is enough
@@ -205,6 +207,20 @@ For long sessions, prefer:
 - latest verdict first
 - docs/current-state first
 - exact file reads over repo-wide dumps
+
+Checkpoint hygiene:
+
+- `.omx/state/session-checkpoint.md` should stay a compact resume pointer, not a
+  transcript or raw log sink.
+- `scripts/write-session-checkpoint.sh` caps `git status --short` output with
+  `OMX_SESSION_CHECKPOINT_STATUS_LIMIT` and long field values with
+  `OMX_SESSION_CHECKPOINT_FIELD_LIMIT`.
+- If a checkpoint points to large evidence, read the linked manifest or verdict
+  first, then open only the specific referenced file needed for the current
+  question.
+- Do not use broad `.omx` reads as a default resume step; explicitly exclude
+  archived review artifacts and logs unless they are the target of the
+  investigation.
 
 ## 5. Resume Protocol
 

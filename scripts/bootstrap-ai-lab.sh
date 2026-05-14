@@ -187,6 +187,13 @@ else
   suggest "chmod +x ${ROOT}/tools/ai-register"
 fi
 
+if [ -x "${ROOT}/tools/ai-auto-template-status" ]; then
+  say_pass "ai-auto-template-status source helper is executable"
+else
+  say_fail "ai-auto-template-status source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-auto-template-status"
+fi
+
 if [ -x "${ROOT}/tools/feedback-collect" ]; then
   say_pass "feedback-collect source helper is executable"
 else
@@ -219,6 +226,7 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
   ensure_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
   ensure_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
+  ensure_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   ensure_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   ensure_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
 

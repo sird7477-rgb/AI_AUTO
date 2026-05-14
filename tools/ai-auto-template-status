@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  case "$LINK_TARGET" in
+    /*)
+      SOURCE="$LINK_TARGET"
+      ;;
+    *)
+      SOURCE="${SOURCE_DIR}/${LINK_TARGET}"
+      ;;
+  esac
+done
+
+TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
+TEMPLATE_DIR="${AI_LAB_ROOT}/templates/automation-base"
+VERSION_FILE="AI_AUTO_TEMPLATE_VERSION"
+RECORD_FEEDBACK=0
+TARGET_DIR=""
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-auto-template-status [--record-feedback] [target-repo]
+
+Compare a project against the current AI_AUTO automation template.
+
+This command reports status only. It does not merge or patch files.
+
+Options:
+  --record-feedback   record a sanitized feedback queue item when drift exists
+  -h, --help          show this help
+
+Examples:
+  ai-auto-template-status
+  ai-auto-template-status /path/to/project
+  ai-auto-template-status --record-feedback /path/to/project
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --record-feedback)
+      RECORD_FEEDBACK=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      echo
+      usage
+      exit 2
+      ;;
+    *)
+      if [ -n "$TARGET_DIR" ]; then
+        echo "Unexpected extra argument: $1"
+        echo
+        usage
+        exit 2
+      fi
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ "$#" -gt 0 ]; then
+  if [ -n "$TARGET_DIR" ]; then
+    echo "Unexpected extra argument: $1"
+    echo
+    usage
+    exit 2
+  fi
+  TARGET_DIR="$1"
+fi
+
+TARGET_DIR="${TARGET_DIR:-$(pwd)}"
+
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Target directory does not exist: ${TARGET_DIR}"
+  exit 1
+fi
+
+if [ ! -d "$TEMPLATE_DIR" ]; then
+  echo "Template directory not found: ${TEMPLATE_DIR}"
+  exit 1
+fi
+
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "sha256sum is required"
+  exit 1
+fi
+
+target_abs="$(cd "$TARGET_DIR" && pwd -P)"
+current_version="$(sed -n '1p' "${TEMPLATE_DIR}/${VERSION_FILE}" 2>/dev/null || true)"
+installed_version="$(sed -n '1p' "${target_abs}/${VERSION_FILE}" 2>/dev/null || true)"
+
+if [ -z "$current_version" ]; then
+  echo "Current template version is missing: ${TEMPLATE_DIR}/${VERSION_FILE}"
+  exit 1
+fi
+
+same_count=0
+different_count=0
+missing_count=0
+total_count=0
+rows=""
+
+managed_files() {
+  cat <<'FILES'
+AI_AUTO_TEMPLATE_VERSION|AI_AUTO_TEMPLATE_VERSION
+AGENTS.md|AGENTS.md
+docs/AI_MODEL_ROUTING.md|docs/AI_MODEL_ROUTING.md
+docs/AUTOMATION_OPERATING_POLICY.md|docs/AUTOMATION_OPERATING_POLICY.md
+docs/DATA_COMPLETION.md|docs/DATA_COMPLETION.md
+docs/DEPLOYMENT_COMPLETION.md|docs/DEPLOYMENT_COMPLETION.md
+docs/INCIDENT_OPS.md|docs/INCIDENT_OPS.md
+docs/OBSERVABILITY_COMPLETION.md|docs/OBSERVABILITY_COMPLETION.md
+docs/PERFORMANCE_COMPLETION.md|docs/PERFORMANCE_COMPLETION.md
+docs/SECURITY_COMPLETION.md|docs/SECURITY_COMPLETION.md
+docs/SESSION_QUALITY_PLAN.md|docs/SESSION_QUALITY_PLAN.md
+docs/UI_COMPLETION.md|docs/UI_COMPLETION.md
+docs/WORKFLOW.md|docs/WORKFLOW.md
+scripts/archive-omx-artifacts.sh|scripts/archive-omx-artifacts.sh
+scripts/automation-doctor.sh|scripts/automation-doctor.sh
+scripts/collect-review-context.sh|scripts/collect-review-context.sh
+scripts/discover-ai-models.sh|scripts/discover-ai-models.sh
+scripts/make-review-prompts.sh|scripts/make-review-prompts.sh
+scripts/record-feedback.sh|scripts/record-feedback.sh
+scripts/record-project-memory.sh|scripts/record-project-memory.sh
+scripts/resolve-feedback.sh|scripts/resolve-feedback.sh
+scripts/run-ai-reviews.sh|scripts/run-ai-reviews.sh
+scripts/summarize-ai-reviews.sh|scripts/summarize-ai-reviews.sh
+scripts/test-review-summary.sh|scripts/test-review-summary.sh
+scripts/review-gate.sh|scripts/review-gate.sh
+scripts/write-session-checkpoint.sh|scripts/write-session-checkpoint.sh
+scripts/verify.sh|scripts/verify.example.sh
+FILES
+}
+
+hash_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+while IFS='|' read -r target_path template_path; do
+  [ -n "$target_path" ] || continue
+
+  total_count=$((total_count + 1))
+  source_path="${TEMPLATE_DIR}/${template_path}"
+  project_path="${target_abs}/${target_path}"
+
+  if [ ! -f "$source_path" ]; then
+    echo "Template managed file missing: ${template_path}"
+    exit 1
+  fi
+
+  if [ ! -f "$project_path" ]; then
+    state="missing"
+    missing_count=$((missing_count + 1))
+  elif [ "$(hash_file "$source_path")" = "$(hash_file "$project_path")" ]; then
+    state="same"
+    same_count=$((same_count + 1))
+  else
+    state="different"
+    different_count=$((different_count + 1))
+  fi
+
+  rows="${rows}${state}	${target_path}	${template_path}
+"
+done <<EOF
+$(managed_files)
+EOF
+
+if [ -z "$installed_version" ]; then
+  overall_status="missing_version"
+elif [ "$installed_version" != "$current_version" ] || [ "$different_count" -gt 0 ] || [ "$missing_count" -gt 0 ]; then
+  overall_status="customized_or_outdated"
+else
+  overall_status="current"
+fi
+
+cat <<REPORT
+AI_AUTO Template Status
+target: ${target_abs}
+installed_version: ${installed_version:-missing}
+current_version: ${current_version}
+status: ${overall_status}
+managed_files: ${total_count}
+same: ${same_count}
+different: ${different_count}
+missing: ${missing_count}
+
+STATE	PATH	TEMPLATE_PATH
+${rows}
+REPORT
+
+if [ "$RECORD_FEEDBACK" -eq 1 ]; then
+  if [ "$overall_status" = "current" ]; then
+    echo "feedback: skipped current"
+  elif [ -x "${AI_LAB_ROOT}/scripts/record-feedback.sh" ]; then
+    OMX_FEEDBACK_QUEUE_FILE="${target_abs}/.omx/feedback/queue.jsonl" \
+      "${AI_LAB_ROOT}/scripts/record-feedback.sh" \
+        --type improvement \
+        --repeat-key automation-template:update-available \
+        --summary "AI_AUTO automation template status differs from the current template" \
+        --severity medium \
+        --surface automation-template \
+        --resolution "Run ai-auto-template-status, review the reported file differences, and patch manually if appropriate" \
+        --source ai-auto-template-status >/dev/null
+    echo "feedback: recorded automation-template:update-available"
+  else
+    echo "feedback: skipped missing AI_AUTO scripts/record-feedback.sh"
+  fi
+fi

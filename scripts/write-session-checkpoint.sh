@@ -2,7 +2,23 @@
 set -euo pipefail
 
 CHECKPOINT_FILE="${OMX_SESSION_CHECKPOINT_FILE:-.omx/state/session-checkpoint.md}"
+CHECKPOINT_STATUS_LIMIT="${OMX_SESSION_CHECKPOINT_STATUS_LIMIT:-40}"
+CHECKPOINT_FIELD_LIMIT="${OMX_SESSION_CHECKPOINT_FIELD_LIMIT:-300}"
 mkdir -p "$(dirname "$CHECKPOINT_FILE")"
+
+case "$CHECKPOINT_STATUS_LIMIT" in
+  ''|*[!0-9]*)
+    echo "[checkpoint] invalid OMX_SESSION_CHECKPOINT_STATUS_LIMIT='${CHECKPOINT_STATUS_LIMIT}'" >&2
+    exit 2
+    ;;
+esac
+
+case "$CHECKPOINT_FIELD_LIMIT" in
+  ''|*[!0-9]*)
+    echo "[checkpoint] invalid OMX_SESSION_CHECKPOINT_FIELD_LIMIT='${CHECKPOINT_FIELD_LIMIT}'" >&2
+    exit 2
+    ;;
+esac
 
 latest_file() {
   local dir="$1"
@@ -23,9 +39,40 @@ write_field() {
   local fallback="$3"
 
   if [ -n "$value" ]; then
-    echo "- ${label}: ${value}"
+    echo "- ${label}: $(compact_value "$value")"
   else
     echo "- ${label}: ${fallback}"
+  fi
+}
+
+compact_value() {
+  local value="$1"
+  local limit="$CHECKPOINT_FIELD_LIMIT"
+
+  value="$(printf '%s' "$value" | tr '\n' ' ')"
+  if [ "${#value}" -gt "$limit" ]; then
+    printf '%s... [truncated]\n' "${value:0:limit}"
+  else
+    printf '%s\n' "$value"
+  fi
+}
+
+write_git_status() {
+  local status_output
+  local total_lines
+
+  status_output="$(git status --short)"
+  if [ -z "$status_output" ]; then
+    echo "  clean"
+    return 0
+  fi
+
+  total_lines="$(printf '%s\n' "$status_output" | wc -l | tr -d ' ')"
+  if [ "$CHECKPOINT_STATUS_LIMIT" -gt 0 ]; then
+    printf '%s\n' "$status_output" | sed -n "1,${CHECKPOINT_STATUS_LIMIT}p" | sed 's/^/  /'
+  fi
+  if [ "$total_lines" -gt "$CHECKPOINT_STATUS_LIMIT" ]; then
+    echo "  ... truncated $((total_lines - CHECKPOINT_STATUS_LIMIT)) additional status lines"
   fi
 }
 
@@ -39,7 +86,7 @@ write_field() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "- Branch: $(git branch --show-current 2>/dev/null || true)"
     echo "- Status:"
-    git status --short | sed 's/^/  /'
+    write_git_status
   else
     echo "- Not inside a git repository"
   fi

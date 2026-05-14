@@ -27,11 +27,13 @@ fi
 conflicts=()
 
 for path in \
+  "AI_AUTO_TEMPLATE_VERSION" \
   "AGENTS.md" \
   "docs/AI_MODEL_ROUTING.md" \
   "docs/AUTOMATION_OPERATING_POLICY.md" \
   "docs/DATA_COMPLETION.md" \
   "docs/DEPLOYMENT_COMPLETION.md" \
+  "docs/INCIDENT_OPS.md" \
   "docs/OBSERVABILITY_COMPLETION.md" \
   "docs/PERFORMANCE_COMPLETION.md" \
   "docs/SECURITY_COMPLETION.md" \
@@ -85,10 +87,12 @@ if ! grep -Eq '^[.]omx/?$' "${exclude_file}" 2>/dev/null; then
 fi
 
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
+cp "${TEMPLATE_DIR}/AI_AUTO_TEMPLATE_VERSION" "${TARGET_DIR}/AI_AUTO_TEMPLATE_VERSION"
 cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTING.md"
 cp "${TEMPLATE_DIR}/docs/AUTOMATION_OPERATING_POLICY.md" "${TARGET_DIR}/docs/AUTOMATION_OPERATING_POLICY.md"
 cp "${TEMPLATE_DIR}/docs/DATA_COMPLETION.md" "${TARGET_DIR}/docs/DATA_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/DEPLOYMENT_COMPLETION.md" "${TARGET_DIR}/docs/DEPLOYMENT_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/INCIDENT_OPS.md" "${TARGET_DIR}/docs/INCIDENT_OPS.md"
 cp "${TEMPLATE_DIR}/docs/OBSERVABILITY_COMPLETION.md" "${TARGET_DIR}/docs/OBSERVABILITY_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/PERFORMANCE_COMPLETION.md" "${TARGET_DIR}/docs/PERFORMANCE_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/SECURITY_COMPLETION.md" "${TARGET_DIR}/docs/SECURITY_COMPLETION.md"
@@ -141,11 +145,13 @@ echo
 echo "Next steps:"
 echo "1. Interview the project owner for purpose, scope, stack, and completion criteria."
 echo "2. Confirm review intensity, feedback recording, approval-friction handling, subagent usage, resource-aware parallelism, and planning/interview intensity."
-echo "3. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
-echo "4. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
-echo "5. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "6. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
-echo "7. Run:"
+echo "3. Confirm operational readiness fail-closed rules, sandbox-vs-real-network evidence, Incident Ops monitoring/reporting, plan/TODO reconciliation, and AGENTS.md vs linked-docs split."
+echo "4. Use ai-auto-template-status later to compare this project with newer AI_AUTO templates; review differences manually before patching."
+echo "5. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
+echo "6. Check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
+echo "7. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
+echo "8. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
+echo "9. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"
@@ -158,5 +164,8 @@ echo "Equivalent detailed request:"
 echo "  프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과"
 echo "  .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,"
 echo "  리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준,"
-echo "  플랜/인터뷰 강도 기준을 정하고"
+echo "  플랜/인터뷰 강도 기준, 운영 준비 fail-closed 기준,"
+echo "  sandbox-vs-real-network evidence 기준, Incident Ops 감시/주기보고 기준,"
+echo "  plan index/TODO reconciliation 기준,"
+echo "  AGENTS.md와 linked docs 분리 기준을 정하고"
 echo "  AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘"

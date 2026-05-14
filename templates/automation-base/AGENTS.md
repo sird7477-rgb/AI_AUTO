@@ -69,6 +69,15 @@ Clarify at minimum:
   sessions, thermal limits, and maximum acceptable parallelism
 - planning/interview intensity expectations for future work: `none`, `light`,
   `standard`, or `deep`
+- operational readiness rules: required inputs, fail-closed blockers, accepted
+  operating artifacts, read-only/auth/network preflight, sandbox-vs-real-network
+  evidence, and analysis-only fallback boundaries
+- Incident Ops rules from `docs/INCIDENT_OPS.md`: dry-run/field-test monitoring,
+  automatic action classes, incident log fields, UI field-test evidence, and
+  heartbeat/quiet/active-incident reporting intervals
+- plan management rules: current plan index, TODO reconciliation, checkpoint
+  update expectations, and where detailed runbooks or long checklists should live
+- guidance context budget: what belongs in `AGENTS.md` versus linked docs
 - whether the final outcome includes UI, and if not, record UI as a non-goal
 - which completion packs in `docs/*_COMPLETION.md` apply or do not apply
 - which installed domain packs under `.omx/domain-packs/` apply or do not apply
@@ -103,12 +112,18 @@ Onboarding workflow:
 2. Inspect existing project materials as references, including folders such as
    `(old)/`, `docs/`, `README.md`, or domain notes when present.
 3. Interview in order: outcome and non-goals; scope and safety boundaries; stack
-   and commands; planning/interview intensity; completion packs; domain packs;
-   operating policy; resource constraints; verification evidence. Ask only for
-   facts that cannot be inferred safely from local files or runtime evidence.
+   and commands; planning/interview intensity; operational readiness and
+   fail-closed inputs; Incident Ops monitoring/logging/reporting expectations;
+   plan index/TODO reconciliation; AGENTS-vs-linked-docs guidance budget;
+   completion packs; domain packs; operating policy; resource constraints;
+   verification evidence. Ask only for facts that cannot be inferred safely from
+   local files or runtime evidence.
 4. Confirm review intensity, feedback recording, approval-friction handling,
-   subagent usage, resource-aware parallelism, and planning/interview intensity
-   expectations from `docs/AUTOMATION_OPERATING_POLICY.md`.
+   subagent usage, resource-aware parallelism, planning/interview intensity,
+   operational readiness fail-closed rules, external API sandbox-vs-real-network
+   evidence rules, Incident Ops automatic action and periodic reporting
+   expectations, and plan/TODO reconciliation expectations from
+   `docs/AUTOMATION_OPERATING_POLICY.md` and `docs/INCIDENT_OPS.md`.
 5. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
    apply and which do not. If a pack applies, use it as reference material and
    merge only the applicable rules. Do not apply domain packs to unrelated

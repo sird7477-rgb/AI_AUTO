@@ -71,6 +71,7 @@ Move there:
 
 Useful commands:
   AI_AUTO --status
+  ai-auto-template-status /path/to/project
   feedback-collect
   workspace-scan
   ai-register /path/to/existing-repo

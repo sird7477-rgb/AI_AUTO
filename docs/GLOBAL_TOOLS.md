@@ -24,6 +24,12 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Resolves the ai-lab checkout from the helper symlink target
   - Runs `scripts/install-automation-template.sh` against the current directory or provided target path
 
+- `ai-auto-template-status`
+  - Compares a project against the current AI_AUTO automation template
+  - Reports installed template version, current template version, overall status, and per-managed-file states
+  - Does not merge or patch files
+  - With `--record-feedback`, records a sanitized project queue item through the trusted AI_AUTO feedback helper only when drift exists
+
 - `workspace-scan`
   - Scans git repositories under `~/workspace`
   - Set `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=N` to discover repositories nested deeper than the default depth of 2
@@ -68,6 +74,7 @@ Expected links:
     ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
     ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
+    ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
     ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
@@ -83,6 +90,7 @@ Manual equivalent:
     ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/ai-home
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
+    ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
     ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
 

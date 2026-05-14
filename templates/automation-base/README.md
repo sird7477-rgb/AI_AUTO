@@ -5,9 +5,11 @@ This template contains the base files for a CLI-based AI development workflow.
 ## Included
 
 - AGENTS.md: repo-local agent operating rules
+- AI_AUTO_TEMPLATE_VERSION: installed template version marker for status comparison
 - docs/WORKFLOW.md: project workflow documentation
 - docs/AUTOMATION_OPERATING_POLICY.md: review-intensity and feedback policy
 - docs/DEPLOYMENT_COMPLETION.md: optional deployment/release completion pack
+- docs/INCIDENT_OPS.md: dry-run and field-test incident operations policy
 - docs/SECURITY_COMPLETION.md: optional security/auth completion pack
 - docs/DATA_COMPLETION.md: optional data/migration completion pack
 - docs/PERFORMANCE_COMPLETION.md: optional performance completion pack
@@ -52,10 +54,17 @@ From any terminal, use `AI_AUTO` to jump to the AI_AUTO checkout:
 
     AI_AUTO
     AI_AUTO --status
+    ai-auto-template-status /path/to/target-repo
 
 `./scripts/install-global-files.sh` installs `AI_AUTO` through
 `~/.config/ai-lab/AI_AUTO.sh` and sources it from `~/.bashrc`; reload the shell
 or run `source ~/.bashrc` after installation.
+
+`ai-auto-template-status` compares a project against the current template and
+prints version and per-file states. It is status-only: review differences
+manually before copying or editing files. Use `--record-feedback` only when the
+detected drift should become a project queue item; feedback is written through
+AI_AUTO's trusted helper, not by executing scripts from the inspected project.
 
 Then ask the AI:
 
@@ -66,7 +75,7 @@ Equivalent detailed request:
     프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
     .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
     리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준,
-    플랜/인터뷰 강도 기준을 정하고
+    플랜/인터뷰 강도 기준, Incident Ops 감시/장애대응 기준을 정하고
     AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 The AI should interview the project owner, then update the generated files for the target project:
@@ -99,6 +108,17 @@ During the interview, decide which completion dimensions apply:
 - Planning/interview intensity: choose when to execute directly, ask one short
   question, or run a plan-first interview. Use `none`, `light`, `standard`, or
   `deep`.
+- Operational readiness: define required inputs, fail-closed blockers, accepted
+  operating artifacts, read-only/auth/network preflight,
+  sandbox-vs-real-network evidence, and analysis-only fallback boundaries.
+- Incident Ops: define dry-run/field-test monitoring, automatic action classes,
+  incident log fields, UI field-test evidence, and heartbeat/quiet/active
+  incident reporting intervals using `docs/INCIDENT_OPS.md`.
+- Plan management: define the current plan index, TODO reconciliation, checkpoint
+  update expectations, and where detailed runbooks or long checklists should
+  live.
+- Guidance context budget: decide what belongs in `AGENTS.md` versus linked docs
+  so project instructions stay scannable.
 
 - UI: use `docs/UI_COMPLETION.md` when the final outcome includes a UI
 - Deployment: use `docs/DEPLOYMENT_COMPLETION.md` when release or operations

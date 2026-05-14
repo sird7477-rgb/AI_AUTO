@@ -199,7 +199,7 @@ is_safe_artifact_name() {
     *[!A-Za-z0-9._+-]*|""|.*|*.tmp)
       return 1
       ;;
-    *.md)
+    *.md|*.md.log)
       return 0
       ;;
     *)
