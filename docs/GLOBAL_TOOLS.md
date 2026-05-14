@@ -41,6 +41,39 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Does not modify files and does not start rebuild execution
   - `리빌드 실행`, `리빌딩 실행`, or `rebuild run` must remain a separate execution request backed by an approved plan artifact
 
+- `ai-split-plan`
+  - Creates a JSON plan for conservative Python top-level function/class extraction
+  - Can read `.omx/domain-packs/<name>/split-rules.json` to propose module moves without hand-picking symbols
+  - Does not modify files
+
+- `ai-split-dry-run`
+  - Prints the diff for an approved Python split plan
+  - Does not modify files
+
+- `ai-split-apply`
+  - Applies a Python split plan only with `--execute-approved-plan` and completed approval-gate fields
+  - Creates rollback backups under `.omx/rebuild/backups/`
+  - Moves top-level Python functions/classes only; it does not rewrite imports or call sites
+
+- `ai-plan-status`
+  - Read-only status check for a full-schema interview/plan artifact
+  - Computes `ready_to_execute`, ambiguity, missing fields, open questions, stale evidence, and next action
+  - May write `.omx/state/plan-status.json` with `--write-state`
+
+- `ai-interview-record`
+  - Records one interview answer into a JSON plan artifact
+  - Keeps user decisions separate from AI assumptions
+  - Does not approve execution
+
+- `ai-plan-review`
+  - Read-only plan quality check built on the same computed status as `ai-plan-status`
+  - Reports whether the plan needs work before execution
+  - Does not approve execution
+
+- `ai-plan-export`
+  - Exports a concise execution summary from a plan artifact
+  - Includes status, blockers, next action, and a reminder that export is not approval
+
 - `workspace-scan`
   - Scans git repositories under `~/workspace`
   - Set `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=N` to discover repositories nested deeper than the default depth of 2
@@ -88,6 +121,13 @@ Expected links:
     ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
     ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
     ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
+    ~/bin/ai-split-plan -> ~/workspace/ai-lab/tools/ai-split-plan
+    ~/bin/ai-split-dry-run -> ~/workspace/ai-lab/tools/ai-split-dry-run
+    ~/bin/ai-split-apply -> ~/workspace/ai-lab/tools/ai-split-apply
+    ~/bin/ai-plan-status -> ~/workspace/ai-lab/tools/ai-plan-status
+    ~/bin/ai-interview-record -> ~/workspace/ai-lab/tools/ai-interview-record
+    ~/bin/ai-plan-review -> ~/workspace/ai-lab/tools/ai-plan-review
+    ~/bin/ai-plan-export -> ~/workspace/ai-lab/tools/ai-plan-export
     ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
@@ -106,6 +146,13 @@ Manual equivalent:
     ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
     ln -sf ~/workspace/ai-lab/tools/ai-refactor-scan ~/bin/ai-refactor-scan
     ln -sf ~/workspace/ai-lab/tools/ai-rebuild-plan ~/bin/ai-rebuild-plan
+    ln -sf ~/workspace/ai-lab/tools/ai-split-plan ~/bin/ai-split-plan
+    ln -sf ~/workspace/ai-lab/tools/ai-split-dry-run ~/bin/ai-split-dry-run
+    ln -sf ~/workspace/ai-lab/tools/ai-split-apply ~/bin/ai-split-apply
+    ln -sf ~/workspace/ai-lab/tools/ai-plan-status ~/bin/ai-plan-status
+    ln -sf ~/workspace/ai-lab/tools/ai-interview-record ~/bin/ai-interview-record
+    ln -sf ~/workspace/ai-lab/tools/ai-plan-review ~/bin/ai-plan-review
+    ln -sf ~/workspace/ai-lab/tools/ai-plan-export ~/bin/ai-plan-export
     ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
 

@@ -226,6 +226,10 @@ and application rules. Generic projects do not need a generic domain pack;
 continue with `automation-base` and any applicable completion packs when no
 installed domain pack matches.
 
+Use `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` only when creating or changing a
+reusable source pack. Project onboarding should normally select, reject, defer,
+or apply installed packs rather than authoring new packs.
+
 Source packs in this repository:
 
     templates/domain-packs/odoo/

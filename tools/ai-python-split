@@ -1,0 +1,703 @@
+#!/usr/bin/env python3
+"""Plan, preview, and apply conservative Python top-level symbol splits."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import difflib
+import json
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+PLAN_VERSION = 1
+
+
+@dataclass(frozen=True)
+class Symbol:
+    name: str
+    kind: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class Move:
+    destination: Path
+    symbols: list[str]
+
+
+def fail(message: str, code: int = 2) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def repo_root_for(path: Path) -> Path:
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        fail(f"Target is not inside a git repository: {path}", 1)
+    return Path(output.strip()).resolve()
+
+
+def load_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        fail(f"Only UTF-8 Python files are supported: {path}", 1)
+    except OSError as exc:
+        fail(f"Could not read {path}: {exc}", 1)
+
+
+def parse_python(path: Path) -> ast.Module:
+    try:
+        return ast.parse(load_text(path), filename=str(path))
+    except SyntaxError as exc:
+        fail(f"Python syntax error in {path}: {exc}", 1)
+
+
+def decorator_start(node: ast.AST) -> int:
+    start = getattr(node, "lineno", None)
+    if start is None:
+        return 0
+    decorators = getattr(node, "decorator_list", [])
+    if decorators:
+        starts = [getattr(decorator, "lineno", start) for decorator in decorators]
+        return min(starts)
+    return start
+
+
+def top_level_symbols(path: Path) -> dict[str, Symbol]:
+    tree = parse_python(path)
+    rows: dict[str, Symbol] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            end = getattr(node, "end_lineno", None)
+            if end is None:
+                continue
+            kind = "class" if isinstance(node, ast.ClassDef) else "function"
+            if isinstance(node, ast.AsyncFunctionDef):
+                kind = "async_function"
+            rows[node.name] = Symbol(node.name, kind, decorator_start(node), end)
+    return rows
+
+
+def target_names(target: ast.AST) -> set[str]:
+    names: set[str] = set()
+    if isinstance(target, ast.Name):
+        names.add(target.id)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            names.update(target_names(element))
+    return names
+
+
+def top_level_global_bindings(path: Path) -> set[str]:
+    tree = parse_python(path)
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                names.update(target_names(target))
+        elif isinstance(node, ast.AnnAssign):
+            names.update(target_names(node.target))
+        elif isinstance(node, ast.AugAssign):
+            names.update(target_names(node.target))
+    return names
+
+
+def top_level_local_dependencies(path: Path, names: set[str]) -> dict[str, set[str]]:
+    tree = parse_python(path)
+    dependencies: dict[str, set[str]] = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        symbol_name = node.name
+        found: set[str] = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                if child.id in names and child.id != symbol_name:
+                    found.add(child.id)
+        dependencies[symbol_name] = found
+    return dependencies
+
+
+def load_rules(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        fail(f"Invalid split rules JSON {path}: {exc}")
+    except OSError as exc:
+        fail(f"Could not read split rules {path}: {exc}", 1)
+    if not isinstance(data, dict):
+        fail("Split rules must be a JSON object")
+    rules = data.get("module_rules", [])
+    if not isinstance(rules, list):
+        fail("Split rules field module_rules must be a list")
+    return data
+
+
+def resolve_domain_pack_rules(repo: Path, raw: str | None) -> Path | None:
+    if not raw:
+        return None
+    candidate = Path(raw)
+    if candidate.is_dir():
+        rules = candidate / "split-rules.json"
+    elif candidate.is_file():
+        rules = candidate
+    else:
+        rules = repo / ".omx" / "domain-packs" / raw / "split-rules.json"
+    if not rules.is_file():
+        fail(f"Domain pack split rules not found: {rules}")
+    return rules.resolve()
+
+
+def rule_values(rule: dict[str, Any], key: str) -> list[str]:
+    raw = rule.get(key, [])
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list) and all(isinstance(item, str) for item in raw):
+        return raw
+    return []
+
+
+def destination_from_rule(repo: Path, source: Path, rule: dict[str, Any]) -> Path | None:
+    raw = rule.get("destination")
+    if not isinstance(raw, str) or not raw:
+        return None
+    source_dir = rel(repo, source.parent)
+    value = raw.format(source_dir=source_dir, source_stem=source.stem)
+    dest = Path(value)
+    if not dest.is_absolute():
+        dest = repo / dest
+    return dest.resolve()
+
+
+def match_rule(symbol: Symbol, rule: dict[str, Any]) -> tuple[bool, list[str]]:
+    name = symbol.name.lower()
+    evidence: list[str] = []
+    contains = [item.lower() for item in rule_values(rule, "name_contains")]
+    prefixes = [item.lower() for item in rule_values(rule, "name_prefixes")]
+    suffixes = [item.lower() for item in rule_values(rule, "name_suffixes")]
+    kinds = [item.lower() for item in rule_values(rule, "kinds")]
+
+    if kinds and symbol.kind.lower() not in kinds:
+        return False, []
+    if contains and any(item in name for item in contains):
+        evidence.append("name_contains")
+    if prefixes and any(name.startswith(item) for item in prefixes):
+        evidence.append("name_prefixes")
+    if suffixes and any(name.endswith(item) for item in suffixes):
+        evidence.append("name_suffixes")
+
+    return bool(evidence), evidence
+
+
+def propose_moves(repo: Path, source: Path, symbols: dict[str, Symbol], rules: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not rules:
+        return []
+    proposals_by_dest: dict[str, dict[str, Any]] = {}
+    for rule in rules.get("module_rules", []):
+        if not isinstance(rule, dict):
+            continue
+        dest = destination_from_rule(repo, source, rule)
+        if dest is None:
+            continue
+        try:
+            dest_rel = rel(repo, dest)
+        except ValueError:
+            continue
+        rule_name = str(rule.get("name", dest_rel))
+        for symbol in symbols.values():
+            matched, evidence = match_rule(symbol, rule)
+            if not matched:
+                continue
+            row = proposals_by_dest.setdefault(
+                dest_rel,
+                {
+                    "destination_file": dest_rel,
+                    "symbols": [],
+                    "confidence": "medium",
+                    "evidence": [],
+                },
+            )
+            if symbol.name not in row["symbols"]:
+                row["symbols"].append(symbol.name)
+            row["evidence"].append(
+                {
+                    "symbol": symbol.name,
+                    "rule": rule_name,
+                    "matched": evidence,
+                }
+            )
+    return sorted(proposals_by_dest.values(), key=lambda item: item["destination_file"])
+
+
+def top_level_import_spans(path: Path) -> list[tuple[int, int]]:
+    tree = parse_python(path)
+    spans = []
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            end = getattr(node, "end_lineno", None)
+            if end is not None:
+                spans.append((node.lineno, end))
+    return spans
+
+
+def normalize_repo_path(repo: Path, raw: str, field: str) -> Path:
+    if not raw:
+        fail(f"Plan field is required: {field}")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = repo / path
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(repo)
+    except ValueError:
+        fail(f"{field} must stay inside the git repository: {raw}")
+    return resolved
+
+
+def rel(repo: Path, path: Path) -> str:
+    return str(path.resolve().relative_to(repo))
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    source = Path(args.source).resolve()
+    if source.suffix != ".py":
+        fail(f"Source must be a .py file: {source}")
+    if not source.is_file():
+        fail(f"Source file does not exist: {source}", 1)
+    repo = repo_root_for(source.parent)
+    source_rel = rel(repo, source)
+    dest_rel = args.dest or str(Path(source_rel).with_name(f"{source.stem}_split.py"))
+    rules_path = Path(args.rules).resolve() if args.rules else resolve_domain_pack_rules(repo, args.domain_pack)
+    rules = load_rules(rules_path)
+    split_rules = ""
+    if rules_path:
+        try:
+            split_rules = rel(repo, rules_path)
+        except ValueError:
+            fail(f"Split rules path must stay inside the git repository: {rules_path}")
+    symbols_by_name = top_level_symbols(source)
+
+    candidates = [
+        {
+            "name": symbol.name,
+            "kind": symbol.kind,
+            "start_line": symbol.start,
+            "end_line": symbol.end,
+        }
+        for symbol in sorted(symbols_by_name.values(), key=lambda item: item.start)
+    ]
+    proposals = propose_moves(repo, source, symbols_by_name, rules)
+
+    plan: dict[str, Any] = {
+        "version": PLAN_VERSION,
+        "mode": "python-top-level-symbol-split",
+        "source_file": source_rel,
+        "destination_file": dest_rel,
+        "symbols": [],
+        "moves": [
+            {
+                "destination_file": proposal["destination_file"],
+                "symbols": proposal["symbols"],
+            }
+            for proposal in proposals
+        ],
+        "proposed_moves": proposals,
+        "candidate_symbols": candidates,
+        "split_rules": split_rules,
+        "approved_execution_gate": {
+            "approved_by": "",
+            "approved_scope": "",
+            "reviewed_dry_run": False,
+            "rollback_path": "",
+            "post_apply_verification": [],
+        },
+        "notes": [
+            "If domain split rules generated moves, review them before dry-run.",
+            "Without domain split rules, edit symbols or moves to include approved top-level functions/classes.",
+            "Run ai-split-dry-run --plan this-file before ai-split-apply.",
+            "ai-split-apply also requires --execute-approved-plan.",
+        ],
+    }
+
+    payload = json.dumps(plan, ensure_ascii=False, indent=2) + "\n"
+    if args.output:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(payload, encoding="utf-8")
+        print(f"wrote split plan: {output}")
+    else:
+        print(payload, end="")
+    return 0
+
+
+def load_plan(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        fail(f"Invalid JSON plan {path}: {exc}")
+    except OSError as exc:
+        fail(f"Could not read plan {path}: {exc}", 1)
+    if not isinstance(data, dict):
+        fail("Plan must be a JSON object")
+    if data.get("version") != PLAN_VERSION:
+        fail(f"Unsupported plan version: {data.get('version')!r}")
+    if data.get("mode") != "python-top-level-symbol-split":
+        fail(f"Unsupported plan mode: {data.get('mode')!r}")
+    return data
+
+
+def selected_symbols(plan: dict[str, Any]) -> list[str]:
+    raw = plan.get("symbols")
+    if not isinstance(raw, list) or not raw:
+        fail("Plan symbols must be a non-empty list before dry-run/apply")
+    symbols = []
+    for item in raw:
+        if not isinstance(item, str) or not item:
+            fail("Each plan symbol must be a non-empty string")
+        symbols.append(item)
+    if len(set(symbols)) != len(symbols):
+        fail("Plan symbols must be unique")
+    return symbols
+
+
+def plan_moves(repo: Path, plan: dict[str, Any]) -> list[Move]:
+    raw_moves = plan.get("moves")
+    moves: list[Move] = []
+    if isinstance(raw_moves, list) and raw_moves:
+        for index, item in enumerate(raw_moves, start=1):
+            if not isinstance(item, dict):
+                fail(f"moves[{index}] must be an object")
+            dest = normalize_repo_path(repo, str(item.get("destination_file", "")), f"moves[{index}].destination_file")
+            raw_symbols = item.get("symbols")
+            if not isinstance(raw_symbols, list) or not raw_symbols:
+                fail(f"moves[{index}].symbols must be a non-empty list")
+            symbols = []
+            for symbol in raw_symbols:
+                if not isinstance(symbol, str) or not symbol:
+                    fail(f"moves[{index}].symbols must contain non-empty strings")
+                symbols.append(symbol)
+            moves.append(Move(dest, symbols))
+    else:
+        destination = normalize_repo_path(repo, str(plan.get("destination_file", "")), "destination_file")
+        moves.append(Move(destination, selected_symbols(plan)))
+
+    all_symbols = [symbol for move in moves for symbol in move.symbols]
+    if len(set(all_symbols)) != len(all_symbols):
+        fail("Selected symbols must be unique across all moves")
+    destinations = [str(move.destination) for move in moves]
+    if len(set(destinations)) != len(destinations):
+        fail("Each move destination_file must be unique")
+    return moves
+
+
+def line_ranges_to_remove(symbols: list[Symbol], lines: list[str]) -> set[int]:
+    remove: set[int] = set()
+    line_count = len(lines)
+    for symbol in symbols:
+        start = symbol.start
+        end = symbol.end
+        if start > 1 and lines[start - 2].strip() == "":
+            start -= 1
+        for line_no in range(start, end + 1):
+            if 1 <= line_no <= line_count:
+                remove.add(line_no)
+        if end < line_count and lines[end].strip() == "":
+            remove.add(end + 1)
+    return remove
+
+
+def extract_blocks(lines: list[str], symbols: list[Symbol]) -> list[str]:
+    blocks: list[str] = []
+    for symbol in symbols:
+        if blocks and blocks[-1] != "":
+            blocks.extend(["", ""])
+        blocks.extend(lines[symbol.start - 1 : symbol.end])
+    return blocks
+
+
+def extract_imports(lines: list[str], source: Path) -> list[str]:
+    imports: list[str] = []
+    seen: set[str] = set()
+    for start, end in top_level_import_spans(source):
+        for line in lines[start - 1 : end]:
+            if line not in seen:
+                imports.append(line)
+                seen.add(line)
+    return imports
+
+
+def extract_import_blocks(lines: list[str], source: Path) -> list[list[str]]:
+    return [lines[start - 1 : end] for start, end in top_level_import_spans(source)]
+
+
+def initial_import_insert_index(lines: list[str], destination: Path) -> int:
+    tree = parse_python(destination)
+    index = 0
+    if lines and lines[0].startswith("#!"):
+        index = 1
+    if len(lines) > index and "coding" in lines[index]:
+        index += 1
+
+    body = tree.body
+    position = 0
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant):
+        if isinstance(body[0].value.value, str):
+            index = max(index, getattr(body[0], "end_lineno", index))
+            position = 1
+
+    for node in body[position:]:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            index = max(index, getattr(node, "end_lineno", index))
+            continue
+        break
+    return index
+
+
+def is_future_import_block(block: list[str]) -> bool:
+    for line in block:
+        stripped = line.strip()
+        if stripped:
+            return stripped.startswith("from __future__ import ")
+    return False
+
+
+def merge_missing_imports(old_dest: str, destination: Path, import_blocks: list[list[str]]) -> str:
+    dest_lines = old_dest.splitlines()
+    existing_lines = set(dest_lines)
+    missing = [block for block in import_blocks if any(line not in existing_lines for line in block)]
+    if not missing:
+        return old_dest
+
+    ordered_missing = sorted(missing, key=lambda block: 0 if is_future_import_block(block) else 1)
+    insert_lines: list[str] = []
+    for block in ordered_missing:
+        if insert_lines:
+            insert_lines.append("")
+        insert_lines.extend(block)
+
+    insert_at = initial_import_insert_index(dest_lines, destination)
+    payload: list[str] = []
+    if insert_at > 0 and dest_lines[insert_at - 1].strip():
+        payload.append("")
+    payload.extend(insert_lines)
+    if insert_at < len(dest_lines) and dest_lines[insert_at].strip():
+        payload.append("")
+
+    merged_lines = dest_lines[:insert_at] + payload + dest_lines[insert_at:]
+    return "\n".join(merged_lines) + ("\n" if old_dest.endswith("\n") else "")
+
+
+def build_split(plan_path: Path) -> tuple[Path, str, str, list[tuple[Path, str | None, str]]]:
+    plan = load_plan(plan_path)
+    repo = repo_root_for(plan_path.parent)
+    source = normalize_repo_path(repo, str(plan.get("source_file", "")), "source_file")
+    moves = plan_moves(repo, plan)
+    if source.suffix != ".py":
+        fail("source_file must be a .py file")
+    for move in moves:
+        if source == move.destination:
+            fail("source_file and destination_file must differ")
+        if move.destination.suffix != ".py":
+            fail("destination_file must be a .py file")
+    if not source.is_file():
+        fail(f"Source file does not exist: {source}", 1)
+
+    symbols_by_name = top_level_symbols(source)
+    wanted = [symbol for move in moves for symbol in move.symbols]
+    missing = [name for name in wanted if name not in symbols_by_name]
+    if missing:
+        fail(f"Selected symbols are not top-level functions/classes in source_file: {', '.join(missing)}")
+    selected = [symbols_by_name[name] for name in wanted]
+    selected.sort(key=lambda item: item.start)
+
+    local_dependency_names = set(symbols_by_name) | top_level_global_bindings(source)
+    symbol_dependencies = top_level_local_dependencies(source, local_dependency_names)
+    for move in moves:
+        move_set = set(move.symbols)
+        missing_dependencies = {
+            name: sorted(symbol_dependencies.get(name, set()) - move_set)
+            for name in move.symbols
+            if symbol_dependencies.get(name, set()) - move_set
+        }
+        if missing_dependencies:
+            detail = "; ".join(
+                f"{name} needs {', '.join(dependencies)}"
+                for name, dependencies in sorted(missing_dependencies.items())
+            )
+            fail(
+                "Selected symbols reference source-local top-level symbols that are not moved to the same destination: "
+                + detail
+            )
+
+    for move in moves:
+        if move.destination.exists():
+            dest_symbols = top_level_symbols(move.destination)
+            duplicates = [name for name in move.symbols if name in dest_symbols]
+            if duplicates:
+                fail(f"Destination already defines selected symbols: {', '.join(duplicates)}")
+
+    source_text = load_text(source)
+    source_lines = source_text.splitlines()
+    remove = line_ranges_to_remove(selected, source_lines)
+    new_source_lines = [line for index, line in enumerate(source_lines, start=1) if index not in remove]
+    while new_source_lines and new_source_lines[-1] == "":
+        new_source_lines.pop()
+    new_source = "\n".join(new_source_lines) + "\n"
+
+    import_blocks = extract_import_blocks(source_lines, source)
+    import_lines = [line for block in import_blocks for line in block]
+    dest_changes: list[tuple[Path, str | None, str]] = []
+    for move in moves:
+        move_symbols = [symbols_by_name[name] for name in move.symbols]
+        move_symbols.sort(key=lambda item: item.start)
+        moved_blocks = extract_blocks(source_lines, move_symbols)
+        if move.destination.exists():
+            old_dest = load_text(move.destination)
+            dest_prefix = merge_missing_imports(old_dest, move.destination, import_blocks).rstrip()
+            new_dest = dest_prefix + "\n\n\n" + "\n".join(moved_blocks).rstrip() + "\n"
+        else:
+            old_dest = None
+            header = [
+                '"""Extracted module created by ai-split-apply from an approved plan."""',
+                "",
+            ]
+            if import_lines:
+                header.extend(import_lines)
+                header.append("")
+            new_dest = "\n".join(header + moved_blocks).rstrip() + "\n"
+        dest_changes.append((move.destination, old_dest, new_dest))
+
+    return source, source_text, new_source, dest_changes
+
+
+def print_diff(source: Path, old_source: str, new_source: str, dest_changes: list[tuple[Path, str | None, str]]) -> None:
+    source_diff = difflib.unified_diff(
+        old_source.splitlines(keepends=True),
+        new_source.splitlines(keepends=True),
+        fromfile=str(source),
+        tofile=str(source),
+    )
+    print("".join(source_diff), end="")
+    for dest, old_dest, new_dest in dest_changes:
+        old_dest_text = old_dest if old_dest is not None else ""
+        dest_diff = difflib.unified_diff(
+            old_dest_text.splitlines(keepends=True),
+            new_dest.splitlines(keepends=True),
+            fromfile=str(dest),
+            tofile=str(dest),
+        )
+        print("".join(dest_diff), end="")
+
+
+def command_dry_run(args: argparse.Namespace) -> int:
+    source, old_source, new_source, dest_changes = build_split(Path(args.plan).resolve())
+    print("AI_AUTO Python Split Dry Run")
+    print(f"source: {source}")
+    for dest, _old_dest, _new_dest in dest_changes:
+        print(f"destination: {dest}")
+    print()
+    print_diff(source, old_source, new_source, dest_changes)
+    return 0
+
+
+def command_apply(args: argparse.Namespace) -> int:
+    if not args.execute_approved_plan:
+        fail("ai-split-apply requires --execute-approved-plan")
+    plan_path = Path(args.plan).resolve()
+    plan = load_plan(plan_path)
+    gate = plan.get("approved_execution_gate")
+    if not isinstance(gate, dict):
+        fail("approved_execution_gate is required before apply")
+    if not gate.get("approved_by"):
+        fail("approved_execution_gate.approved_by is required before apply")
+    if not gate.get("approved_scope"):
+        fail("approved_execution_gate.approved_scope is required before apply")
+    if gate.get("reviewed_dry_run") is not True:
+        fail("approved_execution_gate.reviewed_dry_run must be true before apply")
+    if not gate.get("rollback_path"):
+        fail("approved_execution_gate.rollback_path is required before apply")
+    if gate.get("rollback_path") != ".omx/rebuild/backups":
+        fail("approved_execution_gate.rollback_path must be .omx/rebuild/backups")
+    post_apply = gate.get("post_apply_verification")
+    if not isinstance(post_apply, list) or not post_apply:
+        fail("approved_execution_gate.post_apply_verification must be a non-empty list before apply")
+    source, old_source, new_source, dest_changes = build_split(plan_path)
+    repo = repo_root_for(source.parent)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = repo / ".omx" / "rebuild" / "backups" / timestamp
+
+    originals: list[tuple[Path, str | None]] = [(source, old_source)]
+    originals.extend((dest, old_dest) for dest, old_dest, _new_dest in dest_changes)
+    created_files: list[str] = []
+    for original, old_text in originals:
+        if old_text is None:
+            created_files.append(rel(repo, original))
+            continue
+        backup_path = backup_root / rel(repo, original)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path.write_text(old_text, encoding="utf-8")
+    if created_files:
+        backup_root.mkdir(parents=True, exist_ok=True)
+        (backup_root / "created-files.txt").write_text("\n".join(created_files) + "\n", encoding="utf-8")
+
+    source.write_text(new_source, encoding="utf-8")
+    for dest, _old_dest, new_dest in dest_changes:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(new_dest, encoding="utf-8")
+
+    print("AI_AUTO Python Split Applied")
+    print(f"source: {source}")
+    for dest, _old_dest, _new_dest in dest_changes:
+        print(f"destination: {dest}")
+    print(f"backup: {backup_root}")
+    print("next: inspect diff, run targeted tests, then run project verification")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="ai-python-split")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    plan = subparsers.add_parser("plan", help="create a JSON split plan template")
+    plan.add_argument("--source", required=True, help="source Python file")
+    plan.add_argument("--dest", help="destination Python file, repo-relative or absolute")
+    plan.add_argument("--output", help="write JSON plan to this path")
+    plan.add_argument("--rules", help="domain split-rules.json file")
+    plan.add_argument("--domain-pack", help="domain pack name, directory, or split-rules.json file")
+    plan.set_defaults(func=command_plan)
+
+    dry_run = subparsers.add_parser("dry-run", help="print the diff for an approved split plan")
+    dry_run.add_argument("--plan", required=True, help="split plan JSON")
+    dry_run.set_defaults(func=command_dry_run)
+
+    apply = subparsers.add_parser("apply", help="apply an approved split plan")
+    apply.add_argument("--plan", required=True, help="split plan JSON")
+    apply.add_argument(
+        "--execute-approved-plan",
+        action="store_true",
+        help="required explicit execution acknowledgement",
+    )
+    apply.set_defaults(func=command_apply)
+
+    args = parser.parse_args(argv)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -10,6 +10,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - docs/AUTOMATION_OPERATING_POLICY.md: review-intensity and feedback policy
 - docs/DEPLOYMENT_COMPLETION.md: optional deployment/release completion pack
 - docs/DOMAIN_PACKS.md: domain-pack lifecycle, selection, and application rules
+- docs/DOMAIN_PACK_AUTHORING_GUIDE.md: authoring standard for reusable domain packs
 - docs/INTERVIEW_PLAN_LAYER.md: reusable interview, plan, ambiguity, and execution-gate contract
 - docs/INCIDENT_OPS.md: dry-run and field-test incident operations policy
 - docs/SECURITY_COMPLETION.md: optional security/auth completion pack
@@ -75,6 +76,12 @@ at a plan/report boundary. `리빌드 실행`, `리빌딩 실행`, or `rebuild r
 separate execution request and requires an approved plan artifact, refreshed
 domain-pack assumptions, behavior-locking tests or smoke checks, and explicit
 module boundaries.
+
+For Python rebuilds, `ai-split-plan` can turn conservative domain-pack
+`split-rules.json` rules into proposed top-level function/class moves. Use
+`ai-split-dry-run` to inspect the diff first; `ai-split-apply` requires
+`--execute-approved-plan` plus completed approval-gate fields and writes rollback
+backups under `.omx/rebuild/backups/`.
 
 Then ask the AI:
 
@@ -143,8 +150,10 @@ During the interview, decide which completion dimensions apply:
 - Observability: use `docs/OBSERVABILITY_COMPLETION.md` when health checks,
   logs, metrics, traces, audits, or support diagnostics are in scope
 - Domain packs: use `docs/DOMAIN_PACKS.md` to select, reject, or defer installed
-  `.omx/domain-packs/` references. `automation-base` is the generic baseline;
-  there is no separate generic domain pack.
+  `.omx/domain-packs/` references. Use
+  `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` when creating or changing reusable
+  packs. `automation-base` is the generic baseline; there is no separate
+  generic domain pack.
 
 For dimensions that do not apply, record them as non-goals instead of merging
 their checks into the project workflow. After onboarding, unused completion pack

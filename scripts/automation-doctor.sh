@@ -61,7 +61,7 @@ if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
   HOME_READY=1
 fi
 
-if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-auto-template-status" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
+if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-auto-template-status" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
   IN_AI_LAB=1
 fi
 
@@ -354,6 +354,7 @@ REQUIRED_FILES=(
   "AGENTS.md"
   "docs/AI_MODEL_ROUTING.md"
   "docs/AUTOMATION_OPERATING_POLICY.md"
+  "docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
   "docs/INTERVIEW_PLAN_LAYER.md"
   "docs/SESSION_QUALITY_PLAN.md"
   "docs/WORKFLOW.md"
@@ -514,6 +515,13 @@ if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   check_helper_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   check_helper_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
   check_helper_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"
+  check_helper_link "${HOME_DIR}/bin/ai-split-plan" "${ROOT}/tools/ai-split-plan"
+  check_helper_link "${HOME_DIR}/bin/ai-split-dry-run" "${ROOT}/tools/ai-split-dry-run"
+  check_helper_link "${HOME_DIR}/bin/ai-split-apply" "${ROOT}/tools/ai-split-apply"
+  check_helper_link "${HOME_DIR}/bin/ai-plan-status" "${ROOT}/tools/ai-plan-status"
+  check_helper_link "${HOME_DIR}/bin/ai-interview-record" "${ROOT}/tools/ai-interview-record"
+  check_helper_link "${HOME_DIR}/bin/ai-plan-review" "${ROOT}/tools/ai-plan-review"
+  check_helper_link "${HOME_DIR}/bin/ai-plan-export" "${ROOT}/tools/ai-plan-export"
   check_helper_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   check_helper_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   case ":${PATH}:" in

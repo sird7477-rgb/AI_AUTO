@@ -24,6 +24,13 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/ai-auto-template-status
   ~/bin/ai-refactor-scan
   ~/bin/ai-rebuild-plan
+  ~/bin/ai-split-plan
+  ~/bin/ai-split-dry-run
+  ~/bin/ai-split-apply
+  ~/bin/ai-plan-status
+  ~/bin/ai-interview-record
+  ~/bin/ai-plan-review
+  ~/bin/ai-plan-export
   ~/bin/feedback-collect
   ~/bin/workspace-scan
 
@@ -246,6 +253,13 @@ check_source_helper "${ROOT}/tools/ai-register"
 check_source_helper "${ROOT}/tools/ai-auto-template-status"
 check_source_helper "${ROOT}/tools/ai-refactor-scan"
 check_source_helper "${ROOT}/tools/ai-rebuild-plan"
+check_source_helper "${ROOT}/tools/ai-split-plan"
+check_source_helper "${ROOT}/tools/ai-split-dry-run"
+check_source_helper "${ROOT}/tools/ai-split-apply"
+check_source_helper "${ROOT}/tools/ai-plan-status"
+check_source_helper "${ROOT}/tools/ai-interview-record"
+check_source_helper "${ROOT}/tools/ai-plan-review"
+check_source_helper "${ROOT}/tools/ai-plan-export"
 check_source_helper "${ROOT}/tools/feedback-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
 
@@ -269,6 +283,13 @@ else
   install_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   install_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
   install_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"
+  install_link "${HOME_DIR}/bin/ai-split-plan" "${ROOT}/tools/ai-split-plan"
+  install_link "${HOME_DIR}/bin/ai-split-dry-run" "${ROOT}/tools/ai-split-dry-run"
+  install_link "${HOME_DIR}/bin/ai-split-apply" "${ROOT}/tools/ai-split-apply"
+  install_link "${HOME_DIR}/bin/ai-plan-status" "${ROOT}/tools/ai-plan-status"
+  install_link "${HOME_DIR}/bin/ai-interview-record" "${ROOT}/tools/ai-interview-record"
+  install_link "${HOME_DIR}/bin/ai-plan-review" "${ROOT}/tools/ai-plan-review"
+  install_link "${HOME_DIR}/bin/ai-plan-export" "${ROOT}/tools/ai-plan-export"
   install_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_shell_function

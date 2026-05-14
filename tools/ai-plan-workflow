@@ -1,0 +1,655 @@
+#!/usr/bin/env python3
+"""Small AI_AUTO interview/plan state helpers."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REQUIRED_FIELDS = [
+    "goal",
+    "non_goals",
+    "success_criteria",
+    "constraints",
+    "risk_gates",
+    "user_decisions",
+    "execution_boundaries",
+    "verification_plan",
+    "rollback_or_stop_condition",
+    "ambiguity_index",
+    "evidence_references",
+    "ready_to_execute_gate",
+]
+
+OPTIONAL_FIELDS = [
+    "assumptions",
+    "open_questions",
+]
+
+WRITABLE_RECORD_FIELDS = {
+    "user_decisions",
+    "assumptions",
+    "open_questions",
+    "constraints",
+    "risk_gates",
+    "execution_boundaries",
+    "verification_plan",
+    "evidence_references",
+}
+
+FIELD_ALIASES = {
+    "goal": "goal",
+    "goals": "goal",
+    "non_goals": "non_goals",
+    "non-goals": "non_goals",
+    "non goals": "non_goals",
+    "success_criteria": "success_criteria",
+    "success criteria": "success_criteria",
+    "constraints": "constraints",
+    "risk_gates": "risk_gates",
+    "risk gates": "risk_gates",
+    "assumptions": "assumptions",
+    "user_decisions": "user_decisions",
+    "user decisions": "user_decisions",
+    "open_questions": "open_questions",
+    "open questions": "open_questions",
+    "execution_boundaries": "execution_boundaries",
+    "execution boundaries": "execution_boundaries",
+    "verification_plan": "verification_plan",
+    "verification plan": "verification_plan",
+    "rollback_or_stop_condition": "rollback_or_stop_condition",
+    "rollback or stop condition": "rollback_or_stop_condition",
+    "stop_condition": "rollback_or_stop_condition",
+    "ambiguity_index": "ambiguity_index",
+    "ambiguity index": "ambiguity_index",
+    "evidence_references": "evidence_references",
+    "evidence references": "evidence_references",
+    "ready_to_execute_gate": "ready_to_execute_gate",
+    "ready-to-execute gate": "ready_to_execute_gate",
+    "ready to execute gate": "ready_to_execute_gate",
+}
+
+
+def fail(message: str, code: int = 2) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def normalize_field(raw: str) -> str:
+    key = raw.strip().lower().replace("-", "_")
+    key = re.sub(r"\s+", " ", key)
+    key = key.replace(" ", "_")
+    return FIELD_ALIASES.get(key, key)
+
+
+def repo_root_for(path: Path) -> Path:
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return path.resolve()
+    return Path(output.strip()).resolve()
+
+
+def discover_plan(repo: Path) -> Path | None:
+    roots = [repo / ".omx" / "plans"]
+    candidates: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pattern in ("*.json", "*.md"):
+            candidates.extend(path for path in root.glob(pattern) if path.is_file())
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item.stat().st_mtime)
+
+
+def load_json_plan(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        fail(f"Invalid JSON plan {path}: {exc}")
+    except OSError as exc:
+        fail(f"Could not read plan {path}: {exc}", 1)
+    if not isinstance(data, dict):
+        fail("JSON plan must be an object")
+    return {normalize_field(str(key)): value for key, value in data.items()}
+
+
+def parse_markdown_plan(path: Path) -> dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        fail(f"Only UTF-8 plan files are supported: {path}", 1)
+    except OSError as exc:
+        fail(f"Could not read plan {path}: {exc}", 1)
+
+    fields: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in text.splitlines():
+        heading = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+        if heading:
+            current = normalize_field(heading.group(1).strip())
+            fields.setdefault(current, [])
+            continue
+        if current:
+            fields[current].append(line)
+    return {key: "\n".join(lines).strip() for key, lines in fields.items()}
+
+
+def load_plan(path: Path) -> tuple[dict[str, Any], str]:
+    if path.suffix.lower() == ".json":
+        return load_json_plan(path), "json"
+    if path.suffix.lower() in {".md", ".markdown"}:
+        return parse_markdown_plan(path), "markdown"
+    fail(f"Unsupported plan file type: {path}")
+
+
+def is_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        return not stripped or stripped in {"[]", "{}"}
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
+
+
+def as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        lines = [line.strip() for line in value.splitlines() if line.strip()]
+        return [line.lstrip("-*0123456789. ").strip() for line in lines]
+    return [value]
+
+
+def parse_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1"}:
+            return True
+        if lowered in {"false", "no", "0"}:
+            return False
+    return None
+
+
+def parse_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        match = re.search(r"-?\d+", value)
+        if match:
+            return int(match.group(0))
+    return None
+
+
+def ambiguity_from_mapping(mapping: dict[str, Any]) -> dict[str, int | bool]:
+    critical_open = parse_int(mapping.get("critical_open_decisions")) or 0
+    total_critical = parse_int(mapping.get("total_critical_decisions")) or 0
+    overall_open = parse_int(mapping.get("overall_open_decisions")) or 0
+    overall_total = parse_int(mapping.get("overall_total_decisions")) or 0
+    invalid = (total_critical == 0 and critical_open > 0) or (overall_total == 0 and overall_open > 0)
+    critical_percent = 0 if total_critical == 0 else math.ceil((critical_open / total_critical) * 100)
+    overall_percent = 0 if overall_total == 0 else math.ceil((overall_open / overall_total) * 100)
+    return {
+        "critical_open_decisions": critical_open,
+        "total_critical_decisions": total_critical,
+        "overall_open_decisions": overall_open,
+        "overall_total_decisions": overall_total,
+        "critical_ambiguity_percent": critical_percent,
+        "overall_ambiguity_percent": overall_percent,
+        "invalid": invalid,
+    }
+
+
+def ambiguity_from_text(text: str) -> dict[str, int | bool]:
+    pairs: dict[str, int] = {}
+    for key in (
+        "critical_open_decisions",
+        "total_critical_decisions",
+        "overall_open_decisions",
+        "overall_total_decisions",
+    ):
+        pattern = key.replace("_", r"[\s_-]+")
+        match = re.search(pattern + r"\s*[:=]\s*(\d+)", text, re.IGNORECASE)
+        if match:
+            pairs[key] = int(match.group(1))
+    return ambiguity_from_mapping(pairs)
+
+
+def ambiguity_index(plan: dict[str, Any]) -> dict[str, int | bool]:
+    value = plan.get("ambiguity_index")
+    if isinstance(value, dict):
+        return ambiguity_from_mapping(value)
+    if isinstance(value, str):
+        return ambiguity_from_text(value)
+    return ambiguity_from_mapping({})
+
+
+def item_excluded(item: Any) -> bool:
+    if isinstance(item, dict):
+        return item.get("excluded_from_execution") is True or item.get("excluded") is True
+    text = str(item).lower()
+    return "excluded" in text or "out of scope" in text or "scope exclusion" in text
+
+
+def gate_value(plan: dict[str, Any], key: str) -> Any:
+    gate = plan.get("ready_to_execute_gate")
+    if isinstance(gate, dict) and key in gate:
+        return gate[key]
+    if isinstance(gate, str):
+        match = re.search(key.replace("_", r"[\s_-]+") + r"\s*[:=]\s*([^\n]+)", gate, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return plan.get(key)
+
+
+def approved_execution_gate(plan: dict[str, Any], plan_path: Path | None, repo: Path) -> tuple[bool, list[str]]:
+    gate = gate_value(plan, "approved_execution_gate")
+    missing: list[str] = []
+    if not isinstance(gate, dict):
+        return False, ["approved_execution_gate"]
+    for key in ("approved_by", "approved_at", "approved_scope", "plan_artifact", "exclusions"):
+        if is_empty(gate.get(key)):
+            missing.append(f"approved_execution_gate.{key}")
+    readiness = parse_bool(gate.get("readiness"))
+    if readiness is not True:
+        missing.append("approved_execution_gate.readiness")
+    raw_plan_artifact = gate.get("plan_artifact")
+    if plan_path is not None and not is_empty(raw_plan_artifact):
+        artifact = Path(str(raw_plan_artifact))
+        if not artifact.is_absolute():
+            artifact = repo / artifact
+        if artifact.resolve() != plan_path.resolve():
+            missing.append("approved_execution_gate.plan_artifact_mismatch")
+    return not missing, missing
+
+
+def evidence_status(repo: Path, plan: dict[str, Any]) -> list[str]:
+    stale: list[str] = []
+    for item in as_list(plan.get("evidence_references")):
+        if isinstance(item, dict):
+            raw = item.get("path") or item.get("file") or item.get("artifact")
+        else:
+            raw = str(item).split(":", 1)[0]
+        if not raw:
+            continue
+        raw = str(raw).strip().strip("`")
+        if raw.startswith(("http://", "https://")):
+            continue
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = repo / candidate
+        if not candidate.exists():
+            stale.append(raw)
+    return stale
+
+
+def evaluate_plan(plan: dict[str, Any], plan_path: Path | None, repo: Path) -> dict[str, Any]:
+    missing_fields = [field for field in REQUIRED_FIELDS if is_empty(plan.get(field))]
+    ambiguity = ambiguity_index(plan)
+    blockers: list[str] = []
+    stale_evidence = evidence_status(repo, plan)
+
+    open_questions = as_list(plan.get("open_questions"))
+    unexcluded_questions = [item for item in open_questions if not item_excluded(item)]
+    if unexcluded_questions:
+        blockers.append("open questions are not excluded from execution scope")
+
+    if ambiguity["invalid"]:
+        blockers.append("ambiguity index has open decisions with zero total decisions")
+    if int(ambiguity["critical_ambiguity_percent"]) > 0:
+        blockers.append("critical ambiguity is greater than 0%")
+    if int(ambiguity["overall_ambiguity_percent"]) > 10:
+        blockers.append("overall ambiguity is greater than 10%")
+
+    gate_ok, gate_missing = approved_execution_gate(plan, plan_path, repo)
+    if not gate_ok:
+        blockers.append("approved execution gate is missing or incomplete")
+
+    verification_commands = gate_value(plan, "verification_commands") or plan.get("verification_plan")
+    if is_empty(verification_commands):
+        blockers.append("verification commands are missing")
+
+    if missing_fields:
+        status = "missing"
+    elif stale_evidence:
+        status = "stale"
+    elif blockers:
+        status = "blocked"
+    elif gate_missing:
+        status = "blocked"
+    else:
+        status = "ready"
+
+    ready = status == "ready"
+    if not ready and stale_evidence and not blockers and not missing_fields:
+        status = "stale"
+    if not ready and not missing_fields and not blockers and gate_missing:
+        status = "blocked"
+
+    next_action = "execute approved plan" if ready else "resolve blockers before execution"
+    if missing_fields:
+        next_action = "fill missing plan fields"
+    elif stale_evidence:
+        next_action = "refresh or remove stale evidence references"
+    elif unexcluded_questions:
+        next_action = "answer or explicitly exclude open questions"
+    elif gate_missing:
+        next_action = "obtain a scoped approved execution gate"
+
+    return {
+        "plan_file": str(plan_path) if plan_path else "",
+        "status": status,
+        "ready_to_execute": ready,
+        "ambiguity": {
+            "critical_ambiguity_percent": ambiguity["critical_ambiguity_percent"],
+            "overall_ambiguity_percent": ambiguity["overall_ambiguity_percent"],
+            "critical_open_decisions": ambiguity["critical_open_decisions"],
+            "overall_open_decisions": ambiguity["overall_open_decisions"],
+        },
+        "blockers": blockers,
+        "missing_fields": missing_fields,
+        "open_questions": [str(item) for item in open_questions],
+        "unexcluded_open_questions": [str(item) for item in unexcluded_questions],
+        "stale_evidence": stale_evidence,
+        "approved_execution_gate_missing": gate_missing,
+        "next_action": next_action,
+        "reviewed_is_not_approval": True,
+    }
+
+
+def print_status(result: dict[str, Any]) -> None:
+    print("AI_AUTO Plan Status")
+    print(f"plan: {result['plan_file'] or 'missing'}")
+    print(f"status: {result['status']}")
+    print(f"ready_to_execute: {str(result['ready_to_execute']).lower()}")
+    print(
+        "ambiguity: "
+        f"critical={result['ambiguity']['critical_ambiguity_percent']}% "
+        f"overall={result['ambiguity']['overall_ambiguity_percent']}%"
+    )
+    print(f"next_action: {result['next_action']}")
+    for key in ("missing_fields", "blockers", "open_questions", "stale_evidence"):
+        print(f"{key}:")
+        rows = result[key]
+        if rows:
+            for row in rows:
+                print(f"  - {row}")
+        else:
+            print("  - none")
+    if result["approved_execution_gate_missing"]:
+        print("approved_execution_gate_missing:")
+        for row in result["approved_execution_gate_missing"]:
+            print(f"  - {row}")
+    print("note: reviewed is not approved_to_execute")
+
+
+def resolve_plan_arg(raw: str | None, cwd: Path, require_existing: bool = True) -> Path | None:
+    repo = repo_root_for(cwd)
+    if raw:
+        path = Path(raw)
+        if not path.is_absolute():
+            path = cwd / path
+        if require_existing and not path.is_file():
+            fail(f"Plan file does not exist: {path}", 1)
+        return path.resolve()
+    plan = discover_plan(repo)
+    if require_existing and plan is None:
+        return None
+    return plan
+
+
+def command_status(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    plan_path = resolve_plan_arg(args.plan, cwd, require_existing=True)
+    repo = repo_root_for(plan_path.parent) if plan_path else repo_root_for(cwd)
+    if plan_path is None:
+        result = {
+            "plan_file": "",
+            "status": "missing",
+            "ready_to_execute": False,
+            "ambiguity": {
+                "critical_ambiguity_percent": 0,
+                "overall_ambiguity_percent": 0,
+                "critical_open_decisions": 0,
+                "overall_open_decisions": 0,
+            },
+            "blockers": ["no plan artifact found"],
+            "missing_fields": REQUIRED_FIELDS,
+            "open_questions": [],
+            "unexcluded_open_questions": [],
+            "stale_evidence": [],
+            "approved_execution_gate_missing": ["approved_execution_gate"],
+            "next_action": "create a plan artifact",
+            "reviewed_is_not_approval": True,
+        }
+    else:
+        plan, _kind = load_plan(plan_path)
+        result = evaluate_plan(plan, plan_path, repo)
+
+    if args.write_state:
+        state_path = repo / ".omx" / "state" / "plan-status.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print_status(result)
+    return 0
+
+
+def base_plan() -> dict[str, Any]:
+    return {
+        "goal": "",
+        "non_goals": [],
+        "success_criteria": [],
+        "constraints": [],
+        "risk_gates": [],
+        "assumptions": [],
+        "user_decisions": [],
+        "open_questions": [],
+        "execution_boundaries": [],
+        "verification_plan": [],
+        "rollback_or_stop_condition": [],
+        "ambiguity_index": {
+            "critical_open_decisions": 0,
+            "total_critical_decisions": 0,
+            "overall_open_decisions": 0,
+            "overall_total_decisions": 0,
+        },
+        "evidence_references": [],
+        "ready_to_execute_gate": {
+            "ready_to_execute": False,
+            "blocking_reasons": ["plan is not approved for execution"],
+            "approved_execution_gate": {},
+            "verification_commands": [],
+            "stop_conditions": [],
+        },
+    }
+
+
+def command_record(args: argparse.Namespace) -> int:
+    path = Path(args.plan)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if path.exists():
+        if path.suffix.lower() != ".json":
+            fail("ai-interview-record only writes JSON plan artifacts")
+        data = load_json_plan(path)
+    else:
+        data = base_plan()
+
+    field = normalize_field(args.field)
+    if field not in WRITABLE_RECORD_FIELDS:
+        fail(f"Field is not record-writable: {field}")
+    if field == "user_decisions" and args.source != "user":
+        fail("user_decisions can only be recorded with --source user")
+
+    entry = {
+        "id": args.decision_id or f"decision-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+        "field": field,
+        "source": args.source,
+        "question": args.question,
+        "answer": args.answer,
+        "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    if args.excluded_from_execution:
+        entry["excluded_from_execution"] = True
+
+    current = data.get(field)
+    if not isinstance(current, list):
+        current = [] if is_empty(current) else [current]
+    current.append(entry)
+    data[field] = current
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print("AI_AUTO Interview Record")
+    print(f"plan: {path.resolve()}")
+    print(f"field: {field}")
+    print(f"source: {args.source}")
+    print("note: recorded answer does not approve execution")
+    return 0
+
+
+def command_review(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    plan_path = resolve_plan_arg(args.plan, cwd, require_existing=True)
+    if plan_path is None:
+        fail("No plan artifact found", 1)
+    repo = repo_root_for(plan_path.parent)
+    plan, _kind = load_plan(plan_path)
+    result = evaluate_plan(plan, plan_path, repo)
+    verdict = "pass" if result["ready_to_execute"] else "needs_work"
+    payload = {
+        "plan_file": result["plan_file"],
+        "verdict": verdict,
+        "ready_to_execute": result["ready_to_execute"],
+        "status": result["status"],
+        "findings": result["blockers"] + [f"missing field: {field}" for field in result["missing_fields"]],
+        "stale_evidence": result["stale_evidence"],
+        "note": "plan review is not execution approval",
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("AI_AUTO Plan Review")
+        print(f"plan: {payload['plan_file']}")
+        print(f"verdict: {payload['verdict']}")
+        print(f"ready_to_execute: {str(payload['ready_to_execute']).lower()}")
+        print("findings:")
+        if payload["findings"]:
+            for finding in payload["findings"]:
+                print(f"  - {finding}")
+        else:
+            print("  - none")
+        print("note: plan review is not execution approval")
+    return 0
+
+
+def command_export(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    plan_path = resolve_plan_arg(args.plan, cwd, require_existing=True)
+    if plan_path is None:
+        fail("No plan artifact found", 1)
+    repo = repo_root_for(plan_path.parent)
+    plan, _kind = load_plan(plan_path)
+    result = evaluate_plan(plan, plan_path, repo)
+    output = Path(args.output)
+    if not output.is_absolute():
+        output = cwd / output
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    def field_text(field: str) -> str:
+        value = plan.get(field)
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        return str(value or "").strip()
+
+    content = [
+        "# AI_AUTO Plan Export",
+        "",
+        f"- source_plan: `{plan_path.resolve()}`",
+        f"- status: `{result['status']}`",
+        f"- ready_to_execute: `{str(result['ready_to_execute']).lower()}`",
+        "- note: review/export is not execution approval",
+        "",
+        "## Goal",
+        field_text("goal"),
+        "",
+        "## Success Criteria",
+        field_text("success_criteria"),
+        "",
+        "## Execution Boundaries",
+        field_text("execution_boundaries"),
+        "",
+        "## Verification Plan",
+        field_text("verification_plan"),
+        "",
+        "## Blockers",
+    ]
+    blockers = result["blockers"] + [f"missing field: {field}" for field in result["missing_fields"]]
+    content.extend([f"- {row}" for row in blockers] or ["- none"])
+    content.extend(["", "## Next Action", result["next_action"], ""])
+    output.write_text("\n".join(content), encoding="utf-8")
+    print("AI_AUTO Plan Export")
+    print(f"source: {plan_path.resolve()}")
+    print(f"output: {output.resolve()}")
+    print("note: export does not approve execution")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="ai-plan-workflow")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    status = subparsers.add_parser("status", help="show computed plan readiness")
+    status.add_argument("plan", nargs="?", help="plan artifact path; defaults to latest .omx plan")
+    status.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    status.add_argument("--write-state", action="store_true", help="write .omx/state/plan-status.json")
+    status.set_defaults(func=command_status)
+
+    record = subparsers.add_parser("record", help="record one interview answer into a JSON plan")
+    record.add_argument("--plan", required=True, help="JSON plan artifact path")
+    record.add_argument("--field", required=True, help="plan field to append to")
+    record.add_argument("--answer", required=True, help="answer text")
+    record.add_argument("--question", default="", help="question text")
+    record.add_argument("--source", choices=("user", "ai"), default="user", help="answer source")
+    record.add_argument("--decision-id", default="", help="stable decision id")
+    record.add_argument("--excluded-from-execution", action="store_true", help="mark item excluded from execution")
+    record.set_defaults(func=command_record)
+
+    review = subparsers.add_parser("review", help="read-only plan quality review")
+    review.add_argument("plan", nargs="?", help="plan artifact path; defaults to latest .omx plan")
+    review.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    review.set_defaults(func=command_review)
+
+    export = subparsers.add_parser("export", help="export an execution summary without approving execution")
+    export.add_argument("plan", nargs="?", help="plan artifact path; defaults to latest .omx plan")
+    export.add_argument("--output", required=True, help="markdown output path")
+    export.set_defaults(func=command_export)
+
+    args = parser.parse_args(argv)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

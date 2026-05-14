@@ -10,8 +10,9 @@ confirm that it is an Odoo project, then apply only the parts that match the
 project version, deployment model, and test environment.
 
 Use the installed `docs/DOMAIN_PACKS.md` as the common lifecycle and application
-contract for all domain packs. This README contains only Odoo-specific
-applicability and onboarding guidance.
+contract for all domain packs, and `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` for
+pack authoring standards. This README contains only Odoo-specific applicability
+and onboarding guidance.
 
 ## When To Use
 

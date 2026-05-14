@@ -55,6 +55,7 @@ Use these files as the workflow baseline:
 - `docs/AI_MODEL_ROUTING.md`
 - `docs/AUTOMATION_OPERATING_POLICY.md`
 - `docs/DOMAIN_PACKS.md`
+- `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` when creating or changing reusable domain packs
 - `docs/INTERVIEW_PLAN_LAYER.md`
 - `docs/SESSION_QUALITY_PLAN.md`
 - applicable completion packs from `docs/*_COMPLETION.md`
@@ -103,6 +104,14 @@ When the user asks for `리빌드 실행`, `리빌딩 실행`, or `rebuild run`,
 treat the phrase as approval to improvise a rebuild. Execution requires an
 approved rebuild plan, refreshed domain-pack assumptions, behavior-locking tests
 or smoke checks, explicit module boundaries, and the normal verify/review gates.
+
+Optional rebuild support gates are read-only by default. Context packing,
+codemod scan, and boundary check may be suggested for explicit requests,
+material boundary changes, stale required evidence, domain-critical work, or
+structural verification/review failures. Missing optional tools must not block
+small reversible work. `codemod apply`, autofix, or any write-capable tool
+requires an explicit execution command tied to an approved scoped plan, reviewed
+dry-run diff or summary, rollback path, and post-apply verification.
 
 ## Completion Report Format
 

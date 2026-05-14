@@ -5,6 +5,11 @@ framework-specific project guidance. They do not replace the generic
 `automation-base` template, and they are never merged into project instructions
 automatically.
 
+Use `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` when creating or changing a pack. This
+file owns lifecycle and application rules; the authoring guide owns pack quality,
+question design, risk boundaries, verification examples, and optional split-rule
+standards.
+
 ## Baseline, Completion Packs, And Domain Packs
 
 - `templates/automation-base/` is the always-installed generic baseline. It owns
@@ -52,6 +57,7 @@ templates/domain-packs/<name>/
   WORKFLOW.md
   verify-patterns.md
   review-checklist.md
+  split-rules.json       # optional, only when the domain has stable module boundaries
 ```
 
 - `README.md`: when to use the pack, pack files, and onboarding questions.
@@ -60,9 +66,13 @@ templates/domain-packs/<name>/
   `docs/WORKFLOW.md`.
 - `verify-patterns.md`: example verification shapes for `scripts/verify.sh`.
 - `review-checklist.md`: review-gate or manual review checklist.
+- `split-rules.json`: optional `ai-split-plan` rules for proposing Python
+  top-level function/class moves during rebuild planning. These rules generate
+  proposals only; dry-run review and an explicit apply gate are still required.
 
 ## Authoring Rules
 
+- Follow `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` before adding or changing a pack.
 - Keep reusable domain guidance in the pack.
 - Keep project names, credentials, private URLs, production hosts, customer
   workflows, branch routing, SSH details, and deployment access rules out of
@@ -72,6 +82,9 @@ templates/domain-packs/<name>/
 - Label command examples as examples unless they were verified in the target
   project.
 - Do not put generic baseline rules in `templates/domain-packs/`.
+- Keep split rules conservative and explainable. Prefer name-based rules such as
+  `name_contains`, `name_prefixes`, `name_suffixes`, and optional `kinds` over
+  speculative dependency or call-graph assumptions.
 
 ## Application Rules
 

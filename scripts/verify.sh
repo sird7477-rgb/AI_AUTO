@@ -55,8 +55,17 @@ bash -n tools/ai-register
 bash -n tools/ai-auto-template-status
 bash -n tools/ai-refactor-scan
 bash -n tools/ai-rebuild-plan
+bash -n tools/ai-split-plan
+bash -n tools/ai-split-dry-run
+bash -n tools/ai-split-apply
+bash -n tools/ai-plan-status
+bash -n tools/ai-interview-record
+bash -n tools/ai-plan-review
+bash -n tools/ai-plan-export
 bash -n tools/feedback-collect
 bash -n tools/workspace-scan
+python3 -m py_compile tools/ai-python-split
+python3 -m py_compile tools/ai-plan-workflow
 
 echo "[verify] testing review summary decisions..."
 ./scripts/test-review-summary.sh
@@ -126,12 +135,446 @@ echo "[verify] testing ai-rebuild-plan..."
   grep -q "리빌드 실행" "${tmp_dir}/rebuild-plan.out"
   grep -q "selected / rejected / deferred domain packs" "${tmp_dir}/rebuild-plan.out"
   grep -q "AI_AUTO Refactor Scan:" "${tmp_dir}/rebuild-plan.out"
+  grep -q "ai-split-plan" "${tmp_dir}/rebuild-plan.out"
 
   if ./tools/ai-rebuild-plan -- "${target_dir}" extra > "${tmp_dir}/invalid-extra.out" 2>&1; then
     echo "[verify] ai-rebuild-plan accepted an extra argument after --"
     exit 1
   fi
   grep -q "Unexpected extra argument: extra" "${tmp_dir}/invalid-extra.out"
+)
+
+echo "[verify] testing ai-split Python rebuild helpers..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_split_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_split_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  mkdir -p "${target_dir}/src" "${target_dir}/.omx/domain-packs/trading"
+  cat > "${target_dir}/src/monolith.py" <<'PY'
+import math
+
+
+def place_order(symbol):
+    return f"order:{symbol}"
+
+
+class RiskManager:
+    def score(self, symbol):
+        return len(symbol)
+
+
+def helper():
+    return math.pi
+
+
+def outer():
+    def nested_risk():
+        return "nested"
+    return nested_risk()
+PY
+  cat > "${target_dir}/.omx/domain-packs/trading/split-rules.json" <<'JSON'
+{
+  "module_rules": [
+    {
+      "name": "orders",
+      "destination": "{source_dir}/orders.py",
+      "name_contains": ["order"]
+    },
+    {
+      "name": "risk",
+      "destination": "{source_dir}/risk.py",
+      "name_contains": ["risk"]
+    }
+  ]
+}
+JSON
+
+  plan_file="${target_dir}/.omx/rebuild/split-plan.json"
+  mkdir -p "$(dirname "${plan_file}")"
+  ./tools/ai-split-plan --source "${target_dir}/src/monolith.py" --domain-pack trading --output "${plan_file}" > "${tmp_dir}/split-plan.out"
+  grep -q "wrote split plan" "${tmp_dir}/split-plan.out"
+
+  python3 - "${plan_file}" <<'PY'
+import json
+import sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+names = {row["name"] for row in plan["candidate_symbols"]}
+assert {"place_order", "RiskManager", "helper", "outer"} <= names, names
+assert "nested_risk" not in names, names
+moves = {move["destination_file"]: set(move["symbols"]) for move in plan["moves"]}
+assert moves["src/orders.py"] == {"place_order"}, moves
+assert moves["src/risk.py"] == {"RiskManager"}, moves
+assert plan["proposed_moves"], plan
+assert plan["approved_execution_gate"]["reviewed_dry_run"] is False
+PY
+
+  cp "${target_dir}/src/monolith.py" "${tmp_dir}/monolith.before"
+  ./tools/ai-split-dry-run --plan "${plan_file}" > "${tmp_dir}/split-dry-run.out"
+  grep -q "AI_AUTO Python Split Dry Run" "${tmp_dir}/split-dry-run.out"
+  grep -q "place_order" "${tmp_dir}/split-dry-run.out"
+  grep -q "RiskManager" "${tmp_dir}/split-dry-run.out"
+  test ! -e "${target_dir}/src/orders.py"
+  cmp "${tmp_dir}/monolith.before" "${target_dir}/src/monolith.py"
+
+  cat > "${target_dir}/src/decorated.py" <<'PY'
+def trace(fn):
+    return fn
+
+
+@trace
+def decorated_order(symbol):
+    return f"decorated:{symbol}"
+PY
+  decorated_plan_file="${target_dir}/.omx/rebuild/decorated-plan.json"
+  ./tools/ai-split-plan --source "${target_dir}/src/decorated.py" --domain-pack trading --output "${decorated_plan_file}" >/dev/null
+  if ./tools/ai-split-dry-run --plan "${decorated_plan_file}" > "${tmp_dir}/split-decorated.out" 2>&1; then
+    echo "[verify] ai-split-dry-run accepted a source-local decorator dependency"
+    exit 1
+  fi
+  grep -q "source-local top-level symbols" "${tmp_dir}/split-decorated.out"
+
+  cat > "${target_dir}/src/global_dep.py" <<'PY'
+RISK_LIMIT = 7
+
+
+def risk_score(symbol):
+    return len(symbol) + RISK_LIMIT
+PY
+  global_dep_plan_file="${target_dir}/.omx/rebuild/global-dep-plan.json"
+  ./tools/ai-split-plan --source "${target_dir}/src/global_dep.py" --domain-pack trading --output "${global_dep_plan_file}" >/dev/null
+  if ./tools/ai-split-dry-run --plan "${global_dep_plan_file}" > "${tmp_dir}/split-global-dep.out" 2>&1; then
+    echo "[verify] ai-split-dry-run accepted a source-local global dependency"
+    exit 1
+  fi
+  grep -q "risk_score needs RISK_LIMIT" "${tmp_dir}/split-global-dep.out"
+
+  if ./tools/ai-split-apply --plan "${plan_file}" > "${tmp_dir}/split-apply-no-flag.out" 2>&1; then
+    echo "[verify] ai-split-apply ran without explicit execution flag"
+    exit 1
+  fi
+  grep -q "requires --execute-approved-plan" "${tmp_dir}/split-apply-no-flag.out"
+
+  if ./tools/ai-split-apply --plan "${plan_file}" --execute-approved-plan > "${tmp_dir}/split-apply-no-gate.out" 2>&1; then
+    echo "[verify] ai-split-apply ran without completed approval gate"
+    exit 1
+  fi
+  grep -q "approved_execution_gate.approved_by" "${tmp_dir}/split-apply-no-gate.out"
+
+  python3 - "${plan_file}" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+plan = json.load(open(path, encoding="utf-8"))
+plan["approved_execution_gate"] = {
+    "approved_by": "verify",
+    "approved_scope": "src/monolith.py -> src/orders.py, src/risk.py",
+    "reviewed_dry_run": True,
+    "rollback_path": ".omx/rebuild/backups",
+    "post_apply_verification": [
+        "python3 -m py_compile src/monolith.py src/orders.py src/risk.py"
+    ],
+}
+json.dump(plan, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+open(path, "a", encoding="utf-8").write("\n")
+PY
+
+  python3 - "${plan_file}" "${target_dir}/.omx/rebuild/wrong-rollback-plan.json" <<'PY'
+import json
+import sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+plan["approved_execution_gate"]["rollback_path"] = ".omx/rebuild/custom-backups"
+json.dump(plan, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+open(sys.argv[2], "a", encoding="utf-8").write("\n")
+PY
+  if ./tools/ai-split-apply --plan "${target_dir}/.omx/rebuild/wrong-rollback-plan.json" --execute-approved-plan > "${tmp_dir}/split-wrong-rollback.out" 2>&1; then
+    echo "[verify] ai-split-apply accepted an unsupported rollback path"
+    exit 1
+  fi
+  grep -q "rollback_path must be .omx/rebuild/backups" "${tmp_dir}/split-wrong-rollback.out"
+
+  ./tools/ai-split-apply --plan "${plan_file}" --execute-approved-plan > "${tmp_dir}/split-apply.out"
+  grep -q "AI_AUTO Python Split Applied" "${tmp_dir}/split-apply.out"
+  grep -q "backup:" "${tmp_dir}/split-apply.out"
+  grep -q "def place_order" "${target_dir}/src/orders.py"
+  grep -q "class RiskManager" "${target_dir}/src/risk.py"
+  grep -q "def helper" "${target_dir}/src/monolith.py"
+  if grep -q "def place_order" "${target_dir}/src/monolith.py"; then
+    echo "[verify] moved function remained in source"
+    exit 1
+  fi
+  if grep -q "class RiskManager" "${target_dir}/src/monolith.py"; then
+    echo "[verify] moved class remained in source"
+    exit 1
+  fi
+  test -f "$(find "${target_dir}/.omx/rebuild/backups" -path '*/src/monolith.py' -type f | head -n 1)"
+  grep -q "src/orders.py" "$(find "${target_dir}/.omx/rebuild/backups" -name created-files.txt | head -n 1)"
+  python3 -m py_compile "${target_dir}/src/monolith.py" "${target_dir}/src/orders.py" "${target_dir}/src/risk.py"
+  PYTHONPATH="${target_dir}/src" python3 -c "import orders, risk"
+
+  cat > "${target_dir}/src/future_source.py" <<'PY'
+from __future__ import annotations
+
+import math
+
+
+def future_order(symbols: list[str]) -> float:
+    return math.pi + len(symbols)
+PY
+  future_plan_file="${target_dir}/.omx/rebuild/future-plan.json"
+  ./tools/ai-split-plan --source "${target_dir}/src/future_source.py" --domain-pack trading --output "${future_plan_file}" >/dev/null
+  python3 - "${future_plan_file}" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+plan = json.load(open(path, encoding="utf-8"))
+plan["approved_execution_gate"] = {
+    "approved_by": "verify",
+    "approved_scope": "src/future_source.py -> src/orders.py",
+    "reviewed_dry_run": True,
+    "rollback_path": ".omx/rebuild/backups",
+    "post_apply_verification": [
+        "python3 -m py_compile src/future_source.py src/orders.py"
+    ],
+}
+json.dump(plan, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+open(path, "a", encoding="utf-8").write("\n")
+PY
+  ./tools/ai-split-dry-run --plan "${future_plan_file}" > "${tmp_dir}/split-future.out"
+  grep -q "+from __future__ import annotations" "${tmp_dir}/split-future.out"
+  ./tools/ai-split-apply --plan "${future_plan_file}" --execute-approved-plan > "${tmp_dir}/split-future-apply.out"
+  python3 -m py_compile "${target_dir}/src/future_source.py" "${target_dir}/src/orders.py"
+
+  outside_rules="${tmp_dir}/outside-rules.json"
+  cp "${target_dir}/.omx/domain-packs/trading/split-rules.json" "${outside_rules}"
+  if ./tools/ai-split-plan --source "${target_dir}/src/monolith.py" --rules "${outside_rules}" > "${tmp_dir}/split-outside-rules.out" 2>&1; then
+    echo "[verify] ai-split-plan accepted a rules file outside the repository"
+    exit 1
+  fi
+  grep -q "Split rules path must stay inside the git repository" "${tmp_dir}/split-outside-rules.out"
+
+  bad_plan_file="${target_dir}/.omx/rebuild/bad-plan.json"
+  python3 - "${plan_file}" "${bad_plan_file}" <<'PY'
+import json
+import sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+plan["moves"] = [
+    {"destination_file": "src/a.py", "symbols": ["helper"]},
+    {"destination_file": "src/b.py", "symbols": ["helper"]},
+]
+json.dump(plan, open(sys.argv[2], "w", encoding="utf-8"))
+PY
+  if ./tools/ai-split-dry-run --plan "${bad_plan_file}" > "${tmp_dir}/split-duplicate.out" 2>&1; then
+    echo "[verify] ai-split-dry-run accepted duplicate symbols across moves"
+    exit 1
+  fi
+  grep -q "unique across all moves" "${tmp_dir}/split-duplicate.out"
+
+  duplicate_dest_plan_file="${target_dir}/.omx/rebuild/duplicate-dest-plan.json"
+  python3 - "${plan_file}" "${duplicate_dest_plan_file}" <<'PY'
+import json
+import sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+plan["moves"] = [
+    {"destination_file": "src/shared.py", "symbols": ["helper"]},
+    {"destination_file": "src/shared.py", "symbols": ["outer"]},
+]
+json.dump(plan, open(sys.argv[2], "w", encoding="utf-8"))
+PY
+  if ./tools/ai-split-dry-run --plan "${duplicate_dest_plan_file}" > "${tmp_dir}/split-duplicate-dest.out" 2>&1; then
+    echo "[verify] ai-split-dry-run accepted duplicate destination files"
+    exit 1
+  fi
+  grep -q "destination_file must be unique" "${tmp_dir}/split-duplicate-dest.out"
+
+  cat > "${target_dir}/src/helpers.py" <<'PY'
+"""Existing helper module."""
+
+
+def existing_helper():
+    return "existing"
+PY
+  existing_dest_plan_file="${target_dir}/.omx/rebuild/existing-dest-plan.json"
+  python3 - "${plan_file}" "${existing_dest_plan_file}" <<'PY'
+import json
+import sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+plan["moves"] = [
+    {"destination_file": "src/helpers.py", "symbols": ["helper"]},
+]
+plan["approved_execution_gate"] = {
+    "approved_by": "verify",
+    "approved_scope": "src/monolith.py -> src/helpers.py",
+    "reviewed_dry_run": True,
+    "rollback_path": ".omx/rebuild/backups",
+    "post_apply_verification": [
+        "python3 -m py_compile src/monolith.py src/helpers.py"
+    ],
+}
+json.dump(plan, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+open(sys.argv[2], "a", encoding="utf-8").write("\n")
+PY
+  ./tools/ai-split-dry-run --plan "${existing_dest_plan_file}" > "${tmp_dir}/split-existing-dest.out"
+  grep -q "+import math" "${tmp_dir}/split-existing-dest.out"
+  grep -q "def existing_helper" "${tmp_dir}/split-existing-dest.out"
+  ./tools/ai-split-apply --plan "${existing_dest_plan_file}" --execute-approved-plan > "${tmp_dir}/split-existing-dest-apply.out"
+  grep -q "import math" "${target_dir}/src/helpers.py"
+  grep -q "def helper" "${target_dir}/src/helpers.py"
+  if grep -q "def helper" "${target_dir}/src/monolith.py"; then
+    echo "[verify] helper remained in source after existing-destination split"
+    exit 1
+  fi
+  python3 -m py_compile "${target_dir}/src/monolith.py" "${target_dir}/src/helpers.py"
+  PYTHONPATH="${target_dir}/src" python3 -c "import helpers; assert helpers.helper() == 3.141592653589793"
+)
+
+echo "[verify] testing ai-plan interview/status helpers..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_plan_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_plan_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  mkdir -p "${target_dir}/.omx/plans" "${target_dir}/docs" "${target_dir}/scripts"
+  printf '# Evidence\n' > "${target_dir}/docs/evidence.md"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${target_dir}/scripts/verify.sh"
+
+  (cd "${target_dir}" && "${repo_root}/tools/ai-plan-status" --json > "${tmp_dir}/missing-status.json")
+  grep -q '"status": "missing"' "${tmp_dir}/missing-status.json"
+  grep -q '"ready_to_execute": false' "${tmp_dir}/missing-status.json"
+
+  draft_plan="${target_dir}/.omx/plans/draft.json"
+  "${repo_root}/tools/ai-interview-record" \
+    --plan "${draft_plan}" \
+    --field user_decisions \
+    --question "Execution scope?" \
+    --answer "Local files only" > "${tmp_dir}/record.out"
+  grep -q "does not approve execution" "${tmp_dir}/record.out"
+  grep -q '"source": "user"' "${draft_plan}"
+
+  if "${repo_root}/tools/ai-interview-record" \
+    --plan "${draft_plan}" \
+    --field user_decisions \
+    --source ai \
+    --answer "AI inferred approval" > "${tmp_dir}/bad-record.out" 2>&1; then
+    echo "[verify] ai-interview-record accepted AI-sourced user decision"
+    exit 1
+  fi
+  grep -q "user_decisions can only be recorded" "${tmp_dir}/bad-record.out"
+
+  "${repo_root}/tools/ai-plan-status" --json "${draft_plan}" > "${tmp_dir}/draft-status.json"
+  grep -q '"status": "missing"' "${tmp_dir}/draft-status.json"
+  grep -q '"approved_execution_gate_missing"' "${tmp_dir}/draft-status.json"
+  "${repo_root}/tools/ai-plan-review" "${draft_plan}" > "${tmp_dir}/draft-review.out"
+  grep -q "verdict: needs_work" "${tmp_dir}/draft-review.out"
+  grep -q "plan review is not execution approval" "${tmp_dir}/draft-review.out"
+
+  ready_plan="${target_dir}/.omx/plans/ready.json"
+  cat > "${ready_plan}" <<'JSON'
+{
+  "goal": "Ship a local-only planning status helper.",
+  "non_goals": ["No code execution approval"],
+  "success_criteria": ["Status is computed", "Review is not approval"],
+  "constraints": ["No new external dependencies"],
+  "risk_gates": ["Plan/run boundary remains separate"],
+  "assumptions": [],
+  "user_decisions": [
+    {
+      "id": "scope",
+      "source": "user",
+      "answer": "Local files only"
+    }
+  ],
+  "open_questions": [],
+  "execution_boundaries": ["Read-only status unless export path is explicitly provided"],
+  "verification_plan": ["./scripts/verify.sh"],
+  "rollback_or_stop_condition": ["Stop if status reports missing required fields"],
+  "ambiguity_index": {
+    "critical_open_decisions": 0,
+    "total_critical_decisions": 1,
+    "overall_open_decisions": 0,
+    "overall_total_decisions": 4
+  },
+  "evidence_references": ["docs/evidence.md"],
+  "ready_to_execute_gate": {
+    "approved_execution_gate": {
+      "approved_by": "verify",
+      "approved_at": "2026-05-15T00:00:00Z",
+      "approved_scope": "plan-status test fixture",
+      "plan_artifact": ".omx/plans/ready.json",
+      "readiness": true,
+      "exclusions": ["No production or external execution"]
+    },
+    "verification_commands": ["./scripts/verify.sh"],
+    "stop_conditions": ["status != ready"]
+  }
+}
+JSON
+
+  weak_gate_plan="${target_dir}/.omx/plans/weak-gate.json"
+  cp "${ready_plan}" "${weak_gate_plan}"
+  python3 - "${weak_gate_plan}" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+plan = json.load(open(path, encoding="utf-8"))
+gate = plan["ready_to_execute_gate"]["approved_execution_gate"]
+gate.pop("approved_at")
+gate.pop("exclusions")
+json.dump(plan, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+open(path, "a", encoding="utf-8").write("\n")
+PY
+  "${repo_root}/tools/ai-plan-status" --json "${weak_gate_plan}" > "${tmp_dir}/weak-gate-status.json"
+  grep -q '"status": "blocked"' "${tmp_dir}/weak-gate-status.json"
+  grep -q "approved_execution_gate.approved_at" "${tmp_dir}/weak-gate-status.json"
+  grep -q "approved_execution_gate.exclusions" "${tmp_dir}/weak-gate-status.json"
+
+  mismatch_gate_plan="${target_dir}/.omx/plans/mismatch-gate.json"
+  cp "${ready_plan}" "${mismatch_gate_plan}"
+  python3 - "${mismatch_gate_plan}" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+plan = json.load(open(path, encoding="utf-8"))
+plan["ready_to_execute_gate"]["approved_execution_gate"]["plan_artifact"] = ".omx/plans/some-other-plan.json"
+json.dump(plan, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+open(path, "a", encoding="utf-8").write("\n")
+PY
+  "${repo_root}/tools/ai-plan-status" --json "${mismatch_gate_plan}" > "${tmp_dir}/mismatch-gate-status.json"
+  grep -q '"status": "blocked"' "${tmp_dir}/mismatch-gate-status.json"
+  grep -q "approved_execution_gate.plan_artifact_mismatch" "${tmp_dir}/mismatch-gate-status.json"
+
+  (cd "${target_dir}" && "${repo_root}/tools/ai-plan-status" --write-state --json ".omx/plans/ready.json" > "${tmp_dir}/ready-status.json")
+  grep -q '"status": "ready"' "${tmp_dir}/ready-status.json"
+  grep -q '"ready_to_execute": true' "${tmp_dir}/ready-status.json"
+  test -f "${target_dir}/.omx/state/plan-status.json"
+
+  "${repo_root}/tools/ai-plan-review" --json "${ready_plan}" > "${tmp_dir}/ready-review.json"
+  grep -q '"verdict": "pass"' "${tmp_dir}/ready-review.json"
+  grep -q "plan review is not execution approval" "${tmp_dir}/ready-review.json"
+
+  export_path="${target_dir}/.omx/plans/ready-export.md"
+  "${repo_root}/tools/ai-plan-export" "${ready_plan}" --output "${export_path}" > "${tmp_dir}/export.out"
+  grep -q "export does not approve execution" "${tmp_dir}/export.out"
+  grep -q "review/export is not execution approval" "${export_path}"
+
+  stale_plan="${target_dir}/.omx/plans/stale.json"
+  cp "${ready_plan}" "${stale_plan}"
+  sed -i 's|docs/evidence.md|docs/missing-evidence.md|' "${stale_plan}"
+  "${repo_root}/tools/ai-plan-status" --json "${stale_plan}" > "${tmp_dir}/stale-status.json"
+  grep -q '"status": "stale"' "${tmp_dir}/stale-status.json"
+  grep -q 'missing-evidence.md' "${tmp_dir}/stale-status.json"
 )
 
 echo "[verify] testing AI model discovery..."
@@ -900,6 +1343,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
+  printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
   printf '# Interview Plan Layer\n' > docs/INTERVIEW_PLAN_LAYER.md
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
@@ -966,6 +1410,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
+  printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
   printf '# Interview Plan Layer\n' > docs/INTERVIEW_PLAN_LAYER.md
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
@@ -1030,6 +1475,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   printf '# Agents\n' > AGENTS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
+  printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
   printf '# Interview Plan Layer\n' > docs/INTERVIEW_PLAN_LAYER.md
   printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
   printf '# Workflow\n' > docs/WORKFLOW.md
@@ -1267,6 +1713,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
   test -f "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  test -f "${target_dir}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
   test -f "${target_dir}/docs/DOMAIN_PACKS.md"
   test -f "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   test -f "${target_dir}/docs/INCIDENT_OPS.md"
@@ -1280,9 +1727,13 @@ echo "[verify] testing automation template installer..."
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q "Auxiliary Rebuild Tool Gates" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
   grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
+  grep -q "Domain Pack Authoring Guide" "${target_dir}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
+  grep -q "Forbidden Content" "${target_dir}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
   grep -q "There is no generic domain pack" "${target_dir}/docs/DOMAIN_PACKS.md"
+  grep -q "DOMAIN_PACK_AUTHORING_GUIDE.md" "${target_dir}/docs/DOMAIN_PACKS.md"
   grep -q "decision width" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   grep -q "ready_to_execute" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
@@ -1301,6 +1752,7 @@ echo "[verify] testing automation template installer..."
   grep -q "resource-aware parallelism" "${target_dir}/AGENTS.md"
   grep -q "Planning And Interview Escalation" "${target_dir}/AGENTS.md"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${target_dir}/AGENTS.md"
+  grep -q "codemod apply" "${target_dir}/AGENTS.md"
   grep -q '`none`' "${target_dir}/AGENTS.md"
   grep -q '`light`' "${target_dir}/AGENTS.md"
   grep -q '`standard`' "${target_dir}/AGENTS.md"
@@ -1310,6 +1762,7 @@ echo "[verify] testing automation template installer..."
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
   grep -q "Delete unused" "${target_dir}/AGENTS.md"
   grep -q "docs/DOMAIN_PACKS.md" "templates/automation-base/README.md"
+  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/README.md"
   grep -q "Review intensity" "templates/automation-base/README.md"
   grep -q "Subagents" "templates/automation-base/README.md"
   grep -q "Planning/interview intensity" "templates/automation-base/README.md"
@@ -1323,6 +1776,7 @@ echo "[verify] testing automation template installer..."
   grep -q "ai-auto-template-status" "templates/automation-base/README.md"
   grep -q "unused completion pack" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACKS.md" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "review intensity" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "서브에이전트 사용 기준" "docs/NEW_PROJECT_GUIDE.md"
@@ -1335,6 +1789,7 @@ echo "[verify] testing automation template installer..."
   grep -q "프로젝트 초기설정 해줘" "${installer_output}"
   grep -q "docs/\\*_COMPLETION.md" "${installer_output}"
   grep -q "docs/DOMAIN_PACKS.md" "${installer_output}"
+  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${installer_output}"
   grep -q ".omx/domain-packs/에 설치된 도메인팩" "${installer_output}"
   grep -q "서브에이전트 사용 기준" "${installer_output}"
   grep -q "플랜/인터뷰 강도 기준" "${installer_output}"
@@ -1353,6 +1808,8 @@ echo "[verify] testing automation template installer..."
   grep -q "heartbeat, quiet, active-incident 보고" "${target_dir}/docs/WORKFLOW.md"
   grep -q "plan index/TODO reconciliation" "${target_dir}/docs/WORKFLOW.md"
   grep -q "linked docs" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "ai-context-pack" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "advisory/fail-open" "${target_dir}/docs/WORKFLOW.md"
   test ! -e "${target_dir}/templates/domain-packs/odoo/README.md"
   test -f "${target_dir}/.omx/domain-packs/odoo/README.md"
   grep -q "Optional domain packs installed for onboarding reference" "${installer_output}"
@@ -1360,7 +1817,9 @@ echo "[verify] testing automation template installer..."
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-current.out"
   grep -q "status: current" "${tmp_dir}/template-status-current.out"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
 
   printf '\nproject-specific customization\n' >> "${target_dir}/docs/WORKFLOW.md"
@@ -1386,13 +1845,19 @@ test -f "templates/domain-packs/odoo/verify-patterns.md"
 test -f "templates/domain-packs/odoo/review-checklist.md"
 grep -q "ignored onboarding reference under" "templates/domain-packs/odoo/README.md"
 grep -q "docs/DOMAIN_PACKS.md" "templates/domain-packs/odoo/README.md"
+grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/domain-packs/odoo/README.md"
 grep -q "ko_KR" "templates/domain-packs/odoo/README.md"
 grep -q "Project-Specific Rules" "templates/domain-packs/odoo/WORKFLOW.md"
 grep -q "localization baseline" "templates/domain-packs/odoo/verify-patterns.md"
 grep -Fq 'Path("custom_addons").rglob("*.xml")' "templates/domain-packs/odoo/verify-patterns.md"
 grep -q "도메인팩" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "There is no generic domain pack" "templates/automation-base/docs/DOMAIN_PACKS.md"
+grep -q "Domain Pack Authoring Guide" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
+grep -q "Interview Design" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
+grep -q "Forbidden Content" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
+grep -q "split-rules.json" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
 cmp -s "docs/DOMAIN_PACKS.md" "templates/automation-base/docs/DOMAIN_PACKS.md"
+cmp -s "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
 grep -q "Deployment Completion Pack" "templates/automation-base/docs/DEPLOYMENT_COMPLETION.md"
 grep -q "Security Completion Pack" "templates/automation-base/docs/SECURITY_COMPLETION.md"
 grep -q "Data Completion Pack" "templates/automation-base/docs/DATA_COMPLETION.md"
@@ -1627,6 +2092,13 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-plan" "${tmp_home}/bin/ai-split-plan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-dry-run" "${tmp_home}/bin/ai-split-dry-run"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-apply" "${tmp_home}/bin/ai-split-apply"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-status" "${tmp_home}/bin/ai-plan-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-interview-record" "${tmp_home}/bin/ai-interview-record"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1640,6 +2112,13 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
+  test "$(readlink "${tmp_home}/bin/ai-split-plan")" = "$(pwd)/tools/ai-split-plan"
+  test "$(readlink "${tmp_home}/bin/ai-split-dry-run")" = "$(pwd)/tools/ai-split-dry-run"
+  test "$(readlink "${tmp_home}/bin/ai-split-apply")" = "$(pwd)/tools/ai-split-apply"
+  test "$(readlink "${tmp_home}/bin/ai-plan-status")" = "$(pwd)/tools/ai-plan-status"
+  test "$(readlink "${tmp_home}/bin/ai-interview-record")" = "$(pwd)/tools/ai-interview-record"
+  test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
+  test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
   test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
@@ -1739,6 +2218,13 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-plan" "${tmp_home}/bin/ai-split-plan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-dry-run" "${tmp_home}/bin/ai-split-dry-run"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-apply" "${tmp_home}/bin/ai-split-apply"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-status" "${tmp_home}/bin/ai-plan-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-interview-record" "${tmp_home}/bin/ai-interview-record"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1752,6 +2238,13 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
+  test "$(readlink "${tmp_home}/bin/ai-split-plan")" = "$(pwd)/tools/ai-split-plan"
+  test "$(readlink "${tmp_home}/bin/ai-split-dry-run")" = "$(pwd)/tools/ai-split-dry-run"
+  test "$(readlink "${tmp_home}/bin/ai-split-apply")" = "$(pwd)/tools/ai-split-apply"
+  test "$(readlink "${tmp_home}/bin/ai-plan-status")" = "$(pwd)/tools/ai-plan-status"
+  test "$(readlink "${tmp_home}/bin/ai-interview-record")" = "$(pwd)/tools/ai-interview-record"
+  test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
+  test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
@@ -1775,6 +2268,13 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-plan" "${tmp_home}/bin/ai-split-plan"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-dry-run" "${tmp_home}/bin/ai-split-dry-run"
+  ln -s "${tmp_home}/old-checkout/tools/ai-split-apply" "${tmp_home}/bin/ai-split-apply"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-status" "${tmp_home}/bin/ai-plan-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-interview-record" "${tmp_home}/bin/ai-interview-record"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
+  ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -1788,6 +2288,13 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
+  test "$(readlink "${tmp_home}/bin/ai-split-plan")" = "$(pwd)/tools/ai-split-plan"
+  test "$(readlink "${tmp_home}/bin/ai-split-dry-run")" = "$(pwd)/tools/ai-split-dry-run"
+  test "$(readlink "${tmp_home}/bin/ai-split-apply")" = "$(pwd)/tools/ai-split-apply"
+  test "$(readlink "${tmp_home}/bin/ai-plan-status")" = "$(pwd)/tools/ai-plan-status"
+  test "$(readlink "${tmp_home}/bin/ai-interview-record")" = "$(pwd)/tools/ai-interview-record"
+  test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
+  test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )

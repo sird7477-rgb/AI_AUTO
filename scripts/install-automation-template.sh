@@ -33,6 +33,7 @@ for path in \
   "docs/AUTOMATION_OPERATING_POLICY.md" \
   "docs/DATA_COMPLETION.md" \
   "docs/DEPLOYMENT_COMPLETION.md" \
+  "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" \
   "docs/DOMAIN_PACKS.md" \
   "docs/INTERVIEW_PLAN_LAYER.md" \
   "docs/INCIDENT_OPS.md" \
@@ -94,6 +95,7 @@ cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTI
 cp "${TEMPLATE_DIR}/docs/AUTOMATION_OPERATING_POLICY.md" "${TARGET_DIR}/docs/AUTOMATION_OPERATING_POLICY.md"
 cp "${TEMPLATE_DIR}/docs/DATA_COMPLETION.md" "${TARGET_DIR}/docs/DATA_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/DEPLOYMENT_COMPLETION.md" "${TARGET_DIR}/docs/DEPLOYMENT_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${TARGET_DIR}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
 cp "${TEMPLATE_DIR}/docs/DOMAIN_PACKS.md" "${TARGET_DIR}/docs/DOMAIN_PACKS.md"
 cp "${TEMPLATE_DIR}/docs/INTERVIEW_PLAN_LAYER.md" "${TARGET_DIR}/docs/INTERVIEW_PLAN_LAYER.md"
 cp "${TEMPLATE_DIR}/docs/INCIDENT_OPS.md" "${TARGET_DIR}/docs/INCIDENT_OPS.md"
@@ -154,9 +156,10 @@ echo "4. Confirm operational readiness fail-closed rules, sandbox-vs-real-networ
 echo "5. Use ai-auto-template-status later to compare this project with newer AI_AUTO templates; review differences manually before patching."
 echo "6. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
 echo "7. Use ${TARGET_DIR}/docs/DOMAIN_PACKS.md to check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
-echo "8. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "9. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
-echo "10. Run:"
+echo "8. Use ${TARGET_DIR}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md only when creating or changing reusable domain packs."
+echo "9. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
+echo "10. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards."
+echo "11. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"

@@ -74,6 +74,13 @@ Useful commands:
   ai-auto-template-status /path/to/project
   ai-refactor-scan /path/to/project
   ai-rebuild-plan /path/to/project
+  ai-split-plan --source path/to/monolith.py --domain-pack trading --output .omx/rebuild/split-plan.json
+  ai-split-dry-run --plan .omx/rebuild/split-plan.json
+  ai-split-apply --plan .omx/rebuild/split-plan.json --execute-approved-plan
+  ai-plan-status .omx/plans/plan.json
+  ai-interview-record --plan .omx/plans/plan.json --field user_decisions --answer "..."
+  ai-plan-review .omx/plans/plan.json
+  ai-plan-export .omx/plans/plan.json --output .omx/plans/plan-export.md
   feedback-collect
   workspace-scan
   ai-register /path/to/existing-repo

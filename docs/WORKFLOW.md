@@ -238,6 +238,8 @@ import가 많은 파일을 출력한다. 주식자동매매처럼 코드가 한 
 
 Odoo 등 특정 프레임워크 검증 패턴은 `docs/DOMAIN_PACKS.md`와 설치된
 `.omx/domain-packs/` 참고자료를 기준으로 적용 여부를 먼저 확정한 뒤 다룬다.
+재사용 도메인팩을 새로 만들거나 수정할 때만
+`docs/DOMAIN_PACK_AUTHORING_GUIDE.md`를 따른다.
 
 리빌드 플랜:
 
@@ -255,6 +257,32 @@ git 상태, 자동화 템플릿 최신성, 도메인팩 원본/설치본 상태,
 계획 artifact, 최신 도메인팩 검증, 동작 고정 테스트 또는 smoke check,
 모듈 경계와 non-goal이 없으면 실행하지 않는다. 도메인팩은 실행 허가증이
 아니라 리빌딩 전 확인해야 하는 안전 계약이다.
+
+### 리빌드 보조 게이트
+
+외부 도구를 붙이더라도 기본 실행 엔진으로 쓰지 않는다. `ai-context-pack`
+계열 컨텍스트 패킹, `ai-codemod-scan` 계열 구조 검색, `ai-boundary-check`
+계열 경계 검사, `ai-split-plan` Python 분리 계획은 read-only 보조 게이트다.
+명시 요청, 대형/경계 변경, `ai-refactor-scan`에서 확인된 material smell,
+도메인-critical 변경, stale evidence, 구조적 검증 실패, 또는 리뷰어가
+리빌드/리팩터/경계 검사를 요청한 경우에만 제안하거나 실행한다.
+
+이 보조 게이트는 기본적으로 advisory/fail-open이다. 도구가 없다고 작은
+되돌릴 수 있는 작업, 일반 verify, 커밋 준비를 막지 않는다. 단, 리빌드
+실행, 마이그레이션, production/real-data, destructive, domain-critical
+경로에서는 프로젝트 정책에 따라 fail-closed로 승격할 수 있다.
+
+`ai-codemod-apply`, autofix처럼 파일을 수정하는 도구는 별도 실행 게이트다.
+명시 실행 요청, 승인된 scoped plan artifact, exact target scope, 검토된
+dry-run diff/summary, rollback path, post-apply verification이 없으면
+실행하지 않는다.
+
+Python 리빌드에서는 도메인팩의 `split-rules.json`이 심볼을 직접 명시하는
+부담을 줄이는 자동 제안층이 될 수 있다. `ai-split-plan`은 top-level
+function/class 이동 후보만 제안하고, `ai-split-dry-run` 검토와
+`ai-split-apply --execute-approved-plan` 승인 게이트를 통과해야 파일을
+수정한다. 이 도구는 import/call site를 자동 재작성하지 않으므로 리빌드
+실행 전후 behavior-locking test가 필수다.
 
 범용 템플릿은 UI, 배포, 보안, 데이터, 성능, 관측성 완료 기준이 필요한
 프로젝트를 위해 `docs/*_COMPLETION.md` 완료팩을 함께 설치한다. 단, 이

@@ -208,6 +208,55 @@ else
   suggest "chmod +x ${ROOT}/tools/ai-rebuild-plan"
 fi
 
+if [ -x "${ROOT}/tools/ai-split-plan" ]; then
+  say_pass "ai-split-plan source helper is executable"
+else
+  say_fail "ai-split-plan source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-split-plan"
+fi
+
+if [ -x "${ROOT}/tools/ai-split-dry-run" ]; then
+  say_pass "ai-split-dry-run source helper is executable"
+else
+  say_fail "ai-split-dry-run source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-split-dry-run"
+fi
+
+if [ -x "${ROOT}/tools/ai-split-apply" ]; then
+  say_pass "ai-split-apply source helper is executable"
+else
+  say_fail "ai-split-apply source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-split-apply"
+fi
+
+if [ -x "${ROOT}/tools/ai-plan-status" ]; then
+  say_pass "ai-plan-status source helper is executable"
+else
+  say_fail "ai-plan-status source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-plan-status"
+fi
+
+if [ -x "${ROOT}/tools/ai-interview-record" ]; then
+  say_pass "ai-interview-record source helper is executable"
+else
+  say_fail "ai-interview-record source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-interview-record"
+fi
+
+if [ -x "${ROOT}/tools/ai-plan-review" ]; then
+  say_pass "ai-plan-review source helper is executable"
+else
+  say_fail "ai-plan-review source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-plan-review"
+fi
+
+if [ -x "${ROOT}/tools/ai-plan-export" ]; then
+  say_pass "ai-plan-export source helper is executable"
+else
+  say_fail "ai-plan-export source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-plan-export"
+fi
+
 if [ -x "${ROOT}/tools/feedback-collect" ]; then
   say_pass "feedback-collect source helper is executable"
 else
@@ -243,6 +292,13 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   ensure_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
   ensure_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"
+  ensure_link "${HOME_DIR}/bin/ai-split-plan" "${ROOT}/tools/ai-split-plan"
+  ensure_link "${HOME_DIR}/bin/ai-split-dry-run" "${ROOT}/tools/ai-split-dry-run"
+  ensure_link "${HOME_DIR}/bin/ai-split-apply" "${ROOT}/tools/ai-split-apply"
+  ensure_link "${HOME_DIR}/bin/ai-plan-status" "${ROOT}/tools/ai-plan-status"
+  ensure_link "${HOME_DIR}/bin/ai-interview-record" "${ROOT}/tools/ai-interview-record"
+  ensure_link "${HOME_DIR}/bin/ai-plan-review" "${ROOT}/tools/ai-plan-review"
+  ensure_link "${HOME_DIR}/bin/ai-plan-export" "${ROOT}/tools/ai-plan-export"
   ensure_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   ensure_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
 

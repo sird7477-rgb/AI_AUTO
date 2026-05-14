@@ -198,3 +198,24 @@ questions, missing evidence references, or no approved execution gate.
 For safe, reversible `light` or `standard` tasks that do not use the full
 schema, do not evaluate `ready_to_execute`; use the local plan, explicit user
 request, and normal verification instead.
+
+## Local Status Tools
+
+AI_AUTO includes small local helpers for making this contract observable without
+adding external dependencies:
+
+- `ai-plan-status`: read-only computed status for a plan artifact. It reports
+  `ready_to_execute`, ambiguity, blockers, missing fields, open questions, stale
+  evidence, and the next action. `ready_to_execute` is computed by the tool; it
+  is not a user-editable approval field.
+- `ai-interview-record`: appends one interview answer to a JSON plan artifact.
+  User decisions and AI assumptions remain separate. Recording an answer does
+  not approve execution.
+- `ai-plan-review`: read-only quality review using the same status calculation.
+  A passing review means the plan shape is acceptable; it is not execution
+  approval.
+- `ai-plan-export`: writes a concise execution summary for handoff. Exporting a
+  plan does not approve execution.
+
+These helpers are the first local status layer. External tools may later provide
+evidence, but they must not own readiness, ambiguity, or approval decisions.

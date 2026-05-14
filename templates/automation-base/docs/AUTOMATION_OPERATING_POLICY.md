@@ -232,6 +232,58 @@ says "바로 진행", skip interview only for safe and reversible work; keep
 approval gates for destructive, credentialed, production, or materially
 scope-changing actions.
 
+## Auxiliary Rebuild Tool Gates
+
+Auxiliary rebuild tools are optional support gates, not default execution
+requirements. Do not install external tools or make normal verification depend
+on them unless the user explicitly asks or a project-local policy promotes a
+specific gate to required.
+
+Read-only diagnostic gates include:
+
+- context pack: create a local AI-readable repository snapshot for planning
+- codemod scan: structurally search for migration or refactor candidates
+- boundary check: scan for forbidden imports, old APIs, or domain-boundary leaks
+- Python split plan: use domain-pack `split-rules.json` to propose top-level
+  function/class moves without editing files
+
+These read-only gates may be suggested or run when available only when local
+evidence shows one of these triggers:
+
+- explicit user command for context packing, codemod scan, boundary check, or
+  rebuild support
+- material large-scope or boundary-changing work, such as module moves, public
+  API/signature changes, import-path rewrites, schema/config changes, or shared
+  module extraction
+- `ai-refactor-scan` or equivalent local evidence identifies a material
+  refactor smell above the project threshold
+- a domain-critical boundary is touched, such as credentials, production/real
+  data, order/execution loops, risk controls, payment, deployment, or security
+- required evidence is stale, including context packs, domain-pack assumptions,
+  plan artifacts, generated scans, or behavior-locking tests
+- repeated verification failure has a structural cause rather than a local typo
+- a reviewer finding specifically requests rebuild, refactor, migration, or
+  boundary planning
+
+These gates are advisory and fail-open by default. Missing optional tools must
+not fail `./scripts/verify.sh`, block normal commit readiness, or interrupt
+small safe reversible work. They fail-closed only for rebuild-run, migration,
+domain-critical, production/real-data, destructive paths, or when a
+project-local policy explicitly makes the gate required.
+
+Write gates are separate. Codemod apply, autofix, or any tool that edits files
+must not be triggered automatically by the diagnostic criteria above. It
+requires an explicit execution command, an approved scoped plan artifact, exact
+target scope, reviewed dry-run diff or summary, rollback path, and post-apply
+verification.
+
+For Python rebuilds, `ai-split-plan` may consume
+`.omx/domain-packs/<name>/split-rules.json` and write a proposed plan. This is
+still advisory. `ai-split-dry-run` must be reviewed before `ai-split-apply`,
+and apply requires `--execute-approved-plan` plus completed approval-gate fields.
+The splitter is a mechanical top-level symbol mover; it does not rewrite imports
+or call sites, so behavior-locking tests remain mandatory for any rebuild run.
+
 ## Autonomous Checkpoint Continuation
 
 Long-running autonomous workflows, including Ralph-style execution loops, should
@@ -378,7 +430,9 @@ Use this order:
 5. Completion packs: select or reject UI, deployment, security, data,
    performance, and observability packs.
 6. Domain packs: follow `docs/DOMAIN_PACKS.md` to select, reject, or defer
-   installed `.omx/domain-packs/` references.
+   installed `.omx/domain-packs/` references. Use
+   `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` only when creating or changing reusable
+   source packs.
 7. Operating policy: review intensity, feedback recording, approval-friction
    handling, subagent usage expectations, and resource-aware parallelism. Before
    asking, inspect local CPU, memory, disk, and load evidence; then ask about
