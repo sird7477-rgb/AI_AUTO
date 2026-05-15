@@ -16,6 +16,8 @@ Before changing Odoo code, confirm:
   projects
 - whether changes affect models, views, security, reports, cron, or business
   workflows
+- for Odoo 19 on odoo.sh, the project-local access runbook for SSH, temporary
+  admin password handling, branch routing, and Playwright environment variables
 
 ## Version And Localization
 
@@ -65,6 +67,7 @@ passes. At minimum, verification should cover syntax/import checks and one Odoo
 module install/update or test path when the runtime is available.
 
 Project-specific deployment workflows such as odoo.sh SSH access, branch routing,
-commit-message approval rules, and customer-specific attachment or document
-automation rules belong in the target project's own `AGENTS.md` or
-`docs/WORKFLOW.md`, not in this reusable pack.
+temporary admin password handling, Playwright login variables, commit-message
+approval rules, and customer-specific attachment or document automation rules
+belong in the target project's own `AGENTS.md` or `docs/WORKFLOW.md`, not in
+this reusable pack.

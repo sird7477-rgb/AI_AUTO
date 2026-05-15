@@ -435,6 +435,13 @@ ${CODEX_FALLBACK_COVERAGE}
 
 Codex fallback coverage is degraded and informational-only. It is not independent Claude or Gemini reviewer approval.
 
+## Disabled Reviewer Reporting
+
+Skipped external reviewers always mean degraded coverage. A reviewer skipped by
+\`RUN_CLAUDE_REVIEW=0\` or \`RUN_GEMINI_REVIEW=0\` is an intentional user opt-out,
+not an external reviewer failure. A reviewer skipped because of a persisted
+.omx/reviewer-state marker remains disabled until the reset hint is run.
+
 ## Reviewer Verdicts
 
 | Reviewer | Verdict | File |

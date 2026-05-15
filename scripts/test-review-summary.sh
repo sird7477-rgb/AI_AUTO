@@ -213,6 +213,12 @@ assert_summary() {
     exit 1
   fi
 
+  if [ -n "${expected_missing}" ] && ! grep -q "Disabled Reviewer Reporting" "${summary_file}"; then
+    echo "[summary-test] ${name}: missing disabled reviewer reporting section"
+    cat "${summary_file}"
+    exit 1
+  fi
+
   echo "[summary-test] ${name}: pass"
 }
 

@@ -18,6 +18,10 @@ confirming that the project is Odoo-based.
   10% VAT?
 - Are there project-specific deployment, SSH, branch, or commit rules that must
   stay in the target project instructions?
+- For Odoo 19 on odoo.sh, where is the project-local SSH/access runbook, and how
+  are temporary admin passwords requested, used, and revoked?
+- Are Playwright checks required, and which environment variables provide the
+  base URL, login identity, password source, and browser project?
 
 ## Development Loop
 
@@ -37,7 +41,8 @@ Keep reusable Odoo guidance separate from project-specific operations:
   patterns, localization prompts, and review checklist
 - target project files: customer-specific modules, odoo.sh URLs, SSH keys,
   branch routing, commit approval rules, attachment/document automation rules,
-  and production-like access procedures
+  temporary admin password procedures, Playwright environment variables, and
+  production-like access procedures
 
 ## Odoo-Specific Completion Evidence
 

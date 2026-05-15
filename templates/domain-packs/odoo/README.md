@@ -51,6 +51,10 @@ confirm:
 - smoke scenario that proves the customized business flow works
 - project-specific deployment, SSH, branch, commit, and access rules that should
   stay in the target project instructions instead of the reusable pack
+- for Odoo 19 on odoo.sh, the project-local access runbook for SSH, temporary
+  admin password handling, branch routing, and rollback boundaries
+- whether Playwright checks are required, and which environment variables hold
+  the base URL, login identity, password source, and browser project
 
 Then adapt `AGENTS.md`, `docs/WORKFLOW.md`, and `scripts/verify.sh` from this
 pack. Keep the final files project-specific; do not paste unused checklist items

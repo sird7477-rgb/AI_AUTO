@@ -265,6 +265,52 @@ check_gemini_cli_capabilities() {
   printf '[doctor] Gemini large prompt stdin threshold: %s bytes\n' "${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
 }
 
+check_legacy_pointer_targets() {
+  local pointer target found_pointer=0
+  local pointer_files=(
+    "CLAUDE.md"
+    "Claude.md"
+    "claude.md"
+    "GEMINI.md"
+    "Gemini.md"
+    "gemini.md"
+  )
+  local target_files=(
+    "AGENTS.md"
+    "docs/WORKFLOW.md"
+    "scripts/verify.sh"
+  )
+
+  if ! command -v git >/dev/null 2>&1 || ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return
+  fi
+
+  for pointer in "${pointer_files[@]}"; do
+    [ -f "$pointer" ] || continue
+    if ! grep -Eq 'AGENTS\.md|docs/WORKFLOW\.md|scripts/verify\.sh' "$pointer"; then
+      continue
+    fi
+
+    found_pointer=1
+    for target in "${target_files[@]}"; do
+      if ! grep -qF "$target" "$pointer"; then
+        continue
+      fi
+      if [ ! -e "$target" ]; then
+        say_warn "legacy pointer ${pointer} references missing target: ${target}"
+        suggest "create ${target} before committing ${pointer}"
+      elif ! git ls-files --error-unmatch "$target" >/dev/null 2>&1; then
+        say_warn "legacy pointer ${pointer} references untracked target: ${target}"
+        suggest "git add ${pointer} ${target}"
+      fi
+    done
+  done
+
+  if [ "$found_pointer" -eq 0 ]; then
+    say_pass "no legacy AI instruction pointer files detected"
+  fi
+}
+
 check_helper_link() {
   local link_path="$1"
   local target_path="$2"
@@ -397,6 +443,8 @@ for path in scripts/*.sh; do
   [ -e "$path" ] || continue
   check_executable "$path"
 done
+
+check_legacy_pointer_targets
 
 echo
 echo "[doctor] checking optional runtime tools"

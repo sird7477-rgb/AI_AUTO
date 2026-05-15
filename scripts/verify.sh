@@ -1533,6 +1533,42 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   ! grep -q "UI_COMPLETION.md" "${tmp_dir}/doctor.out"
 )
 
+echo "[verify] testing automation-doctor legacy pointer target warning..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_doctor_pointer_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_doctor_pointer_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  mkdir -p docs scripts
+  cp "${repo_root}/scripts/automation-doctor.sh" scripts/automation-doctor.sh
+  chmod +x scripts/automation-doctor.sh
+  printf 'See AGENTS.md, docs/WORKFLOW.md, and scripts/verify.sh.\n' > claude.md
+  printf '# Agents\n' > AGENTS.md
+  printf '# Workflow\n' > docs/WORKFLOW.md
+  printf '#!/usr/bin/env bash\nexit 0\n' > scripts/verify.sh
+
+  set +e
+  DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh > "${tmp_dir}/doctor.out"
+  set -e
+
+  grep -q "legacy pointer claude.md references untracked target: AGENTS.md" "${tmp_dir}/doctor.out"
+  grep -q "legacy pointer claude.md references untracked target: docs/WORKFLOW.md" "${tmp_dir}/doctor.out"
+  grep -q "legacy pointer claude.md references untracked target: scripts/verify.sh" "${tmp_dir}/doctor.out"
+
+  printf 'See AGENTS.md.\n' > claude.md
+  DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh > "${tmp_dir}/doctor-single-target.out" || true
+  grep -q "legacy pointer claude.md references untracked target: AGENTS.md" "${tmp_dir}/doctor-single-target.out"
+  ! grep -q "legacy pointer claude.md references untracked target: docs/WORKFLOW.md" "${tmp_dir}/doctor-single-target.out"
+  ! grep -q "legacy pointer claude.md references untracked target: scripts/verify.sh" "${tmp_dir}/doctor-single-target.out"
+)
+
 echo "[verify] testing project memory helper and session checkpoint..."
 (
   tmp_dir="$(mktemp -d)"
