@@ -158,6 +158,8 @@ repo helper로 마찰을 줄이고, destructive/credential/production 작업은 
   이유를 기록한다.
 - 긴 runbook/checklist/detail은 `AGENTS.md`에 계속 붙이지 말고 linked docs로
   분리한다.
+- review artifact 정리는 보관(archive) 기본값을 유지하고, 삭제(delete)는
+  명시 옵션으로만 실행한다.
 
 완료 보고에 포함할 것
 변경 파일

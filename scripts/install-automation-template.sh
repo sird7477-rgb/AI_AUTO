@@ -75,6 +75,7 @@ if [ "${#conflicts[@]}" -gt 0 ]; then
   echo "  기존 프로젝트에 자동화 기반을 병합 도입해줘."
   echo "  기존 AGENTS.md, docs, scripts/verify.sh는 덮어쓰지 말고 먼저 분석한 뒤"
   echo "  필요한 자동화 파일과 지침만 제안/반영해줘."
+  echo "  그리고 먼저 git status --short로 untracked 상태를 확인해줘."
   echo
   echo "If this is a new project and these files are accidental, move or review them first, then rerun aiinit."
   exit 1
