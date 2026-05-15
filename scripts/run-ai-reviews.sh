@@ -14,8 +14,8 @@ GEMINI_REVIEW_TIMEOUT_SECONDS="${GEMINI_REVIEW_TIMEOUT_SECONDS:-${REVIEW_TIMEOUT
 CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS="${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS:-300}"
 CLAUDE_PROMPT_ARG_MAX_BYTES="${CLAUDE_PROMPT_ARG_MAX_BYTES:-100000}"
 GEMINI_PROMPT_ARG_MAX_BYTES="${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
-GEMINI_PROMPT_MAX_BYTES="${GEMINI_PROMPT_MAX_BYTES:-750000}"
-REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-750000}"
+GEMINI_PROMPT_MAX_BYTES="${GEMINI_PROMPT_MAX_BYTES:-300000}"
+REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-300000}"
 REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
@@ -350,31 +350,38 @@ disable_reviewer() {
 failure_details() {
   local output_file="$1"
   local status="$2"
-  local class="unknown"
+  local class
   local tail_text
 
-  if grep -qiE 'heap out of memory|JavaScript heap|allocation failed|out of memory|ENOMEM' "${output_file}" 2>/dev/null; then
-    class="oom"
-  elif grep -qiE 'trust folder|trusted folder|trust.*workspace|workspace.*trust|skip-trust' "${output_file}" 2>/dev/null; then
-    class="trust_required"
-  elif grep -qiE 'ECONNREFUSED|ConnectionRefused|connection refused|network.*blocked|sandbox|read-only file system|EROFS' "${output_file}" 2>/dev/null; then
-    class="network_or_sandbox"
-  elif grep -qiE 'timed out|timeout|SIGTERM|Killed' "${output_file}" 2>/dev/null; then
-    class="timeout_or_killed"
-  elif grep -qiE 'auth|login|credential|permission denied|unauthorized|forbidden' "${output_file}" 2>/dev/null; then
-    class="auth_or_permission"
-  elif is_limit_failure "${output_file}"; then
-    class="usage_limit"
-  elif [ "${status}" -eq 0 ]; then
-    class="no_usable_verdict"
-  else
-    class="command_failed"
-  fi
+  class="$(failure_class "${output_file}" "${status}")"
 
   tail_text="$(tail -20 "${output_file}" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' | cut -c1-500)"
   printf 'class=%s; exit_status=%s; tail=%s' "${class}" "${status}" "${tail_text:-none}"
   if [ -n "${REVIEWER_PREFLIGHT_DETAILS:-}" ]; then
     printf '; preflight=%s' "${REVIEWER_PREFLIGHT_DETAILS}"
+  fi
+}
+
+failure_class() {
+  local output_file="$1"
+  local status="${2:-1}"
+
+  if grep -qiE 'heap out of memory|JavaScript heap|allocation failed|out of memory|ENOMEM' "${output_file}" 2>/dev/null; then
+    echo "oom"
+  elif grep -qiE 'trust folder|trusted folder|trust.*workspace|workspace.*trust|skip-trust' "${output_file}" 2>/dev/null; then
+    echo "trust_required"
+  elif grep -qiE 'ECONNREFUSED|ConnectionRefused|connection refused|network.*blocked|sandbox|read-only file system|EROFS' "${output_file}" 2>/dev/null; then
+    echo "network_or_sandbox"
+  elif grep -qiE 'timed out|timeout|SIGTERM|Killed' "${output_file}" 2>/dev/null; then
+    echo "timeout_or_killed"
+  elif grep -qiE 'auth|login|credential|permission denied|unauthorized|forbidden' "${output_file}" 2>/dev/null; then
+    echo "auth_or_permission"
+  elif is_limit_failure "${output_file}"; then
+    echo "usage_limit"
+  elif [ "${status}" -eq 0 ]; then
+    echo "no_usable_verdict"
+  else
+    echo "command_failed"
   fi
 }
 
@@ -509,7 +516,9 @@ run_with_retries() {
     fi
 
     if is_limit_failure "${output_file}"; then
-      disable_reviewer "${reviewer}" "usage_limit" "$(failure_details "${output_file}" "${status}")"
+      local reason
+      reason="$(failure_class "${output_file}" "${status}")"
+      disable_reviewer "${reviewer}" "${reason}" "$(failure_details "${output_file}" "${status}")"
       return "${status}"
     fi
 
@@ -653,6 +662,7 @@ MSG
       echo "The original Gemini prompt was ${gemini_prompt_bytes} bytes and exceeded GEMINI_PROMPT_MAX_BYTES=${GEMINI_PROMPT_MAX_BYTES}."
       echo "The review context below is truncated to avoid Gemini CLI Node/V8 heap exhaustion."
       echo "If the truncated context is insufficient, return request_changes with the missing context noted."
+      echo "Do not ask for API-key mode or weaker gate criteria; recovery must stay on the configured local CLI path."
       echo
       python3 - "${GEMINI_PROMPT}" "${GEMINI_PROMPT_MAX_BYTES}" <<'PY'
 import sys

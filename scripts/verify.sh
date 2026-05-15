@@ -1162,10 +1162,14 @@ echo "[verify] testing focused review context budgeting..."
   grep -q "Focused Review Context" .omx/review-prompts/focused-review-context.md
   grep -q "new.txt" .omx/review-prompts/focused-review-context.md
   grep -q "exceeded REVIEW_CONTEXT_MAX_BYTES=200" .omx/review-prompts/focused-review-context.md
+  grep -q "local CLI path" .omx/review-prompts/focused-review-context.md
   grep -q "Bounded Actual Diff" .omx/review-prompts/focused-review-context.md
   grep -q "diff --git a/README.md b/README.md" .omx/review-prompts/focused-review-context.md
   grep -q "+changed" .omx/review-prompts/focused-review-context.md
   grep -q "+new file" .omx/review-prompts/focused-review-context.md
+
+  grep -q 'REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-300000}"' "${repo_root}/scripts/make-review-prompts.sh"
+  grep -q 'FOCUSED_CONTEXT_DIFF_MAX_BYTES="${FOCUSED_CONTEXT_DIFF_MAX_BYTES:-120000}"' "${repo_root}/scripts/make-review-prompts.sh"
 )
 
 echo "[verify] testing reviewer network failure classification..."

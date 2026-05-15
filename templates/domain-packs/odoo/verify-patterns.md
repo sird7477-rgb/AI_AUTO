@@ -9,15 +9,20 @@ workflow; do not copy commands that the project cannot actually run.
 Useful when Odoo runtime is not available yet:
 
 ```bash
-python -m compileall custom_addons
 python - <<'PY'
 from pathlib import Path
 import xml.etree.ElementTree as ET
+
+for path in Path("custom_addons").rglob("*.py"):
+    compile(path.read_text(encoding="utf-8"), str(path), "exec")
 
 for path in Path("custom_addons").rglob("*.xml"):
     ET.parse(path)
 PY
 ```
+
+Compile Python source in memory instead of using `compileall` or `py_compile`
+when `__pycache__` churn would dirty the working tree.
 
 Prefer project-local linters when already present, such as `ruff`, `pylint`, or
 `pylint-odoo`. Do not add new dependencies during onboarding unless the user

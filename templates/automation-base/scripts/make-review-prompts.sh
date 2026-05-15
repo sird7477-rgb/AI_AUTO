@@ -3,8 +3,8 @@ set -euo pipefail
 
 CONTEXT_FILE="${1:-.omx/review-context/latest-review-context.md}"
 OUT_DIR="${OUT_DIR:-.omx/review-prompts}"
-REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-750000}"
-FOCUSED_CONTEXT_DIFF_MAX_BYTES="${FOCUSED_CONTEXT_DIFF_MAX_BYTES:-300000}"
+REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-300000}"
+FOCUSED_CONTEXT_DIFF_MAX_BYTES="${FOCUSED_CONTEXT_DIFF_MAX_BYTES:-120000}"
 FOCUSED_CONTEXT_UNTRACKED_MAX_BYTES="${FOCUSED_CONTEXT_UNTRACKED_MAX_BYTES:-102400}"
 
 mkdir -p "${OUT_DIR}"
@@ -41,6 +41,7 @@ if [ "${context_bytes}" -gt "${REVIEW_CONTEXT_MAX_BYTES}" ]; then
     echo
     echo "The original review context was ${context_bytes} bytes and exceeded REVIEW_CONTEXT_MAX_BYTES=${REVIEW_CONTEXT_MAX_BYTES}."
     echo "This focused context keeps the review bounded so external reviewers do not have to consume the full dirty workspace context."
+    echo "Reviewer recovery must stay on the local CLI path; do not request API-key mode or weaker gate criteria."
     echo "If this focused context is insufficient, return request_changes and name the missing file or section."
     echo
     echo "## Source Context"
