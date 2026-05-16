@@ -22,16 +22,34 @@ The active Codex/GPT leader is selected by the runtime or user. Do not claim
 that the leader changed its own model mid-session unless the runtime provides
 explicit evidence of a supported change path.
 
-Cost and latency optimization should happen through bounded delegated lanes:
-route lookup, scanning, or lightweight synthesis to role-appropriate child
-agents such as `explore`/fast-scan lanes, and keep planning, architecture,
-security-sensitive decisions, integration, final verification, and user-facing
-completion claims on the leader or stronger reviewer roles.
+Cost and latency optimization should happen through bounded delegated lanes.
+Route lookup, scanning, lightweight synthesis, and narrow implementation slices
+to role-appropriate child agents such as `explore`/fast-scan lanes or the
+current low-cost Codex coding lane. Keep planning, architecture,
+security-sensitive decisions, integration, final verification, review-gate
+interpretation, and user-facing completion claims on the leader or stronger
+reviewer roles.
 
 Default child-agent routing should inherit the current runtime contract. Use an
 explicit model override only when a lane has a concrete reason and current
 runtime evidence supports that model. Prefer role and `reasoning_effort`
-selection over hardcoded model names.
+selection over hardcoded model names. When the current runtime exposes
+an available low-cost Codex coding lane, prefer that lane for bounded
+implementation work that passes the delegation guardrails in
+`docs/AUTOMATION_OPERATING_POLICY.md`.
+
+## Token-Efficient Implementation Delegation
+
+Delegate implementation to a low-cost coding lane only when the guardrails in
+`docs/AUTOMATION_OPERATING_POLICY.md` pass. That policy is the authoritative
+source for allowed task shapes, security and contract carve-outs, escalation
+rules, leader review duties, and the rewrite-rate stop rule.
+
+Do not delegate broad design, ambiguity resolution, security-sensitive
+implementation, cross-module integration, reviewer verdict interpretation, or
+final completion claims to the low-cost lane. If a delegated task reveals a
+larger boundary than expected, the child agent must stop and report the scope
+expansion upward instead of continuing.
 
 For detailed subagent delegation boundaries, use
 `docs/AUTOMATION_OPERATING_POLICY.md` as the source of truth. Native subagents
@@ -43,7 +61,7 @@ are throughput and focus lanes, not independent external reviewer coverage.
 |---|---|---|
 | `architect_review` | deep reasoning, long-context risk review, maintainability judgment | Claude provider default with suggested alias recorded; Codex architect fallback |
 | `alternative_review` | independent second opinion, missed cases, simpler alternatives | Gemini provider default unless explicitly configured; Codex test fallback |
-| `implementation` | repo-local code edits and test fixes | Codex executor/current runtime default |
+| `implementation` | bounded repo-local code edits and test fixes | Current low-cost Codex coding lane when guardrails pass; otherwise Codex executor/current runtime default |
 | `debug` | logs, reproduction, root cause, regression isolation | Codex debugger/current runtime default |
 | `test_review` | verification shape, missing tests, failure modes | Codex test-engineer plus Gemini when available |
 | `fast_scan` | file/symbol lookup and lightweight synthesis | Codex explore/spark lane |

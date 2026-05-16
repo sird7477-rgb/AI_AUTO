@@ -123,9 +123,48 @@ Do not delegate:
 
 - destructive actions, credentialed operations, production deploys, or commits
   and pushes
+- auth, authorization, validation, crypto, credential handling, PII, external
+  data boundaries, schema/API contracts, migrations, or serialization behavior
 - ambiguous scope decisions that require user judgment
 - the final integration decision or completion claim
 - work that would duplicate the leader's immediate critical path
+
+### Low-Cost Coding Lane
+
+For token efficiency, the leader may delegate bounded implementation work to
+the current low-cost Codex coding lane when runtime evidence shows that lane is
+available.
+Acceptable runtime evidence includes the active model-routing report, an
+explicit session configuration value, or another auditable runtime capability
+signal.
+
+Use this lane for:
+
+- exact-file implementation slices with clear acceptance criteria
+- local test fixes or test additions
+- mechanical cleanup and narrow refactors
+- repo-local code edits that do not alter contracts or security boundaries
+
+Do not use this lane for:
+
+- planning, architecture, or requirements interpretation
+- security-sensitive implementation or review
+- cross-module integration decisions
+- review-gate verdict interpretation
+- final user-facing completion claims
+
+The leader must package enough context for the delegated task to be completed
+without guessing, require the child agent to escalate ambiguity or scope
+expansion, inspect the resulting diff rather than only test output, and run the
+project verification gates before accepting the work.
+
+Track delegation quality informally during a session. If the leader rewrites a
+significant fraction of low-cost-lane output for correctness or fit (rough
+guide: about 20%, not a precise metric), suspend that lane for the task and
+finish the work locally or with a stronger role.
+When a low-cost lane was used, include the estimated rewrite fraction in the
+completion report.
+When guardrails do not pass, fall back to the standard implementation lane.
 
 External reviewers such as Claude and Gemini do not directly control Codex
 native subagents. They may recommend subagent follow-ups, but the leader decides
