@@ -10,7 +10,9 @@
 2. 플랜/인터뷰 강도를 판단한다.
 3. 작은 작업은 바로 실행하고, 방향이 갈리는 작업은 짧은 질문을 먼저 한다.
 4. 장기 정책, 표준, 아키텍처, 검증 체계, 배포/보안/데이터 작업은
-   plan-first interview 후 진행한다.
+   plan-first interview 후 진행하며, 인터뷰/플랜 산출물은
+   `docs/PLANNING_VISUALIZATION_GUIDE.md`의 Markdown +
+   Mermaid/Structurizr + Excalidraw 운영 기준을 따른다.
 5. 요청/입력/승인 경계가 애매하고 잘못 추측하면 결과가 달라지는 경우 먼저
    확인한다.
 6. 운영 준비, dry-run, 배포, promotion, field evidence 작업은 필수 입력이

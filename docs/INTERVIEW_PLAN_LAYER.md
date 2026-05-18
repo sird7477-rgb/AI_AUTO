@@ -99,6 +99,12 @@ The full schema in this section is mandatory for initial onboarding, `deep`
 interviews, rebuild planning, migration planning, production/credentialed/data
 work, and other high-risk plan-first lanes.
 
+Plans that will guide more than one execution turn, affect a high-risk domain,
+or become a recurring project control surface should also follow
+`docs/PLANNING_VISUALIZATION_GUIDE.md`. That guide defines how to pair the
+Markdown plan source of truth with Mermaid or Structurizr diagrams and optional
+Excalidraw explanatory drawings.
+
 For `light` interviews, record the user decision, assumption, and verification
 impact in the response or local plan note; the full schema is optional unless
 the answer turns the task into a high-risk or long-lived change.
