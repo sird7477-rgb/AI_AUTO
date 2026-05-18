@@ -741,8 +741,49 @@ PY
   echo "[review] Gemini result: ${GEMINI_OUT}"
 }
 
+reviewer_fallback_needed() {
+  local reviewer="$1"
+
+  case "${reviewer}" in
+    claude)
+      [ "${RUN_CLAUDE_REVIEW:-1}" = "0" ] || [ -f "$(reviewer_disabled_file claude)" ]
+      ;;
+    gemini)
+      [ "${RUN_GEMINI_REVIEW:-1}" = "0" ] || [ -f "$(reviewer_disabled_file gemini)" ]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+reviewer_fallback_reason() {
+  local reviewer="$1"
+
+  case "${reviewer}" in
+    claude)
+      if [ "${RUN_CLAUDE_REVIEW:-1}" = "0" ]; then
+        echo "reviewer skipped by RUN_CLAUDE_REVIEW=0"
+      else
+        disabled_reason claude
+      fi
+      ;;
+    gemini)
+      if [ "${RUN_GEMINI_REVIEW:-1}" = "0" ]; then
+        echo "reviewer skipped by RUN_GEMINI_REVIEW=0"
+      else
+        disabled_reason gemini
+      fi
+      ;;
+    *)
+      echo "unknown reviewer: ${reviewer}"
+      return 1
+      ;;
+  esac
+}
+
 codex_persona_needed() {
-  [ -f "$(reviewer_disabled_file claude)" ] || [ -f "$(reviewer_disabled_file gemini)" ]
+  reviewer_fallback_needed claude || reviewer_fallback_needed gemini
 }
 
 generate_codex_fallback_summary() {
@@ -785,29 +826,29 @@ This is Codex/GPT fallback coverage for disabled external reviewers. It is degra
 ## Assigned Fallback Reviewers
 MSG
 
-  if [ -f "$(reviewer_disabled_file claude)" ]; then
+  if reviewer_fallback_needed claude; then
     cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
 - codex-architect-review
   - covers the disabled Claude lane
   - focus: correctness, maintainability, scope control, hidden risk, AGENTS.md and workflow compliance
-  - disabled reason: $(disabled_reason claude)
+  - disabled reason: $(reviewer_fallback_reason claude)
   - artifact: ${CODEX_ARCHITECT_FALLBACK_OUT}
 MSG
   fi
 
-  if [ -f "$(reviewer_disabled_file gemini)" ]; then
+  if reviewer_fallback_needed gemini; then
     cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
 - codex-test-alternative-review
   - covers the disabled Gemini lane
   - focus: missed edge cases, simpler alternatives, test coverage gaps, documentation clarity, future automation friction
-  - disabled reason: $(disabled_reason gemini)
+  - disabled reason: $(reviewer_fallback_reason gemini)
   - artifact: ${CODEX_TEST_FALLBACK_OUT}
 MSG
   fi
 
-  if [ -f "$(reviewer_disabled_file claude)" ] && [ -f "$(reviewer_disabled_file gemini)" ]; then
+  if reviewer_fallback_needed claude && reviewer_fallback_needed gemini; then
     cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
 ## Complete External Reviewer Outage
@@ -862,7 +903,7 @@ write_codex_fallback_prompt() {
   local disabled_reviewer="$3"
   local focus="$4"
   local reason
-  reason="$(disabled_reason "${disabled_reviewer}")"
+  reason="$(reviewer_fallback_reason "${disabled_reviewer}")"
 
   cat > "${prompt_file}" <<MSG
 # ${persona}
@@ -999,7 +1040,7 @@ run_codex_fallback_reviews() {
     return 0
   fi
 
-  if [ -f "$(reviewer_disabled_file claude)" ]; then
+  if reviewer_fallback_needed claude; then
     run_codex_fallback_review \
       "codex-architect-review" \
       "${CODEX_ARCHITECT_FALLBACK_OUT}" \
@@ -1011,7 +1052,7 @@ run_codex_fallback_reviews() {
 - AGENTS.md and docs/WORKFLOW.md compliance"
   fi
 
-  if [ -f "$(reviewer_disabled_file gemini)" ]; then
+  if reviewer_fallback_needed gemini; then
     run_codex_fallback_review \
       "codex-test-alternative-review" \
       "${CODEX_TEST_FALLBACK_OUT}" \

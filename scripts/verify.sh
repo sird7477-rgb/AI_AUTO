@@ -21,6 +21,7 @@ for script in \
   scripts/automation-doctor.sh \
   scripts/collect-review-context.sh \
   scripts/discover-ai-models.sh \
+  scripts/install-ubuntu-prereqs.sh \
   scripts/install-global-files.sh \
   scripts/install-automation-template.sh \
   scripts/make-review-prompts.sh \
