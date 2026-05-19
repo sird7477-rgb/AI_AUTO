@@ -113,6 +113,9 @@ ai-lab-only bootstrap command:
   - Intended AI keyword: `전역파일 설치해줘`
   - Creates or repairs safe repo-owned helper symlinks under `~/bin`
   - Adds a managed `AI_AUTO` shell function file under `~/.config/ai-lab` and a small source block to `~/.bashrc`
+  - With `--install-codex-drift-notice`, adds an opt-in managed `codex` shell
+    function that prints a read-only AI_AUTO template update notice before
+    calling the real Codex binary
   - Does not install external programs, configure credentials, run `automation-doctor --fix`, or overwrite non-symlink files
 
 ## Link setup
@@ -175,3 +178,23 @@ For permanent setup, add this to `~/.bashrc`:
 Reload the shell or run:
 
     source ~/.bashrc
+
+## Codex Drift Notice
+
+The normal global install does not replace or shadow `codex`. To opt into a
+template drift notice before Codex starts, run:
+
+    ./scripts/install-global-files.sh --install-codex-drift-notice
+
+This writes `~/.config/ai-lab/codex-drift-notice.sh` and a managed `.bashrc`
+source block. The generated function resolves the real Codex executable at
+install time, checks the current git repository with `ai-auto-template-status`,
+prints a warning to stderr only when the project is customized or outdated, and
+then calls the real Codex binary with the original arguments.
+
+Disable the notice for a shell command with:
+
+    AI_AUTO_CODEX_DRIFT_NOTICE=0 codex
+
+The notice path is read-only. It does not run `--record-feedback`, merge
+template files, patch projects, or install a `~/bin/codex` executable.

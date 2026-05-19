@@ -7,10 +7,11 @@ PASS_COUNT=0
 FIX_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
+INSTALL_CODEX_DRIFT_NOTICE=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/install-global-files.sh
+Usage: ./scripts/install-global-files.sh [--install-codex-drift-notice]
 
 Install or repair ai-lab global helper files for this checkout.
 
@@ -38,25 +39,36 @@ It may also add a managed AI_AUTO shell function under ~/.config/ai-lab and a
 small source block in ~/.bashrc so typing AI_AUTO with no arguments changes the
 current shell directory to this checkout.
 
+Options:
+  --install-codex-drift-notice
+      Install an opt-in managed shell function that shows an AI_AUTO template
+      update notice before running the real codex binary.
+  -h, --help
+      Show this help.
+
 It does not install external programs, configure credentials, run
 automation-doctor --fix, or overwrite non-symlink files.
 USAGE
 }
 
-case "${1:-}" in
-  "")
-    ;;
-  -h|--help)
-    usage
-    exit 0
-    ;;
-  *)
-    echo "Unknown option: $1"
-    echo
-    usage
-    exit 2
-    ;;
-esac
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --install-codex-drift-notice)
+      INSTALL_CODEX_DRIFT_NOTICE=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo
+      usage
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 say_pass() {
   PASS_COUNT=$((PASS_COUNT + 1))
@@ -243,6 +255,166 @@ EOF
   say_fix "installed AI_AUTO shell function file: ${function_path}"
 }
 
+install_codex_drift_notice() {
+  local bashrc_path="${HOME_DIR}/.bashrc"
+  local config_dir="${HOME_DIR}/.config/ai-lab"
+  local function_path="${config_dir}/codex-drift-notice.sh"
+  local function_tmp_path
+  local function_marker="# Managed by AI_AUTO install-global-files.sh codex drift notice"
+  local begin_marker="# >>> AI_AUTO codex drift notice integration >>>"
+  local end_marker="# <<< AI_AUTO codex drift notice integration <<<"
+  local tmp_path
+  local begin_count end_count
+  local real_codex real_codex_dir real_codex_base real_codex_quoted
+
+  if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ]; then
+    return
+  fi
+
+  if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
+    say_fail "HOME is not ready; cannot install codex drift notice shell function"
+    return
+  fi
+
+  if ! real_codex="$(command -v codex 2>/dev/null)"; then
+    say_fail "codex is not on PATH; cannot install codex drift notice"
+    return
+  fi
+
+  case "$real_codex" in
+    /*)
+      ;;
+    */*)
+      real_codex_dir="$(cd -P "$(dirname "$real_codex")" 2>/dev/null && pwd)" || {
+        say_fail "could not resolve codex directory: ${real_codex}"
+        return
+      }
+      real_codex="${real_codex_dir}/$(basename "$real_codex")"
+      ;;
+    *)
+      real_codex_dir="$(dirname "$(command -v -- "$real_codex")")"
+      real_codex_base="$(basename "$real_codex")"
+      real_codex_dir="$(cd -P "$real_codex_dir" 2>/dev/null && pwd)" || {
+        say_fail "could not resolve codex directory: ${real_codex}"
+        return
+      }
+      real_codex="${real_codex_dir}/${real_codex_base}"
+      ;;
+  esac
+
+  if [ ! -x "$real_codex" ]; then
+    say_fail "resolved codex is not executable: ${real_codex}"
+    return
+  fi
+
+  case "$real_codex" in
+    "${HOME_DIR}/bin/codex"|*"${ROOT}/"*)
+      say_fail "resolved codex path looks AI_AUTO-managed; refusing shadow install: ${real_codex}"
+      return
+      ;;
+  esac
+
+  if [ -e "$bashrc_path" ] && [ ! -f "$bashrc_path" ]; then
+    say_fail "shell profile path exists but is not a file: ${bashrc_path}"
+    return
+  fi
+
+  if [ -e "$bashrc_path" ] && [ ! -w "$bashrc_path" ]; then
+    say_fail "shell profile is not writable: ${bashrc_path}"
+    return
+  fi
+
+  if [ ! -e "$bashrc_path" ] && [ ! -w "$HOME_DIR" ]; then
+    say_fail "HOME directory is not writable; cannot create shell profile: ${HOME_DIR}"
+    return
+  fi
+
+  if [ -e "$function_path" ] && [ ! -f "$function_path" ]; then
+    say_fail "codex drift notice path exists but is not a file: ${function_path}"
+    return
+  fi
+
+  if [ -f "$function_path" ] && ! grep -qFx "$function_marker" "$function_path"; then
+    say_fail "codex drift notice file exists but is not managed: ${function_path}"
+    return
+  fi
+
+  tmp_path="${bashrc_path}.ai-auto-codex.$$"
+  begin_count=0
+  end_count=0
+  if [ -f "$bashrc_path" ]; then
+    begin_count="$(grep -cFx "$begin_marker" "$bashrc_path" || true)"
+    end_count="$(grep -cFx "$end_marker" "$bashrc_path" || true)"
+  fi
+
+  if [ "$begin_count" -ne "$end_count" ]; then
+    say_fail "codex drift notice markers are unbalanced in ${bashrc_path}; not editing profile"
+    rm -f "$tmp_path"
+    return
+  fi
+
+  mkdir -p "$config_dir"
+  function_tmp_path="${function_path}.tmp.$$"
+  real_codex_quoted="$(printf '%q' "$real_codex")"
+
+  cat > "$function_tmp_path" <<EOF
+${function_marker}
+codex() {
+  local real_codex=${real_codex_quoted}
+  local repo_root=""
+  local status_output=""
+
+  if [ "\${AI_AUTO_CODEX_DRIFT_NOTICE:-1}" != "0" ] &&
+    command -v git >/dev/null 2>&1 &&
+    repo_root="\$(git rev-parse --show-toplevel 2>/dev/null)" &&
+    [ -f "\${repo_root}/AI_AUTO_TEMPLATE_VERSION" ] &&
+    command -v ai-auto-template-status >/dev/null 2>&1; then
+    status_output="\$(ai-auto-template-status "\${repo_root}" 2>/dev/null || true)"
+    if printf '%s\n' "\$status_output" | grep -q '^status: customized_or_outdated'; then
+      printf '%s\n' "[AI_AUTO] automation template update recommended for \${repo_root}" >&2
+      printf '%s\n' "\$status_output" | awk '/^(installed_version|current_version|status): / {print "[AI_AUTO] " \$0}' >&2
+      printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status \${repo_root}" >&2
+    fi
+  fi
+
+  "\$real_codex" "\$@"
+}
+EOF
+
+  if [ -f "$bashrc_path" ]; then
+    awk -v begin="$begin_marker" -v end="$end_marker" '
+      $0 == begin {skip=1; next}
+      $0 == end {skip=0; next}
+      !skip {print}
+    ' "$bashrc_path" > "$tmp_path"
+  else
+    : > "$tmp_path"
+  fi
+
+  cat >> "$tmp_path" <<'EOF'
+# >>> AI_AUTO codex drift notice integration >>>
+[ -f "$HOME/.config/ai-lab/codex-drift-notice.sh" ] && . "$HOME/.config/ai-lab/codex-drift-notice.sh"
+# <<< AI_AUTO codex drift notice integration <<<
+EOF
+
+  if [ -f "$bashrc_path" ] && cmp -s "$tmp_path" "$bashrc_path"; then
+    rm -f "$tmp_path"
+    say_pass "codex drift notice source block already installed in ${bashrc_path}"
+  else
+    mv "$tmp_path" "$bashrc_path"
+    say_fix "installed codex drift notice source block in ${bashrc_path}"
+  fi
+
+  if [ -f "$function_path" ] && cmp -s "$function_tmp_path" "$function_path"; then
+    rm -f "$function_tmp_path"
+    say_pass "codex drift notice shell function already installed: ${function_path}"
+    return
+  fi
+
+  mv "$function_tmp_path" "$function_path"
+  say_fix "installed codex drift notice shell function file: ${function_path}"
+}
+
 echo "[global-files] installing ai-lab global helper files"
 echo "[global-files] checkout: ${ROOT}"
 echo
@@ -293,6 +465,7 @@ else
   install_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_shell_function
+  install_codex_drift_notice
 
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)

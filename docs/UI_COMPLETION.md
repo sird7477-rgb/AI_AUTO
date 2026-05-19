@@ -23,6 +23,8 @@ Clarify these before implementing UI work:
   local product conventions
 - frontend stack and package commands
 - screenshot or browser smoke checks that prove completion
+- whether Playwright should launch its own isolated browser, use a project-owned
+  wrapper script, or attach to a user-launched Chrome remote debugging port
 - field-test incident evidence: route, viewport, screenshot, console status,
   network status, operator flow step, and whether the next action is possible
 
@@ -60,6 +62,13 @@ npx playwright test
 Use only the commands that exist and are meaningful for the project. Do not add
 frontend dependencies during onboarding unless the user approves them.
 
+For repeated browser checks, prefer a project-owned wrapper script with a narrow
+approved prefix instead of long inline commands with changing URLs or
+environment variables. The wrapper should validate required inputs, print the
+target environment, and call the real Playwright command without accepting
+arbitrary shell fragments. Keep credentialed, production, destructive, and
+dependency-installing paths behind explicit approval.
+
 For static HTML or simple browser apps, a lighter smoke check may be enough:
 
 ```bash
@@ -73,6 +82,41 @@ npm run build
 npx playwright test --project=chromium
 ```
 
+## Playwright CDP Access
+
+Attaching Playwright to a user-launched Chrome remote debugging port is an
+optional diagnostic path, not the default browser verification path. Treat CDP
+access as credential-equivalent because the browser may expose cookies, logged
+in sessions, tabs, local storage, and authenticated application state.
+
+Allowed use:
+
+- bind remote debugging to loopback only, such as `127.0.0.1`
+- when attaching to an already running user-launched browser, verify the target
+  port is loopback-bound before connecting
+- use a unique port per parallel session
+- prefer an isolated temporary `--user-data-dir` test profile and remove it
+  when the session ends
+- record the route, viewport, target environment, and whether the browser state
+  came from a user-launched session
+- stop at observation or non-destructive smoke checks unless the user
+  explicitly approves a credentialed or production action
+
+Do not:
+
+- bind remote debugging to `0.0.0.0` or a public interface
+- reuse a personal/default Chrome profile for automated checks
+- assume a production login session is safe to automate
+- store cookies, tokens, private URLs, screenshots with secrets, or raw browser
+  state in repo files, `.omx`, logs, review prompts, or feedback queues
+- use CDP access to bypass sandbox, credential, deployment, or production
+  approval gates
+
+Project-specific wrappers should keep the command prefix stable while moving
+changeable values into validated arguments or `.env` files that are not committed.
+The wrapper is a friction-reduction surface only; it must not widen what the
+agent is allowed to do.
+
 ## Completion Criteria
 
 UI work is complete only when:
@@ -85,6 +129,8 @@ UI work is complete only when:
   project UI rules
 - browser console errors are checked when a browser test or manual browser smoke
   is part of the project workflow
+- any Playwright CDP run documents loopback binding, isolated profile decision,
+  target environment, and credential/production boundary
 - screenshots or browser test results are captured for the changed main path
 - field-test UI incidents include route, viewport, screenshot, console/network
   status, operator flow step, and recoverability evidence

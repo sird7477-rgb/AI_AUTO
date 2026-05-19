@@ -18,6 +18,9 @@ Before changing Odoo code, confirm:
   workflows
 - for Odoo 19 on odoo.sh, the project-local access runbook for SSH, temporary
   admin password handling, branch routing, and Playwright environment variables
+- when odoo.sh SSH is run from WSL, whether the required key is present in WSL
+  `~/.ssh`; a key that exists only in Windows PowerShell's SSH location is not
+  available to WSL `ssh`
 
 ## Version And Localization
 
@@ -71,3 +74,8 @@ temporary admin password handling, Playwright login variables, commit-message
 approval rules, and customer-specific attachment or document automation rules
 belong in the target project's own `AGENTS.md` or `docs/WORKFLOW.md`, not in
 this reusable pack.
+
+Never paste private key material into project docs, prompts, logs, memories, or
+feedback queues. Project runbooks may document commands that verify key presence,
+copy a key into WSL, set file permissions, or choose an `IdentityFile`, but must
+leave actual key values in the user's local SSH store.

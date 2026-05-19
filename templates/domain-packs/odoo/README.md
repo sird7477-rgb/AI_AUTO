@@ -53,6 +53,10 @@ confirm:
   stay in the target project instructions instead of the reusable pack
 - for Odoo 19 on odoo.sh, the project-local access runbook for SSH, temporary
   admin password handling, branch routing, and rollback boundaries
+- if operators switch between PowerShell and WSL, whether the odoo.sh SSH key is
+  available in the shell that will run `ssh`; Windows and WSL have separate
+  `~/.ssh` locations, so record only the verification/copy procedure, never the
+  private key content
 - whether Playwright checks are required, and which environment variables hold
   the base URL, login identity, password source, and browser project
 

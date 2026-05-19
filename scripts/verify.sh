@@ -68,6 +68,16 @@ bash -n tools/workspace-scan
 python3 -m py_compile tools/ai-python-split
 python3 -m py_compile tools/ai-plan-workflow
 
+echo "[verify] checking Playwright CDP safety guidance..."
+for ui_completion_doc in \
+  docs/UI_COMPLETION.md \
+  templates/automation-base/docs/UI_COMPLETION.md
+do
+  grep -q "Playwright CDP Access" "${ui_completion_doc}"
+  grep -q "credential-equivalent" "${ui_completion_doc}"
+  grep -q "project-owned wrapper script" "${ui_completion_doc}"
+done
+
 echo "[verify] testing review summary decisions..."
 ./scripts/test-review-summary.sh
 
@@ -1919,6 +1929,9 @@ grep -q "ignored onboarding reference under" "templates/domain-packs/odoo/README
 grep -q "docs/DOMAIN_PACKS.md" "templates/domain-packs/odoo/README.md"
 grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/domain-packs/odoo/README.md"
 grep -q "ko_KR" "templates/domain-packs/odoo/README.md"
+grep -q "Windows and WSL have separate" "templates/domain-packs/odoo/README.md"
+grep -q "Windows PowerShell's SSH location" "templates/domain-packs/odoo/AGENTS.patch.md"
+grep -q "private key content" "templates/domain-packs/odoo/WORKFLOW.md"
 grep -q "Project-Specific Rules" "templates/domain-packs/odoo/WORKFLOW.md"
 grep -q "localization baseline" "templates/domain-packs/odoo/verify-patterns.md"
 grep -Fq 'Path("custom_addons").rglob("*.xml")' "templates/domain-packs/odoo/verify-patterns.md"
@@ -2198,6 +2211,7 @@ echo "[verify] testing global helper link repair..."
   grep -q '. "$HOME/.config/ai-lab/AI_AUTO.sh"' "${tmp_home}/.bashrc"
   grep -q "Managed by AI_AUTO" "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
   grep -q 'cd "$(command AI_AUTO --path)"' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  test ! -e "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
   test "$(grep -c "AI_AUTO shell integration" "${tmp_home}/.bashrc")" -eq 2
@@ -2228,6 +2242,147 @@ echo "[verify] testing AI_AUTO shell function unmanaged-file conflict..."
     exit 1
   fi
   grep -q "user owned" "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+)
+
+echo "[verify] testing opt-in codex drift notice shell function..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_codex_drift_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_codex_drift_tmp EXIT
+
+  fake_bin="${tmp_home}/fake-bin"
+  repo_dir="${tmp_home}/project"
+  mkdir -p "${fake_bin}" "${repo_dir}"
+
+  cat > "${fake_bin}/codex" <<'STUB'
+#!/usr/bin/env bash
+stdin_content="$(cat)"
+printf 'real codex'
+for arg in "$@"; do
+  printf ' <%s>' "$arg"
+done
+printf '\n'
+printf 'stdin <%s>\n' "$stdin_content"
+printf 'real codex stderr\n' >&2
+exit "${CODEX_STUB_EXIT:-7}"
+STUB
+
+  cat > "${fake_bin}/ai-auto-template-status" <<'STUB'
+#!/usr/bin/env bash
+status="${AI_AUTO_TEMPLATE_STATUS_STUB:-customized_or_outdated}"
+printf 'AI_AUTO Template Status\n'
+printf 'target: %s\n' "${1:-}"
+printf 'installed_version: old\n'
+printf 'current_version: new\n'
+printf 'status: %s\n' "$status"
+STUB
+
+  chmod +x "${fake_bin}/codex" "${fake_bin}/ai-auto-template-status"
+  git -C "${repo_dir}" init -q
+  printf 'old\n' > "${repo_dir}/AI_AUTO_TEMPLATE_VERSION"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
+  grep -q "AI_AUTO codex drift notice integration" "${tmp_home}/.bashrc"
+  grep -q "Managed by AI_AUTO install-global-files.sh codex drift notice" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q "${fake_bin}/codex" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+
+  set +e
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex --alpha "two words"' \
+    > "${tmp_home}/codex.out" 2> "${tmp_home}/codex.err"
+  codex_status=$?
+  set -e
+  test "$codex_status" -eq 7
+  grep -q "real codex <--alpha> <two words>" "${tmp_home}/codex.out"
+  grep -q "stdin <>" "${tmp_home}/codex.out"
+  grep -q "real codex stderr" "${tmp_home}/codex.err"
+  grep -q "automation template update recommended" "${tmp_home}/codex.err"
+  grep -q "status: customized_or_outdated" "${tmp_home}/codex.err"
+
+  printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    CODEX_STUB_EXIT=0 \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex --stdin-check' \
+    > "${tmp_home}/codex-stdin.out" 2> "${tmp_home}/codex-stdin.err"
+  grep -q "real codex <--stdin-check>" "${tmp_home}/codex-stdin.out"
+  grep -q "stdin <input stream>" "${tmp_home}/codex-stdin.out"
+  grep -q "real codex stderr" "${tmp_home}/codex-stdin.err"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    AI_AUTO_CODEX_DRIFT_NOTICE=0 CODEX_STUB_EXIT=0 \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
+    > "${tmp_home}/codex-disabled.out" 2> "${tmp_home}/codex-disabled.err"
+  grep -q "real codex" "${tmp_home}/codex-disabled.out"
+  if grep -q "automation template update recommended" "${tmp_home}/codex-disabled.err"; then
+    echo "[verify] codex drift notice ignored AI_AUTO_CODEX_DRIFT_NOTICE=0"
+    exit 1
+  fi
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    AI_AUTO_TEMPLATE_STATUS_STUB=current CODEX_STUB_EXIT=0 \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
+    > "${tmp_home}/codex-current.out" 2> "${tmp_home}/codex-current.err"
+  grep -q "real codex" "${tmp_home}/codex-current.out"
+  if grep -q "automation template update recommended" "${tmp_home}/codex-current.err"; then
+    echo "[verify] codex drift notice printed for current template"
+    exit 1
+  fi
+
+  rm "${repo_dir}/AI_AUTO_TEMPLATE_VERSION"
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    CODEX_STUB_EXIT=0 \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
+    > "${tmp_home}/codex-no-version.out" 2> "${tmp_home}/codex-no-version.err"
+  grep -q "real codex" "${tmp_home}/codex-no-version.out"
+  if grep -q "automation template update recommended" "${tmp_home}/codex-no-version.err"; then
+    echo "[verify] codex drift notice printed without AI_AUTO_TEMPLATE_VERSION"
+    exit 1
+  fi
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" CODEX_STUB_EXIT=0 \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$HOME"; codex' \
+    > "${tmp_home}/codex-outside-git.out" 2> "${tmp_home}/codex-outside-git.err"
+  grep -q "real codex" "${tmp_home}/codex-outside-git.out"
+  if grep -q "automation template update recommended" "${tmp_home}/codex-outside-git.err"; then
+    echo "[verify] codex drift notice printed outside git repository"
+    exit 1
+  fi
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
+  test "$(grep -c "AI_AUTO codex drift notice integration" "${tmp_home}/.bashrc")" -eq 2
+
+  printf '%s\n' "# >>> AI_AUTO codex drift notice integration >>>" "preserve me" > "${tmp_home}/.bashrc"
+  if HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null 2>&1; then
+    echo "[verify] install-global-files edited unbalanced codex drift notice markers"
+    exit 1
+  fi
+  grep -q "preserve me" "${tmp_home}/.bashrc"
+)
+
+echo "[verify] testing codex drift notice unmanaged-file conflict..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_codex_drift_conflict_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_codex_drift_conflict_tmp EXIT
+
+  fake_bin="${tmp_home}/fake-bin"
+  mkdir -p "${fake_bin}" "${tmp_home}/.config/ai-lab"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${fake_bin}/codex"
+  chmod +x "${fake_bin}/codex"
+  printf 'user owned\n' > "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+
+  if HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null 2>&1; then
+    echo "[verify] install-global-files overwrote unmanaged codex drift notice file"
+    exit 1
+  fi
+  grep -q "user owned" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
 )
 
 echo "[verify] testing global helper non-symlink conflict handling..."

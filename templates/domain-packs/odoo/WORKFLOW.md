@@ -20,6 +20,10 @@ confirming that the project is Odoo-based.
   stay in the target project instructions?
 - For Odoo 19 on odoo.sh, where is the project-local SSH/access runbook, and how
   are temporary admin passwords requested, used, and revoked?
+- If odoo.sh SSH is run from WSL after setup in Windows PowerShell, has the
+  operator verified that the required key exists in WSL `~/.ssh` or has been
+  copied/imported there with correct permissions? Keep the private key content
+  out of docs, prompts, logs, and feedback queues.
 - Are Playwright checks required, and which environment variables provide the
   base URL, login identity, password source, and browser project?
 
