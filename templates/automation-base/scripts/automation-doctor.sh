@@ -407,6 +407,8 @@ REQUIRED_FILES=(
   "scripts/archive-omx-artifacts.sh"
   "scripts/review-gate.sh"
   "scripts/collect-review-context.sh"
+  "scripts/doc-budget.sh"
+  "scripts/guidance-duplicate-report.sh"
   "scripts/discover-ai-models.sh"
   "scripts/make-review-prompts.sh"
   "scripts/record-feedback.sh"

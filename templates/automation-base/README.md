@@ -23,6 +23,8 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
 - scripts/verify.example.sh: onboarding placeholder; replace with project-specific verification
 - scripts/collect-review-context.sh: collects git diff and workflow context
+- scripts/doc-budget.sh: reports guidance document volume and bloat warnings
+- scripts/guidance-duplicate-report.sh: creates read-only Stage 2 guidance duplicate reports
 - scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
 - scripts/make-review-prompts.sh: generates reviewer prompts
 - scripts/record-feedback.sh: appends sanitized failure/improvement feedback
@@ -77,6 +79,15 @@ AI reviewer context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked
 diffs use a lightweight context focused on the patch, git state, and
 verification tail. Set `REVIEW_CONTEXT_DETAIL=full` when planning artifacts or
 full workflow reference excerpts are needed for the review.
+
+Guidance context budget is a staged workflow. The installed `scripts/doc-budget.sh`
+is Stage 1: it reports document-volume warnings during verification and
+recommends the next step. Stage 2 is a read-only duplicate or consolidation
+report produced by `scripts/guidance-duplicate-report.sh` and should run only
+when the user asks for it after seeing the Stage 1 recommendation. The Stage 2
+tool prefers an existing duplicate detector such as `jscpd` when available and
+uses a local read-only fallback otherwise. Do not edit guidance documents from a
+Stage 1 warning alone.
 
 Use `ai-rebuild-plan /path/to/project` for `리빌드 플랜`, `리빌딩 플랜`, or
 `rebuild plan` requests. This is read-only: it checks git state, automation
@@ -144,6 +155,12 @@ During the interview, decide which completion dimensions apply:
 - Plan management: define the current plan index, TODO reconciliation, checkpoint
   update expectations, and where detailed runbooks or long checklists should
   live.
+- Spec/design alignment: define which plan, specification, or design artifacts
+  should be checked after code edits, and how to report aligned, updated, not
+  applicable, or blocked outcomes.
+- User-facing report language: report outcomes in plain Korean first and avoid
+  leading with internal variable names unless reproduction or user action needs
+  them.
 - Guidance context budget: decide what belongs in `AGENTS.md` versus linked docs
   so project instructions stay scannable.
 

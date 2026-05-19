@@ -232,6 +232,95 @@ says "바로 진행", skip interview only for safe and reversible work; keep
 approval gates for destructive, credentialed, production, or materially
 scope-changing actions.
 
+## Post-Code Spec/Design Alignment
+
+After code edits and before final reporting, compare the final diff with the
+applicable plan/spec/design artifact when one exists. Scope the comparison to
+artifacts that are named by the user, linked from the current plan index, or
+directly govern the touched behavior. Do not search every historical document
+for small direct tasks.
+
+First decide whether an applicable artifact exists. For `none`, `light`, or
+`standard` work, report the alignment result as `not applicable` if no relevant
+artifact exists. For `deep` or full-schema work, treat a missing governing
+artifact as a planning gap instead.
+
+Use the existing intensity model only to size the comparison:
+
+- `none`: do not add an alignment search; compare only if the user or active
+  task already named a governing artifact.
+- `light`: compare only the named artifact or TODO/source-of-truth.
+- `standard`: compare the diff against accepted scope, non-goals, success
+  criteria, execution boundaries, and verification plan.
+- `deep`: require an explicit artifact status: `aligned`, `updated`, or
+  `blocked`. A deep/full-schema lane is expected to have a governing artifact;
+  treat its absence as a planning gap, not `not applicable`.
+
+When a mismatch exists, classify it before continuing:
+
+- implementation drift: the code exceeds or contradicts a still-current
+  artifact. Fix or revert the implementation, or split the extra work into a new
+  plan/approval.
+- outdated spec drift: the artifact is stale but the implementation remains
+  inside the approved user intent and scope. Update the artifact when
+  documentation edits are in scope; otherwise report the drift as a limitation.
+- material scope change: updating the artifact would change goals, non-goals,
+  risk, data, security, deployment, user-visible behavior, or approval
+  boundaries. Stop implementation and return to planning/approval.
+- partial implementation: the code implements an approved subset without
+  contradicting the artifact. Report what is complete and what remains; continue
+  only when the requested completion criteria still require it.
+
+Do not update a plan/spec/design artifact merely to justify unauthorized code.
+Completion reports should state the alignment result: `aligned`, `updated`,
+`not applicable`, or `blocked`.
+
+## User-Facing Report Language
+
+User-facing progress and completion reports should be written in clear Korean by
+default. Avoid exposing internal variable names, constants, flags, or raw
+implementation identifiers as the main explanation. Translate the result into
+plain user terms first, then include commands, file paths, review verdicts, or
+technical identifiers only when they are needed for reproduction, verification,
+or user action.
+
+Do not make users infer meaning from internal names. For example, say that the
+design check was not applicable because no related planning artifact existed,
+instead of only reporting an internal status value.
+
+## Guidance Budget Escalation
+
+Treat guidance bloat control as a staged workflow.
+
+Stage 1 is the normal guidance budget check. It may run during verification and
+should report document-volume warnings to the user. A warning is evidence to
+recommend the next review step, not approval to edit guidance.
+
+Stage 2 is a read-only duplicate or consolidation report, typically produced by
+`scripts/guidance-duplicate-report.sh`. Run it only when the user asks for that
+report after seeing the Stage 1 recommendation. The report should identify
+likely repeated rules, candidate source-of-truth locations, and possible
+deletions without changing files. Prefer existing duplicate-detection tools such
+as `jscpd` when available; use the local fallback only when the distributed tool
+is unavailable or inappropriate.
+
+Guidance slimming or source-of-truth rewrites require a separate user decision
+after the Stage 2 report, because they can change long-lived operating
+contracts.
+
+## Tool Adoption Before Custom Development
+
+Before adding a new automation feature, first look for an existing maintained
+tool, package, or CLI that already solves the core problem. Prefer wrapping or
+configuring an available tool over building custom logic when the tool is
+usable, reasonably maintained, compatible with the project's licensing and
+runtime constraints, and can run in a read-only or reversible mode for the
+needed workflow.
+
+Build a custom tool only when available tools are unsuitable, unavailable in the
+target environment, too risky for the approval boundary, or would add more
+operational burden than the small project-local implementation.
+
 ## Auxiliary Rebuild Tool Gates
 
 Auxiliary rebuild tools are optional support gates, not default execution

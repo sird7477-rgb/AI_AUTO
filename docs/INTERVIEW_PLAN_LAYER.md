@@ -169,6 +169,15 @@ artifact. A separate user execution request may create that gate only when it
 names or clearly refers to the current plan artifact and authorized scope. A
 completed plan is not execution approval.
 
+Before completing a full-schema execution lane, compare the implementation
+evidence and final diff against the plan artifact's Goal, Non-goals, Success
+criteria, Execution boundaries, Verification plan, and Evidence references.
+Record the result as `aligned`, `updated`, or `blocked`. If the comparison shows
+that the implementation or plan must change outside the approved scope, stop and
+return to planning/approval instead of treating the changed artifact as
+retroactive approval. `not applicable` is excluded here because a full-schema
+lane always has a governing plan artifact.
+
 For safe, reversible `light` or `standard` tasks, an explicit user execution
 request plus a clear local plan is sufficient. Do not require the full execution
 gate unless the task crosses into destructive, credentialed, production,

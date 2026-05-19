@@ -11,10 +11,14 @@ Before claiming a task is complete, the agent must:
 
 1. keep the change small and within scope
 2. inspect the diff
-3. run `./scripts/verify.sh` for basic verification
-4. run `./scripts/review-gate.sh` before presenting a commit candidate
-5. report the verification and review results
-6. mention any remaining warnings or limitations
+3. compare code edits against any applicable plan/spec/design artifact and
+   classify the result as aligned, updated, not applicable, or blocked; size the
+   search using `docs/AUTOMATION_OPERATING_POLICY.md` and re-check if
+   verification causes more edits
+4. run `./scripts/verify.sh` for basic verification
+5. run `./scripts/review-gate.sh` before presenting a commit candidate
+6. report the verification, review, and spec/design alignment results
+7. mention any remaining warnings or limitations
 
 If `./scripts/verify.sh` fails, the task is not complete.
 If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
@@ -71,8 +75,8 @@ Record at minimum the review intensity policy, resource-aware parallelism
 expectations, planning/interview intensity expectations (`none`, `light`,
 `standard`, or `deep`), and any project-specific completion-pack decisions in
 those files. Include sandbox-vs-real-network evidence, Incident Ops rules, and
-plan index/TODO reconciliation boundaries when the project may run dry-run,
-field-test, networked, or long-running work.
+plan index/TODO reconciliation plus spec/design alignment boundaries when the
+project may run dry-run, field-test, networked, or long-running work.
 
 Run `./scripts/automation-doctor.sh`, `./scripts/verify.sh`, and
 `./scripts/review-gate.sh` before treating the automation baseline as ready.
@@ -166,3 +170,5 @@ When reporting completion, include:
 - verification command
 - verification result
 - known warnings or limitations
+- user-facing summary in plain Korean first, avoiding internal variable names
+  unless they are needed for reproduction or user action

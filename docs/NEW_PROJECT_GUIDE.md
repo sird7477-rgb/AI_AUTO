@@ -62,6 +62,11 @@ assumptions. Capture:
   incident reporting intervals from `docs/INCIDENT_OPS.md`
 - plan management rules: current plan index, TODO reconciliation, checkpoint
   update expectations, and where detailed runbooks or long checklists should live
+- spec/design alignment rules: which plan, specification, or design artifacts
+  code edits must be compared against before completion
+- user-facing report language: plain Korean outcome summaries first, without
+  leading with internal variable names unless they are needed for reproduction
+  or user action
 - guidance context budget: what belongs in `AGENTS.md` versus linked docs
 - selected and rejected completion packs from `docs/*_COMPLETION.md`
 - whether a domain pack applies, such as the Odoo pack for Odoo projects
@@ -106,15 +111,17 @@ Use this request when asking Codex to initialize a new project:
     11. 운영 준비 규칙을 정해. 필수 입력이 missing/stale/incomplete/degraded이면 fail-closed로 막고, partial success는 진단으로만 남기며 accepted operating artifact로 저장하지 않게 해.
     12. operational dry-run/deployment 전에 read-only/auth/network 권한, DB, token, cooldown, output path, API budget, side-effect boundary preflight 기준을 정해. sandboxed external API probe 실패와 승인된 real-network path 결과를 구분해.
     13. Incident Ops 기준을 정해. dry-run/field-test 감시, 자동 조치 class, incident log 필드, UI field-test evidence, heartbeat/quiet/active-incident 보고 주기를 docs/INCIDENT_OPS.md 기준으로 프로젝트에 맞게 확정해.
-    14. plan index와 TODO reconciliation 기준을 정해. 긴 runbook/checklist는 AGENTS.md에 계속 붙이지 말고 linked docs로 분리해.
-    15. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
-    16. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
-    17. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
-    18. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
-    19. ./scripts/automation-doctor.sh를 실행해.
-    20. ./scripts/verify.sh를 실행해.
-    21. 확정한 리뷰 강도에 맞춰 ./scripts/review-gate.sh를 실행해.
-    22. 커밋은 하지 말고 결과만 보고해.
+    14. plan index와 TODO reconciliation 기준을 정해. 코드 수정 후 어떤 기획서/사양서/설계자료와 diff를 대조할지도 정해.
+    15. 사용자에게 보고할 때 변수명이나 내부 식별자를 앞세우지 않고 쉬운 한국어로 먼저 설명하는 기준을 정해.
+    16. 긴 runbook/checklist는 AGENTS.md에 계속 붙이지 말고 linked docs로 분리해.
+    17. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
+    18. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
+    19. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
+    20. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
+    21. ./scripts/automation-doctor.sh를 실행해.
+    22. ./scripts/verify.sh를 실행해.
+    23. 확정한 리뷰 강도에 맞춰 ./scripts/review-gate.sh를 실행해.
+    24. 커밋은 하지 말고 결과만 보고해.
 
     완료 보고에는 아래를 포함해:
     - 변경 파일
@@ -127,6 +134,8 @@ Use this request when asking Codex to initialize a new project:
     - 운영 준비 fail-closed 기준
     - Incident Ops 감시/장애대응/주기보고 기준
     - plan index/TODO reconciliation 기준
+    - spec/design alignment 기준
+    - 사용자 보고를 쉬운 한국어로 먼저 작성하는 기준
     - AGENTS.md와 linked docs 분리 기준
     - 선택/제외한 완료팩과 선택한 팩의 완료/검증 기준
     - verify.sh에 넣은 검증 기준
@@ -139,7 +148,7 @@ Use this request when asking Codex to initialize a new project:
 
 ## Short request
 
-    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 기존 파일을 먼저 읽고 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위, 리뷰 강도(lightweight/standard/strict), 실패 패턴/개선사항 기록 여부, 승인 마찰 관리 기준, 서브에이전트 사용 기준, 플랜/인터뷰 강도 기준(none/light/standard/deep), 운영 준비 fail-closed 기준, sandbox-vs-real-network evidence 기준, Incident Ops 감시/장애대응/주기보고 기준, plan index/TODO reconciliation 기준, AGENTS.md와 linked docs 분리 기준, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, 확정한 리뷰 강도에 따른 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 기존 파일을 먼저 읽고 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위, 리뷰 강도(lightweight/standard/strict), 실패 패턴/개선사항 기록 여부, 승인 마찰 관리 기준, 서브에이전트 사용 기준, 플랜/인터뷰 강도 기준(none/light/standard/deep), 운영 준비 fail-closed 기준, sandbox-vs-real-network evidence 기준, Incident Ops 감시/장애대응/주기보고 기준, plan index/TODO reconciliation 기준, spec/design alignment 기준, 사용자 보고를 쉬운 한국어로 먼저 작성하는 기준, AGENTS.md와 linked docs 분리 기준, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, 확정한 리뷰 강도에 따른 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
 
 ## Post-aiinit request
 

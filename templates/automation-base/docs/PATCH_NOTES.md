@@ -4,6 +4,23 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.20.1
+
+- Added `scripts/doc-budget.sh` as the Stage 1 guidance document budget check.
+- Added `scripts/guidance-duplicate-report.sh` for read-only Stage 2 duplicate
+  and consolidation reports when requested after a budget warning.
+- Updated verification to run the guidance budget check, exercise budget
+  accounting, test duplicate-report fallback behavior, and confirm template
+  installation coverage.
+- Added workflow policy requiring final code diffs to be compared with
+  applicable plan, specification, or design artifacts before completion reports.
+- Added completion-report guidance to explain user-facing results in plain
+  Korean first, with technical identifiers included only when needed for
+  reproduction or user action.
+- Updated onboarding and template guidance so new projects decide spec/design
+  alignment ownership, Korean-first report language, and guidance document
+  budget handling during setup.
+
 ## 2026.05.15.1
 
 - Added ownership and patch-policy columns to `ai-auto-template-status` output.

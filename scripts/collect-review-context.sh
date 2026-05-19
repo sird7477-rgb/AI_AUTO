@@ -254,6 +254,8 @@ fi
   echo
   echo "- Before completion, run ./scripts/verify.sh"
   echo "- If verification fails, the task is not complete."
+  echo "- After code edits, compare the final diff with any applicable plan/spec/design artifact and report aligned, updated, not applicable, or blocked."
+  echo "- User-facing reports should explain results in plain Korean before using internal technical identifiers."
   echo "- Do not commit without user approval."
   echo
   echo "## Local Planning Artifacts"

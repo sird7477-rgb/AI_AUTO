@@ -20,11 +20,14 @@
 7. 작업 범위를 작게 고정한다.
 8. 최소 변경만 수행한다.
 9. 완료를 주장하기 전에 diff와 plan/TODO index 상태를 확인한다.
-10. `./scripts/verify.sh`를 실행한다.
-11. 실패하면 수정 후 다시 검증한다.
-12. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
-13. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
-14. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+10. 코드 수정 후 관련 기획서/사양서/설계자료가 있으면 최종 diff를
+    승인된 scope, non-goal, success criteria, execution boundary,
+    verification plan과 대조한다. 관련 artifact가 없으면 그 이유를 기록한다.
+11. `./scripts/verify.sh`를 실행한다.
+12. 실패하면 수정 후 다시 검증한다.
+13. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
+14. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
+15. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
 
 ## 플랜/인터뷰 강도
 
@@ -158,6 +161,12 @@ repo helper로 마찰을 줄이고, destructive/credential/production 작업은 
   status, operator flow step, 다음 조작 가능 여부를 incident log에 남긴다.
 - 작업 완료 전 plan index 또는 TODO source of truth를 갱신하거나 변경 없음
   이유를 기록한다.
+- 코드 수정이 기획서/사양서/설계자료와 다르면 구현 drift, outdated spec
+  drift, material scope change 중 하나로 분류한다. 구현 drift는 수정하거나
+  되돌리고, outdated spec drift는 승인 범위가 변하지 않을 때만 artifact를
+  갱신하며, scope change는 새 계획/승인 전까지 구현을 멈춘다.
+- 코드가 승인된 범위 일부만 구현했고 자료와 충돌하지 않으면 완료된 부분과
+  남은 부분을 보고한다. 요청한 완료 기준이 아직 남아 있으면 계속 진행한다.
 - 긴 runbook/checklist/detail은 `AGENTS.md`에 계속 붙이지 말고 linked docs로
   분리한다.
 - review artifact 정리는 보관(archive) 기본값을 유지하고, 삭제(delete)는
@@ -168,7 +177,13 @@ repo helper로 마찰을 줄이고, destructive/credential/production 작업은 
 diff 요약
 실행한 검증 명령
 검증 결과
+설계자료 대조 결과: aligned, updated, not applicable, or blocked
 남은 warning 또는 제한사항
+
+사용자에게 보고할 때는 변수명, 내부 상수명, 환경변수명, raw identifier를
+앞세우지 말고 쉬운 한국어로 결과를 먼저 설명한다. 재현이나 사용자 조치에
+필요한 명령어, 파일 경로, 리뷰 verdict 같은 기술 식별자는 필요한 경우에만
+덧붙인다.
 허용 범위
 
 허용:

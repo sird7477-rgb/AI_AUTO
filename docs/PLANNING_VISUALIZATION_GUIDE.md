@@ -318,6 +318,9 @@ During the loop:
 Before claiming completion:
 
 - update the plan status or explain why it did not change
+- compare the final implementation diff with the plan/spec/design artifacts and
+  classify the result as aligned, updated, not applicable, or blocked. If the
+  status is `blocked`, explain the material scope change separately.
 - update the risk register for new accepted risks
 - update the decision log for new accepted or rejected directions
 - update diagrams that no longer match implementation evidence

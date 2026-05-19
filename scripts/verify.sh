@@ -20,6 +20,8 @@ for script in \
   scripts/archive-omx-artifacts.sh \
   scripts/automation-doctor.sh \
   scripts/collect-review-context.sh \
+  scripts/doc-budget.sh \
+  scripts/guidance-duplicate-report.sh \
   scripts/discover-ai-models.sh \
   scripts/install-ubuntu-prereqs.sh \
   scripts/install-global-files.sh \
@@ -36,6 +38,8 @@ for script in \
   templates/automation-base/scripts/archive-omx-artifacts.sh \
   templates/automation-base/scripts/automation-doctor.sh \
   templates/automation-base/scripts/collect-review-context.sh \
+  templates/automation-base/scripts/doc-budget.sh \
+  templates/automation-base/scripts/guidance-duplicate-report.sh \
   templates/automation-base/scripts/discover-ai-models.sh \
   templates/automation-base/scripts/make-review-prompts.sh \
   templates/automation-base/scripts/record-feedback.sh \
@@ -77,6 +81,118 @@ do
   grep -q "credential-equivalent" "${ui_completion_doc}"
   grep -q "project-owned wrapper script" "${ui_completion_doc}"
 done
+
+echo "[verify] checking guidance document budget..."
+./scripts/doc-budget.sh
+
+echo "[verify] testing guidance document budget accounting..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_doc_budget_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_doc_budget_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}"
+  cd "${tmp_dir}"
+  mkdir -p docs templates/automation-base/docs scripts
+  printf '# Agents\n' > AGENTS.md
+  printf '# Workflow\n' > docs/WORKFLOW.md
+  printf '# Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
+  printf '# Template Agents\n' > templates/automation-base/AGENTS.md
+  printf '# Template Readme\n' > templates/automation-base/README.md
+  printf '# Template Workflow\n' > templates/automation-base/docs/WORKFLOW.md
+  printf '# Template Policy\n' > templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
+  cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
+  cp "${repo_root}/scripts/guidance-duplicate-report.sh" scripts/guidance-duplicate-report.sh
+  chmod +x scripts/doc-budget.sh
+  chmod +x scripts/guidance-duplicate-report.sh
+  git add .
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed doc budget fixture"
+
+  printf 'unstaged guidance line\n' >> AGENTS.md
+  printf 'staged guidance line\n' >> docs/WORKFLOW.md
+  git add docs/WORKFLOW.md
+  printf 'new guidance line\n' > docs/NEW_GUIDE.md
+
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget.out"
+  grep -q "current guidance diff net added lines: 3" "${tmp_dir}/budget.out"
+
+  printf 'new spaced guidance line\n' > "docs/SPACE GUIDE.md"
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-space.out"
+  grep -q "current guidance diff net added lines: 4" "${tmp_dir}/budget-space.out"
+)
+
+echo "[verify] testing guidance document budget missing-file tolerance..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_doc_budget_missing_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_doc_budget_missing_tmp EXIT
+
+  mkdir -p "${tmp_dir}/scripts"
+  cp "${repo_root}/scripts/doc-budget.sh" "${tmp_dir}/scripts/doc-budget.sh"
+  chmod +x "${tmp_dir}/scripts/doc-budget.sh"
+  cd "${tmp_dir}"
+
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-missing.out"
+  grep -q "AGENTS.md lines: 0" "${tmp_dir}/budget-missing.out"
+  grep -q "guidance markdown total lines: 0" "${tmp_dir}/budget-missing.out"
+)
+
+grep -q "stage-2 duplicate report only when the user asks" scripts/doc-budget.sh
+grep -q "stage-2 duplicate report only when the user asks" templates/automation-base/scripts/doc-budget.sh
+grep -q "Guidance Budget Escalation" docs/AUTOMATION_OPERATING_POLICY.md
+grep -q "Guidance Budget Escalation" templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
+grep -q "Stage 2 is a read-only duplicate or consolidation" templates/automation-base/README.md
+grep -q "Tool Adoption Before Custom Development" docs/AUTOMATION_OPERATING_POLICY.md
+grep -q "Tool Adoption Before Custom Development" templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
+
+echo "[verify] testing Stage 2 guidance duplicate reporter fallback..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_guidance_duplicate_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_guidance_duplicate_tmp EXIT
+
+  report_output="$(
+    GUIDANCE_DUPLICATE_REPORT_DIR="${tmp_dir}/reports" \
+      ./scripts/guidance-duplicate-report.sh AGENTS.md docs
+  )"
+  report_path="${report_output##*: }"
+  test -f "${report_path}"
+  grep -q "2단계 지침 중복 리포트" "${report_path}"
+  grep -Eq "기존 도구 분석|로컬 경량 분석" "${report_path}"
+  grep -q "문서 수정 없이" "${report_path}"
+
+  mkdir -p "${tmp_dir}/space docs"
+  {
+    printf '# Space Doc\n'
+    printf '### Shared Setup\n'
+    printf 'This repeated guidance line is intentionally long enough for duplicate reporting with paths that contain spaces.\n'
+  } > "${tmp_dir}/space docs/one file.md"
+  {
+    printf '# Space Doc Copy\n'
+    printf '### Shared Setup\n'
+    printf 'This repeated guidance line is intentionally long enough for duplicate reporting with paths that contain spaces.\n'
+  } > "${tmp_dir}/space docs/two file.md"
+  space_output="$(
+    PATH="/usr/bin:/bin" GUIDANCE_DUPLICATE_REPORT_DIR="${tmp_dir}/space reports" \
+      ./scripts/guidance-duplicate-report.sh "${tmp_dir}/space docs"
+  )"
+  space_report_path="${space_output##*: }"
+  test -f "${space_report_path}"
+  grep -q "paths that contain spaces" "${space_report_path}"
+  grep -q "### Shared Setup" "${space_report_path}"
+)
 
 echo "[verify] testing review summary decisions..."
 ./scripts/test-review-summary.sh
@@ -933,6 +1049,8 @@ echo "[verify] testing review context edge cases..."
   git add staged.txt
   "${context_script}" >/dev/null
   grep -q "### Staged Diff" .omx/review-context/latest-review-context.md
+  grep -q "applicable plan/spec/design artifact" .omx/review-context/latest-review-context.md
+  grep -q "plain Korean" .omx/review-context/latest-review-context.md
   if grep -qi "fatal:" .omx/review-context/latest-review-context.md; then
     echo "[verify] review context included git fatal output for initial staged diff"
     exit 1
@@ -1396,6 +1514,8 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     archive-omx-artifacts.sh \
     automation-doctor.sh \
     collect-review-context.sh \
+    doc-budget.sh \
+    guidance-duplicate-report.sh \
     discover-ai-models.sh \
       make-review-prompts.sh \
       record-feedback.sh \
@@ -1463,6 +1583,8 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     archive-omx-artifacts.sh \
     automation-doctor.sh \
     collect-review-context.sh \
+    doc-budget.sh \
+    guidance-duplicate-report.sh \
     discover-ai-models.sh \
       make-review-prompts.sh \
       record-feedback.sh \
@@ -1522,6 +1644,8 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     archive-omx-artifacts.sh \
     automation-doctor.sh \
     collect-review-context.sh \
+    doc-budget.sh \
+    guidance-duplicate-report.sh \
     discover-ai-models.sh \
       make-review-prompts.sh \
       record-feedback.sh \
@@ -1778,6 +1902,8 @@ echo "[verify] testing automation template installer..."
   ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
   test -x "${target_dir}/scripts/archive-omx-artifacts.sh"
   test -x "${target_dir}/scripts/discover-ai-models.sh"
+  test -x "${target_dir}/scripts/doc-budget.sh"
+  test -x "${target_dir}/scripts/guidance-duplicate-report.sh"
   test -x "${target_dir}/scripts/record-feedback.sh"
   test -x "${target_dir}/scripts/record-project-memory.sh"
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
@@ -1798,6 +1924,8 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
   test -f "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
+  grep -q "scripts/doc-budget.sh" "${target_dir}/scripts/verify.sh"
+  ! grep -q "guidance-duplicate-report.sh" "${target_dir}/scripts/verify.sh"
   cmp -s "templates/automation-base/AI_AUTO_TEMPLATE_VERSION" "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -1848,6 +1976,8 @@ echo "[verify] testing automation template installer..."
   grep -q "heartbeat/quiet/active" "templates/automation-base/README.md"
   grep -q "sandbox-vs-real-network evidence" "templates/automation-base/README.md"
   grep -q "Plan management" "templates/automation-base/README.md"
+  grep -q "Spec/design alignment" "templates/automation-base/README.md"
+  grep -q "User-facing report language" "templates/automation-base/README.md"
   grep -q "Guidance context budget" "templates/automation-base/README.md"
   grep -q "ai-auto-template-status" "templates/automation-base/README.md"
   grep -q "unused completion pack" "templates/automation-base/README.md"
@@ -1859,6 +1989,8 @@ echo "[verify] testing automation template installer..."
   grep -q "플랜/인터뷰 강도 기준" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "none/light/standard/deep" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "Incident Ops 감시/장애대응/주기보고 기준" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "spec/design alignment 기준" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "사용자 보고를 쉬운 한국어" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "Template Status Comparison" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "ai-auto-template-status" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "rejected as non-goals" "docs/NEW_PROJECT_GUIDE.md"
@@ -1873,6 +2005,8 @@ echo "[verify] testing automation template installer..."
   grep -q "sandbox-vs-real-network evidence 기준" "${installer_output}"
   grep -q "Incident Ops 감시/주기보고 기준" "${installer_output}"
   grep -q "plan index/TODO reconciliation 기준" "${installer_output}"
+  grep -q "spec/design alignment 기준" "${installer_output}"
+  grep -q "사용자 보고를 쉬운 한국어" "${installer_output}"
   grep -q "linked docs 분리 기준" "${installer_output}"
   grep -q '`none`' "${target_dir}/docs/WORKFLOW.md"
   grep -q '`light`' "${target_dir}/docs/WORKFLOW.md"
@@ -1883,6 +2017,8 @@ echo "[verify] testing automation template installer..."
   grep -q "Incident Ops 정책" "${target_dir}/docs/WORKFLOW.md"
   grep -q "heartbeat, quiet, active-incident 보고" "${target_dir}/docs/WORKFLOW.md"
   grep -q "plan index/TODO reconciliation" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "기획서/사양서/설계자료" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "쉬운 한국어" "${target_dir}/docs/WORKFLOW.md"
   grep -q "linked docs" "${target_dir}/docs/WORKFLOW.md"
   grep -q "ai-context-pack" "${target_dir}/docs/WORKFLOW.md"
   grep -q "advisory/fail-open" "${target_dir}/docs/WORKFLOW.md"
@@ -1952,6 +2088,25 @@ grep -q "UI Completion Pack" "templates/automation-base/docs/UI_COMPLETION.md"
 grep -q "Incident Ops For Dry-run And Field-test" "templates/automation-base/docs/INCIDENT_OPS.md"
 grep -q "Periodic Status Reporting" "templates/automation-base/docs/INCIDENT_OPS.md"
 grep -q "Incident Ops During Dry-run And Field-test" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
+grep -q "doc-budget.sh" "templates/automation-base/README.md"
+grep -q "guidance-duplicate-report.sh" "templates/automation-base/README.md"
+test -x "scripts/doc-budget.sh"
+test -x "templates/automation-base/scripts/doc-budget.sh"
+test -x "scripts/guidance-duplicate-report.sh"
+test -x "templates/automation-base/scripts/guidance-duplicate-report.sh"
+grep -q "Post-Code Spec/Design Alignment" "docs/AUTOMATION_OPERATING_POLICY.md"
+grep -q "Post-Code Spec/Design Alignment" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
+grep -q "User-Facing Report Language" "docs/AUTOMATION_OPERATING_POLICY.md"
+grep -q "User-Facing Report Language" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
+grep -q "기획서/사양서/설계자료" "docs/WORKFLOW.md"
+grep -q "기획서/사양서/설계자료" "templates/automation-base/docs/WORKFLOW.md"
+grep -q "설계자료 대조 결과: aligned, updated, not applicable, or blocked" "docs/WORKFLOW.md"
+grep -q "설계자료 대조 결과: aligned, updated, not applicable, or blocked" "templates/automation-base/docs/WORKFLOW.md"
+grep -q "classify the result as aligned, updated, not applicable, or blocked" "docs/PLANNING_VISUALIZATION_GUIDE.md"
+grep -q "쉬운 한국어" "docs/WORKFLOW.md"
+grep -q "쉬운 한국어" "templates/automation-base/docs/WORKFLOW.md"
+grep -q "plan artifact's Goal" "docs/INTERVIEW_PLAN_LAYER.md"
+grep -q "plan artifact's Goal" "templates/automation-base/docs/INTERVIEW_PLAN_LAYER.md"
 grep -q "field-test incident evidence" "templates/automation-base/docs/UI_COMPLETION.md"
 grep -q "Approval Friction" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "실패 패턴 피드백" "templates/automation-base/docs/WORKFLOW.md"
@@ -2027,12 +2182,16 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   grep -q "sandbox-vs-real-network evidence 기준" "${aiinit_output}"
   grep -q "Incident Ops" "${aiinit_output}"
   grep -q "plan index/TODO" "${aiinit_output}"
+  grep -q "spec/design alignment" "${aiinit_output}"
+  grep -q "사용자 보고를 쉬운 한국어" "${aiinit_output}"
   grep -q "linked docs 분리 기준" "${aiinit_output}"
   grep -q "Project registered" "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
   grep -q "sandbox-vs-real-network" "${target_dir}/AGENTS.md"
   grep -q "Incident Ops rules" "${target_dir}/AGENTS.md"
   grep -q "plan index/TODO reconciliation" "${target_dir}/AGENTS.md"
+  grep -q "spec/design alignment" "${target_dir}/AGENTS.md"
+  grep -q "plain Korean" "${target_dir}/AGENTS.md"
   grep -q "$(cd "${target_dir}" && pwd -P)" "${registry_file}"
 )
 
@@ -2531,6 +2690,8 @@ for script in \
   automation-doctor.sh \
   archive-omx-artifacts.sh \
   collect-review-context.sh \
+  doc-budget.sh \
+  guidance-duplicate-report.sh \
   discover-ai-models.sh \
   make-review-prompts.sh \
   record-feedback.sh \

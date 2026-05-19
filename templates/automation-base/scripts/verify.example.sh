@@ -30,6 +30,11 @@ if [ -x "./scripts/test-review-summary.sh" ]; then
   ./scripts/test-review-summary.sh || true
 fi
 
+if [ -x "./scripts/doc-budget.sh" ]; then
+  echo "[verify] checking guidance document budget..."
+  ./scripts/doc-budget.sh || true
+fi
+
 if [ -x "./scripts/automation-doctor.sh" ]; then
   echo "[verify] checking automation files..."
   DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh || true
