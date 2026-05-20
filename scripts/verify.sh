@@ -2461,6 +2461,16 @@ STUB
   grep -q "real codex stderr" "${tmp_home}/codex.err"
   grep -q "automation template update recommended" "${tmp_home}/codex.err"
   grep -q "status: customized_or_outdated" "${tmp_home}/codex.err"
+  grep -q "latest patch note:" "${tmp_home}/codex.err"
+  grep -q "review notes: .*templates/automation-base/docs/PATCH_NOTES.md" "${tmp_home}/codex.err"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    CODEX_STUB_EXIT=0 \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex first; codex second' \
+    > "${tmp_home}/codex-once.out" 2> "${tmp_home}/codex-once.err"
+  grep -q "real codex <first>" "${tmp_home}/codex-once.out"
+  grep -q "real codex <second>" "${tmp_home}/codex-once.out"
+  test "$(grep -c "automation template update recommended" "${tmp_home}/codex-once.err")" -eq 1
 
   printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     CODEX_STUB_EXIT=0 \

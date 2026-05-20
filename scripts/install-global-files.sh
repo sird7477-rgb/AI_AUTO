@@ -42,7 +42,8 @@ current shell directory to this checkout.
 Options:
   --install-codex-drift-notice
       Install an opt-in managed shell function that shows an AI_AUTO template
-      update notice before running the real codex binary.
+      update notice once per shell session before the first real codex call in
+      each AI_AUTO-managed project.
   -h, --help
       Show this help.
 
@@ -265,7 +266,7 @@ install_codex_drift_notice() {
   local end_marker="# <<< AI_AUTO codex drift notice integration <<<"
   local tmp_path
   local begin_count end_count
-  local real_codex real_codex_dir real_codex_base real_codex_quoted
+  local real_codex real_codex_dir real_codex_base real_codex_quoted patch_notes_quoted
 
   if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ]; then
     return
@@ -356,26 +357,49 @@ install_codex_drift_notice() {
   mkdir -p "$config_dir"
   function_tmp_path="${function_path}.tmp.$$"
   real_codex_quoted="$(printf '%q' "$real_codex")"
+  patch_notes_quoted="$(printf '%q' "${ROOT}/templates/automation-base/docs/PATCH_NOTES.md")"
 
   cat > "$function_tmp_path" <<EOF
 ${function_marker}
 codex() {
   local real_codex=${real_codex_quoted}
+  local patch_notes=${patch_notes_quoted}
   local repo_root=""
   local status_output=""
+  local notice_key=""
+  local latest_note=""
 
   if [ "\${AI_AUTO_CODEX_DRIFT_NOTICE:-1}" != "0" ] &&
     command -v git >/dev/null 2>&1 &&
     repo_root="\$(git rev-parse --show-toplevel 2>/dev/null)" &&
     [ -f "\${repo_root}/AI_AUTO_TEMPLATE_VERSION" ] &&
     command -v ai-auto-template-status >/dev/null 2>&1; then
-    status_output="\$(ai-auto-template-status "\${repo_root}" 2>/dev/null || true)"
-    if printf '%s\n' "\$status_output" | grep -q '^status: customized_or_outdated'; then
-      printf '%s\n' "[AI_AUTO] automation template update recommended for \${repo_root}" >&2
-      printf '%s\n' "\$status_output" | awk '/^(installed_version|current_version|status): / {print "[AI_AUTO] " \$0}' >&2
-      printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status \${repo_root}" >&2
+    if command -v sha256sum >/dev/null 2>&1; then
+      notice_key="\$(printf '%s' "\${repo_root}" | sha256sum | awk '{print \$1}')"
+    elif command -v cksum >/dev/null 2>&1; then
+      notice_key="\$(printf '%s' "\${repo_root}" | cksum | awk '{print \$1 "-" \$2}')"
+    else
+      notice_key="\$(printf '%s' "\${repo_root}" | sed 's/|/%7C/g')"
     fi
-  fi
+    case "\${AI_AUTO_CODEX_DRIFT_NOTICE_SEEN:-}" in
+      *"|"\${notice_key}"|"*)
+        ;;
+      *)
+        status_output="\$(ai-auto-template-status "\${repo_root}" 2>/dev/null || true)"
+        AI_AUTO_CODEX_DRIFT_NOTICE_SEEN="\${AI_AUTO_CODEX_DRIFT_NOTICE_SEEN:-}|\${notice_key}|"
+        if printf '%s\n' "\$status_output" | grep -q '^status: customized_or_outdated'; then
+          latest_note="\$(awk '/^## / {print; exit}' "\${patch_notes}" 2>/dev/null || true)"
+          printf '%s\n' "[AI_AUTO] automation template update recommended for \${repo_root}" >&2
+          printf '%s\n' "\$status_output" | awk '/^(installed_version|current_version|status): / {print "[AI_AUTO] " \$0}' >&2
+          if [ -n "\${latest_note}" ]; then
+            printf '%s\n' "[AI_AUTO] latest patch note: \${latest_note#\#\# }" >&2
+          fi
+          printf '%s\n' "[AI_AUTO] review notes: \${patch_notes}" >&2
+          printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status \${repo_root}" >&2
+        fi
+        ;;
+    esac
+    fi
 
   "\$real_codex" "\$@"
 }

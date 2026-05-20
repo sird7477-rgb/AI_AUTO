@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.20.2
+
+- Updated the opt-in Codex drift notice so each AI_AUTO-managed project reports
+  template drift only once per shell session.
+- Added the latest template patch-note heading and patch-note path to the drift
+  notice so users can inspect the home checkout review notes before patching.
+- Bumped the template version marker to match the latest patch-note version used
+  by `ai-auto-template-status`.
+
 ## 2026.05.20.1
 
 - Added `scripts/doc-budget.sh` as the Stage 1 guidance document budget check.
