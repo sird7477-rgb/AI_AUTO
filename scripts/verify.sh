@@ -85,6 +85,38 @@ done
 echo "[verify] checking guidance document budget..."
 ./scripts/doc-budget.sh
 
+echo "[verify] checking Codex native goal mode boundary guidance..."
+(
+  goal_boundary_tmp="$(mktemp -d)"
+  cleanup_goal_boundary_tmp() {
+    rm -rf "${goal_boundary_tmp}"
+  }
+  trap cleanup_goal_boundary_tmp EXIT
+
+  extract_goal_boundary_section() {
+    awk '
+      /^## [0-9]+\. Codex Native Goal Mode Boundary$/ { printing = 1 }
+      printing && /^## [0-9]+\. / && !/^## [0-9]+\. Codex Native Goal Mode Boundary$/ { exit }
+      printing { print }
+    ' "$1"
+  }
+  extract_goal_boundary_section docs/SESSION_QUALITY_PLAN.md \
+    > "${goal_boundary_tmp}/root.md"
+  extract_goal_boundary_section templates/automation-base/docs/SESSION_QUALITY_PLAN.md \
+    > "${goal_boundary_tmp}/template.md"
+  test -s "${goal_boundary_tmp}/root.md"
+  test -s "${goal_boundary_tmp}/template.md"
+  grep -qF "Codex Native Goal Mode Boundary" "${goal_boundary_tmp}/root.md"
+  grep -qF "State authority matrix" "${goal_boundary_tmp}/root.md"
+  grep -qF "AI_AUTO/OMX state" "${goal_boundary_tmp}/root.md"
+  grep -qF ".omx/state/session-checkpoint.md" "${goal_boundary_tmp}/root.md"
+  grep -qF "update_goal" "${goal_boundary_tmp}/root.md"
+  diff -u "${goal_boundary_tmp}/root.md" "${goal_boundary_tmp}/template.md"
+)
+
+template_version="$(cat templates/automation-base/AI_AUTO_TEMPLATE_VERSION)"
+grep -qxF "## ${template_version}" templates/automation-base/docs/PATCH_NOTES.md
+
 echo "[verify] testing guidance document budget accounting..."
 (
   tmp_dir="$(mktemp -d)"

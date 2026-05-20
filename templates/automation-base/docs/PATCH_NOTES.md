@@ -4,6 +4,16 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.21.1
+
+- Documented Codex native goal mode as an optional thread-local completion aid,
+  not an AI_AUTO control plane.
+- Clarified that AI_AUTO/OMX state, checkpoints, plan artifacts, verification,
+  review gates, approvals, and latest user instructions remain separate sources
+  of truth.
+- Added verification coverage so root and template session-quality guidance keep
+  the same native-goal boundary.
+
 ## 2026.05.20.2
 
 - Updated the opt-in Codex drift notice so each AI_AUTO-managed project reports

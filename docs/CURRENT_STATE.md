@@ -92,7 +92,7 @@ Current behavior:
 - model routing avoids dated hardcoded model names; it is role-first, then resolves against explicit env overrides, advertised CLI aliases, the current OMX/Codex model contract, or provider defaults
 - the active Codex/GPT leader is treated as runtime-selected; cost/latency optimization is handled by bounded delegated subagent or OMX lanes instead of claiming the leader changed models mid-session
 - model availability inferred from local help/config must be reported as inferred; do not present uncertain provider/model availability as fact
-- long-session quality management draft is in `docs/SESSION_QUALITY_PLAN.md`; it covers model routing cache, working memory, checkpoints, and token/context hygiene
+- long-session quality management draft is in `docs/SESSION_QUALITY_PLAN.md`; it covers model routing cache, Codex native goal mode boundaries, working memory, checkpoints, and token/context hygiene
 - Claude review runs automatically if claude is available.
 - Gemini review runs automatically if gemini is available.
 - Gemini can be disabled for a specific run with RUN_GEMINI_REVIEW=0.

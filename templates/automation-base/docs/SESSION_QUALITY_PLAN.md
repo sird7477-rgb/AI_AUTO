@@ -10,6 +10,7 @@ and reduce quality drift as token usage and session length grow.
 This plan covers:
 
 - model routing cache and refresh behavior
+- Codex native goal mode boundaries
 - working memory capture during tasks
 - long-session quality controls
 - handoff/resume checkpoints
@@ -62,7 +63,43 @@ leader should be treated as runtime-selected for the session; cost and latency
 optimization should be done by routing bounded work to child agents or OMX lanes
 with explicit role, reasoning, and trust boundaries.
 
-## 2. Working Memory
+## 2. Codex Native Goal Mode Boundary
+
+Status: optional runtime aid, not an AI_AUTO control plane.
+
+Codex native goal mode is a thread-local completion aid. It may make a
+long-running session stricter by recording the active objective and requiring an
+explicit completion audit, but it does not replace AI_AUTO/OMX state,
+project-owned plan artifacts, approval gates, checkpoints, verification,
+review gates, TODO reconciliation, or the latest user instructions.
+
+State authority matrix:
+
+| Layer | Source of truth |
+|---|---|
+| Current thread objective | Codex native goal mode, when active and consistent with the latest user request |
+| Project scope and approvals | Latest user instructions plus plan/spec/design artifacts |
+| Durable memory | `.omx/project-memory.json` and project documentation |
+| Resume/checkpoint evidence | `.omx/state/session-checkpoint.md` and run artifacts |
+| Completion evidence | diff alignment, `./scripts/verify.sh`, and `./scripts/review-gate.sh` when required |
+
+Rules:
+
+- Call `get_goal` only for long-running or explicitly goal-managed sessions.
+- Do not call `create_goal` unless the user or system explicitly requested a new
+  Codex native goal.
+- Do not infer a native goal from an AI_AUTO command, plan title, issue title, or
+  current task summary.
+- An active native goal may make completion stricter, but it must not broaden
+  scope, grant approval, override newer user instructions, or authorize
+  destructive, credentialed, production, or materially scope-changing work.
+- Call `update_goal({status: "complete"})` only after normal project completion
+  evidence passes and no required work remains.
+- If the native goal conflicts with the latest user request, repo guidance,
+  active plan, or approval boundary, stop goal completion and report the
+  conflict instead of marking the goal complete.
+
+## 3. Working Memory
 
 Status: active guidance with a repo helper. Use
 `scripts/record-project-memory.sh` for sanitized durable entries.
@@ -107,7 +144,7 @@ Examples:
 - `reviewer-state`: Claude disabled until user resets after session limit.
 - `workflow`: Existing initialized projects require merge/upgrade flow, not overwrite.
 
-## 3. Long-Session Quality Controls
+## 4. Long-Session Quality Controls
 
 Status: active guidance with checkpoint automation. `review-gate` writes
 `.omx/state/session-checkpoint.md` after a successful summary unless
@@ -177,7 +214,7 @@ When a trigger appears, the agent should:
 4. summarize the active state in 5-10 bullets
 5. continue from the newest user request only
 
-## 4. Token And Context Hygiene
+## 5. Token And Context Hygiene
 
 Status: active guidance using existing repo/runtime artifacts.
 
