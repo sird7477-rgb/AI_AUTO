@@ -396,6 +396,7 @@ codex() {
           fi
           printf '%s\n' "[AI_AUTO] review notes: \${patch_notes}" >&2
           printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status \${repo_root}" >&2
+          printf '%s\n' "[AI_AUTO] patch keyword: AI_AUTO 최신 패치 적용해줘" >&2
         fi
         ;;
     esac

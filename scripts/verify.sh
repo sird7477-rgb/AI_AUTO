@@ -116,6 +116,10 @@ echo "[verify] checking Codex native goal mode boundary guidance..."
 
 template_version="$(cat templates/automation-base/AI_AUTO_TEMPLATE_VERSION)"
 grep -qxF "## ${template_version}" templates/automation-base/docs/PATCH_NOTES.md
+grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" AGENTS.md
+grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" templates/automation-base/AGENTS.md
+grep -qF "patch keyword: AI_AUTO 최신 패치 적용해줘" docs/GLOBAL_TOOLS.md
+grep -qF "patch keyword: AI_AUTO 최신 패치 적용해줘" docs/NEW_PROJECT_GUIDE.md
 
 echo "[verify] testing guidance document budget accounting..."
 (
@@ -2495,6 +2499,7 @@ STUB
   grep -q "status: customized_or_outdated" "${tmp_home}/codex.err"
   grep -q "latest patch note:" "${tmp_home}/codex.err"
   grep -q "review notes: .*templates/automation-base/docs/PATCH_NOTES.md" "${tmp_home}/codex.err"
+  grep -q "patch keyword: AI_AUTO 최신 패치 적용해줘" "${tmp_home}/codex.err"
 
   HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     CODEX_STUB_EXIT=0 \

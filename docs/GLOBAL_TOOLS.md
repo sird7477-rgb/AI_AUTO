@@ -116,6 +116,9 @@ ai-lab-only bootstrap command:
   - With `--install-codex-drift-notice`, adds an opt-in managed `codex` shell
     function that prints a read-only AI_AUTO template update notice before
     calling the real Codex binary
+  - When drift is detected, the notice prints the patch-request keyword
+    `AI_AUTO 최신 패치 적용해줘`; project `AGENTS.md` expands that keyword into
+    the full template patch workflow
   - Does not install external programs, configure credentials, run `automation-doctor --fix`, or overwrite non-symlink files
 
 ## Link setup
@@ -191,6 +194,9 @@ source block. The generated function resolves the real Codex executable at
 install time, checks the current git repository with `ai-auto-template-status`,
 prints a warning to stderr only when the project is customized or outdated, and
 then calls the real Codex binary with the original arguments.
+The warning includes `patch keyword: AI_AUTO 최신 패치 적용해줘`; type that
+keyword in Codex to ask the agent to run the documented AI_AUTO template patch
+workflow.
 
 Disable the notice for a shell command with:
 

@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.21.2
+
+- Added the `AI_AUTO 최신 패치 적용해줘` keyword so projects can request the
+  AI_AUTO template patch workflow without retyping the full prompt.
+- Updated the optional Codex drift notice to print the short patch keyword when
+  template drift is detected.
+- Documented that the keyword still preserves project-specific rules, avoids
+  generated `.omx/` artifacts, and requires normal verification/review gates.
+
 ## 2026.05.21.1
 
 - Documented Codex native goal mode as an optional thread-local completion aid,

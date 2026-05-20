@@ -98,6 +98,12 @@ installing or overwriting project automation files.
 When the user asks to clean stale project registry entries, run
 `ai-register --prune`.
 
+When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as the AI_AUTO template patch workflow:
+check path/git status, run `ai-auto-template-status`, read current AI_AUTO patch notes,
+inspect managed-file differences, preserve hybrid project rules, apply only template-owned
+or review-merge updates, then run `./scripts/verify.sh` and `./scripts/review-gate.sh`.
+Do not overwrite project-owned files, patch `.omx/`, commit, or push unless explicitly asked.
+
 When the user asks for `리빌드 플랜`, `리빌딩 플랜`, `rebuild plan`, or
 `ai-rebuild-plan`, run `ai-rebuild-plan /path/to/repo` or `ai-rebuild-plan`
 from the target repository. This is a read-only planning surface: it may inspect

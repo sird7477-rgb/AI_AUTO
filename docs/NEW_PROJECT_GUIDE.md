@@ -234,6 +234,13 @@ This appends a sanitized feedback item with repeat key
 through AI_AUTO's trusted feedback recorder rather than executing scripts from
 the inspected project.
 
+When Codex starts in a project with the optional drift notice installed, it may
+print `patch keyword: AI_AUTO 최신 패치 적용해줘`. Typing that keyword in the
+project is the short form for the full AI_AUTO template patch workflow: inspect
+template status and patch notes, merge only applicable managed-file changes,
+preserve project-specific rules, run verification and the review gate, and stop
+before commit/push unless explicitly asked.
+
 ## Domain Packs
 
 Domain packs are optional reference packs for project-specific onboarding.

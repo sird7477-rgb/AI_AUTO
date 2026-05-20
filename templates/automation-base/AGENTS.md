@@ -114,6 +114,12 @@ Onboarding workflow:
 12. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
 13. Do not commit unless the user explicitly asks for a commit.
 
+When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as the AI_AUTO template patch workflow:
+check path/git status, run `ai-auto-template-status`, read current AI_AUTO patch notes,
+inspect managed-file differences, preserve hybrid project rules, apply only template-owned
+or review-merge updates, then run `./scripts/verify.sh` and `./scripts/review-gate.sh`.
+Do not overwrite project-owned files, patch `.omx/`, commit, or push unless explicitly asked.
+
 When the user asks for `리빌드 플랜`, `리빌딩 플랜`, `rebuild plan`, or
 `ai-rebuild-plan`, treat it as read-only planning. Inspect the repository,
 template drift, domain-pack references, refactoring candidates, and behavior
