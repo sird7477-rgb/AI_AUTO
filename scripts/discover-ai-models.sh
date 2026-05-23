@@ -8,6 +8,7 @@ OBSERVATIONS_OUT="${AI_MODEL_ROUTING_OBSERVATIONS:-${OUT_DIR}/observations.tsv}"
 AI_MODEL_ROUTING_TTL_SECONDS="${AI_MODEL_ROUTING_TTL_SECONDS:-43200}"
 AI_MODEL_DISCOVERY_REFRESH="${AI_MODEL_DISCOVERY_REFRESH:-0}"
 CLAUDE_REVIEW_MODEL_AUTO="${CLAUDE_REVIEW_MODEL_AUTO:-0}"
+GEMINI_REVIEW_COMMAND="${GEMINI_REVIEW_COMMAND:-agy}"
 
 mkdir -p "${OUT_DIR}" "$(dirname "${ENV_OUT}")" "$(dirname "${REPORT_OUT}")"
 
@@ -54,7 +55,7 @@ codex_exec_help_text() {
 override_fingerprint() {
   # Keep this list in sync with all routing-affecting env vars and cheap
   # runtime facts. Any new selector must be added here to avoid stale cache.
-  printf 'CLAUDE_REVIEW_ROLE=%s|GEMINI_REVIEW_ROLE=%s|CODEX_ARCHITECT_REVIEW_ROLE=%s|CODEX_TEST_REVIEW_ROLE=%s|CLAUDE_REVIEW_MODEL=%s|CLAUDE_REVIEW_MODEL_AUTO=%s|GEMINI_REVIEW_MODEL=%s|CODEX_ARCHITECT_REVIEW_MODEL=%s|CODEX_TEST_REVIEW_MODEL=%s|CODEX_FALLBACK_MODEL=%s|OMX_DEFAULT_FRONTIER_MODEL=%s|CLAUDE_CLI_VERSION=%s|GEMINI_CLI_VERSION=%s|CODEX_CLI_VERSION=%s|CLAUDE_HELP=%s|GEMINI_HELP=%s|CODEX_EXEC_HELP=%s' \
+  printf 'CLAUDE_REVIEW_ROLE=%s|GEMINI_REVIEW_ROLE=%s|CODEX_ARCHITECT_REVIEW_ROLE=%s|CODEX_TEST_REVIEW_ROLE=%s|CLAUDE_REVIEW_MODEL=%s|CLAUDE_REVIEW_MODEL_AUTO=%s|GEMINI_REVIEW_MODEL=%s|GEMINI_REVIEW_COMMAND=%s|CODEX_ARCHITECT_REVIEW_MODEL=%s|CODEX_TEST_REVIEW_MODEL=%s|CODEX_FALLBACK_MODEL=%s|OMX_DEFAULT_FRONTIER_MODEL=%s|CLAUDE_CLI_VERSION=%s|GEMINI_CLI_VERSION=%s|CODEX_CLI_VERSION=%s|CLAUDE_HELP=%s|GEMINI_HELP=%s|CODEX_EXEC_HELP=%s' \
     "${CLAUDE_REVIEW_ROLE:-}" \
     "${GEMINI_REVIEW_ROLE:-}" \
     "${CODEX_ARCHITECT_REVIEW_ROLE:-}" \
@@ -62,15 +63,16 @@ override_fingerprint() {
     "${CLAUDE_REVIEW_MODEL:-}" \
     "${CLAUDE_REVIEW_MODEL_AUTO:-0}" \
     "${GEMINI_REVIEW_MODEL:-}" \
+    "${GEMINI_REVIEW_COMMAND}" \
     "${CODEX_ARCHITECT_REVIEW_MODEL:-}" \
     "${CODEX_TEST_REVIEW_MODEL:-}" \
     "${CODEX_FALLBACK_MODEL:-}" \
     "${OMX_DEFAULT_FRONTIER_MODEL:-}" \
     "$(command_version claude)" \
-    "$(command_version gemini)" \
+    "$(command_version "${GEMINI_REVIEW_COMMAND}")" \
     "$(command_version codex)" \
     "$(command_help claude)" \
-    "$(command_help gemini)" \
+    "$(command_help "${GEMINI_REVIEW_COMMAND}")" \
     "$(codex_exec_help_text)"
 }
 
@@ -196,7 +198,7 @@ select_claude_alias_for_role() {
 }
 
 claude_help="$(command_help claude)"
-gemini_help="$(command_help gemini)"
+gemini_help="$(command_help "${GEMINI_REVIEW_COMMAND}")"
 codex_exec_help=""
 if command -v codex >/dev/null 2>&1; then
   codex_exec_help="$(codex_exec_help_text)"
@@ -317,6 +319,7 @@ write_env "CLAUDE_REVIEW_SUGGESTED_MODEL" "${claude_suggested_model}"
 write_env "GEMINI_REVIEW_ROLE" "${gemini_review_role}"
 write_env "GEMINI_REVIEW_MODEL" "${gemini_review_model}"
 write_env "GEMINI_REVIEW_MODEL_SOURCE" "${gemini_review_model_source}"
+write_env "GEMINI_REVIEW_COMMAND" "${GEMINI_REVIEW_COMMAND}"
 write_env "CODEX_ARCHITECT_REVIEW_ROLE" "${codex_architect_role}"
 write_env "CODEX_ARCHITECT_REVIEW_MODEL" "${codex_architect_model}"
 write_env "CODEX_ARCHITECT_REVIEW_MODEL_SOURCE" "${codex_architect_model_source}"
@@ -422,7 +425,7 @@ Generated at: ${discovered_at}
 | Provider | Version | Supports --model | Discovered aliases |
 |---|---|---:|---|
 | Claude | $(command_version claude) | ${claude_supports_model} | ${claude_aliases[*]:-none} |
-| Gemini | $(command_version gemini) | ${gemini_supports_model} | none exposed by help |
+| Gemini | $(command_version "${GEMINI_REVIEW_COMMAND}") via ${GEMINI_REVIEW_COMMAND} | ${gemini_supports_model} | none exposed by help |
 | Codex exec | $(command_version codex) | ${codex_supports_model} | use env/OMX model contract |
 
 ## Selected Review Models

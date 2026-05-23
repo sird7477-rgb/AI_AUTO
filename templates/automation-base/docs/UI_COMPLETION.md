@@ -84,38 +84,12 @@ npx playwright test --project=chromium
 
 ## Playwright CDP Access
 
-Attaching Playwright to a user-launched Chrome remote debugging port is an
-optional diagnostic path, not the default browser verification path. Treat CDP
-access as credential-equivalent because the browser may expose cookies, logged
-in sessions, tabs, local storage, and authenticated application state.
-
-Allowed use:
-
-- bind remote debugging to loopback only, such as `127.0.0.1`
-- when attaching to an already running user-launched browser, verify the target
-  port is loopback-bound before connecting
-- use a unique port per parallel session
-- prefer an isolated temporary `--user-data-dir` test profile and remove it
-  when the session ends
-- record the route, viewport, target environment, and whether the browser state
-  came from a user-launched session
-- stop at observation or non-destructive smoke checks unless the user
-  explicitly approves a credentialed or production action
-
-Do not:
-
-- bind remote debugging to `0.0.0.0` or a public interface
-- reuse a personal/default Chrome profile for automated checks
-- assume a production login session is safe to automate
-- store cookies, tokens, private URLs, screenshots with secrets, or raw browser
-  state in repo files, `.omx`, logs, review prompts, or feedback queues
-- use CDP access to bypass sandbox, credential, deployment, or production
-  approval gates
-
-Project-specific wrappers should keep the command prefix stable while moving
-changeable values into validated arguments or `.env` files that are not committed.
-The wrapper is a friction-reduction surface only; it must not widen what the
-agent is allowed to do.
+Use `docs/CHROME_CDP_ACCESS.md` as the single source of truth for attaching
+Playwright or other tooling to a user-launched Chrome remote debugging port.
+CDP access is optional, credential-equivalent, and should stay loopback-bound.
+For UI work, prefer it when the user and AI need to inspect the same visible
+page, popup, focus state, console, storage, network behavior, or extension
+runtime.
 
 ## Completion Criteria
 

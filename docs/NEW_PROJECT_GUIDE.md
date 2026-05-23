@@ -172,6 +172,11 @@ the shell, typing `AI_AUTO` with no arguments moves the current terminal to the
 AI_AUTO checkout. Use `AI_AUTO --path` when you only need the path, or
 `AI_AUTO --status` to inspect the checkout status.
 
+The managed shell integration also makes bare `tmux` convenient: typing `tmux`
+with no arguments creates a new session named with the first available number,
+starting from `1`. Normal tmux commands such as `tmux ls` and
+`tmux attach -t 1` still pass through unchanged.
+
 ## Project Registry
 
 New `aiinit` runs register the target repository in:
@@ -259,6 +264,7 @@ or apply installed packs rather than authoring new packs.
 
 Source packs in this repository:
 
+    templates/domain-packs/browser-macro/
     templates/domain-packs/odoo/
 
 During onboarding, the AI should ask whether the project matches an available

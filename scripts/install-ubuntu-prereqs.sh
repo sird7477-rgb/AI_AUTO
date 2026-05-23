@@ -22,7 +22,10 @@ Default mode installs only OS/repo prerequisites:
 With --install-ai-cli, it also attempts npm global installs for:
   - @openai/codex
   - @anthropic-ai/claude-code
-  - @google/gemini-cli
+
+Antigravity CLI (`agy`) is the default Gemini review command, but it is not
+installed by this npm-based helper. Install or update it through the
+Antigravity-managed installer, then verify it with `agy --version`.
 
 This script does not configure credentials, create API keys, log into AI
 services, create SSH keys, or configure GitHub tokens.
@@ -144,11 +147,10 @@ install_ai_cli_tools() {
   fi
 
   echo "[install] installing AI CLI packages with npm"
-  echo "[install] selected npm packages: @openai/codex @anthropic-ai/claude-code @google/gemini-cli"
+  echo "[install] selected npm packages: @openai/codex @anthropic-ai/claude-code"
   $SUDO npm install -g \
     @openai/codex \
-    @anthropic-ai/claude-code \
-    @google/gemini-cli
+    @anthropic-ai/claude-code
 }
 
 cd "$ROOT"
@@ -184,4 +186,5 @@ echo
 echo "Manual credential steps still required for AI tools:"
 echo "  codex login"
 echo "  claude login"
-echo "  gemini"
+echo "  agy"
+echo "  (install agy separately with the Antigravity-managed installer if missing)"

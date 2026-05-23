@@ -108,6 +108,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   if [ "$diff_net" -lt 0 ]; then
     diff_net=0
   fi
+  printf '[budget] current guidance diff added lines: %s\n' "$diff_added"
   check_number "current guidance diff net added lines" "$diff_net" 150 300
 fi
 

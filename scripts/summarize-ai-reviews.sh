@@ -263,6 +263,91 @@ is_usable_review() {
   is_approval "$1" || [ "$1" = "request_changes" ]
 }
 
+split_context_active() {
+  [ -n "${SPLIT_CONTEXT_MANIFEST_FILE:-}" ] && [ "${SPLIT_CONTEXT_MANIFEST_FILE}" != "none" ] && [ -f "${SPLIT_CONTEXT_MANIFEST_FILE}" ]
+}
+
+review_covers_split_context() {
+  local review_file="$1"
+  local manifest_file="$2"
+  local part part_name part_pattern synthesis_text
+
+  [ -n "${review_file}" ] && [ -f "${review_file}" ] || return 1
+  [ -n "${manifest_file}" ] && [ -f "${manifest_file}" ] || return 1
+  synthesis_text="$(
+    awk '
+      BEGIN { in_section = 0 }
+      tolower($0) ~ /^#+[[:space:]]+.*synthesis[[:space:]:.-]*$/ { in_section = 1; next }
+      in_section && /^#+[[:space:]]+/ { in_section = 0; next }
+      in_section { print }
+    ' "${review_file}"
+  )"
+  [ -n "${synthesis_text}" ] || return 1
+
+  while IFS= read -r part; do
+    [ -n "${part}" ] || continue
+    part_name="$(basename "${part}")"
+    part_pattern="$(printf '%s\n' "${part_name}" | sed 's/[][\\.^$*+?{}|()]/\\&/g')"
+    if ! printf '%s\n' "${synthesis_text}" | grep -Eq "${part_pattern}[[:space:]]*[:;-][[:space:]]*[^[:space:]]"; then
+      return 1
+    fi
+  done < <(grep -Eo '[^[:space:]]*split-review-context/part-[0-9]+\.md' "${manifest_file}" | sort -u)
+
+  return 0
+}
+
+fallback_has_direct_file_inspection() {
+  local review_file="$1"
+
+  [ -n "${review_file}" ] && [ -f "${review_file}" ] || return 1
+
+  awk '
+    BEGIN { in_section = 0; has_content = 0 }
+    tolower($0) ~ /^#+[[:space:]]+direct file inspection[[:space:]:.-]*$/ { in_section = 1; next }
+    in_section && /^#+[[:space:]]+/ { exit }
+    in_section && /^[[:space:]]*$/ { next }
+    in_section {
+      line = tolower($0)
+      if (line !~ /no blocking findings/ && line !~ /^none[[:punct:][:space:]]*$/) {
+        has_content = 1
+        exit
+      }
+    }
+    END { exit has_content ? 0 : 1 }
+  ' "${review_file}"
+}
+
+policy_block_reason() {
+  local claude="$1"
+  local gemini="$2"
+  local codex_architect="$3"
+  local codex_test="$4"
+
+  if split_context_active; then
+    if is_approval "${claude}" && ! review_covers_split_context "${CLAUDE_FILE}" "${SPLIT_CONTEXT_MANIFEST_FILE}"; then
+      echo "split_context_without_synthesis"
+      return 0
+    fi
+    if is_approval "${gemini}" && ! review_covers_split_context "${GEMINI_FILE}" "${SPLIT_CONTEXT_MANIFEST_FILE}"; then
+      echo "split_context_without_synthesis"
+      return 0
+    fi
+  fi
+
+  if [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ]; then
+    if is_approval "${codex_architect}" && ! fallback_has_direct_file_inspection "${CODEX_ARCHITECT_FALLBACK_FILE}"; then
+      echo "codex_fallback_missing_direct_file_inspection"
+      return 0
+    fi
+    if is_approval "${codex_test}" && ! fallback_has_direct_file_inspection "${CODEX_TEST_FALLBACK_FILE}"; then
+      echo "codex_fallback_missing_direct_file_inspection"
+      return 0
+    fi
+  fi
+
+  echo "none"
+}
+
 decision_reason() {
   local claude="$1"
   local gemini="$2"
@@ -370,6 +455,7 @@ GEMINI_FILE="$(manifest_file 'Gemini result' 'gemini-review-*.md')"
 CODEX_ARCHITECT_FALLBACK_FILE="$(manifest_file 'Codex architect fallback' 'codex-architect-fallback-*.md')"
 CODEX_TEST_FALLBACK_FILE="$(manifest_file 'Codex test fallback' 'codex-test-fallback-*.md')"
 CODEX_FALLBACK_SUMMARY_FILE="$(manifest_file 'Codex fallback summary' 'codex-fallback-summary-*.md')"
+SPLIT_CONTEXT_MANIFEST_FILE="$(manifest_file 'Split context manifest' 'split-review-manifest.md')"
 CODEX_FALLBACK_REQUIRED=0
 if [ -n "${CODEX_FALLBACK_SUMMARY_FILE}" ] && [ -f "${CODEX_FALLBACK_SUMMARY_FILE}" ] && grep -q '^informational_only$' "${CODEX_FALLBACK_SUMMARY_FILE}"; then
   CODEX_FALLBACK_REQUIRED=1
@@ -386,6 +472,11 @@ fi
 FINAL_DECISION="$(final_decision "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}" "${CODEX_TEST_VERDICT}")"
 REVIEW_COVERAGE="$(review_coverage "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}" "${CODEX_TEST_VERDICT}")"
 DECISION_REASON="$(decision_reason "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}" "${CODEX_TEST_VERDICT}")"
+POLICY_BLOCK_REASON="$(policy_block_reason "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}" "${CODEX_TEST_VERDICT}")"
+if [ "${POLICY_BLOCK_REASON}" != "none" ] && { [ "${FINAL_DECISION}" = "proceed" ] || [ "${FINAL_DECISION}" = "proceed_degraded" ]; }; then
+  FINAL_DECISION="review_manually"
+  DECISION_REASON="${POLICY_BLOCK_REASON}"
+fi
 MISSING_REVIEWERS="$(missing_reviewers "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}")"
 CODEX_FALLBACK_COVERAGE="none"
 if is_usable_review "${CODEX_ARCHITECT_VERDICT}" || is_usable_review "${CODEX_TEST_VERDICT}"; then
@@ -434,6 +525,10 @@ ${MISSING_REVIEWERS}
 ${CODEX_FALLBACK_COVERAGE}
 
 Codex fallback coverage is degraded and informational-only. It is not independent Claude or Gemini reviewer approval.
+
+## Split Context Manifest
+
+${SPLIT_CONTEXT_MANIFEST_FILE:-none}
 
 ## Disabled Reviewer Reporting
 

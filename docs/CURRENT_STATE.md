@@ -94,14 +94,14 @@ Current behavior:
 - model availability inferred from local help/config must be reported as inferred; do not present uncertain provider/model availability as fact
 - long-session quality management draft is in `docs/SESSION_QUALITY_PLAN.md`; it covers model routing cache, Codex native goal mode boundaries, working memory, checkpoints, and token/context hygiene
 - Claude review runs automatically if claude is available.
-- Gemini review runs automatically if gemini is available.
+- Gemini review runs automatically if the configured Gemini review command is available; the default command is Antigravity CLI `agy`.
 - Gemini can be disabled for a specific run with RUN_GEMINI_REVIEW=0.
 - REVIEW_EXECUTION_MODE=external prepares review prompts and a runner script for unrestricted interactive execution.
 - Reviewer failures are captured instead of blocking the whole script.
 - Claude is invoked in non-interactive print mode when supported.
 - Claude uses plan permission mode when supported.
 - Claude has a shorter default reviewer timeout in agent-run contexts.
-- Gemini is invoked in non-interactive prompt mode.
+- Gemini review is invoked through `GEMINI_REVIEW_COMMAND` in non-interactive prompt mode when supported.
 - Gemini uses plan approval mode, skip-trust, and text output when supported.
 - Large Gemini prompts switch to stdin mode to avoid command-line argument length limits.
 - Review context, prompts, and results can use separate output directories.
@@ -215,8 +215,9 @@ Domain-specific standards are separated from the generic `aiinit` template.
 optional domain packs into `.omx/domain-packs/` as ignored onboarding
 references.
 
-Current optional domain pack:
+Current optional domain packs:
 
+- `templates/domain-packs/browser-macro/`
 - `templates/domain-packs/odoo/`
 
 The shorter global command is:
@@ -506,7 +507,8 @@ Current handling:
 - `REVIEW_TIMEOUT_KILL_AFTER_SECONDS` applies to both Claude and Gemini timeout cleanup
 - Claude is the current stable external reviewer
 - Gemini absence or failure is reported as incomplete review coverage
-- automation doctor reports Gemini CLI capability signals from `gemini --help`,
+- automation doctor reports Gemini review command capability signals from
+  `${GEMINI_REVIEW_COMMAND:-agy} --help`,
   including prompt mode, approval mode, skip-trust, output format, explicit
   model flag support, timeout default, and stdin threshold
 

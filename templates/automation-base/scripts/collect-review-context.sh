@@ -165,6 +165,34 @@ write_diff() {
   echo "No staged or unstaged tracked diff detected. Untracked files, if any, are shown in the Untracked Files section."
 }
 
+write_markdown_file() {
+  local file="$1"
+  echo "### $file"
+  echo
+  echo '```markdown'
+  sed -n '1,200p' "$file"
+  echo '```'
+  echo
+}
+
+collect_review_reference_files() {
+  local file
+  for file in AGENTS.md docs/WORKFLOW.md docs/AI_ROLES.md; do
+    if [ -f "$file" ]; then
+      printf '%s\n' "$file"
+    fi
+  done
+
+  if [ -d docs/runbooks ]; then
+    find docs/runbooks -maxdepth 1 -type f -name '*.md' \
+      ! -name '*.generated.md' \
+      ! -name '*-generated.md' \
+      ! -name '*.runtime.md' \
+      ! -name '*-runtime.md' \
+      | sort | tail -8
+  fi
+}
+
 LIGHTWEIGHT_CONTEXT=0
 if use_lightweight_context; then
   LIGHTWEIGHT_CONTEXT=1
@@ -290,16 +318,11 @@ fi
     echo "Omitted in lightweight context. Set REVIEW_CONTEXT_DETAIL=full when AGENTS.md, docs/WORKFLOW.md, or docs/AI_ROLES.md content is needed."
     echo
   else
-  for file in AGENTS.md docs/WORKFLOW.md docs/AI_ROLES.md; do
+  while IFS= read -r file; do
     if [ -f "$file" ]; then
-      echo "### $file"
-      echo
-      echo '```markdown'
-      sed -n '1,200p' "$file"
-      echo '```'
-      echo
+      write_markdown_file "$file"
     fi
-  done
+  done < <(collect_review_reference_files)
   fi
 } > "${OUT_FILE}"
 

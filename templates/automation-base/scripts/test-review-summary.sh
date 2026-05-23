@@ -16,7 +16,7 @@ write_verdict() {
   local file="$1"
   local verdict="$2"
 
-  printf '# Review\n\n## Verdict\n\n%s\n' "${verdict}" > "${file}"
+  printf '# Review\n\n## Verdict\n\n%s\n\n## Direct File Inspection\n\n- fixture.md\n' "${verdict}" > "${file}"
 }
 
 write_skipped() {
@@ -128,6 +128,7 @@ write_run_summary() {
   local architect="$4"
   local test_fallback="$5"
   local fallback_summary="$6"
+  local split_manifest="${7:-none}"
 
   cat > "${dir}/review-summary-current.md" <<MSG
 # AI Review Summary
@@ -139,6 +140,7 @@ write_run_summary() {
 - Codex architect fallback: ${architect}
 - Codex test fallback: ${test_fallback}
 - Codex fallback summary: ${fallback_summary}
+- Split context manifest: ${split_manifest}
 MSG
 }
 
@@ -418,6 +420,148 @@ case_valid_request_changes_with_skipped_word() {
   assert_summary "valid_request_changes_with_skipped_word" "revise" "codex_only_degraded" 1 "claude:skipped, gemini:skipped"
 }
 
+case_split_manifest_approval_blocks_without_synthesis() {
+  local dir="${TMP_ROOT}/split_manifest_approval_blocks_without_synthesis"
+  mkdir -p "${dir}/split-review-context"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf '# Split Review Manifest\n\n## Parts\n\n- %s/split-review-context/part-0001.md\n- %s/split-review-context/part-0002.md\n' "${dir}" "${dir}" > "${dir}/split-review-manifest.md"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "${dir}/split-review-manifest.md"
+
+  assert_summary "split_manifest_approval_blocks_without_synthesis" "review_manually" "multi_reviewer" 1
+}
+
+case_split_manifest_prompt_echo_blocks_without_synthesis_section() {
+  local dir="${TMP_ROOT}/split_manifest_prompt_echo_blocks_without_synthesis_section"
+  mkdir -p "${dir}/split-review-context"
+
+  cat > "${dir}/claude-review-current.md" <<'MSG'
+# Prompt Echo
+
+# Review Context Overflow
+
+Return request_changes unless a synthesis review explicitly lists every part used.
+
+## Parts
+
+- /tmp/fixture/split-review-context/part-0001.md
+- /tmp/fixture/split-review-context/part-0002.md
+
+## Verdict
+
+approve
+MSG
+  cp "${dir}/claude-review-current.md" "${dir}/gemini-review-current.md"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf '# Split Review Manifest\n\n## Parts\n\n- /tmp/fixture/split-review-context/part-0001.md\n- /tmp/fixture/split-review-context/part-0002.md\n' > "${dir}/split-review-manifest.md"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "${dir}/split-review-manifest.md"
+
+  assert_summary "split_manifest_prompt_echo_blocks_without_synthesis_section" "review_manually" "multi_reviewer" 1
+}
+
+case_split_manifest_synthesis_lists_only_blocks() {
+  local dir="${TMP_ROOT}/split_manifest_synthesis_lists_only_blocks"
+  mkdir -p "${dir}/split-review-context"
+
+  cat > "${dir}/claude-review-current.md" <<'MSG'
+# Review
+
+## Verdict
+
+approve
+
+## Synthesis
+
+Processed split-review-context/part-0001.md and split-review-context/part-0002.md.
+MSG
+  cp "${dir}/claude-review-current.md" "${dir}/gemini-review-current.md"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf '# Split Review Manifest\n\n## Parts\n\n- %s/split-review-context/part-0001.md\n- %s/split-review-context/part-0002.md\n' "${dir}" "${dir}" > "${dir}/split-review-manifest.md"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "${dir}/split-review-manifest.md"
+
+  assert_summary "split_manifest_synthesis_lists_only_blocks" "review_manually" "multi_reviewer" 1
+}
+
+case_split_manifest_synthesis_allows_approval() {
+  local dir="${TMP_ROOT}/split_manifest_synthesis_allows_approval"
+  mkdir -p "${dir}/split-review-context"
+
+  cat > "${dir}/claude-review-current.md" <<'MSG'
+# Review
+
+## Verdict
+
+approve
+
+## Synthesis
+
+- split-review-context/part-0001.md: reviewed with no blocking findings.
+- split-review-context/part-0002.md: reviewed with no blocking findings.
+MSG
+  cat > "${dir}/gemini-review-current.md" <<'MSG'
+# Review
+
+## Verdict
+
+approve_with_notes
+
+## Synthesis
+
+- split-review-context/part-0001.md: reviewed with no blocking findings.
+- split-review-context/part-0002.md: reviewed with no blocking findings.
+MSG
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf '# Split Review Manifest\n\n## Parts\n\n- %s/split-review-context/part-0001.md\n- %s/split-review-context/part-0002.md\n' "${dir}" "${dir}" > "${dir}/split-review-manifest.md"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "${dir}/split-review-manifest.md"
+
+  assert_summary "split_manifest_synthesis_allows_approval" "proceed" "multi_reviewer" 0
+}
+
+case_codex_fallback_without_direct_inspection_blocks() {
+  local dir="${TMP_ROOT}/codex_fallback_without_direct_inspection_blocks"
+  mkdir -p "${dir}"
+
+  write_skipped "${dir}/claude-review-current.md"
+  write_skipped "${dir}/gemini-review-current.md"
+  printf '# Review\n\n## Verdict\n\napprove\n' > "${dir}/codex-architect-current.md"
+  write_verdict "${dir}/codex-test-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "codex_fallback_without_direct_inspection_blocks" "review_manually" "codex_only_degraded" 1 "claude:skipped, gemini:skipped"
+}
+
 case_multi_reviewer
 case_single_external_plus_codex
 case_codex_only_degraded
@@ -429,5 +573,10 @@ case_failed_reviewer_skipped_text_ignored
 case_valid_review_with_failure_words
 case_valid_review_with_fenced_failure_footer
 case_valid_request_changes_with_skipped_word
+case_split_manifest_approval_blocks_without_synthesis
+case_split_manifest_prompt_echo_blocks_without_synthesis_section
+case_split_manifest_synthesis_lists_only_blocks
+case_split_manifest_synthesis_allows_approval
+case_codex_fallback_without_direct_inspection_blocks
 
 echo "[summary-test] success"

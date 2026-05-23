@@ -4,10 +4,12 @@ set -euo pipefail
 CONTEXT_FILE="${1:-.omx/review-context/latest-review-context.md}"
 OUT_DIR="${OUT_DIR:-.omx/review-prompts}"
 REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-300000}"
-FOCUSED_CONTEXT_DIFF_MAX_BYTES="${FOCUSED_CONTEXT_DIFF_MAX_BYTES:-120000}"
-FOCUSED_CONTEXT_UNTRACKED_MAX_BYTES="${FOCUSED_CONTEXT_UNTRACKED_MAX_BYTES:-102400}"
+REVIEW_CONTEXT_SPLIT_LINES="${REVIEW_CONTEXT_SPLIT_LINES:-400}"
+REVIEW_CONTEXT_SPLIT_BYTES="${REVIEW_CONTEXT_SPLIT_BYTES:-${REVIEW_CONTEXT_MAX_BYTES}}"
 
 mkdir -p "${OUT_DIR}"
+rm -f "${OUT_DIR}/split-review-manifest.md"
+rm -rf "${OUT_DIR}/split-review-context"
 
 if [ ! -f "${CONTEXT_FILE}" ]; then
   echo "Review context file not found: ${CONTEXT_FILE}"
@@ -16,83 +18,92 @@ if [ ! -f "${CONTEXT_FILE}" ]; then
 fi
 
 ORIGINAL_CONTEXT_FILE="${CONTEXT_FILE}"
+SPLIT_MANIFEST_FILE=""
 context_bytes="$(wc -c < "${CONTEXT_FILE}")"
 if [ "${context_bytes}" -gt "${REVIEW_CONTEXT_MAX_BYTES}" ]; then
-  FOCUSED_CONTEXT_FILE="${OUT_DIR}/focused-review-context.md"
-  FOCUSED_DIFF_FILE="$(mktemp "${OUT_DIR}/focused-diff.XXXXXX")"
-  {
-    git diff
-    git diff --cached
-    while IFS= read -r -d '' file; do
-      [ -f "$file" ] || continue
-      grep -qI '' "$file" 2>/dev/null || continue
-      size="$(wc -c < "$file" | tr -d ' ')"
-      if [ "$size" -gt "$FOCUSED_CONTEXT_UNTRACKED_MAX_BYTES" ]; then
-        echo "diff --git a/${file} b/${file}"
-        echo "# skipped untracked file content: ${file} is ${size} bytes, limit is ${FOCUSED_CONTEXT_UNTRACKED_MAX_BYTES}"
-        continue
-      fi
-      git diff --no-index -- /dev/null "$file" || true
-    done < <(git ls-files -z --others --exclude-standard)
-  } > "${FOCUSED_DIFF_FILE}"
-  focused_diff_bytes="$(wc -c < "${FOCUSED_DIFF_FILE}")"
-  {
-    echo "# Focused Review Context"
-    echo
-    echo "The original review context was ${context_bytes} bytes and exceeded REVIEW_CONTEXT_MAX_BYTES=${REVIEW_CONTEXT_MAX_BYTES}."
-    echo "This focused context keeps the review bounded so external reviewers do not have to consume the full dirty workspace context."
-    echo "Reviewer recovery must stay on the local CLI path; do not request API-key mode or weaker gate criteria."
-    echo "If this focused context is insufficient, return request_changes and name the missing file or section."
-    echo
-    echo "## Source Context"
-    echo
-    echo "- Full context: ${ORIGINAL_CONTEXT_FILE}"
-    echo
-    echo "## Changed Files"
-    echo
-    echo '```text'
-    git diff --name-only
-    git diff --cached --name-only
-    git ls-files --others --exclude-standard
-    echo '```'
-    echo
-    echo "## Diff Stat"
-    echo
-    echo '```text'
-    git diff --stat
-    git diff --cached --stat
-    echo '```'
-    echo
-    echo "## Bounded Actual Diff"
-    echo
-    echo "This section preserves actual patch content before the head/tail excerpts. It is capped at FOCUSED_CONTEXT_DIFF_MAX_BYTES=${FOCUSED_CONTEXT_DIFF_MAX_BYTES}."
-    echo
-    echo '```diff'
-    if [ "${focused_diff_bytes}" -gt 0 ]; then
-      head -c "${FOCUSED_CONTEXT_DIFF_MAX_BYTES}" "${FOCUSED_DIFF_FILE}"
-      echo
-      if [ "${focused_diff_bytes}" -gt "${FOCUSED_CONTEXT_DIFF_MAX_BYTES}" ]; then
-        echo "# focused diff truncated: ${focused_diff_bytes} bytes total, limit is ${FOCUSED_CONTEXT_DIFF_MAX_BYTES}"
-      fi
-    else
-      echo "# no tracked diff or untracked text content available"
+  is_positive_integer='^[0-9]+$'
+  if ! printf '%s\n' "${REVIEW_CONTEXT_SPLIT_LINES}" | grep -Eq "${is_positive_integer}" || [ "${REVIEW_CONTEXT_SPLIT_LINES}" -lt 1 ]; then
+    echo "Invalid REVIEW_CONTEXT_SPLIT_LINES=${REVIEW_CONTEXT_SPLIT_LINES}; expected a positive integer" >&2
+    exit 2
+  fi
+  if ! printf '%s\n' "${REVIEW_CONTEXT_SPLIT_BYTES}" | grep -Eq "${is_positive_integer}" || [ "${REVIEW_CONTEXT_SPLIT_BYTES}" -lt 1 ]; then
+    echo "Invalid REVIEW_CONTEXT_SPLIT_BYTES=${REVIEW_CONTEXT_SPLIT_BYTES}; expected a positive integer" >&2
+    exit 2
+  fi
+
+  SPLIT_DIR="${OUT_DIR}/split-review-context"
+  rm -rf "${SPLIT_DIR}"
+  mkdir -p "${SPLIT_DIR}"
+
+  LC_ALL=C awk -v outdir="${SPLIT_DIR}" -v lines="${REVIEW_CONTEXT_SPLIT_LINES}" -v bytes="${REVIEW_CONTEXT_SPLIT_BYTES}" '
+    BEGIN { part = 1; line_in_part = 0; part_bytes = 0; file = sprintf("%s/part-%04d.body.md", outdir, part) }
+    {
+      line_bytes = length($0) + 1
+      if (line_in_part > 0 && (line_in_part >= lines || part_bytes + line_bytes > bytes)) {
+        close(file)
+        part++
+        line_in_part = 0
+        part_bytes = 0
+        file = sprintf("%s/part-%04d.body.md", outdir, part)
+      }
+      print $0 >> file
+      line_in_part++
+      part_bytes += line_bytes
+    }
+  ' "${CONTEXT_FILE}"
+
+  part_count="$(find "${SPLIT_DIR}" -maxdepth 1 -type f -name 'part-*.body.md' | wc -l | tr -d ' ')"
+  for body in "${SPLIT_DIR}"/part-*.body.md; do
+    [ -f "${body}" ] || continue
+    part_name="$(basename "${body}" .body.md)"
+    part_number="$(printf '%s\n' "${part_name}" | sed 's/^part-//; s/^0*//')"
+    if [ -z "${part_number}" ]; then
+      part_number=0
     fi
-    echo '```'
+    part_file="${SPLIT_DIR}/${part_name}.md"
+    body_bytes="$(wc -c < "${body}")"
+    if [ "${body_bytes}" -gt "${REVIEW_CONTEXT_SPLIT_BYTES}" ]; then
+      echo "Split review part ${body} is ${body_bytes} bytes and exceeds REVIEW_CONTEXT_SPLIT_BYTES=${REVIEW_CONTEXT_SPLIT_BYTES}" >&2
+      echo "A single context line may be too large to review safely without truncation." >&2
+      exit 2
+    fi
+    {
+      echo "# Split Review Context ${part_number}/${part_count}"
+      echo
+      echo "Original context: ${ORIGINAL_CONTEXT_FILE}"
+      echo "Original bytes: ${context_bytes}"
+      echo "Part lines limit: ${REVIEW_CONTEXT_SPLIT_LINES}"
+      echo "Part body bytes: ${body_bytes}"
+      echo "Part body byte limit: ${REVIEW_CONTEXT_SPLIT_BYTES}"
+      echo
+      echo "Do not issue a final review verdict from this part alone. A final verdict requires all parts or a synthesized review that explicitly lists every part with a non-empty per-part observation."
+      echo
+      cat "${body}"
+    } > "${part_file}"
+    rm -f "${body}"
+  done
+
+  SPLIT_MANIFEST_FILE="${OUT_DIR}/split-review-manifest.md"
+  {
+    echo "# Split Review Manifest"
     echo
-    echo "## Context Head"
+    echo "The original review context exceeded the configured reviewer limit and was split instead of silently compressed."
     echo
-    echo '```markdown'
-    sed -n '1,220p' "${ORIGINAL_CONTEXT_FILE}"
-    echo '```'
+    echo "- Original context: ${ORIGINAL_CONTEXT_FILE}"
+    echo "- Original bytes: ${context_bytes}"
+    echo "- REVIEW_CONTEXT_MAX_BYTES: ${REVIEW_CONTEXT_MAX_BYTES}"
+    echo "- REVIEW_CONTEXT_SPLIT_LINES: ${REVIEW_CONTEXT_SPLIT_LINES}"
+    echo "- REVIEW_CONTEXT_SPLIT_BYTES: ${REVIEW_CONTEXT_SPLIT_BYTES}"
+    echo "- Part count: ${part_count}"
     echo
-    echo "## Context Tail"
+    echo "## Review Protocol"
     echo
-    echo '```markdown'
-    tail -220 "${ORIGINAL_CONTEXT_FILE}"
-    echo '```'
-  } > "${FOCUSED_CONTEXT_FILE}"
-  rm -f "${FOCUSED_DIFF_FILE}"
-  CONTEXT_FILE="${FOCUSED_CONTEXT_FILE}"
+    echo "A reviewer must not issue a final verdict from a truncated head/tail excerpt. Process every part in order, then issue one final verdict. If the reviewer surface cannot process ordered parts in one stateful conversation, produce per-part observations first and run a separate synthesis review over those observations. A valid synthesis must include one non-empty observation line for every part."
+    echo
+    echo "## Parts"
+    echo
+    find "${SPLIT_DIR}" -maxdepth 1 -type f -name 'part-*.md' | sort | sed 's/^/- /'
+  } > "${SPLIT_MANIFEST_FILE}"
 fi
 
 CLAUDE_PROMPT="${OUT_DIR}/claude-review.md"
@@ -102,6 +113,11 @@ cat > "${CLAUDE_PROMPT}" <<PROMPT
 # Claude Review Request
 
 You are reviewing a small Codex-generated change in this repository.
+
+Use only the review context embedded in this prompt. Do not run shell commands,
+inspect repository files, invoke tools, or start a fresh verification run. If the
+embedded context is insufficient for a confident review, return request_changes
+and name the missing context.
 
 Focus on:
 
@@ -150,12 +166,31 @@ Give a short final recommendation.
 ---
 PROMPT
 
-cat "${CONTEXT_FILE}" >> "${CLAUDE_PROMPT}"
+if [ -n "${SPLIT_MANIFEST_FILE}" ]; then
+  cat >> "${CLAUDE_PROMPT}" <<PROMPT
+# Review Context Overflow
+
+The full review context is too large for a single bounded external-review prompt.
+It has been split into ordered parts. Do not approve from a head/tail truncation.
+Return request_changes unless all split parts are processed in order or a
+synthesis review explicitly lists every part with a non-empty per-part
+observation.
+
+PROMPT
+  cat "${SPLIT_MANIFEST_FILE}" >> "${CLAUDE_PROMPT}"
+else
+  cat "${CONTEXT_FILE}" >> "${CLAUDE_PROMPT}"
+fi
 
 cat > "${GEMINI_PROMPT}" <<PROMPT
 # Gemini Review Request
 
 You are reviewing a small Codex-generated change in this repository.
+
+Use only the review context embedded in this prompt. Do not run shell commands,
+inspect repository files, invoke tools, or start a fresh verification run. If the
+embedded context is insufficient for a confident review, return request_changes
+and name the missing context.
 
 Focus on:
 
@@ -203,7 +238,21 @@ Give a short final recommendation.
 ---
 PROMPT
 
-cat "${CONTEXT_FILE}" >> "${GEMINI_PROMPT}"
+if [ -n "${SPLIT_MANIFEST_FILE}" ]; then
+  cat >> "${GEMINI_PROMPT}" <<PROMPT
+# Review Context Overflow
+
+The full review context is too large for a single bounded external-review prompt.
+It has been split into ordered parts. Do not approve from a head/tail truncation.
+Return request_changes unless all split parts are processed in order or a
+synthesis review explicitly lists every part with a non-empty per-part
+observation.
+
+PROMPT
+  cat "${SPLIT_MANIFEST_FILE}" >> "${GEMINI_PROMPT}"
+else
+  cat "${CONTEXT_FILE}" >> "${GEMINI_PROMPT}"
+fi
 
 echo "${CLAUDE_PROMPT}"
 echo "${GEMINI_PROMPT}"

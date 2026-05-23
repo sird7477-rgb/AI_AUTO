@@ -123,9 +123,13 @@ Responsibilities:
 Current status:
 
 - implemented as an optional reviewer
-- enabled by default when gemini is available
+- enabled by default when the configured Gemini review command is available; the default command is `agy`
 - disabled only with RUN_GEMINI_REVIEW=0
 - unstable in non-interactive CLI usage
+
+The lane is still called Gemini for reviewer-state and artifact compatibility,
+but the default executable is Antigravity CLI `agy`. Override only the executable
+with `GEMINI_REVIEW_COMMAND` when a project needs a different local command.
 
 Gemini must not block the whole workflow when unavailable.
 

@@ -220,6 +220,21 @@ AI_AUTO() {
     command AI_AUTO "\$@"
   fi
 }
+
+tmux() {
+  if [ "\$#" -ne 0 ]; then
+    command tmux "\$@"
+    return
+  fi
+
+  local session_name
+  session_name=1
+  while command tmux has-session -t "\${session_name}" >/dev/null 2>&1; do
+    session_name=\$((session_name + 1))
+  done
+
+  command tmux new-session -s "\${session_name}"
+}
 EOF
 
   if [ -f "$bashrc_path" ]; then

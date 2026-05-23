@@ -213,20 +213,55 @@ command_help_supports() {
   local help_text="$1"
   local flag="$2"
 
-  printf '%s\n' "$help_text" | grep -q -- "$flag"
+  printf '%s\n' "$help_text" | grep -Eq "(^|[^[:alnum:]_-])${flag}($|[^[:alnum:]_-])"
 }
 
-check_gemini_cli_capabilities() {
-  local gemini_help
+command_help_text() {
+  local command_name="$1"
+  local output=""
 
-  if ! command -v gemini >/dev/null 2>&1; then
+  if command -v timeout >/dev/null 2>&1; then
+    output="$(timeout 10 "$command_name" --help 2>&1 || true)"
+    if [ -n "$output" ]; then
+      printf '%s\n' "$output"
+      return
+    fi
+    output="$(timeout 10 "$command_name" help 2>&1 || true)"
+    if [ -n "$output" ]; then
+      printf '%s\n' "$output"
+      return
+    fi
+    output="$(timeout 10 "$command_name" -h 2>&1 || true)"
+    printf '%s\n' "$output"
     return
   fi
 
-  gemini_help="$(gemini --help 2>/dev/null || true)"
+  output="$("$command_name" --help 2>&1 || true)"
+  if [ -n "$output" ]; then
+    printf '%s\n' "$output"
+    return
+  fi
+  output="$("$command_name" help 2>&1 || true)"
+  if [ -n "$output" ]; then
+    printf '%s\n' "$output"
+    return
+  fi
+  "$command_name" -h 2>&1 || true
+}
+
+check_gemini_cli_capabilities() {
+  local gemini_command gemini_help
+
+  gemini_command="${GEMINI_REVIEW_COMMAND:-agy}"
+
+  if ! command -v "$gemini_command" >/dev/null 2>&1; then
+    return
+  fi
+
+  gemini_help="$(command_help_text "$gemini_command")"
   if [ -z "$gemini_help" ]; then
     say_warn "Gemini help output unavailable; non-interactive review mode could not be inspected"
-    suggest "run gemini --help in an interactive terminal"
+    suggest "run ${gemini_command} --help in an interactive terminal"
     return
   fi
 
@@ -262,6 +297,7 @@ check_gemini_cli_capabilities() {
   fi
 
   printf '[doctor] Gemini review timeout default: %s seconds\n' "${GEMINI_REVIEW_TIMEOUT_SECONDS:-${REVIEW_TIMEOUT_SECONDS:-300}}"
+  printf '[doctor] Gemini review command: %s\n' "${gemini_command}"
   printf '[doctor] Gemini large prompt stdin threshold: %s bytes\n' "${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
 }
 
@@ -398,6 +434,7 @@ ensure_dir "scripts"
 
 REQUIRED_FILES=(
   "AGENTS.md"
+  "docs/CHROME_CDP_ACCESS.md"
   "docs/AI_MODEL_ROUTING.md"
   "docs/AUTOMATION_OPERATING_POLICY.md"
   "docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
@@ -463,7 +500,7 @@ if command -v docker >/dev/null 2>&1; then
 fi
 
 check_command claude warn
-check_command gemini warn
+check_command "${GEMINI_REVIEW_COMMAND:-agy}" warn
 
 check_gemini_cli_capabilities
 

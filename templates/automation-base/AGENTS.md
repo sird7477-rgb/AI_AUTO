@@ -7,6 +7,12 @@ onboarding before feature work begins.
 
 ## Operating Rule
 
+Article 1.1: the best code is code that was never written. Before adding code,
+first check whether the problem can be removed, solved with existing behavior,
+handled by configuration or documentation, simplified, or addressed by deleting
+unneeded code. When code is still necessary, make the smallest verifiable
+change.
+
 Before claiming a task is complete, the agent must:
 
 1. keep the change small and within scope

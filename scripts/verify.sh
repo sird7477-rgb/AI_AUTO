@@ -79,8 +79,12 @@ for ui_completion_doc in \
 do
   grep -q "Playwright CDP Access" "${ui_completion_doc}"
   grep -q "credential-equivalent" "${ui_completion_doc}"
-  grep -q "project-owned wrapper script" "${ui_completion_doc}"
+  grep -q "docs/CHROME_CDP_ACCESS.md" "${ui_completion_doc}"
 done
+grep -q "Chrome CDP Access" docs/CHROME_CDP_ACCESS.md
+grep -q "credential-equivalent" docs/CHROME_CDP_ACCESS.md
+grep -q "project-owned wrapper scripts" docs/CHROME_CDP_ACCESS.md
+cmp -s docs/CHROME_CDP_ACCESS.md templates/automation-base/docs/CHROME_CDP_ACCESS.md
 
 echo "[verify] checking guidance document budget..."
 ./scripts/doc-budget.sh
@@ -154,11 +158,37 @@ echo "[verify] testing guidance document budget accounting..."
   printf 'new guidance line\n' > docs/NEW_GUIDE.md
 
   ./scripts/doc-budget.sh > "${tmp_dir}/budget.out"
+  grep -q "current guidance diff added lines: 3" "${tmp_dir}/budget.out"
   grep -q "current guidance diff net added lines: 3" "${tmp_dir}/budget.out"
 
   printf 'new spaced guidance line\n' > "docs/SPACE GUIDE.md"
   ./scripts/doc-budget.sh > "${tmp_dir}/budget-space.out"
+  grep -q "current guidance diff added lines: 4" "${tmp_dir}/budget-space.out"
   grep -q "current guidance diff net added lines: 4" "${tmp_dir}/budget-space.out"
+
+  git restore --staged docs/WORKFLOW.md
+  git restore AGENTS.md docs/WORKFLOW.md
+  rm -f docs/NEW_GUIDE.md "docs/SPACE GUIDE.md"
+
+  printf 'old guidance line 1\nold guidance line 2\n' > docs/MIXED.md
+  git add docs/MIXED.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed mixed guidance fixture"
+  printf 'new guidance line 1\nnew guidance line 2\n' > docs/MIXED.md
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-mixed.out"
+  grep -q "current guidance diff added lines: 2" "${tmp_dir}/budget-mixed.out"
+  grep -q "current guidance diff net added lines: 0" "${tmp_dir}/budget-mixed.out"
+
+  git restore docs/MIXED.md
+  : > docs/LONG.md
+  for i in $(seq 1 400); do
+    printf 'moved guidance line %s\n' "$i" >> docs/LONG.md
+  done
+  git add docs/LONG.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed refactor guidance fixture"
+  mv docs/LONG.md docs/MOVED.md
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-refactor.out"
+  grep -q "current guidance diff added lines: 400" "${tmp_dir}/budget-refactor.out"
+  grep -q "current guidance diff net added lines: 0" "${tmp_dir}/budget-refactor.out"
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."
@@ -819,17 +849,17 @@ case "${1:-}" in
 esac
 STUB
 
-  cat > "${fake_bin}/gemini" <<'STUB'
+  cat > "${fake_bin}/agy" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-}" in
   --version)
-    echo "gemini fixture ${MODEL_STUB_VERSION:-v1}"
+    echo "agy fixture ${MODEL_STUB_VERSION:-v1}"
     ;;
   --help)
     if [ "${MODEL_STUB_MODE:-supported}" = "unsupported" ]; then
-      echo "Usage: gemini [--model-context <tokens>]"
+      echo "Usage: agy [--model-context <tokens>]"
     else
-      echo "Usage: gemini [-m, --model <model>]"
+      echo "Usage: agy [-m, --model <model>]"
     fi
     ;;
 esac
@@ -850,7 +880,7 @@ elif [ "${1:-}" = "--help" ]; then
 fi
 STUB
 
-  chmod +x "${fake_bin}/claude" "${fake_bin}/gemini" "${fake_bin}/codex"
+  chmod +x "${fake_bin}/claude" "${fake_bin}/agy" "${fake_bin}/codex"
 
   role_default_dir="${tmp_dir}/role-default"
   PATH="${fake_bin}:${PATH}" \
@@ -1135,6 +1165,18 @@ echo "[verify] testing review context edge cases..."
   REVIEW_CONTEXT_DETAIL=full "${context_script}" >/dev/null
   grep -qx "full" .omx/review-context/latest-review-context.md
   grep -q "Module boundaries are documented here" .omx/review-context/latest-review-context.md
+
+  mkdir -p docs/runbooks
+  printf '# Runbook Fixture\n\nOperator steps belong here.\n' > docs/runbooks/active.md
+  printf '# Generated Runbook\n\nShould be omitted.\n' > docs/runbooks/ignored.generated.md
+  printf '# Runtime Runbook\n\nShould be omitted.\n' > docs/runbooks/ignored.runtime.md
+  REVIEW_CONTEXT_DETAIL=full "${context_script}" >/dev/null
+  grep -q "docs/runbooks/active.md" .omx/review-context/latest-review-context.md
+  grep -q "Operator steps belong here" .omx/review-context/latest-review-context.md
+  if grep -q "Should be omitted" .omx/review-context/latest-review-context.md; then
+    echo "[verify] review context included generated/runtime runbook content"
+    exit 1
+  fi
 )
 
 echo "[verify] testing review run manifest and external disabled guidance..."
@@ -1224,20 +1266,16 @@ printf 'missing stdin marker\n'
 exit 1
 STUB
 
-  cat > "${fake_bin}/gemini" <<'STUB'
+  cat > "${fake_bin}/agy" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-}" in
   --help)
-    echo "--prompt"
+    echo "--prompt --skip-trust" >&2
     exit 0
     ;;
 esac
-if grep -q "Truncation Notice"; then
-  printf 'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n'
-  exit 1
-fi
-printf 'expected capped prompt on stdin\n'
-exit 1
+printf 'agy should not run when Gemini prompt exceeds cap\n'
+exit 64
 STUB
 
   cat > "${fake_bin}/codex" <<'STUB'
@@ -1260,7 +1298,7 @@ else
 fi
 STUB
 
-  chmod +x "${fake_bin}/claude" "${fake_bin}/gemini" "${fake_bin}/codex"
+  chmod +x "${fake_bin}/claude" "${fake_bin}/agy" "${fake_bin}/codex"
 
   printf '# Context\n' > "${tmp_dir}/context/latest-review-context.md"
   {
@@ -1289,16 +1327,554 @@ STUB
     REVIEW_RETRY_LIMIT=1 \
     ./scripts/run-ai-reviews.sh > "${tmp_dir}/reviews.out"
 
-  test -f "${tmp_dir}/prompts/gemini-review-capped-"*.md
-  grep -q "reason=retry_exhausted" "${tmp_dir}/state/gemini.disabled"
-  grep -q "class=oom" "${tmp_dir}/state/gemini.disabled"
-  grep -q "exit_status=1" "${tmp_dir}/state/gemini.disabled"
-  grep -q "preflight=prompt_bytes=" "${tmp_dir}/state/gemini.disabled"
-  grep -q "prompt_flag=yes" "${tmp_dir}/state/gemini.disabled"
-  grep -q "api_env=missing" "${tmp_dir}/state/gemini.disabled"
+  if find "${tmp_dir}/prompts" -maxdepth 1 -type f -name 'gemini-review-capped-*.md' | grep -q .; then
+    echo "[verify] Gemini oversized prompt was silently capped"
+    exit 1
+  fi
+  gemini_result="$(find "${tmp_dir}/results" -maxdepth 1 -type f -name 'gemini-review-*.md' -print | head -1)"
+  test -f "${gemini_result}"
+  grep -q "request_changes" "${gemini_result}"
+  grep -q "exceeds GEMINI_PROMPT_MAX_BYTES=120" "${gemini_result}"
+  grep -q "must not truncate the prompt" "${gemini_result}"
+  grep -q "Gemini prompt too large; wrote request_changes without truncating" "${tmp_dir}/reviews.out"
 )
 
-echo "[verify] testing focused review context budgeting..."
+echo "[verify] testing Codex fallback direct-file review prompts..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_codex_fallback_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_codex_fallback_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}/repo"
+  cd "${tmp_dir}/repo"
+  mkdir -p .omx/review-prompts .omx/review-context src "${tmp_dir}/bin"
+  printf 'print("review me")\n' > src/review_target.py
+  printf '# Claude Review\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n' > .omx/review-prompts/gemini-review.md
+  printf '# Context\n\n## Changed Files\n\n```text\nsrc/review_target.py\n```\n' > .omx/review-context/latest-review-context.md
+
+  cat > "${tmp_dir}/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--help" ]; then
+  echo "usage: codex exec --model"
+  exit 0
+fi
+
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+
+cat > "${out}.prompt-copy"
+cat > "${out}" <<'MSG'
+# Codex Fallback
+
+## Verdict
+
+approve_with_notes
+
+## Direct File Inspection
+
+- src/review_target.py
+
+## Fallback Boundary
+
+Codex/GPT fallback coverage only; not independent external review.
+MSG
+STUB
+  chmod +x "${tmp_dir}/bin/codex"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+    SKIP_CONTEXT_GENERATION=1 \
+    AI_MODEL_DISCOVERY=0 \
+    RUN_CLAUDE_REVIEW=0 \
+    RUN_GEMINI_REVIEW=0 \
+    OUT_DIR=.omx/review-results \
+    CONTEXT_DIR=.omx/review-context \
+    PROMPT_DIR=.omx/review-prompts \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  architect_prompt="$(find .omx/review-results -maxdepth 1 -type f -name 'codex-architect-fallback-*.md.prompt-copy' -print | head -1)"
+  test -f "${architect_prompt}"
+  grep -q "Direct File Review" "${architect_prompt}"
+  grep -q "read the referenced files directly from the workspace" "${architect_prompt}"
+  grep -q "src/review_target.py" "${architect_prompt}"
+  grep -q "Direct File Inspection" "${architect_prompt}"
+)
+
+echo "[verify] testing agy help detection uses exact stderr flags..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_agy_help_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_agy_help_tmp EXIT
+
+  mkdir -p "${tmp_dir}/repo/.omx/review-prompts" "${tmp_dir}/repo/.omx/review-context" "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  printf '# Claude Review\n\n## Verdict\n\napprove\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n\n## Verdict\n\napprove\n' > .omx/review-prompts/gemini-review.md
+  printf '# Context\n' > .omx/review-context/latest-review-context.md
+
+  cat > "${tmp_dir}/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: claude --print"
+  exit 0
+fi
+printf '# Claude Review\n\n## Verdict\n\napprove\n'
+STUB
+  chmod +x "${tmp_dir}/bin/claude"
+
+  cat > "${tmp_dir}/bin/agy" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: agy review --prompt-file PATH --output-format text --skip-trust" >&2
+  exit 0
+fi
+
+for arg in "$@"; do
+  if [ "${arg}" = "--prompt" ]; then
+    echo "agy fixture should not receive standalone --prompt when help only has --prompt-file"
+    exit 64
+  fi
+done
+
+cat > "${AGY_STDIN_CAPTURE}"
+printf '# Gemini Review\n\n## Verdict\n\napprove_with_notes\n'
+STUB
+  chmod +x "${tmp_dir}/bin/agy"
+
+  cat > "${tmp_dir}/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      out="${2:-}"
+      shift
+      ;;
+  esac
+  shift
+done
+cat >/dev/null
+if [ -n "$out" ]; then
+  printf '## Verdict\n\napprove_with_notes\n\n## Direct File Inspection\n\n- README.md\n' > "$out"
+else
+  printf '## Verdict\n\napprove_with_notes\n\n## Direct File Inspection\n\n- README.md\n'
+fi
+STUB
+  chmod +x "${tmp_dir}/bin/codex"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+    AGY_STDIN_CAPTURE="${tmp_dir}/agy.stdin" \
+    SKIP_CONTEXT_GENERATION=1 \
+    AI_MODEL_DISCOVERY=0 \
+    OUT_DIR=.omx/review-results \
+    CONTEXT_DIR=.omx/review-context \
+    PROMPT_DIR=.omx/review-prompts \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  grep -q "# Gemini Review" "${tmp_dir}/agy.stdin"
+  grep -q "## Verdict" "$(find .omx/review-results -maxdepth 1 -type f -name 'gemini-review-*.md' -print | head -1)"
+)
+
+echo "[verify] testing agy print timeout flag and no-tool prompt guidance..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_agy_timeout_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_agy_timeout_tmp EXIT
+
+  mkdir -p "${tmp_dir}/repo/.omx/review-context" "${tmp_dir}/repo/.omx/review-results" "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  printf 'seed\n' > README.md
+  git add README.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m seed
+  printf 'changed\n' > README.md
+  printf '# Context\n\nsmall\n' > .omx/review-context/latest-review-context.md
+  OUT_DIR=.omx/review-prompts "${repo_root}/scripts/make-review-prompts.sh" .omx/review-context/latest-review-context.md >/dev/null
+
+  cat > "${tmp_dir}/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '# Claude Review\n\nSkipped: disabled for fixture\n'
+STUB
+  chmod +x "${tmp_dir}/bin/claude"
+
+  cat > "${tmp_dir}/bin/agy" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: agy --prompt --print-timeout"
+  exit 0
+fi
+
+printf '%s\n' "$*" > "${AGY_ARGS_CAPTURE}"
+printf '# Gemini Review\n\n## Verdict\n\napprove_with_notes\n'
+STUB
+  chmod +x "${tmp_dir}/bin/agy"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+    AGY_ARGS_CAPTURE="${tmp_dir}/agy.args" \
+    AI_MODEL_DISCOVERY=0 \
+    RUN_CLAUDE_REVIEW=0 \
+    RUN_CODEX_FALLBACK_REVIEW=0 \
+    SKIP_CONTEXT_GENERATION=1 \
+    REVIEW_RETRY_LIMIT=1 \
+    GEMINI_REVIEW_TIMEOUT_SECONDS=77 \
+    OUT_DIR=.omx/review-results \
+    CONTEXT_DIR=.omx/review-context \
+    PROMPT_DIR=.omx/review-prompts \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  grep -q -- "--print-timeout 77s" "${tmp_dir}/agy.args"
+  grep -q "Use only the review context embedded in this prompt" .omx/review-prompts/gemini-review.md
+  grep -q "Do not run shell commands" .omx/review-prompts/gemini-review.md
+  grep -q 'REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-100000}"' "${repo_root}/scripts/run-ai-reviews.sh"
+)
+
+echo "[verify] testing agy split review runner..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_agy_split_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_agy_split_tmp EXIT
+
+  mkdir -p \
+    "${tmp_dir}/repo/.omx/review-context" \
+    "${tmp_dir}/repo/.omx/review-prompts/split-review-context" \
+    "${tmp_dir}/repo/.omx/review-results" \
+    "${tmp_dir}/repo/.omx/reviewer-state" \
+    "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  printf 'seed\n' > README.md
+  git add README.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m seed
+  printf 'changed\n' > README.md
+  printf '# Context\n\nlarge split context\n' > .omx/review-context/latest-review-context.md
+  printf '# Claude Review\n\nSkipped in fixture.\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n\nUse split context.\n' > .omx/review-prompts/gemini-review.md
+  printf '# Split Review Manifest\n\n- part-0001.md\n- part-0002.md\n' > .omx/review-prompts/split-review-manifest.md
+  printf '# Part 1\n\nfirst split payload\n' > .omx/review-prompts/split-review-context/part-0001.md
+  printf '# Part 2\n\nsecond split payload\n' > .omx/review-prompts/split-review-context/part-0002.md
+
+  cat > "${tmp_dir}/bin/agy" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: agy --prompt --print-timeout --skip-trust --output-format"
+  exit 0
+fi
+
+prompt=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prompt)
+      prompt="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ "${prompt}" = "Review the Markdown prompt provided on stdin." ]; then
+  prompt="$(cat)"
+fi
+
+# Real reviewer CLIs may still inspect stdin even when --prompt is used. The
+# split runner must not depend on a while-read stdin stream surviving that.
+cat >/dev/null || true
+
+printf 'call\n' >> "${AGY_CALL_LOG}"
+
+case "${prompt}" in
+  *"# Gemini Split Review Synthesis Request"*)
+    case "${prompt}" in
+      *"part-0001.md: reviewed first split part."*"part-0002.md: reviewed second split part."*) ;;
+      *)
+        printf 'synthesis prompt missing per-part observations\n' >&2
+        exit 65
+        ;;
+    esac
+    cat <<'MSG'
+# Gemini Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+No blocking findings.
+
+## Synthesis
+
+- part-0001.md: reviewed first split part.
+- part-0002.md: reviewed second split part.
+
+## Final Recommendation
+
+Proceed with notes.
+MSG
+    ;;
+  *"# Gemini Split Review Part"*"part-0001.md"*)
+    cat <<'MSG'
+# Gemini Part Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+No blocking findings.
+
+## Part Observation
+
+part-0001.md: reviewed first split part.
+
+## Final Recommendation
+
+Include in synthesis.
+MSG
+    ;;
+  *"# Gemini Split Review Part"*"part-0002.md"*)
+    cat <<'MSG'
+# Gemini Part Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+No blocking findings.
+
+## Part Observation
+
+part-0002.md: reviewed second split part.
+
+## Final Recommendation
+
+Include in synthesis.
+MSG
+    ;;
+  *)
+    printf 'unexpected agy prompt\n' >&2
+    exit 65
+    ;;
+esac
+STUB
+  chmod +x "${tmp_dir}/bin/agy"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+    AGY_CALL_LOG="${tmp_dir}/agy.calls" \
+    AI_MODEL_DISCOVERY=0 \
+    RUN_CLAUDE_REVIEW=0 \
+    RUN_CODEX_FALLBACK_REVIEW=0 \
+    SKIP_CONTEXT_GENERATION=1 \
+    REVIEW_RETRY_LIMIT=1 \
+    GEMINI_REVIEW_TIMEOUT_SECONDS=77 \
+    OUT_DIR=.omx/review-results \
+    CONTEXT_DIR=.omx/review-context \
+    PROMPT_DIR=.omx/review-prompts \
+    REVIEW_STATE_DIR=.omx/reviewer-state \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  gemini_result="$(find .omx/review-results -maxdepth 1 -type f -name 'gemini-review-*.md' -print | head -1)"
+  test -f "${gemini_result}"
+  grep -q "approve_with_notes" "${gemini_result}"
+  grep -q -- "- part-0001.md: reviewed first split part." "${gemini_result}"
+  grep -q -- "- part-0002.md: reviewed second split part." "${gemini_result}"
+  test -f "$(find .omx/review-results -path '*/gemini-split-*/part-0001-review.md' -print | head -1)"
+  test -f "$(find .omx/review-results -path '*/gemini-split-*/part-0002-review.md' -print | head -1)"
+  test -f "$(find .omx/review-results -path '*/gemini-split-*/synthesis-prompt.md' -print | head -1)"
+  test "$(wc -l < "${tmp_dir}/agy.calls")" = "3"
+  grep -q "running Gemini split review for part-0001.md" "${tmp_dir}/run.out"
+  grep -q "running Gemini split review for part-0002.md" "${tmp_dir}/run.out"
+  grep -q "running Gemini split synthesis over 2 parts" "${tmp_dir}/run.out"
+)
+
+echo "[verify] testing Claude split review runner..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_claude_split_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_claude_split_tmp EXIT
+
+  mkdir -p \
+    "${tmp_dir}/repo/.omx/review-context" \
+    "${tmp_dir}/repo/.omx/review-prompts/split-review-context" \
+    "${tmp_dir}/repo/.omx/review-results" \
+    "${tmp_dir}/repo/.omx/reviewer-state" \
+    "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  printf 'seed\n' > README.md
+  git add README.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m seed
+  printf 'changed\n' > README.md
+  printf '# Context\n\nlarge split context\n' > .omx/review-context/latest-review-context.md
+  printf '# Claude Review\n\nUse split context.\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n\nSkipped in fixture.\n' > .omx/review-prompts/gemini-review.md
+  printf '# Split Review Manifest\n\n- part-0001.md\n- part-0002.md\n' > .omx/review-prompts/split-review-manifest.md
+  printf '# Part 1\n\nfirst split payload\n' > .omx/review-prompts/split-review-context/part-0001.md
+  printf '# Part 2\n\nsecond split payload\n' > .omx/review-prompts/split-review-context/part-0002.md
+
+  cat > "${tmp_dir}/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: claude --print --permission-mode --no-session-persistence"
+  exit 0
+fi
+
+prompt=""
+while [ "$#" -gt 0 ]; do
+  prompt="$1"
+  shift
+done
+
+if [ -z "${prompt}" ] || [ "${prompt}" = "--print" ] || [ "${prompt}" = "plan" ]; then
+  prompt="$(cat)"
+fi
+
+# Real reviewer CLIs may inspect stdin even when a prompt argument is supplied.
+cat >/dev/null || true
+
+printf 'call\n' >> "${CLAUDE_CALL_LOG}"
+
+case "${prompt}" in
+  *"# Claude Split Review Synthesis Request"*)
+    case "${prompt}" in
+      *"part-0001.md: reviewed first split part."*"part-0002.md: reviewed second split part."*) ;;
+      *)
+        printf 'synthesis prompt missing per-part observations\n' >&2
+        exit 65
+        ;;
+    esac
+    cat <<'MSG'
+# Claude Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+No blocking findings.
+
+## Synthesis
+
+- part-0001.md: reviewed first split part.
+- part-0002.md: reviewed second split part.
+
+## Final Recommendation
+
+Proceed with notes.
+MSG
+    ;;
+  *"# Claude Split Review Part"*"part-0001.md"*)
+    cat <<'MSG'
+# Claude Part Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+No blocking findings.
+
+## Part Observation
+
+part-0001.md: reviewed first split part.
+
+## Final Recommendation
+
+Include in synthesis.
+MSG
+    ;;
+  *"# Claude Split Review Part"*"part-0002.md"*)
+    cat <<'MSG'
+# Claude Part Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+No blocking findings.
+
+## Part Observation
+
+part-0002.md: reviewed second split part.
+
+## Final Recommendation
+
+Include in synthesis.
+MSG
+    ;;
+  *)
+    printf 'unexpected claude prompt\n' >&2
+    exit 65
+    ;;
+esac
+STUB
+  chmod +x "${tmp_dir}/bin/claude"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+    CLAUDE_CALL_LOG="${tmp_dir}/claude.calls" \
+    AI_MODEL_DISCOVERY=0 \
+    RUN_GEMINI_REVIEW=0 \
+    RUN_CODEX_FALLBACK_REVIEW=0 \
+    SKIP_CONTEXT_GENERATION=1 \
+    REVIEW_RETRY_LIMIT=1 \
+    CLAUDE_REVIEW_TIMEOUT_SECONDS=77 \
+    OUT_DIR=.omx/review-results \
+    CONTEXT_DIR=.omx/review-context \
+    PROMPT_DIR=.omx/review-prompts \
+    REVIEW_STATE_DIR=.omx/reviewer-state \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  claude_result="$(find .omx/review-results -maxdepth 1 -type f -name 'claude-review-*.md' -print | head -1)"
+  test -f "${claude_result}"
+  grep -q "approve_with_notes" "${claude_result}"
+  grep -q -- "- part-0001.md: reviewed first split part." "${claude_result}"
+  grep -q -- "- part-0002.md: reviewed second split part." "${claude_result}"
+  test -f "$(find .omx/review-results -path '*/claude-split-*/part-0001-review.md' -print | head -1)"
+  test -f "$(find .omx/review-results -path '*/claude-split-*/part-0002-review.md' -print | head -1)"
+  test -f "$(find .omx/review-results -path '*/claude-split-*/synthesis-prompt.md' -print | head -1)"
+  test "$(wc -l < "${tmp_dir}/claude.calls")" = "3"
+  grep -q "running Claude split review for part-0001.md" "${tmp_dir}/run.out"
+  grep -q "running Claude split review for part-0002.md" "${tmp_dir}/run.out"
+  grep -q "running Claude split synthesis over 2 parts" "${tmp_dir}/run.out"
+)
+
+echo "[verify] testing split review context budgeting..."
 (
   tmp_dir="$(mktemp -d)"
 
@@ -1323,18 +1899,64 @@ echo "[verify] testing focused review context budgeting..."
 
   REVIEW_CONTEXT_MAX_BYTES=200 OUT_DIR=.omx/review-prompts "${repo_root}/scripts/make-review-prompts.sh" .omx/review-context/latest-review-context.md >/dev/null
 
-  test -f .omx/review-prompts/focused-review-context.md
-  grep -q "Focused Review Context" .omx/review-prompts/focused-review-context.md
-  grep -q "new.txt" .omx/review-prompts/focused-review-context.md
-  grep -q "exceeded REVIEW_CONTEXT_MAX_BYTES=200" .omx/review-prompts/focused-review-context.md
-  grep -q "local CLI path" .omx/review-prompts/focused-review-context.md
-  grep -q "Bounded Actual Diff" .omx/review-prompts/focused-review-context.md
-  grep -q "diff --git a/README.md b/README.md" .omx/review-prompts/focused-review-context.md
-  grep -q "+changed" .omx/review-prompts/focused-review-context.md
-  grep -q "+new file" .omx/review-prompts/focused-review-context.md
+  if [ -f .omx/review-prompts/focused-review-context.md ]; then
+    echo "[verify] large context used deprecated focused head/tail context"
+    exit 1
+  fi
+  test -f .omx/review-prompts/split-review-manifest.md
+  test -f .omx/review-prompts/split-review-context/part-0001.md
+  grep -q "Split Review Manifest" .omx/review-prompts/split-review-manifest.md
+  grep -q "split instead of silently compressed" .omx/review-prompts/split-review-manifest.md
+  grep -q "REVIEW_CONTEXT_MAX_BYTES: 200" .omx/review-prompts/split-review-manifest.md
+  grep -q "Do not approve from a head/tail truncation" .omx/review-prompts/claude-review.md
+  grep -q "non-empty per-part" .omx/review-prompts/gemini-review.md
+  grep -q "context padding" .omx/review-prompts/split-review-context/part-0001.md
+
+  printf '# Small Context\n\nsmall\n' > .omx/review-context/latest-review-context.md
+  REVIEW_CONTEXT_MAX_BYTES=200 OUT_DIR=.omx/review-prompts "${repo_root}/scripts/make-review-prompts.sh" .omx/review-context/latest-review-context.md >/dev/null
+  if [ -f .omx/review-prompts/split-review-manifest.md ] || [ -d .omx/review-prompts/split-review-context ]; then
+    echo "[verify] stale split review artifacts survived a normal-size prompt generation"
+    exit 1
+  fi
+  grep -q "# Small Context" .omx/review-prompts/claude-review.md
 
   grep -q 'REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-300000}"' "${repo_root}/scripts/make-review-prompts.sh"
-  grep -q 'FOCUSED_CONTEXT_DIFF_MAX_BYTES="${FOCUSED_CONTEXT_DIFF_MAX_BYTES:-120000}"' "${repo_root}/scripts/make-review-prompts.sh"
+  grep -q 'REVIEW_CONTEXT_SPLIT_LINES="${REVIEW_CONTEXT_SPLIT_LINES:-400}"' "${repo_root}/scripts/make-review-prompts.sh"
+  grep -q 'LC_ALL=C awk' "${repo_root}/scripts/make-review-prompts.sh"
+)
+
+echo "[verify] testing split review context uses byte counting for UTF-8..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_prompt_utf8_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_prompt_utf8_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}/repo"
+  cd "${tmp_dir}/repo"
+  mkdir -p .omx/review-context .omx/review-prompts
+  {
+    printf '# UTF-8 Context\n\n'
+    printf '가나다라마바\n%.0s' $(seq 1 80)
+  } > .omx/review-context/latest-review-context.md
+
+  REVIEW_CONTEXT_MAX_BYTES=120 REVIEW_CONTEXT_SPLIT_BYTES=120 OUT_DIR=.omx/review-prompts "${repo_root}/scripts/make-review-prompts.sh" .omx/review-context/latest-review-context.md >/dev/null
+
+  while IFS= read -r part; do
+    part_body_bytes="$(LC_ALL=C awk '
+      BEGIN { body = 0; bytes = 0 }
+      body { bytes += length($0) + 1 }
+      /^Do not issue a final review verdict/ { body = 1; next }
+      END { print bytes }
+    ' "${part}")"
+    if [ "${part_body_bytes}" -gt 120 ]; then
+      echo "[verify] split part exceeded byte budget: ${part} (${part_body_bytes} bytes)"
+      exit 1
+    fi
+  done < <(find .omx/review-prompts/split-review-context -maxdepth 1 -type f -name 'part-*.md' | sort)
 )
 
 echo "[verify] testing reviewer network failure classification..."
@@ -1533,6 +2155,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   cd "${target_dir}"
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
+  printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
@@ -1602,6 +2225,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   cd "${target_dir}"
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
+  printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
@@ -1669,6 +2293,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   cd "${target_dir}"
   mkdir -p docs scripts .omx/reviewer-state
   printf '# Agents\n' > AGENTS.md
+  printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
@@ -1945,6 +2570,7 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
   test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
+  test -f "${target_dir}/docs/CHROME_CDP_ACCESS.md"
   test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
   test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
@@ -1964,6 +2590,7 @@ echo "[verify] testing automation template installer..."
   ! grep -q "guidance-duplicate-report.sh" "${target_dir}/scripts/verify.sh"
   cmp -s "templates/automation-base/AI_AUTO_TEMPLATE_VERSION" "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
+  grep -q "Chrome CDP Access" "${target_dir}/docs/CHROME_CDP_ACCESS.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Auxiliary Rebuild Tool Gates" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -1982,6 +2609,7 @@ echo "[verify] testing automation template installer..."
   grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
   grep -q "Session Quality Plan" "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
   grep -q "UI Completion Pack" "${target_dir}/docs/UI_COMPLETION.md"
+  grep -q "docs/CHROME_CDP_ACCESS.md" "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "UI가 필요하면" "${target_dir}/docs/WORKFLOW.md"
   grep -q "Subagent Utilization" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Onboarding Interview Structure" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -2071,6 +2699,7 @@ echo "[verify] testing automation template installer..."
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/CHROME_CDP_ACCESS.md\tdocs/CHROME_CDP_ACCESS.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/PATCH_NOTES.md\tdocs/PATCH_NOTES.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/verify.sh\tscripts/verify.example.sh\tproject-owned\tinspect-only' "${tmp_dir}/template-status-current.out"
@@ -2092,6 +2721,20 @@ echo "[verify] testing automation template installer..."
 )
 
 echo "[verify] checking optional domain pack structure..."
+test -f "templates/domain-packs/browser-macro/README.md"
+test -f "templates/domain-packs/browser-macro/AGENTS.patch.md"
+test -f "templates/domain-packs/browser-macro/WORKFLOW.md"
+test -f "templates/domain-packs/browser-macro/verify-patterns.md"
+test -f "templates/domain-packs/browser-macro/review-checklist.md"
+test -f "templates/domain-packs/browser-macro/ecount-reference.md"
+grep -q "Guidance Hierarchy" "templates/domain-packs/browser-macro/README.md"
+grep -q "Planning Method" "templates/domain-packs/browser-macro/AGENTS.patch.md"
+grep -q "selector address" "templates/domain-packs/browser-macro/WORKFLOW.md"
+grep -q "Tooling And Stack Selection" "templates/domain-packs/browser-macro/WORKFLOW.md"
+grep -q "Bridge Contract" "templates/domain-packs/browser-macro/WORKFLOW.md"
+grep -q "docs/CHROME_CDP_ACCESS.md" "templates/domain-packs/browser-macro/verify-patterns.md"
+grep -q "data-columnid" "templates/domain-packs/browser-macro/ecount-reference.md"
+grep -q "browser-macro" "docs/DOMAIN_PACKS.md"
 test -f "templates/domain-packs/odoo/README.md"
 test -f "templates/domain-packs/odoo/AGENTS.patch.md"
 test -f "templates/domain-packs/odoo/WORKFLOW.md"
@@ -2406,6 +3049,29 @@ echo "[verify] testing global helper link repair..."
   grep -q '. "$HOME/.config/ai-lab/AI_AUTO.sh"' "${tmp_home}/.bashrc"
   grep -q "Managed by AI_AUTO" "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
   grep -q 'cd "$(command AI_AUTO --path)"' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  grep -q 'tmux()' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  grep -q 'command tmux new-session -s "${session_name}"' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  mkdir -p "${tmp_home}/fake-bin"
+  cat > "${tmp_home}/fake-bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TMUX_FAKE_LOG}"
+if [ "${1:-}" = "has-session" ]; then
+  case "${3:-}" in
+    1)
+      exit 0
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
+fi
+exit 0
+STUB
+  chmod +x "${tmp_home}/fake-bin/tmux"
+  HOME="${tmp_home}" TMUX_FAKE_LOG="${tmp_home}/tmux.log" PATH="${tmp_home}/fake-bin:${tmp_home}/bin:${PATH}" bash -c 'source "$HOME/.config/ai-lab/AI_AUTO.sh"; tmux'
+  grep -q '^has-session -t 1$' "${tmp_home}/tmux.log"
+  grep -q '^has-session -t 2$' "${tmp_home}/tmux.log"
+  grep -q '^new-session -s 2$' "${tmp_home}/tmux.log"
   test ! -e "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null

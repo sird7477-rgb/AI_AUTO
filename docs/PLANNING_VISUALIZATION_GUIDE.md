@@ -27,6 +27,23 @@ The default operating mode is plugin-first:
 - document the chosen validation surface in the project plan before relying on
   Structurizr or rendered diagrams as execution evidence
 
+## Planning Artifact Language
+
+Planning, strategy, architecture, and operations documents should be written in
+Korean by default when they are meant for project-owner review or long-term
+operation. The goal is for the project owner to understand, challenge, and run
+the plan without translating AI-generated control documents first.
+
+Keep machine-readable keys, commands, file paths, verdicts, schema fields,
+status values, code identifiers, and external API names in English. Mermaid and
+Structurizr identifiers may stay English when that makes diagrams easier for AI
+tools to parse, but human-facing labels and explanatory notes should be Korean
+unless the user asks otherwise.
+
+Existing English planning documents should remain English unless the user
+explicitly asks for translation or the document is already being revised for
+that purpose. Do not rewrite old planning artifacts only to normalize language.
+
 ## Roles
 
 | Tool | Role | Source Of Truth |

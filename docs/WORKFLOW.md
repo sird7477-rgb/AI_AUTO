@@ -9,25 +9,31 @@
 1. 요청 내용을 정리한다.
 2. 플랜/인터뷰 강도를 판단한다.
 3. 작은 작업은 바로 실행하고, 방향이 갈리는 작업은 짧은 질문을 먼저 한다.
-4. 장기 정책, 표준, 아키텍처, 검증 체계, 배포/보안/데이터 작업은
+4. 새 코드를 추가하기 전에 문제 제거, 기존 동작 재사용, 설정 변경, 문서화,
+   삭제, 단순화로 해결할 수 있는지 먼저 확인한다. 코드가 필요하면 검증
+   가능한 최소 변경만 수행한다.
+5. 장기 정책, 표준, 아키텍처, 검증 체계, 배포/보안/데이터 작업은
    plan-first interview 후 진행하며, 인터뷰/플랜 산출물은
    `docs/PLANNING_VISUALIZATION_GUIDE.md`의 Markdown +
-   Mermaid/Structurizr + Excalidraw 운영 기준을 따른다.
-5. 요청/입력/승인 경계가 애매하고 잘못 추측하면 결과가 달라지는 경우 먼저
+   Mermaid/Structurizr + Excalidraw 운영 기준을 따른다. 새 기획, 계획,
+   전략, 아키텍처, 운영 판단 문서는 한국어를 기본으로 작성하되 명령어,
+   파일 경로, 상태값, schema field, 코드 식별자는 영어를 유지한다. 기존
+   영문 문서는 사용자 요청이나 해당 문서 정비 범위가 없으면 그대로 둔다.
+6. 요청/입력/승인 경계가 애매하고 잘못 추측하면 결과가 달라지는 경우 먼저
    확인한다.
-6. 운영 준비, dry-run, 배포, promotion, field evidence 작업은 필수 입력이
+7. 운영 준비, dry-run, 배포, promotion, field evidence 작업은 필수 입력이
    missing/stale/incomplete/degraded이면 fail-closed로 멈춘다.
-7. 작업 범위를 작게 고정한다.
-8. 최소 변경만 수행한다.
-9. 완료를 주장하기 전에 diff와 plan/TODO index 상태를 확인한다.
-10. 코드 수정 후 관련 기획서/사양서/설계자료가 있으면 최종 diff를
+8. 작업 범위를 작게 고정한다.
+9. 최소 변경만 수행한다.
+10. 완료를 주장하기 전에 diff와 plan/TODO index 상태를 확인한다.
+11. 코드 수정 후 관련 기획서/사양서/설계자료가 있으면 최종 diff를
     승인된 scope, non-goal, success criteria, execution boundary,
     verification plan과 대조한다. 관련 artifact가 없으면 그 이유를 기록한다.
-11. `./scripts/verify.sh`를 실행한다.
-12. 실패하면 수정 후 다시 검증한다.
-13. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
-14. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
-15. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+12. `./scripts/verify.sh`를 실행한다.
+13. 실패하면 수정 후 다시 검증한다.
+14. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
+15. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
+16. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
 
 ## 플랜/인터뷰 강도
 
@@ -100,7 +106,13 @@ Gemini 리뷰
 필요 시 Codex fallback 리뷰
 리뷰 verdict 요약
 
+Gemini 리뷰 lane은 reviewer 이름과 산출물 호환성은 유지하지만, 기본 실행
+명령은 Antigravity CLI `agy`다. 필요하면 `GEMINI_REVIEW_COMMAND`로 실행
+명령만 덮어쓴다.
+
 Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로 응답할 수 없으면 해당 리뷰어는 `.omx/reviewer-state/`에 disabled 상태로 기록된다. disabled 리뷰어는 사용자가 `RESET_DISABLED_AI_REVIEWERS=claude|gemini|all`로 복구하기 전까지 스킵된다.
+
+리뷰 컨텍스트가 제한을 넘으면 head/tail 압축본으로 정상 승인을 요청하지 않는다. 컨텍스트는 manifest가 있는 ordered split part로 나누고, 모든 part를 처리한 synthesis가 명시된 경우에만 최종 verdict를 신뢰한다. Codex/GPT fallback은 축약 프롬프트만 보지 말고 관련 파일을 workspace에서 직접 읽고, 직접 확인한 파일과 확인하지 못한 관련 파일을 결과에 적는다.
 
 한 리뷰어가 disabled 상태이면 남은 외부 리뷰어 프롬프트는 그대로 유지하고, disabled 역할은 별도 Codex/GPT fallback 리뷰가 담당한다. 두 외부 리뷰어가 모두 disabled 상태이면 `codex-architect-review`와 `codex-test-alternative-review` fallback 리뷰가 모두 필요하다. 이 결과는 `proceed_degraded`, `single_external_plus_codex_fallback`, 또는 `codex_only_degraded`로 표시되며 독립 Claude/Gemini 승인으로 세지 않는다. `proceed_degraded`는 진행 가능한 gate 결과지만 완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
 

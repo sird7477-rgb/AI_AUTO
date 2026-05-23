@@ -5,7 +5,11 @@ VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-outp
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
 
 echo "[gate] running verification..."
-env -u RUN_CLAUDE_REVIEW ./scripts/verify.sh 2>&1 | tee "$VERIFY_OUTPUT_FILE"
+env \
+  -u RUN_CLAUDE_REVIEW \
+  -u REVIEW_CONTEXT_DETAIL \
+  -u REVIEW_INCLUDE_UNTRACKED_CONTENT \
+  ./scripts/verify.sh 2>&1 | tee "$VERIFY_OUTPUT_FILE"
 
 echo "[gate] running AI reviews..."
 set +e

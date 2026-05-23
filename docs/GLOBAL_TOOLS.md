@@ -182,6 +182,11 @@ Reload the shell or run:
 
     source ~/.bashrc
 
+The same managed shell integration adds a small `tmux()` convenience function:
+when called with no arguments, it starts a new tmux session named with the first
+available positive integer (`1`, `2`, `3`, ...). Calls with arguments are passed
+through to the real tmux command unchanged.
+
 ## Codex Drift Notice
 
 The normal global install does not replace or shadow `codex`. To opt into a

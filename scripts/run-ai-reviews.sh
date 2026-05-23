@@ -11,11 +11,12 @@ REVIEW_TIMEOUT_SECONDS="${REVIEW_TIMEOUT_SECONDS:-180}"
 REVIEW_TIMEOUT_KILL_AFTER_SECONDS="${REVIEW_TIMEOUT_KILL_AFTER_SECONDS:-5}"
 CLAUDE_REVIEW_TIMEOUT_SECONDS="${CLAUDE_REVIEW_TIMEOUT_SECONDS:-300}"
 GEMINI_REVIEW_TIMEOUT_SECONDS="${GEMINI_REVIEW_TIMEOUT_SECONDS:-${REVIEW_TIMEOUT_SECONDS}}"
+GEMINI_REVIEW_COMMAND="${GEMINI_REVIEW_COMMAND:-agy}"
 CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS="${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS:-300}"
 CLAUDE_PROMPT_ARG_MAX_BYTES="${CLAUDE_PROMPT_ARG_MAX_BYTES:-100000}"
 GEMINI_PROMPT_ARG_MAX_BYTES="${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
 GEMINI_PROMPT_MAX_BYTES="${GEMINI_PROMPT_MAX_BYTES:-300000}"
-REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-300000}"
+REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-100000}"
 REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
@@ -65,6 +66,10 @@ SUMMARY_OUT="${OUT_DIR}/review-summary-${TIMESTAMP}.md"
 MANIFEST_OUT="${OUT_DIR}/review-run-${REVIEW_RUN_ID}.md"
 EXTERNAL_RUNNER="${EXTERNAL_REVIEW_DIR}/run-reviewers-${TIMESTAMP}.sh"
 EXTERNAL_LATEST="${EXTERNAL_REVIEW_DIR}/run-reviewers-latest.sh"
+SPLIT_CONTEXT_MANIFEST="${PROMPT_DIR}/split-review-manifest.md"
+if [ ! -f "${SPLIT_CONTEXT_MANIFEST}" ]; then
+  SPLIT_CONTEXT_MANIFEST="none"
+fi
 
 reviewer_disabled_file() {
   echo "${REVIEW_STATE_DIR}/$1.disabled"
@@ -138,6 +143,7 @@ Generated at: $(date -Iseconds)
 - Context: ${CONTEXT_FILE}
 - Claude prompt: ${CLAUDE_PROMPT}
 - Gemini prompt: ${GEMINI_PROMPT}
+- Split context manifest: ${SPLIT_CONTEXT_MANIFEST}
 - Model routing report: ${AI_MODEL_ROUTING_REPORT}
 - Model routing cache status: ${AI_MODEL_ROUTING_CACHE_STATUS:-unknown}
 - Model routing cache age seconds: ${AI_MODEL_ROUTING_CACHE_AGE_SECONDS:-unknown}
@@ -183,6 +189,7 @@ cd "\${repo_root}"
 : "\${REVIEW_TIMEOUT_KILL_AFTER_SECONDS:=${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}}"
 : "\${CLAUDE_REVIEW_TIMEOUT_SECONDS:=${CLAUDE_REVIEW_TIMEOUT_SECONDS}}"
 : "\${GEMINI_REVIEW_TIMEOUT_SECONDS:=${GEMINI_REVIEW_TIMEOUT_SECONDS}}"
+: "\${GEMINI_REVIEW_COMMAND:=${GEMINI_REVIEW_COMMAND}}"
 : "\${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS:=${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}}"
 : "\${CLAUDE_PROMPT_ARG_MAX_BYTES:=${CLAUDE_PROMPT_ARG_MAX_BYTES}}"
 : "\${GEMINI_PROMPT_ARG_MAX_BYTES:=${GEMINI_PROMPT_ARG_MAX_BYTES}}"
@@ -214,6 +221,7 @@ REVIEW_TIMEOUT_SECONDS="\${REVIEW_TIMEOUT_SECONDS}" \\
 REVIEW_TIMEOUT_KILL_AFTER_SECONDS="\${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" \\
 CLAUDE_REVIEW_TIMEOUT_SECONDS="\${CLAUDE_REVIEW_TIMEOUT_SECONDS}" \\
 GEMINI_REVIEW_TIMEOUT_SECONDS="\${GEMINI_REVIEW_TIMEOUT_SECONDS}" \\
+GEMINI_REVIEW_COMMAND="\${GEMINI_REVIEW_COMMAND}" \\
 CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS="\${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}" \\
 CLAUDE_PROMPT_ARG_MAX_BYTES="\${CLAUDE_PROMPT_ARG_MAX_BYTES}" \\
 GEMINI_PROMPT_ARG_MAX_BYTES="\${GEMINI_PROMPT_ARG_MAX_BYTES}" \\
@@ -258,6 +266,7 @@ Generated at: $(date -Iseconds)
 - Context: ${CONTEXT_FILE}
 - Claude prompt: ${CLAUDE_PROMPT}
 - Gemini prompt: ${GEMINI_PROMPT}
+- Split context manifest: ${SPLIT_CONTEXT_MANIFEST}
 
 ## External Reviewer Command
 
@@ -325,6 +334,39 @@ help_supports_flag() {
   local flag="$2"
 
   printf '%s\n' "${help_text}" | grep -Eq "(^|[^[:alnum:]_-])${flag}($|[^[:alnum:]_-])"
+}
+
+command_help_text() {
+  local command_name="$1"
+  local output=""
+
+  if command -v timeout >/dev/null 2>&1; then
+    output="$(timeout 10 "${command_name}" --help 2>&1 || true)"
+    if [ -n "${output}" ]; then
+      printf '%s\n' "${output}"
+      return
+    fi
+    output="$(timeout 10 "${command_name}" help 2>&1 || true)"
+    if [ -n "${output}" ]; then
+      printf '%s\n' "${output}"
+      return
+    fi
+    output="$(timeout 10 "${command_name}" -h 2>&1 || true)"
+    printf '%s\n' "${output}"
+    return
+  fi
+
+  output="$("${command_name}" --help 2>&1 || true)"
+  if [ -n "${output}" ]; then
+    printf '%s\n' "${output}"
+    return
+  fi
+  output="$("${command_name}" help 2>&1 || true)"
+  if [ -n "${output}" ]; then
+    printf '%s\n' "${output}"
+    return
+  fi
+  "${command_name}" -h 2>&1 || true
 }
 
 disable_reviewer() {
@@ -395,12 +437,12 @@ preflight_details() {
   case "${reviewer}" in
     gemini)
       printf 'prompt_bytes=%s' "${prompt_bytes}"
-      if printf '%s\n' "${help_text}" | grep -q -- '--prompt'; then
+      if help_supports_flag "${help_text}" "--prompt"; then
         printf ',prompt_flag=yes'
       else
         printf ',prompt_flag=no'
       fi
-      if printf '%s\n' "${help_text}" | grep -q -- '--skip-trust'; then
+      if help_supports_flag "${help_text}" "--skip-trust"; then
         printf ',skip_trust=yes'
       else
         printf ',skip_trust=no'
@@ -473,6 +515,36 @@ has_usable_verdict() {
   ' "${output_file}"
 }
 
+extract_review_verdict() {
+  local output_file="$1"
+
+  awk '
+    BEGIN { in_verdict = 0 }
+    tolower($0) ~ /^#+[[:space:]]+verdict[[:space:]:.-]*$/ { in_verdict = 1; next }
+    in_verdict && /^#+[[:space:]]+/ { exit }
+    in_verdict && /^[[:space:]]*$/ { next }
+    in_verdict {
+      verdict = tolower($0)
+      gsub(/[^a-z_]/, "", verdict)
+      if (verdict == "approve" || verdict == "approve_with_notes" || verdict == "request_changes") {
+        print verdict
+        exit
+      }
+    }
+  ' "${output_file}"
+}
+
+is_review_approval() {
+  case "$1" in
+    approve|approve_with_notes)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 run_review_command() {
   local output_file="$1"
   shift
@@ -496,6 +568,110 @@ run_review_command_stdin() {
   fi
 
   "$@" < "${input_file}" > "${output_file}" 2>&1
+}
+
+run_claude_prompt_file() {
+  local output_file="$1"
+  local prompt_file="$2"
+  local prompt_bytes
+  local claude_args=()
+
+  prompt_bytes="$(wc -c < "${prompt_file}")"
+
+  if help_supports_flag "${claude_help}" "--print"; then
+    claude_args=(--print)
+
+    if help_supports_flag "${claude_help}" "--no-session-persistence"; then
+      claude_args+=(--no-session-persistence)
+    fi
+
+    if help_supports_flag "${claude_help}" "--permission-mode"; then
+      claude_args+=(--permission-mode plan)
+    fi
+
+    if [ -n "${CLAUDE_REVIEW_MODEL:-}" ] && help_supports_flag "${claude_help}" "--model"; then
+      claude_args+=(--model "${CLAUDE_REVIEW_MODEL}")
+    fi
+
+    if [ "${prompt_bytes}" -gt "${CLAUDE_PROMPT_ARG_MAX_BYTES}" ]; then
+      run_with_retries "claude" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}"
+    else
+      run_with_retries "claude" "${output_file}" run_review_command "${output_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}" "$(cat "${prompt_file}")"
+    fi
+  else
+    run_with_retries "claude" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude
+  fi
+}
+
+run_gemini_prompt_file() {
+  local output_file="$1"
+  local prompt_file="$2"
+  local prompt_bytes
+  local gemini_args=()
+  local gemini_stdin_mode=0
+
+  prompt_bytes="$(wc -c < "${prompt_file}")"
+
+  if [ "${prompt_bytes}" -gt "${GEMINI_PROMPT_MAX_BYTES}" ]; then
+    {
+      echo "# Gemini Review"
+      echo
+      echo "## Verdict"
+      echo
+      echo "request_changes"
+      echo
+      echo "## Findings"
+      echo
+      echo "- severity: high"
+      echo "- file or area: review context"
+      echo "- reason: Gemini prompt is ${prompt_bytes} bytes and exceeds GEMINI_PROMPT_MAX_BYTES=${GEMINI_PROMPT_MAX_BYTES}; the review pipeline must not truncate the prompt and accept a normal verdict."
+      echo "- suggested fix: use split review artifacts or a reviewer surface that can process the full context."
+      echo
+      echo "## Final Recommendation"
+      echo
+      echo "Do not proceed with Gemini approval until the full context is reviewed."
+    } > "${output_file}"
+    echo "[review] Gemini prompt too large; wrote request_changes without truncating: ${output_file}"
+    return 0
+  fi
+
+  if help_supports_flag "${gemini_help}" "--prompt"; then
+    if [ "${prompt_bytes}" -gt "${GEMINI_PROMPT_ARG_MAX_BYTES}" ]; then
+      gemini_args=(--prompt "Review the Markdown prompt provided on stdin.")
+      gemini_stdin_mode=1
+    else
+      gemini_args=(--prompt "$(cat "${prompt_file}")")
+      gemini_stdin_mode=0
+    fi
+
+    if help_supports_flag "${gemini_help}" "--approval-mode"; then
+      gemini_args+=(--approval-mode plan)
+    fi
+
+    if help_supports_flag "${gemini_help}" "--skip-trust"; then
+      gemini_args+=(--skip-trust)
+    fi
+
+    if help_supports_flag "${gemini_help}" "--output-format"; then
+      gemini_args+=(--output-format text)
+    fi
+
+    if help_supports_flag "${gemini_help}" "--print-timeout"; then
+      gemini_args+=(--print-timeout "${GEMINI_REVIEW_TIMEOUT_SECONDS}s")
+    fi
+
+    if [ -n "${GEMINI_REVIEW_MODEL:-}" ] && help_supports_flag "${gemini_help}" "--model"; then
+      gemini_args+=(--model "${GEMINI_REVIEW_MODEL}")
+    fi
+
+    if [ "${gemini_stdin_mode}" -eq 1 ]; then
+      run_with_retries "gemini" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" "${GEMINI_REVIEW_COMMAND}" "${gemini_args[@]}"
+    else
+      run_with_retries "gemini" "${output_file}" run_review_command "${output_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" "${GEMINI_REVIEW_COMMAND}" "${gemini_args[@]}"
+    fi
+  else
+    run_with_retries "gemini" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" "${GEMINI_REVIEW_COMMAND}"
+  fi
 }
 
 run_with_retries() {
@@ -535,6 +711,428 @@ run_with_retries() {
   return "${status}"
 }
 
+run_claude_split_review() {
+  local split_dir="${PROMPT_DIR}/split-review-context"
+  local split_work_dir="${OUT_DIR}/claude-split-${TIMESTAMP}"
+  local part part_name part_prompt part_out
+  local split_parts=()
+  local part_count=0
+  local part_request_changes=0
+  local part_verdict
+  local synthesis_prompt="${split_work_dir}/synthesis-prompt.md"
+
+  if [ "${SPLIT_CONTEXT_MANIFEST}" = "none" ] || [ ! -d "${split_dir}" ]; then
+    return 1
+  fi
+
+  mkdir -p "${split_work_dir}"
+  mapfile -t split_parts < <(find "${split_dir}" -maxdepth 1 -type f -name 'part-*.md' | sort)
+
+  if [ "${#split_parts[@]}" -eq 0 ]; then
+    return 1
+  fi
+
+  for part in "${split_parts[@]}"; do
+    [ -n "${part}" ] || continue
+    part_count=$((part_count + 1))
+    part_name="$(basename "${part}")"
+    part_prompt="${split_work_dir}/${part_name%.md}-prompt.md"
+    part_out="${split_work_dir}/${part_name%.md}-review.md"
+
+    cat > "${part_prompt}" <<MSG
+# Claude Split Review Part
+
+You are reviewing one ordered part of a larger review context.
+
+Use only the review context embedded in this prompt. Do not run shell commands,
+inspect repository files, invoke tools, or start a fresh verification run.
+
+This is ${part_name}. Do not issue a final whole-change approval from this part
+alone. Return a verdict for this part and one non-empty observation that can be
+used by the final synthesis review.
+
+Return exactly this Markdown structure:
+
+## Verdict
+
+Choose one:
+
+- approve
+- approve_with_notes
+- request_changes
+
+## Findings
+
+List concrete findings for this part only. If no blocking findings exist, say
+"No blocking findings."
+
+## Part Observation
+
+${part_name}: one concise, non-empty observation about this part.
+
+## Final Recommendation
+
+State whether this part can be included in final synthesis.
+
+---
+
+MSG
+    cat "${part}" >> "${part_prompt}"
+
+    echo "[review] running Claude split review for ${part_name}..."
+    if ! run_claude_prompt_file "${part_out}" "${part_prompt}"; then
+      {
+        echo "# Claude Review"
+        echo
+        echo "## Verdict"
+        echo
+        echo "request_changes"
+        echo
+        echo "## Findings"
+        echo
+        echo "- severity: high"
+        echo "- file or area: ${part_name}"
+        echo "- reason: Claude split review failed before all parts could be reviewed."
+        echo "- suggested fix: inspect ${part_out} and rerun the split review."
+        echo
+        echo "## Final Recommendation"
+        echo
+        echo "Do not proceed until every split part has a usable review result."
+      } > "${CLAUDE_OUT}"
+      return 0
+    fi
+
+    part_verdict="$(extract_review_verdict "${part_out}")"
+    if [ "${part_verdict}" = "request_changes" ]; then
+      part_request_changes=1
+    fi
+  done
+
+  if [ "${part_count}" -eq 0 ]; then
+    return 1
+  fi
+
+  {
+    echo "# Claude Split Review Synthesis Request"
+    echo
+    echo "You are synthesizing ordered Claude split-review results into one final"
+    echo "whole-change review verdict."
+    echo
+    echo "Use only the split manifest and per-part review results embedded below."
+    echo "Do not run shell commands, inspect repository files, invoke tools, or start"
+    echo "a fresh verification run."
+    echo
+    echo "If any part requested changes, the final verdict must be request_changes"
+    echo "unless the part result is internally malformed and cannot be trusted."
+    echo
+    echo "Return exactly this Markdown structure:"
+    echo
+    echo "## Verdict"
+    echo
+    echo "Choose one:"
+    echo
+    echo "- approve"
+    echo "- approve_with_notes"
+    echo "- request_changes"
+    echo
+    echo "## Findings"
+    echo
+    echo "List whole-change findings. If no blocking findings exist, say \"No blocking findings.\""
+    echo
+    echo "## Synthesis"
+    echo
+    echo "Include one non-empty observation line for every split part, formatted exactly like:"
+    echo
+    echo "- part-0001.md: observation"
+    echo
+    echo "## Final Recommendation"
+    echo
+    echo "Give a short final recommendation."
+    echo
+    echo "---"
+    echo
+    echo "## Split Manifest"
+    echo
+    cat "${SPLIT_CONTEXT_MANIFEST}"
+    echo
+    echo "## Per-Part Reviews"
+    echo
+    for part in "${split_parts[@]}"; do
+      part_name="$(basename "${part}")"
+      part_out="${split_work_dir}/${part_name%.md}-review.md"
+      echo
+      echo "### ${part_name}"
+      echo
+      cat "${part_out}"
+    done
+  } > "${synthesis_prompt}"
+
+  echo "[review] running Claude split synthesis over ${part_count} parts..."
+  if ! run_claude_prompt_file "${CLAUDE_OUT}" "${synthesis_prompt}"; then
+    {
+      echo "# Claude Review"
+      echo
+      echo "## Verdict"
+      echo
+      echo "request_changes"
+      echo
+      echo "## Findings"
+      echo
+      echo "- severity: high"
+      echo "- file or area: split synthesis"
+      echo "- reason: Claude split synthesis failed after ${part_count} part reviews."
+      echo "- suggested fix: inspect ${split_work_dir} and rerun the review."
+      echo
+      echo "## Final Recommendation"
+      echo
+      echo "Do not proceed until split synthesis produces a usable verdict."
+    } > "${CLAUDE_OUT}"
+    return 0
+  fi
+
+  if [ "${part_request_changes}" -eq 1 ] && is_review_approval "$(extract_review_verdict "${CLAUDE_OUT}")"; then
+    {
+      echo "# Claude Review"
+      echo
+      echo "## Verdict"
+      echo
+      echo "request_changes"
+      echo
+      echo "## Findings"
+      echo
+      echo "- severity: high"
+      echo "- file or area: split synthesis"
+      echo "- reason: at least one split part requested changes, but synthesis returned an approval."
+      echo "- suggested fix: inspect ${split_work_dir} and address the part-level finding."
+      echo
+      echo "## Synthesis"
+      echo
+      for part in "${split_parts[@]}"; do
+        part_name="$(basename "${part}")"
+        echo "- ${part_name}: reviewed; see ${split_work_dir}/${part_name%.md}-review.md"
+      done
+      echo
+      echo "## Final Recommendation"
+      echo
+      echo "Do not proceed until request_changes part findings are resolved."
+    } > "${CLAUDE_OUT}"
+  fi
+
+  echo "[review] Claude split review result: ${CLAUDE_OUT}"
+  return 0
+}
+
+run_gemini_split_review() {
+  local split_dir="${PROMPT_DIR}/split-review-context"
+  local split_work_dir="${OUT_DIR}/gemini-split-${TIMESTAMP}"
+  local part part_name part_prompt part_out
+  local split_parts=()
+  local part_count=0
+  local part_request_changes=0
+  local part_verdict
+  local synthesis_prompt="${split_work_dir}/synthesis-prompt.md"
+
+  if [ "${SPLIT_CONTEXT_MANIFEST}" = "none" ] || [ ! -d "${split_dir}" ]; then
+    return 1
+  fi
+
+  mkdir -p "${split_work_dir}"
+  mapfile -t split_parts < <(find "${split_dir}" -maxdepth 1 -type f -name 'part-*.md' | sort)
+
+  if [ "${#split_parts[@]}" -eq 0 ]; then
+    return 1
+  fi
+
+  for part in "${split_parts[@]}"; do
+    [ -n "${part}" ] || continue
+    part_count=$((part_count + 1))
+    part_name="$(basename "${part}")"
+    part_prompt="${split_work_dir}/${part_name%.md}-prompt.md"
+    part_out="${split_work_dir}/${part_name%.md}-review.md"
+
+    cat > "${part_prompt}" <<MSG
+# Gemini Split Review Part
+
+You are reviewing one ordered part of a larger review context.
+
+Use only the review context embedded in this prompt. Do not run shell commands,
+inspect repository files, invoke tools, or start a fresh verification run.
+
+This is ${part_name}. Do not issue a final whole-change approval from this part
+alone. Return a verdict for this part and one non-empty observation that can be
+used by the final synthesis review.
+
+Return exactly this Markdown structure:
+
+## Verdict
+
+Choose one:
+
+- approve
+- approve_with_notes
+- request_changes
+
+## Findings
+
+List concrete findings for this part only. If no blocking findings exist, say
+"No blocking findings."
+
+## Part Observation
+
+${part_name}: one concise, non-empty observation about this part.
+
+## Final Recommendation
+
+State whether this part can be included in final synthesis.
+
+---
+
+MSG
+    cat "${part}" >> "${part_prompt}"
+
+    echo "[review] running Gemini split review for ${part_name}..."
+    if ! run_gemini_prompt_file "${part_out}" "${part_prompt}"; then
+      {
+        echo "# Gemini Review"
+        echo
+        echo "## Verdict"
+        echo
+        echo "request_changes"
+        echo
+        echo "## Findings"
+        echo
+        echo "- severity: high"
+        echo "- file or area: ${part_name}"
+        echo "- reason: Gemini split review failed before all parts could be reviewed."
+        echo "- suggested fix: inspect ${part_out} and rerun the split review."
+        echo
+        echo "## Final Recommendation"
+        echo
+        echo "Do not proceed until every split part has a usable review result."
+      } > "${GEMINI_OUT}"
+      return 0
+    fi
+
+    part_verdict="$(extract_review_verdict "${part_out}")"
+    if [ "${part_verdict}" = "request_changes" ]; then
+      part_request_changes=1
+    fi
+  done
+
+  if [ "${part_count}" -eq 0 ]; then
+    return 1
+  fi
+
+  {
+    echo "# Gemini Split Review Synthesis Request"
+    echo
+    echo "You are synthesizing ordered Gemini split-review results into one final"
+    echo "whole-change review verdict."
+    echo
+    echo "Use only the split manifest and per-part review results embedded below."
+    echo "Do not run shell commands, inspect repository files, invoke tools, or start"
+    echo "a fresh verification run."
+    echo
+    echo "If any part requested changes, the final verdict must be request_changes"
+    echo "unless the part result is internally malformed and cannot be trusted."
+    echo
+    echo "Return exactly this Markdown structure:"
+    echo
+    echo "## Verdict"
+    echo
+    echo "Choose one:"
+    echo
+    echo "- approve"
+    echo "- approve_with_notes"
+    echo "- request_changes"
+    echo
+    echo "## Findings"
+    echo
+    echo "List whole-change findings. If no blocking findings exist, say \"No blocking findings.\""
+    echo
+    echo "## Synthesis"
+    echo
+    echo "Include one non-empty observation line for every split part, formatted exactly like:"
+    echo
+    echo "- part-0001.md: observation"
+    echo
+    echo "## Final Recommendation"
+    echo
+    echo "Give a short final recommendation."
+    echo
+    echo "---"
+    echo
+    echo "## Split Manifest"
+    echo
+    cat "${SPLIT_CONTEXT_MANIFEST}"
+    echo
+    echo "## Per-Part Reviews"
+    echo
+    for part in "${split_parts[@]}"; do
+      part_name="$(basename "${part}")"
+      part_out="${split_work_dir}/${part_name%.md}-review.md"
+      echo
+      echo "### ${part_name}"
+      echo
+      cat "${part_out}"
+    done
+  } > "${synthesis_prompt}"
+
+  echo "[review] running Gemini split synthesis over ${part_count} parts..."
+  if ! run_gemini_prompt_file "${GEMINI_OUT}" "${synthesis_prompt}"; then
+    {
+      echo "# Gemini Review"
+      echo
+      echo "## Verdict"
+      echo
+      echo "request_changes"
+      echo
+      echo "## Findings"
+      echo
+      echo "- severity: high"
+      echo "- file or area: split synthesis"
+      echo "- reason: Gemini split synthesis failed after ${part_count} part reviews."
+      echo "- suggested fix: inspect ${split_work_dir} and rerun the review."
+      echo
+      echo "## Final Recommendation"
+      echo
+      echo "Do not proceed until split synthesis produces a usable verdict."
+    } > "${GEMINI_OUT}"
+    return 0
+  fi
+
+  if [ "${part_request_changes}" -eq 1 ] && is_review_approval "$(extract_review_verdict "${GEMINI_OUT}")"; then
+    {
+      echo "# Gemini Review"
+      echo
+      echo "## Verdict"
+      echo
+      echo "request_changes"
+      echo
+      echo "## Findings"
+      echo
+      echo "- severity: high"
+      echo "- file or area: split synthesis"
+      echo "- reason: at least one split part requested changes, but synthesis returned an approval."
+      echo "- suggested fix: inspect ${split_work_dir} and address the part-level finding."
+      echo
+      echo "## Synthesis"
+      echo
+      for part in "${split_parts[@]}"; do
+        part_name="$(basename "${part}")"
+        echo "- ${part_name}: reviewed; see ${split_work_dir}/${part_name%.md}-review.md"
+      done
+      echo
+      echo "## Final Recommendation"
+      echo
+      echo "Do not proceed until request_changes part findings are resolved."
+    } > "${GEMINI_OUT}"
+  fi
+
+  echo "[review] Gemini split review result: ${GEMINI_OUT}"
+  return 0
+}
+
 run_claude() {
   if [ "${RUN_CLAUDE_REVIEW:-1}" = "0" ]; then
     echo "[review] Claude review disabled by RUN_CLAUDE_REVIEW=0"
@@ -567,31 +1165,12 @@ MSG
   set +e
   claude_help="$(claude --help 2>/dev/null)"
   REVIEWER_PREFLIGHT_DETAILS="$(preflight_details claude "${claude_help}" "${CLAUDE_PROMPT}")"
-  if printf '%s\n' "${claude_help}" | grep -q -- '--print'; then
-    claude_args=(--print)
-    claude_prompt_bytes="$(wc -c < "${CLAUDE_PROMPT}")"
-
-    if printf '%s\n' "${claude_help}" | grep -q -- '--no-session-persistence'; then
-      claude_args+=(--no-session-persistence)
-    fi
-
-    if printf '%s\n' "${claude_help}" | grep -q -- '--permission-mode'; then
-      claude_args+=(--permission-mode plan)
-    fi
-
-    if [ -n "${CLAUDE_REVIEW_MODEL:-}" ] && help_supports_flag "${claude_help}" "--model"; then
-      claude_args+=(--model "${CLAUDE_REVIEW_MODEL}")
-    fi
-
-    if [ "${claude_prompt_bytes}" -gt "${CLAUDE_PROMPT_ARG_MAX_BYTES}" ]; then
-      run_with_retries "claude" "${CLAUDE_OUT}" run_review_command_stdin "${CLAUDE_OUT}" "${CLAUDE_PROMPT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}"
-    else
-      run_with_retries "claude" "${CLAUDE_OUT}" run_review_command "${CLAUDE_OUT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}" "$(cat "${CLAUDE_PROMPT}")"
-    fi
+  if run_claude_split_review; then
+    status=0
   else
-    run_with_retries "claude" "${CLAUDE_OUT}" run_review_command_stdin "${CLAUDE_OUT}" "${CLAUDE_PROMPT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude
+    run_claude_prompt_file "${CLAUDE_OUT}" "${CLAUDE_PROMPT}"
+    status=$?
   fi
-  status=$?
   set -e
 
   if [ "${status}" -ne 0 ]; then
@@ -637,85 +1216,29 @@ MSG
     return 0
   fi
 
-  if ! command -v gemini >/dev/null 2>&1; then
-    echo "[review] gemini command not found; skipping Gemini review"
+  if ! command -v "${GEMINI_REVIEW_COMMAND}" >/dev/null 2>&1; then
+    echo "[review] ${GEMINI_REVIEW_COMMAND} command not found; skipping Gemini review"
     cat > "${GEMINI_OUT}" <<MSG
 # Gemini Review
 
-Skipped: gemini command not found.
+Skipped: ${GEMINI_REVIEW_COMMAND} command not found.
 MSG
     return 0
   fi
 
-  echo "[review] running Gemini review..."
+  echo "[review] running Gemini review via ${GEMINI_REVIEW_COMMAND}..."
 
   set +e
-  gemini_help="$(gemini --help 2>/dev/null)"
+  gemini_help="$(command_help_text "${GEMINI_REVIEW_COMMAND}")"
   gemini_prompt_file="${GEMINI_PROMPT}"
   gemini_prompt_bytes="$(wc -c < "${GEMINI_PROMPT}")"
   REVIEWER_PREFLIGHT_DETAILS="$(preflight_details gemini "${gemini_help}" "${GEMINI_PROMPT}")"
-  if [ "${gemini_prompt_bytes}" -gt "${GEMINI_PROMPT_MAX_BYTES}" ]; then
-    gemini_prompt_file="${PROMPT_DIR}/gemini-review-capped-${TIMESTAMP}.md"
-    {
-      echo "# Gemini Review Prompt"
-      echo
-      echo "The original Gemini prompt was ${gemini_prompt_bytes} bytes and exceeded GEMINI_PROMPT_MAX_BYTES=${GEMINI_PROMPT_MAX_BYTES}."
-      echo "The review context below is truncated to avoid Gemini CLI Node/V8 heap exhaustion."
-      echo "If the truncated context is insufficient, return request_changes with the missing context noted."
-      echo "Do not ask for API-key mode or weaker gate criteria; recovery must stay on the configured local CLI path."
-      echo
-      python3 - "${GEMINI_PROMPT}" "${GEMINI_PROMPT_MAX_BYTES}" <<'PY'
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-limit = int(sys.argv[2])
-sys.stdout.write(path.read_bytes()[:limit].decode("utf-8", errors="ignore"))
-PY
-      echo
-      echo
-      echo "## Truncation Notice"
-      echo
-      echo "Gemini prompt truncated by run-ai-reviews.sh. Required output remains: ## Verdict with approve, approve_with_notes, or request_changes."
-    } > "${gemini_prompt_file}"
-    echo "[review] Gemini prompt capped: ${gemini_prompt_file}"
-  fi
-  if printf '%s\n' "${gemini_help}" | grep -q -- '--prompt'; then
-    gemini_prompt_bytes="$(wc -c < "${gemini_prompt_file}")"
-
-    if [ "${gemini_prompt_bytes}" -gt "${GEMINI_PROMPT_ARG_MAX_BYTES}" ]; then
-      gemini_args=(--prompt "Review the Markdown prompt provided on stdin.")
-      gemini_stdin_mode=1
-    else
-      gemini_args=(--prompt "$(cat "${gemini_prompt_file}")")
-      gemini_stdin_mode=0
-    fi
-
-    if printf '%s\n' "${gemini_help}" | grep -q -- '--approval-mode'; then
-      gemini_args+=(--approval-mode plan)
-    fi
-
-    if printf '%s\n' "${gemini_help}" | grep -q -- '--skip-trust'; then
-      gemini_args+=(--skip-trust)
-    fi
-
-    if printf '%s\n' "${gemini_help}" | grep -q -- '--output-format'; then
-      gemini_args+=(--output-format text)
-    fi
-
-    if [ -n "${GEMINI_REVIEW_MODEL:-}" ] && help_supports_flag "${gemini_help}" "--model"; then
-      gemini_args+=(--model "${GEMINI_REVIEW_MODEL}")
-    fi
-
-    if [ "${gemini_stdin_mode}" -eq 1 ]; then
-      run_with_retries "gemini" "${GEMINI_OUT}" run_review_command_stdin "${GEMINI_OUT}" "${gemini_prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini "${gemini_args[@]}"
-    else
-      run_with_retries "gemini" "${GEMINI_OUT}" run_review_command "${GEMINI_OUT}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini "${gemini_args[@]}"
-    fi
+  if run_gemini_split_review; then
+    status=0
   else
-    run_with_retries "gemini" "${GEMINI_OUT}" run_review_command_stdin "${GEMINI_OUT}" "${gemini_prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" gemini
+    run_gemini_prompt_file "${GEMINI_OUT}" "${gemini_prompt_file}"
+    status=$?
   fi
-  status=$?
   set -e
 
   if [ "${status}" -ne 0 ]; then
@@ -929,6 +1452,10 @@ Choose one:
 
 List concrete issues only. If no blocking issues exist, say "No blocking findings."
 
+## Direct File Inspection
+
+List the repository files you inspected directly before giving the verdict. If a relevant changed file could not be inspected, list it here with the reason.
+
 ## Fallback Boundary
 
 State that this is Codex/GPT fallback coverage and not independent external review.
@@ -939,6 +1466,22 @@ Give a short recommendation for the review gate.
 
 Disabled reviewer reason:
 ${reason}
+
+## Direct File Review
+
+You are a Codex/GPT fallback reviewer running in this repository. The embedded review context may be partial, split, or optimized for external reviewers. Treat it as orientation only.
+
+Before issuing a verdict, read the referenced files directly from the workspace whenever they are relevant to the change. Include tracked, staged, and untracked text files that are part of the review scope. Do not rely only on compressed review prompts.
+
+Changed files visible to git:
+
+\`\`\`text
+$(git diff --name-only 2>/dev/null || true)
+$(git diff --cached --name-only 2>/dev/null || true)
+$(git ls-files --others --exclude-standard 2>/dev/null || true)
+\`\`\`
+
+You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.
 
 ---
 
@@ -1081,6 +1624,7 @@ Generated at: $(date -Iseconds)
 - Context: ${CONTEXT_FILE}
 - Claude prompt: ${CLAUDE_PROMPT}
 - Gemini prompt: ${GEMINI_PROMPT}
+- Split context manifest: ${SPLIT_CONTEXT_MANIFEST}
 - Model routing report: ${AI_MODEL_ROUTING_REPORT}
 
 ## Outputs

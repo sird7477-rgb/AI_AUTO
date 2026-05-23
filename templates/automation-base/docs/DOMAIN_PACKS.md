@@ -115,6 +115,10 @@ Completion reports should include:
 
 ## Current Packs
 
+- `templates/domain-packs/browser-macro/`: browser UI automation guidance for
+  Chrome extensions, content scripts, service workers, injected scripts,
+  userscripts, Playwright/browser macros, selector/DOM investigation, and
+  Ecount ERP extension patterns.
 - `templates/domain-packs/odoo/`: Odoo module development and customization
   guidance, including version discipline, addon scope, localization prompts,
   verification examples, and review checklist.

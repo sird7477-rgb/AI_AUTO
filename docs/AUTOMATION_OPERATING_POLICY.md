@@ -327,6 +327,31 @@ Do not make users infer meaning from internal names. For example, say that the
 design check was not applicable because no related planning artifact existed,
 instead of only reporting an internal status value.
 
+## Planning Artifact Language
+
+New planning, strategy, architecture, and operations artifacts should be written
+in Korean by default when they are meant for project-owner review or long-term
+operation. Keep commands, file paths, verdicts, status values, schema fields,
+code identifiers, and other machine-readable names in English.
+
+Existing English documents should remain English unless the user explicitly
+asks for translation or the document is already being revised for that purpose.
+Prefer adding a concise Korean summary to rewriting a large existing document
+when the goal is operational understanding rather than language cleanup.
+
+## Review Context Integrity
+
+Reviewer context limits must not be handled by silently compressing, head/tail
+truncating, or summarizing away source material while still asking for a normal
+approval. If a review context exceeds the configured reviewer budget, split it
+into ordered parts with a manifest and require an explicit synthesis over every
+part before accepting a final verdict.
+
+Fallback Codex/GPT reviews should inspect relevant repository files directly
+from the workspace instead of relying only on a shortened prompt. A fallback
+verdict should list the files inspected and any relevant files that could not be
+inspected.
+
 ## Guidance Budget Escalation
 
 Treat guidance bloat control as a staged workflow.
@@ -346,6 +371,16 @@ is unavailable or inappropriate.
 Guidance slimming or source-of-truth rewrites require a separate user decision
 after the Stage 2 report, because they can change long-lived operating
 contracts.
+
+## No-Code Before New Code
+
+The first implementation option is no new code. Before adding code, check
+whether the request can be satisfied by removing the underlying problem, using
+existing behavior, changing configuration, improving documentation, deleting
+unneeded code, or simplifying the workflow.
+
+If new code is still necessary, keep it to the smallest verifiable change and
+then apply the tool-adoption rule below before building custom automation.
 
 ## Tool Adoption Before Custom Development
 
