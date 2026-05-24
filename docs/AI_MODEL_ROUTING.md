@@ -22,8 +22,8 @@ The active Codex/GPT leader is selected by the runtime or user. Do not claim
 that the leader changed its own model mid-session unless the runtime provides
 explicit evidence of a supported change path.
 
-Cost and latency optimization should happen through bounded delegated lanes.
-Route lookup, scanning, lightweight synthesis, and narrow implementation slices
+Cost and latency optimization should happen through bounded delegated lanes:
+route lookup, scanning, lightweight synthesis, and narrow implementation slices
 to role-appropriate child agents such as `explore`/fast-scan lanes or the
 current low-cost Codex coding lane. Keep planning, architecture,
 security-sensitive decisions, integration, final verification, review-gate
@@ -33,8 +33,8 @@ reviewer roles.
 Default child-agent routing should inherit the current runtime contract. Use an
 explicit model override only when a lane has a concrete reason and current
 runtime evidence supports that model. Prefer role and `reasoning_effort`
-selection over hardcoded model names. When the current runtime exposes
-an available low-cost Codex coding lane, prefer that lane for bounded
+selection over hardcoded model names. When the current runtime exposes an
+available low-cost Codex coding lane, prefer that lane for bounded
 implementation work that passes the delegation guardrails in
 `docs/AUTOMATION_OPERATING_POLICY.md`.
 
@@ -43,13 +43,13 @@ implementation work that passes the delegation guardrails in
 Delegate implementation to a low-cost coding lane only when the guardrails in
 `docs/AUTOMATION_OPERATING_POLICY.md` pass. That policy is the authoritative
 source for allowed task shapes, security and contract carve-outs, escalation
-rules, leader review duties, and the rewrite-rate stop rule.
+rules, leader review duties, and rewrite-rate stop rules.
 
-Do not delegate broad design, ambiguity resolution, security-sensitive
-implementation, cross-module integration, reviewer verdict interpretation, or
-final completion claims to the low-cost lane. If a delegated task reveals a
-larger boundary than expected, the child agent must stop and report the scope
-expansion upward instead of continuing.
+Availability must be supported by auditable runtime evidence: the active
+model-routing report, an explicit session configuration value, or another
+runtime capability signal. Prefer role selection and reasoning effort over
+hardcoded model overrides, and inherit the current runtime model unless a
+concrete, current runtime-supported reason exists to override it.
 
 For detailed subagent delegation boundaries, use
 `docs/AUTOMATION_OPERATING_POLICY.md` as the source of truth. Native subagents

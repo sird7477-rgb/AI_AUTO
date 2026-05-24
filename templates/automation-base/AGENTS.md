@@ -75,18 +75,11 @@ ambiguity, and plan/run boundaries are governed by
 Optional domain packs may be available under `.omx/domain-packs/` after
 `aiinit`. They are onboarding references only and are ignored by git by default.
 
-Then update:
-
-- `AGENTS.md`
-- `docs/WORKFLOW.md`
-- `scripts/verify.sh`
-
-Record at minimum the review intensity policy, resource-aware parallelism
-expectations, planning/interview intensity expectations (`none`, `light`,
-`standard`, or `deep`), and any project-specific completion-pack decisions in
-those files. Include sandbox-vs-real-network evidence, Incident Ops rules, and
-plan index/TODO reconciliation plus spec/design alignment boundaries when the
-project may run dry-run, field-test, networked, or long-running work.
+Then update `AGENTS.md`, `docs/WORKFLOW.md`, and `scripts/verify.sh` with the
+project-specific rules required by the onboarding checklist, including review
+intensity, planning/interview intensity, completion-pack decisions,
+sandbox-vs-real-network evidence, Incident Ops, plan/TODO reconciliation, and
+spec/design alignment boundaries.
 
 Run `./scripts/automation-doctor.sh`, `./scripts/verify.sh`, and
 `./scripts/review-gate.sh` before treating the automation baseline as ready.
@@ -95,34 +88,12 @@ Run `./scripts/automation-doctor.sh`, `./scripts/verify.sh`, and
 
 When the user asks `프로젝트 초기설정 해줘`, or asks to interview project
 requirements and configure `AGENTS.md`, `docs/WORKFLOW.md`, and
-`scripts/verify.sh`, run the onboarding workflow.
-
-Onboarding workflow:
-
-1. Confirm the current path and git status.
-2. Inspect existing project materials as references, including folders such as
-   `(old)/`, `docs/`, `README.md`, or domain notes when present.
-3. Run the canonical onboarding checklist from
-   `docs/AUTOMATION_OPERATING_POLICY.md` using the interview mechanics in
-   `docs/INTERVIEW_PLAN_LAYER.md`. Ask only for facts that cannot be inferred
-   safely from local files or runtime evidence.
-4. Confirm review intensity, feedback recording, approval-friction handling,
-   subagent usage, resource-aware parallelism, operational readiness,
-   Incident Ops, and plan/TODO reconciliation expectations from the linked docs.
-5. Inspect `.omx/domain-packs/` and explicitly confirm which installed packs
-   apply and which do not. If a pack applies, use it as reference material and
-   merge only the applicable rules. Do not apply domain packs to unrelated
-   projects.
-6. Update `AGENTS.md` with project-specific agent rules.
-7. Update `docs/WORKFLOW.md` with project-specific workflow and verification
-   expectations.
-8. Delete unused `docs/*_COMPLETION.md` files after recording them as non-goals
-   if they would only clutter the target project.
-9. Customize `scripts/verify.sh` with real project checks while preserving useful template safeguards.
-10. Run `./scripts/automation-doctor.sh`.
-11. Run `./scripts/verify.sh`.
-12. Run `./scripts/review-gate.sh` when `./scripts/verify.sh` passes.
-13. Do not commit unless the user explicitly asks for a commit.
+`scripts/verify.sh`, run the onboarding workflow in
+`docs/AUTOMATION_OPERATING_POLICY.md` using the interview mechanics in
+`docs/INTERVIEW_PLAN_LAYER.md`. Confirm current path/git status, inspect local
+evidence first, merge only applicable domain-pack rules, run
+`./scripts/automation-doctor.sh`, `./scripts/verify.sh`, and
+`./scripts/review-gate.sh`, and do not commit unless explicitly asked.
 
 When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as the AI_AUTO template patch workflow:
 check path/git status, run `ai-auto-template-status`, read current AI_AUTO patch notes,
@@ -133,22 +104,11 @@ patching and report the source branch/channel as review-only.
 Do not overwrite project-owned files, patch `.omx/`, commit, or push unless explicitly asked.
 
 When the user asks for `리빌드 플랜`, `리빌딩 플랜`, `rebuild plan`, or
-`ai-rebuild-plan`, treat it as read-only planning. Inspect the repository,
-template drift, domain-pack references, refactoring candidates, and behavior
-locking gaps, then stop at a plan/report boundary. Do not modify files.
-
-When the user asks for `리빌드 실행`, `리빌딩 실행`, or `rebuild run`, require
-an approved rebuild plan, refreshed domain-pack assumptions, behavior-locking
-tests or smoke checks, explicit module boundaries, and the normal verify/review
-gates before execution.
-
-Optional rebuild support gates are read-only by default. Context packing,
-codemod scan, and boundary check may be suggested for explicit requests,
-material boundary changes, stale required evidence, domain-critical work, or
-structural verification/review failures. Missing optional tools must not block
-small reversible work. `codemod apply`, autofix, or any write-capable tool
-requires an explicit execution command tied to an approved scoped plan, reviewed
-dry-run diff or summary, rollback path, and post-apply verification.
+`ai-rebuild-plan`, stop at a read-only plan/report boundary. When the user asks
+for `리빌드 실행`, `리빌딩 실행`, or `rebuild run`, require the approved plan,
+refreshed assumptions, behavior-locking checks, explicit module boundaries, and
+normal verify/review gates. Optional rebuild helpers remain read-only unless an
+explicit execution command satisfies `docs/AUTOMATION_OPERATING_POLICY.md`.
 
 ## Required References
 

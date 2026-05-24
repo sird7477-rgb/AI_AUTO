@@ -131,40 +131,23 @@ Do not delegate:
 
 ### Low-Cost Coding Lane
 
-For token efficiency, the leader may delegate bounded implementation work to
-the current low-cost Codex coding lane when runtime evidence shows that lane is
-available.
-Acceptable runtime evidence includes the active model-routing report, an
-explicit session configuration value, or another auditable runtime capability
-signal.
+For token efficiency, the leader may delegate bounded implementation work to the
+current low-cost Codex coding lane only when the routing evidence in
+`docs/AI_MODEL_ROUTING.md` shows that lane is available.
 
-Use this lane for:
+Allowed shapes: exact-file implementation slices with clear acceptance
+criteria, local test fixes or additions, mechanical cleanup, narrow refactors,
+and repo-local code edits that do not alter contracts or security boundaries.
+Forbidden shapes: planning, architecture, requirements interpretation,
+security-sensitive work, cross-module integration decisions, review-gate verdict
+interpretation, and final completion claims.
 
-- exact-file implementation slices with clear acceptance criteria
-- local test fixes or test additions
-- mechanical cleanup and narrow refactors
-- repo-local code edits that do not alter contracts or security boundaries
-
-Do not use this lane for:
-
-- planning, architecture, or requirements interpretation
-- security-sensitive implementation or review
-- cross-module integration decisions
-- review-gate verdict interpretation
-- final user-facing completion claims
-
-The leader must package enough context for the delegated task to be completed
-without guessing, require the child agent to escalate ambiguity or scope
-expansion, inspect the resulting diff rather than only test output, and run the
-project verification gates before accepting the work.
-
-Track delegation quality informally during a session. If the leader rewrites a
-significant fraction of low-cost-lane output for correctness or fit (rough
-guide: about 20%, not a precise metric), suspend that lane for the task and
-finish the work locally or with a stronger role.
-When a low-cost lane was used, include the estimated rewrite fraction in the
-completion report.
-When guardrails do not pass, fall back to the standard implementation lane.
+The leader must package enough context, require escalation for ambiguity or
+scope expansion, inspect the resulting diff rather than only test output, and
+run project verification gates before accepting the work. If the leader rewrites
+a significant fraction of low-cost-lane output for correctness or fit (rough
+guide: about 20%), suspend that lane for the task and finish locally or with a
+stronger role. Report the estimated rewrite fraction when the lane was used.
 
 External reviewers such as Claude and Gemini do not directly control Codex
 native subagents. They may recommend subagent follow-ups, but the leader decides
@@ -172,10 +155,6 @@ whether to spawn them, assigns a narrow task, and reports the result. When an
 external reviewer is disabled, Codex fallback review lanes may cover the missing
 perspective, but this remains degraded informational coverage and must be
 reported as such.
-
-Prefer role selection and reasoning effort over hardcoded model overrides.
-Inherit the current runtime model unless a concrete, current runtime-supported
-reason exists to override it.
 
 ### Resource-Aware Parallelism
 
@@ -203,8 +182,8 @@ Do not interview for routine edits, small fixes, local documentation updates,
 or commands the user already requested.
 
 Use `docs/INTERVIEW_PLAN_LAYER.md` as the contract for interview and planning
-work. Its core rule is decision-width minimization: do not minimize user
-questions by increasing hidden AI assumptions.
+mechanics. Keep decision-width minimization: do not reduce user questions by
+increasing hidden AI assumptions.
 
 Autonomy applies only after the user has clearly requested execution. Do not
 treat feasibility questions, advice requests, recommendations, brainstorming,
@@ -214,11 +193,8 @@ prompts, answer with the likely approach, expected scope, verification plan, and
 the explicit command or instruction that would start execution.
 
 Before implementation, inspect the expected command, module, and domain shape.
-If the work is likely to span multiple command groups, business domains, or
-long-lived maintenance areas, document the module boundaries in the plan before
-writing code. A single entrypoint is acceptable for small surfaces, but do not
-grow a monolithic command file when complexity is already visible during
-planning.
+If likely to span multiple command groups, business domains, or long-lived
+maintenance areas, document module boundaries before writing code.
 
 Escalate to a short interview when one decision would materially change the
 result. Ask one concise question, then proceed from the answer.
@@ -261,15 +237,11 @@ Use this intensity scale:
 | `deep` | High-risk, long-lived, or strategic work | Run a staged interview, produce a plan/test shape, optionally request reviewer/subagent critique, then execute only the approved/safe slice |
 
 When interviewing, first inspect local files and ask only for facts that cannot
-be inferred safely. Prefer many narrow, concrete questions over a few broad
-questions. Map answers into concrete plan fields, track ambiguity with the
-`docs/INTERVIEW_PLAN_LAYER.md` ambiguity rules, and apply its
-`ready_to_execute` gate only for full-schema lanes such as initial onboarding,
-`deep` interviews, rebuild planning, migration, production, credentialed, data,
-or materially scope-changing work. Label assumptions explicitly. If the user
-says "바로 진행", skip interview only for safe and reversible work; keep
-approval gates for destructive, credentialed, production, or materially
-scope-changing actions.
+be inferred safely. Map answers into concrete plan fields, use
+`docs/INTERVIEW_PLAN_LAYER.md` for ambiguity and `ready_to_execute` gates, and
+label assumptions explicitly. If the user says "바로 진행", skip interview only
+for safe reversible work; keep approval gates for destructive, credentialed,
+production, or materially scope-changing actions.
 
 ## Post-Code Spec/Design Alignment
 
@@ -583,15 +555,17 @@ scope-changing execution.
 
 Use this order:
 
-1. Existing evidence: read README, docs, package files, scripts, and old notes
-   before asking.
+1. Existing evidence: read README, docs, package files, scripts, old notes,
+   `(old)/`, and domain notes before asking.
 2. Outcome: purpose, users, final deliverable, and non-goals.
 3. Scope and safety: allowed changes, forbidden changes, data/secret/credential
    boundaries, and destructive-operation rules.
 4. Stack and commands: runtime, setup, test, build, lint, smoke, and deploy
    commands.
 5. Completion packs: select or reject UI, deployment, security, data,
-   performance, and observability packs.
+   performance, and observability packs; delete unused `docs/*_COMPLETION.md`
+   files only after recording them as non-goals and only if they would clutter
+   the target project.
 6. Domain packs: follow `docs/DOMAIN_PACKS.md` to select, reject, or defer
    installed `.omx/domain-packs/` references. Use
    `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` only when creating or changing reusable

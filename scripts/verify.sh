@@ -3046,20 +3046,20 @@ echo "[verify] testing automation template installer..."
   grep -q "Native subagents" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "서브에이전트 사용 기준" "${target_dir}/docs/WORKFLOW.md"
   grep -q "Do not present guesses" "${target_dir}/AGENTS.md"
-  grep -q "review intensity policy" "${target_dir}/AGENTS.md"
-  grep -q "resource-aware parallelism" "${target_dir}/AGENTS.md"
+  grep -q "review intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q "resource-aware parallelism" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Planning And Interview Escalation" "${target_dir}/AGENTS.md"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${target_dir}/AGENTS.md"
   grep -q "template_patch_enabled: no" "${target_dir}/AGENTS.md"
-  grep -q "codemod apply" "${target_dir}/AGENTS.md"
-  grep -q '`none`' "${target_dir}/AGENTS.md"
-  grep -q '`light`' "${target_dir}/AGENTS.md"
-  grep -q '`standard`' "${target_dir}/AGENTS.md"
-  grep -q '`deep`' "${target_dir}/AGENTS.md"
+  grep -q "Codemod apply" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q '`none`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q '`light`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q '`standard`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
+  grep -q '`deep`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "applicable completion packs from" "${target_dir}/AGENTS.md"
   grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
-  grep -q "Delete unused" "${target_dir}/AGENTS.md"
+  grep -q "delete unused" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "docs/DOMAIN_PACKS.md" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/README.md"
   grep -q "Review intensity" "templates/automation-base/README.md"
@@ -3340,8 +3340,8 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   grep -q "Project registered" "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
   grep -q "sandbox-vs-real-network" "${target_dir}/AGENTS.md"
-  grep -q "Incident Ops rules" "${target_dir}/AGENTS.md"
-  grep -q "plan index/TODO reconciliation" "${target_dir}/AGENTS.md"
+  grep -q "Incident Ops" "${target_dir}/docs/WORKFLOW.md"
+  grep -q "plan index/TODO reconciliation" "${target_dir}/docs/WORKFLOW.md"
   grep -q "spec/design alignment" "${target_dir}/AGENTS.md"
   grep -q "plain Korean" "${target_dir}/AGENTS.md"
   grep -q "$(cd "${target_dir}" && pwd -P)" "${registry_file}"
@@ -3872,6 +3872,17 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
 )
 
 echo "[verify] checking automation template sync..."
+for doc in \
+  AI_MODEL_ROUTING.md \
+  AUTOMATION_OPERATING_POLICY.md
+do
+  if ! diff -u "docs/${doc}" "templates/automation-base/docs/${doc}"; then
+    echo "[verify] automation doc copies are out of sync: ${doc}"
+    echo "[verify] sync docs/${doc} and templates/automation-base/docs/${doc}, then rerun"
+    exit 1
+  fi
+done
+
 for script in \
   automation-doctor.sh \
   archive-omx-artifacts.sh \

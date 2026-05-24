@@ -4,6 +4,19 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.24.2
+
+- Reduced guidance document budget pressure by moving low-cost lane routing
+  details into `docs/AI_MODEL_ROUTING.md` while keeping delegation safety
+  boundaries in `docs/AUTOMATION_OPERATING_POLICY.md`.
+- Shortened template `AGENTS.md` onboarding and rebuild keyword guidance by
+  preserving triggers/fail-closed behavior and delegating detailed mechanics to
+  linked workflow documents.
+- Mirrored the active and template `docs/AUTOMATION_OPERATING_POLICY.md`
+  structure so new projects receive the same guidance-budget reduction.
+- Added template-sync verification for active/template routing and operating
+  policy docs.
+
 ## 2026.05.24.1
 
 This version consolidates the runtime-adapter branch changes and records the
