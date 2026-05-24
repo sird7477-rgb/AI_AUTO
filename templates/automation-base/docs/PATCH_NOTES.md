@@ -4,6 +4,26 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.24.1
+
+This version consolidates the runtime-adapter branch changes and records the
+template versioning guard added after review.
+
+- Added the AI runtime adapter contract and `scripts/ai-runtime-adapter.sh` so
+  Codex, Claude, Gemini, and agy review paths use explicit read-only capability
+  checks before execution.
+- Routed Claude/Gemini split reviews and Codex fallback review through the
+  adapter while preserving command overrides, external runner propagation,
+  sandbox/no-edit flags, and failure diagnostics in review artifacts.
+- Added `docs/AI_RUNTIME_ADAPTERS.md` and verification coverage for capability
+  refusal, relative path handling with `--cd`, external runner adapter
+  propagation, adapter diagnostics, and template/root sync.
+- Added experimental template source reporting and install guards so non-main
+  AI_AUTO branches report disabled template patching unless explicitly
+  overridden.
+- Tightened completion guidance and verification so template-owned changes must
+  bump `AI_AUTO_TEMPLATE_VERSION` and keep the latest patch-note heading in sync.
+
 ## 2026.05.21.2
 
 - Added the `AI_AUTO 최신 패치 적용해줘` keyword so projects can request the

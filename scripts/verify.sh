@@ -120,8 +120,17 @@ echo "[verify] checking Codex native goal mode boundary guidance..."
   diff -u "${goal_boundary_tmp}/root.md" "${goal_boundary_tmp}/template.md"
 )
 
-template_version="$(cat templates/automation-base/AI_AUTO_TEMPLATE_VERSION)"
-grep -qxF "## ${template_version}" templates/automation-base/docs/PATCH_NOTES.md
+template_version="$(
+  sed -n '1{s/\r$//; s/[[:space:]]*$//; p; q}' templates/automation-base/AI_AUTO_TEMPLATE_VERSION
+)"
+latest_patch_note="$(
+  sed -n '/^## /{s/^## //; s/\r$//; s/[[:space:]]*$//; p; q}' templates/automation-base/docs/PATCH_NOTES.md
+)"
+echo "[verify] latest template patch note: ${latest_patch_note:-<none>}"
+if test -z "${template_version}" || test -z "${latest_patch_note}" || test "${latest_patch_note}" != "${template_version}"; then
+  echo "[verify] template version ${template_version:-<none>} must match the top PATCH_NOTES heading (got: ${latest_patch_note:-<none>})" >&2
+  exit 1
+fi
 grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" AGENTS.md
 grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" templates/automation-base/AGENTS.md
 grep -qF "patch keyword: AI_AUTO 최신 패치 적용해줘" docs/GLOBAL_TOOLS.md

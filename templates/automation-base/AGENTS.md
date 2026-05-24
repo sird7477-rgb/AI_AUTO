@@ -21,10 +21,14 @@ Before claiming a task is complete, the agent must:
    classify the result as aligned, updated, not applicable, or blocked; size the
    search using `docs/AUTOMATION_OPERATING_POLICY.md` and re-check if
    verification causes more edits
-4. run `./scripts/verify.sh` for basic verification
-5. run `./scripts/review-gate.sh` before presenting a commit candidate
-6. report the verification, review, and spec/design alignment results
-7. mention any remaining warnings or limitations
+4. for changes under `templates/automation-base/`, including template copies of
+   hybrid root files, update
+   `templates/automation-base/AI_AUTO_TEMPLATE_VERSION` and add a matching top
+   entry in `templates/automation-base/docs/PATCH_NOTES.md`
+5. run `./scripts/verify.sh` for basic verification
+6. run `./scripts/review-gate.sh` before presenting a commit candidate
+7. report the verification, review, and spec/design alignment results
+8. mention any remaining warnings or limitations
 
 If `./scripts/verify.sh` fails, the task is not complete.
 If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
