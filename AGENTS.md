@@ -112,6 +112,8 @@ When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as the AI_AUT
 check path/git status, run `ai-auto-template-status`, read current AI_AUTO patch notes,
 inspect managed-file differences, preserve hybrid project rules, apply only template-owned
 or review-merge updates, then run `./scripts/verify.sh` and `./scripts/review-gate.sh`.
+For hybrid `review-merge` files, report template changes as absorbed, rejected, or deferred; for project-owned `inspect-only` files, report drift only.
+If a legitimate template-owned guide addition trips only doc-budget current-diff hard limit, rerun with `DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
 If `ai-auto-template-status` reports `template_patch_enabled: no`, stop before
 patching and report the source branch/channel as review-only.
 Do not overwrite project-owned files, patch `.omx/`, commit, or push unless explicitly asked.

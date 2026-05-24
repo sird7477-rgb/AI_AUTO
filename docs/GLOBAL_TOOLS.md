@@ -205,6 +205,10 @@ workflow.
 If `ai-auto-template-status` reports `template_patch_enabled: no`, the keyword
 workflow must stop before applying managed-file changes because the current
 AI_AUTO source is experimental or unknown.
+For hybrid files, classify template changes as absorbed, rejected, or deferred;
+for project-owned files, report drift only. If a legitimate template-owned guide
+addition trips only the current guidance diff hard limit, rerun with
+`DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
 
 Disable the notice for a shell command with:
 

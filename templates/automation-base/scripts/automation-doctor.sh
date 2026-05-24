@@ -75,6 +75,10 @@ say_warn() {
   printf '[warn] %s\n' "$1"
 }
 
+say_info() {
+  printf '[info] %s\n' "$1"
+}
+
 say_fail() {
   FAIL_COUNT=$((FAIL_COUNT + 1))
   printf '[fail] %s\n' "$1"
@@ -250,7 +254,7 @@ command_help_text() {
 }
 
 check_gemini_cli_capabilities() {
-  local gemini_command gemini_help
+  local gemini_command gemini_help prompt_mode_supported=0
 
   gemini_command="${GEMINI_REVIEW_COMMAND:-agy}"
 
@@ -267,6 +271,7 @@ check_gemini_cli_capabilities() {
 
   if command_help_supports "$gemini_help" "--prompt"; then
     say_pass "Gemini supports non-interactive prompt mode (--prompt)"
+    prompt_mode_supported=1
   else
     say_warn "Gemini --prompt support not detected; review may fall back to stdin and can be affected by auth prompts"
     suggest "check Gemini CLI version or use REVIEW_EXECUTION_MODE=external when Gemini hangs"
@@ -274,24 +279,32 @@ check_gemini_cli_capabilities() {
 
   if command_help_supports "$gemini_help" "--approval-mode"; then
     say_pass "Gemini supports approval mode control"
+  elif [ "$prompt_mode_supported" -eq 1 ]; then
+    say_info "Gemini optional approval mode flag not detected; review can still run, but interactive approvals may require external mode"
   else
     say_warn "Gemini approval mode flag not detected; CLI may request interactive approvals"
   fi
 
   if command_help_supports "$gemini_help" "--skip-trust"; then
     say_pass "Gemini supports skip-trust flag"
+  elif [ "$prompt_mode_supported" -eq 1 ]; then
+    say_info "Gemini optional skip-trust flag not detected; workspace trust prompts may require external mode"
   else
     say_warn "Gemini skip-trust flag not detected; workspace trust prompts may appear"
   fi
 
   if command_help_supports "$gemini_help" "--output-format"; then
     say_pass "Gemini supports text output format control"
+  elif [ "$prompt_mode_supported" -eq 1 ]; then
+    say_info "Gemini optional output format flag not detected; review parsing remains artifact-checked"
   else
     say_warn "Gemini output format flag not detected; review parsing may be less predictable"
   fi
 
   if command_help_supports "$gemini_help" "--model"; then
     say_pass "Gemini supports explicit model selection"
+  elif [ "$prompt_mode_supported" -eq 1 ]; then
+    say_info "Gemini optional --model flag not detected; provider default model will be used"
   else
     say_warn "Gemini --model flag not detected; provider default model will be used"
   fi
@@ -430,11 +443,14 @@ echo "[doctor] checking automation files"
 ensure_dir ".omx"
 ensure_dir ".omx/reviewer-state"
 ensure_dir "docs"
+ensure_dir "docs/research"
 ensure_dir "scripts"
 
 REQUIRED_FILES=(
   "AGENTS.md"
   "docs/CHROME_CDP_ACCESS.md"
+  "docs/AI_AUTOMATION_TREND_HARDENING.md"
+  "docs/research/AI_AUTOMATION_TRENDS.md"
   "docs/AI_RUNTIME_ADAPTERS.md"
   "docs/AI_MODEL_ROUTING.md"
   "docs/AUTOMATION_OPERATING_POLICY.md"

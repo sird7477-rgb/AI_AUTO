@@ -15,6 +15,7 @@ Clarify these before implementing observability work:
 - metrics, traces, audit events, or error reporting tools already in use
 - user-visible and operator-visible error handling requirements
 - incident diagnosis questions the system should answer
+- AI agent or reviewer identity fields when automation decisions must be audited
 - whether dry-run/field-test anomaly handling should use
   `docs/INCIDENT_OPS.md`
 - heartbeat, quiet, and active-incident status reporting intervals
@@ -35,6 +36,10 @@ When observability is in scope, add these steps to the project workflow:
    report cadence
 7. include the relevant log, health, metric, trace, incident, or audit evidence in the
    completion report
+8. for AI automation, include the applicable local artifacts from
+   `docs/AI_AUTOMATION_TREND_HARDENING.md`, such as capability refusal,
+   reviewer disabled state, permission boundary, degraded fallback, and
+   redaction status
 
 ## Verification Patterns
 
@@ -52,6 +57,10 @@ docker compose logs --tail=100
 Do not require external monitoring accounts in local verification unless the
 project already depends on them. Local health and log smoke checks are often
 enough for early-stage projects.
+
+AI agent traces, prompts, screenshots, and tool outputs must be redacted before
+export. Prefer local markdown, JSON, JSONL, manifests, and checkpoints until a
+project explicitly requires hosted observability.
 
 ## Completion Criteria
 

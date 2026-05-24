@@ -7,6 +7,8 @@ This template contains the base files for a CLI-based AI development workflow.
 - AGENTS.md: repo-local agent operating rules
 - AI_AUTO_TEMPLATE_VERSION: installed template version marker for status comparison
 - docs/WORKFLOW.md: project workflow documentation
+- docs/AI_AUTOMATION_TREND_HARDENING.md: compact agent identity, permission, revocation, observability, and trend hardening contract
+- docs/research/AI_AUTOMATION_TRENDS.md: recurring AI automation trend research report structure
 - docs/AUTOMATION_OPERATING_POLICY.md: review-intensity and feedback policy
 - docs/DEPLOYMENT_COMPLETION.md: optional deployment/release completion pack
 - docs/DOMAIN_PACKS.md: domain-pack lifecycle, selection, and application rules
@@ -165,6 +167,11 @@ During the interview, decide which completion dimensions apply:
   them.
 - Guidance context budget: decide what belongs in `AGENTS.md` versus linked docs
   so project instructions stay scannable.
+- AI automation hardening: use `docs/AI_AUTOMATION_TREND_HARDENING.md` when
+  agent identity, tool permissions, revocation, local automation observability,
+  or recurring trend research are in scope. Use
+  `docs/research/AI_AUTOMATION_TRENDS.md` for dated research reports. Do not let
+  trend notes change runtime defaults without a reviewed patch.
 
 - UI: use `docs/UI_COMPLETION.md` when the final outcome includes a UI
 - Deployment: use `docs/DEPLOYMENT_COMPLETION.md` when release or operations

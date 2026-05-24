@@ -62,6 +62,8 @@ for path in \
   "AI_AUTO_TEMPLATE_VERSION" \
   "AGENTS.md" \
   "docs/CHROME_CDP_ACCESS.md" \
+  "docs/AI_AUTOMATION_TREND_HARDENING.md" \
+  "docs/research/AI_AUTOMATION_TRENDS.md" \
   "docs/AI_RUNTIME_ADAPTERS.md" \
   "docs/AI_MODEL_ROUTING.md" \
   "docs/AUTOMATION_OPERATING_POLICY.md" \
@@ -118,7 +120,7 @@ if [ "${#conflicts[@]}" -gt 0 ]; then
   exit 1
 fi
 
-mkdir -p "${TARGET_DIR}/.omx/reviewer-state" "${TARGET_DIR}/docs" "${TARGET_DIR}/scripts"
+mkdir -p "${TARGET_DIR}/.omx/reviewer-state" "${TARGET_DIR}/docs/research" "${TARGET_DIR}/scripts"
 
 exclude_file="${TARGET_DIR}/.git/info/exclude"
 if ! grep -Eq '^[.]omx/?$' "${exclude_file}" 2>/dev/null; then
@@ -131,6 +133,8 @@ fi
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
 cp "${TEMPLATE_DIR}/AI_AUTO_TEMPLATE_VERSION" "${TARGET_DIR}/AI_AUTO_TEMPLATE_VERSION"
 cp "${TEMPLATE_DIR}/docs/CHROME_CDP_ACCESS.md" "${TARGET_DIR}/docs/CHROME_CDP_ACCESS.md"
+cp "${TEMPLATE_DIR}/docs/AI_AUTOMATION_TREND_HARDENING.md" "${TARGET_DIR}/docs/AI_AUTOMATION_TREND_HARDENING.md"
+cp "${TEMPLATE_DIR}/docs/research/AI_AUTOMATION_TRENDS.md" "${TARGET_DIR}/docs/research/AI_AUTOMATION_TRENDS.md"
 cp "${TEMPLATE_DIR}/docs/AI_RUNTIME_ADAPTERS.md" "${TARGET_DIR}/docs/AI_RUNTIME_ADAPTERS.md"
 cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTING.md"
 cp "${TEMPLATE_DIR}/docs/AUTOMATION_OPERATING_POLICY.md" "${TARGET_DIR}/docs/AUTOMATION_OPERATING_POLICY.md"

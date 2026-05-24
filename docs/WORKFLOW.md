@@ -183,6 +183,13 @@ repo helper로 마찰을 줄이고, destructive/credential/production 작업은 
   분리한다.
 - review artifact 정리는 보관(archive) 기본값을 유지하고, 삭제(delete)는
   명시 옵션으로만 실행한다.
+- AI agent, 외부 reviewer, runtime adapter, MCP/tool connector, 장기 자동화,
+  또는 트렌드 기반 자동화 개선을 다룰 때는
+  `docs/AI_AUTOMATION_TREND_HARDENING.md`를 기준으로 agent identity,
+  tool permission class, kill switch/revoke, local observability, recurring
+  trend report 경계를 확인한다. 이 문서는 새 런타임 권한을 부여하지 않으며,
+  write/credential/network/publish 권한 확대는 별도 계획과 리뷰 게이트가
+  필요하다.
 
 완료 보고에 포함할 것
 변경 파일

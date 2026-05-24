@@ -220,6 +220,7 @@ function/class 이동 후보만 제안하고, `ai-split-dry-run` 검토와
   남은 부분을 보고한다. 요청한 완료 기준이 아직 남아 있으면 계속 진행한다.
 - 긴 runbook/checklist/detail은 `AGENTS.md`에 계속 붙이지 말고 linked docs로
   분리한다.
+- AI automation hardening은 `docs/AI_AUTOMATION_TREND_HARDENING.md`를 확인한다.
 
 ## 서브에이전트 사용 기준
 

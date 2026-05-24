@@ -4,6 +4,31 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.24.5
+
+- Split AI automation trend hardening so the always-loaded control contract
+  stays short while recurring trend research lives under `docs/research/`.
+- Added template installer, status, and verification coverage for the nested
+  trend research guide.
+
+## 2026.05.24.4
+
+- Clarified hybrid/project-owned template patch reporting with
+  absorbed/rejected/deferred outcomes.
+- Added `DOC_BUDGET_TEMPLATE_PATCH=1` for reviewed template-owned guide additions.
+- Downgraded missing optional Gemini/agy stabilizing flags to doctor info notes.
+
+## 2026.05.24.3
+
+- Added AI automation trend hardening guidance for agent identity, tool
+  permission classes, kill switch/revoke handling, local automation
+  observability, and recurring trend research.
+- Linked the hardening guide from workflow, runtime adapter, model routing,
+  observability, session-quality, and template onboarding docs without granting
+  new runtime permissions.
+- Added verification coverage so root/template hardening guidance and template
+  status entries stay in sync.
+
 ## 2026.05.24.2
 
 - Reduced guidance document budget pressure by moving low-cost lane routing

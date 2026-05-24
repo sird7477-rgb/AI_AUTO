@@ -200,6 +200,19 @@ echo "[verify] testing guidance document budget accounting..."
   ./scripts/doc-budget.sh > "${tmp_dir}/budget-refactor.out"
   grep -q "current guidance diff added lines: 400" "${tmp_dir}/budget-refactor.out"
   grep -q "current guidance diff net added lines: 0" "${tmp_dir}/budget-refactor.out"
+
+  : > docs/TEMPLATE_PATCH.md
+  for i in $(seq 1 310); do
+    printf 'template patch guidance line %s\n' "$i" >> docs/TEMPLATE_PATCH.md
+  done
+  if ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-fail.out" 2>&1; then
+    echo "[verify] doc-budget accepted large template patch diff without explicit mode"
+    exit 1
+  fi
+  grep -q "DOC_BUDGET_TEMPLATE_PATCH=1" "${tmp_dir}/budget-template-patch-fail.out"
+  DOC_BUDGET_TEMPLATE_PATCH=1 ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-mode.out"
+  grep -q "template patch mode" "${tmp_dir}/budget-template-patch-mode.out"
+  grep -q "warnings=" "${tmp_dir}/budget-template-patch-mode.out"
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."
@@ -224,6 +237,10 @@ echo "[verify] testing guidance document budget missing-file tolerance..."
 
 grep -q "stage-2 duplicate report only when the user asks" scripts/doc-budget.sh
 grep -q "stage-2 duplicate report only when the user asks" templates/automation-base/scripts/doc-budget.sh
+grep -q "DOC_BUDGET_TEMPLATE_PATCH=1" scripts/doc-budget.sh
+grep -q "DOC_BUDGET_TEMPLATE_PATCH=1" templates/automation-base/scripts/doc-budget.sh
+grep -q "absorbed, rejected, or deferred" AGENTS.md
+grep -q "absorbed, rejected, or deferred" templates/automation-base/AGENTS.md
 grep -q "Guidance Budget Escalation" docs/AUTOMATION_OPERATING_POLICY.md
 grep -q "Guidance Budget Escalation" templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
 grep -q "Stage 2 is a read-only duplicate or consolidation" templates/automation-base/README.md
@@ -2574,9 +2591,11 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   target_dir="${tmp_dir}/target"
   git -c init.defaultBranch=main init -q "${target_dir}"
   cd "${target_dir}"
-  mkdir -p docs scripts .omx/reviewer-state .omx/review-results
+  mkdir -p docs/research scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
   printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
+  printf '# AI Automation Trend Hardening\n' > docs/AI_AUTOMATION_TREND_HARDENING.md
+  printf '# AI Automation Trend Research\n' > docs/research/AI_AUTOMATION_TRENDS.md
   printf '# AI Runtime Adapters\n' > docs/AI_RUNTIME_ADAPTERS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
@@ -2646,9 +2665,11 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   target_dir="${tmp_dir}/target"
   git -c init.defaultBranch=main init -q "${target_dir}"
   cd "${target_dir}"
-  mkdir -p docs scripts .omx/reviewer-state .omx/review-results
+  mkdir -p docs/research scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
   printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
+  printf '# AI Automation Trend Hardening\n' > docs/AI_AUTOMATION_TREND_HARDENING.md
+  printf '# AI Automation Trend Research\n' > docs/research/AI_AUTOMATION_TRENDS.md
   printf '# AI Runtime Adapters\n' > docs/AI_RUNTIME_ADAPTERS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
@@ -2716,9 +2737,11 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   target_dir="${tmp_dir}/target"
   git -c init.defaultBranch=main init -q "${target_dir}"
   cd "${target_dir}"
-  mkdir -p docs scripts .omx/reviewer-state
+  mkdir -p docs/research scripts .omx/reviewer-state
   printf '# Agents\n' > AGENTS.md
   printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
+  printf '# AI Automation Trend Hardening\n' > docs/AI_AUTOMATION_TREND_HARDENING.md
+  printf '# AI Automation Trend Research\n' > docs/research/AI_AUTOMATION_TRENDS.md
   printf '# AI Runtime Adapters\n' > docs/AI_RUNTIME_ADAPTERS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
@@ -2999,6 +3022,8 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
   test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   test -f "${target_dir}/docs/CHROME_CDP_ACCESS.md"
+  test -f "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
+  test -f "${target_dir}/docs/research/AI_AUTOMATION_TRENDS.md"
   test -f "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
   test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
   test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -3020,6 +3045,11 @@ echo "[verify] testing automation template installer..."
   cmp -s "templates/automation-base/AI_AUTO_TEMPLATE_VERSION" "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "Chrome CDP Access" "${target_dir}/docs/CHROME_CDP_ACCESS.md"
+  grep -q "Agent Identity" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
+  grep -q "Tool Permission Registry" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
+  grep -q "Kill Switch And Revoke" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
+  grep -q "Recurring Trend Report" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
+  grep -q "AI Automation Trend Research" "${target_dir}/docs/research/AI_AUTOMATION_TRENDS.md"
   grep -q "AI 런타임 어댑터" "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -3061,6 +3091,8 @@ echo "[verify] testing automation template installer..."
   grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
   grep -q "delete unused" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "docs/DOMAIN_PACKS.md" "templates/automation-base/README.md"
+  grep -q "docs/AI_AUTOMATION_TREND_HARDENING.md" "templates/automation-base/README.md"
+  grep -q "docs/research/AI_AUTOMATION_TRENDS.md" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/README.md"
   grep -q "Review intensity" "templates/automation-base/README.md"
   grep -q "Subagents" "templates/automation-base/README.md"
@@ -3138,6 +3170,8 @@ echo "[verify] testing automation template installer..."
   grep -q "template_patch_enabled: no" "${tmp_dir}/template-status-exp.out"
   grep -q "template_patch_block_reason: experimental_source_branch" "${tmp_dir}/template-status-exp.out"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/AI_AUTOMATION_TREND_HARDENING.md" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/research/AI_AUTOMATION_TRENDS.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/AI_RUNTIME_ADAPTERS.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/PATCH_NOTES.md" "${tmp_dir}/template-status-current.out"
@@ -3146,6 +3180,8 @@ echo "[verify] testing automation template installer..."
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/CHROME_CDP_ACCESS.md\tdocs/CHROME_CDP_ACCESS.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/AI_AUTOMATION_TREND_HARDENING.md\tdocs/AI_AUTOMATION_TREND_HARDENING.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/research/AI_AUTOMATION_TRENDS.md\tdocs/research/AI_AUTOMATION_TRENDS.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/AI_RUNTIME_ADAPTERS.md\tdocs/AI_RUNTIME_ADAPTERS.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/ai-runtime-adapter.sh\tscripts/ai-runtime-adapter.sh\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
@@ -3873,7 +3909,9 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
 
 echo "[verify] checking automation template sync..."
 for doc in \
+  AI_AUTOMATION_TREND_HARDENING.md \
   AI_MODEL_ROUTING.md \
+  AI_RUNTIME_ADAPTERS.md \
   AUTOMATION_OPERATING_POLICY.md
 do
   if ! diff -u "docs/${doc}" "templates/automation-base/docs/${doc}"; then
@@ -3882,6 +3920,12 @@ do
     exit 1
   fi
 done
+if ! diff -u \
+  "docs/research/AI_AUTOMATION_TRENDS.md" \
+  "templates/automation-base/docs/research/AI_AUTOMATION_TRENDS.md"; then
+  echo "[verify] automation doc copies are out of sync: docs/research/AI_AUTOMATION_TRENDS.md"
+  exit 1
+fi
 
 for script in \
   automation-doctor.sh \

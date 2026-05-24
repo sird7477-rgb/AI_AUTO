@@ -15,6 +15,9 @@ available in the current CLI/runtime/account.
 
 Provider documentation is reference material only. It is not proof that a local
 CLI, login session, account, or Codex runtime can use a specific model.
+Recurring trend reports may recommend routing changes, but they must remain
+dated, sourced proposals until local runtime evidence confirms availability and
+the normal verification/review gates accept the change.
 
 ## Leader vs Delegated Routing
 

@@ -229,8 +229,8 @@ Patch policies mean:
 
 - `update`: template-owned file; a newer template can normally replace or patch
   it after review.
-- `review-merge`: hybrid file; preserve project-specific rules and merge only
-  applicable template guidance.
+- `review-merge`: hybrid file; preserve project-specific rules, merge only
+  applicable template guidance, and report absorbed, rejected, or deferred.
 - `inspect-only`: project-owned file; report drift, but do not overwrite it.
 
 When the drift should become a queued follow-up for that project, record it
@@ -249,6 +249,8 @@ project is the short form for the full AI_AUTO template patch workflow: inspect
 template status and patch notes, merge only applicable managed-file changes,
 preserve project-specific rules, run verification and the review gate, and stop
 before commit/push unless explicitly asked.
+If a legitimate template-owned guide addition trips only the current guidance
+diff hard limit, rerun with `DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
 
 ## Domain Packs
 

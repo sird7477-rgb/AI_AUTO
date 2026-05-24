@@ -179,6 +179,8 @@ Checkpoint content:
 - reviewer state
 - model routing snapshot
 - leader/delegated lane ownership and any degraded fallback coverage
+- agent identity, tool permission class, revoked/disabled state, and local
+  artifact paths for AI automation decisions when those affect trust
 - known warnings and blockers
 
 Autonomous continuation rule:

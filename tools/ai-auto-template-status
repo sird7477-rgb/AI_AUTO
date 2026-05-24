@@ -146,6 +146,8 @@ managed_files() {
 AI_AUTO_TEMPLATE_VERSION|AI_AUTO_TEMPLATE_VERSION|template-owned|update
 AGENTS.md|AGENTS.md|hybrid|review-merge
 docs/CHROME_CDP_ACCESS.md|docs/CHROME_CDP_ACCESS.md|template-owned|update
+docs/AI_AUTOMATION_TREND_HARDENING.md|docs/AI_AUTOMATION_TREND_HARDENING.md|template-owned|update
+docs/research/AI_AUTOMATION_TRENDS.md|docs/research/AI_AUTOMATION_TRENDS.md|template-owned|update
 docs/AI_RUNTIME_ADAPTERS.md|docs/AI_RUNTIME_ADAPTERS.md|template-owned|update
 docs/AI_MODEL_ROUTING.md|docs/AI_MODEL_ROUTING.md|template-owned|update
 docs/AUTOMATION_OPERATING_POLICY.md|docs/AUTOMATION_OPERATING_POLICY.md|template-owned|update

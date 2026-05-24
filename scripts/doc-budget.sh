@@ -2,6 +2,7 @@
 set -euo pipefail
 
 STRICT="${DOC_BUDGET_STRICT:-0}"
+TEMPLATE_PATCH_MODE="${DOC_BUDGET_TEMPLATE_PATCH:-0}"
 
 WARN_COUNT=0
 FAIL_COUNT=0
@@ -28,6 +29,25 @@ check_number() {
     fail "${label} exceeds hard limit ${fail_at}"
   elif [ "$value" -gt "$warn_at" ]; then
     warn "${label} exceeds warning budget ${warn_at}"
+  fi
+}
+
+check_current_guidance_diff() {
+  local value="$1" warn_at=150 fail_at=300
+
+  printf '[budget] current guidance diff net added lines: %s\n' "$value"
+
+  if [ "$value" -gt "$fail_at" ]; then
+    if [ "$TEMPLATE_PATCH_MODE" = "1" ]; then
+      warn "current guidance diff net added lines exceeds hard limit ${fail_at}; DOC_BUDGET_TEMPLATE_PATCH=1 treats template patch adoption as a reported warning"
+      echo "[budget] template patch mode: verify that additions are template-owned or explicitly review-merged"
+      echo "[budget] template patch mode is attestation-only; report this warning and the reviewed scope"
+    else
+      fail "current guidance diff net added lines exceeds hard limit ${fail_at}"
+      echo "[budget] if this is a reviewed AI_AUTO template patch with legitimate template-owned guide additions, rerun with DOC_BUDGET_TEMPLATE_PATCH=1 and report the warning"
+    fi
+  elif [ "$value" -gt "$warn_at" ]; then
+    warn "current guidance diff net added lines exceeds warning budget ${warn_at}"
   fi
 }
 
@@ -109,7 +129,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     diff_net=0
   fi
   printf '[budget] current guidance diff added lines: %s\n' "$diff_added"
-  check_number "current guidance diff net added lines" "$diff_net" 150 300
+  check_current_guidance_diff "$diff_net"
 fi
 
 duplicate_report="$(
