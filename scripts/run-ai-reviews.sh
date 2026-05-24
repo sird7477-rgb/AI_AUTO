@@ -28,6 +28,10 @@ AI_MODEL_DISCOVERY="${AI_MODEL_DISCOVERY:-1}"
 AI_MODEL_DISCOVERY_DIR="${AI_MODEL_DISCOVERY_DIR:-.omx/model-routing}"
 AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV:-${AI_MODEL_DISCOVERY_DIR}/latest.env}"
 AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT:-${AI_MODEL_DISCOVERY_DIR}/latest.md}"
+RUN_AI_REVIEWS_SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_ADAPTER_SCRIPT="${RUNTIME_ADAPTER_SCRIPT:-${RUN_AI_REVIEWS_SCRIPT_DIR}/ai-runtime-adapter.sh}"
+: "${RUNTIME_ADAPTER_AGY_COMMAND:=${GEMINI_REVIEW_COMMAND}}"
+export RUNTIME_ADAPTER_AGY_COMMAND
 
 mkdir -p "${OUT_DIR}" "${CONTEXT_DIR}" "${PROMPT_DIR}" "${EXTERNAL_REVIEW_DIR}" "${REVIEW_STATE_DIR}" "${AI_MODEL_DISCOVERY_DIR}"
 
@@ -211,6 +215,10 @@ cd "\${repo_root}"
 : "\${AI_MODEL_ROUTING_TTL_SECONDS:=${AI_MODEL_ROUTING_TTL_SECONDS:-43200}}"
 : "\${CLAUDE_REVIEW_MODEL_AUTO:=${CLAUDE_REVIEW_MODEL_AUTO:-0}}"
 : "\${REVIEW_RUN_ID:=${REVIEW_RUN_ID}}"
+: "\${RUNTIME_ADAPTER_SCRIPT:=${RUNTIME_ADAPTER_SCRIPT}}"
+: "\${RUNTIME_ADAPTER_CLAUDE_COMMAND:=${RUNTIME_ADAPTER_CLAUDE_COMMAND:-claude}}"
+: "\${RUNTIME_ADAPTER_AGY_COMMAND:=${RUNTIME_ADAPTER_AGY_COMMAND}}"
+: "\${RUNTIME_ADAPTER_CODEX_COMMAND:=${RUNTIME_ADAPTER_CODEX_COMMAND:-codex}}"
 
 REVIEW_EXECUTION_MODE=local \\
 OUT_DIR="\${OUT_DIR}" \\
@@ -243,6 +251,10 @@ AI_MODEL_DISCOVERY_REFRESH="\${AI_MODEL_DISCOVERY_REFRESH}" \\
 AI_MODEL_ROUTING_TTL_SECONDS="\${AI_MODEL_ROUTING_TTL_SECONDS}" \\
 CLAUDE_REVIEW_MODEL_AUTO="\${CLAUDE_REVIEW_MODEL_AUTO}" \\
 REVIEW_RUN_ID="\${REVIEW_RUN_ID}" \\
+RUNTIME_ADAPTER_SCRIPT="\${RUNTIME_ADAPTER_SCRIPT}" \\
+RUNTIME_ADAPTER_CLAUDE_COMMAND="\${RUNTIME_ADAPTER_CLAUDE_COMMAND}" \\
+RUNTIME_ADAPTER_AGY_COMMAND="\${RUNTIME_ADAPTER_AGY_COMMAND}" \\
+RUNTIME_ADAPTER_CODEX_COMMAND="\${RUNTIME_ADAPTER_CODEX_COMMAND}" \\
 ./scripts/run-ai-reviews.sh
 
 RESULT_DIR="\${OUT_DIR}" OUT_DIR="\${OUT_DIR}" ./scripts/summarize-ai-reviews.sh
@@ -340,33 +352,40 @@ command_help_text() {
   local command_name="$1"
   local output=""
 
-  if command -v timeout >/dev/null 2>&1; then
-    output="$(timeout 10 "${command_name}" --help 2>&1 || true)"
-    if [ -n "${output}" ]; then
-      printf '%s\n' "${output}"
-      return
-    fi
-    output="$(timeout 10 "${command_name}" help 2>&1 || true)"
-    if [ -n "${output}" ]; then
-      printf '%s\n' "${output}"
-      return
-    fi
-    output="$(timeout 10 "${command_name}" -h 2>&1 || true)"
-    printf '%s\n' "${output}"
+  if ! command -v timeout >/dev/null 2>&1; then
+    printf '%s\n' "runtime_unavailable: timeout command not found; help probe skipped"
     return
   fi
 
-  output="$("${command_name}" --help 2>&1 || true)"
+  output="$(timeout 10 "${command_name}" --help 2>&1 || true)"
   if [ -n "${output}" ]; then
     printf '%s\n' "${output}"
     return
   fi
-  output="$("${command_name}" help 2>&1 || true)"
+  output="$(timeout 10 "${command_name}" help 2>&1 || true)"
   if [ -n "${output}" ]; then
     printf '%s\n' "${output}"
     return
   fi
-  "${command_name}" -h 2>&1 || true
+  output="$(timeout 10 "${command_name}" -h 2>&1 || true)"
+  printf '%s\n' "${output}"
+}
+
+runtime_adapter_command() {
+  case "$1" in
+    claude)
+      printf '%s\n' "${RUNTIME_ADAPTER_CLAUDE_COMMAND:-claude}"
+      ;;
+    agy|gemini)
+      printf '%s\n' "${RUNTIME_ADAPTER_AGY_COMMAND:-agy}"
+      ;;
+    codex)
+      printf '%s\n' "${RUNTIME_ADAPTER_CODEX_COMMAND:-codex}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 disable_reviewer() {
@@ -573,42 +592,29 @@ run_review_command_stdin() {
 run_claude_prompt_file() {
   local output_file="$1"
   local prompt_file="$2"
-  local prompt_bytes
-  local claude_args=()
+  local adapter_args=(
+    run-readonly
+    --runtime claude
+    --capability review
+    --prompt-file "${prompt_file}"
+    --output "${output_file}"
+    --timeout "${CLAUDE_REVIEW_TIMEOUT_SECONDS}"
+    --kill-after "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}"
+    --cd "$(pwd)"
+  )
 
-  prompt_bytes="$(wc -c < "${prompt_file}")"
-
-  if help_supports_flag "${claude_help}" "--print"; then
-    claude_args=(--print)
-
-    if help_supports_flag "${claude_help}" "--no-session-persistence"; then
-      claude_args+=(--no-session-persistence)
-    fi
-
-    if help_supports_flag "${claude_help}" "--permission-mode"; then
-      claude_args+=(--permission-mode plan)
-    fi
-
-    if [ -n "${CLAUDE_REVIEW_MODEL:-}" ] && help_supports_flag "${claude_help}" "--model"; then
-      claude_args+=(--model "${CLAUDE_REVIEW_MODEL}")
-    fi
-
-    if [ "${prompt_bytes}" -gt "${CLAUDE_PROMPT_ARG_MAX_BYTES}" ]; then
-      run_with_retries "claude" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}"
-    else
-      run_with_retries "claude" "${output_file}" run_review_command "${output_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude "${claude_args[@]}" "$(cat "${prompt_file}")"
-    fi
-  else
-    run_with_retries "claude" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CLAUDE_REVIEW_TIMEOUT_SECONDS}" claude
+  if [ -n "${CLAUDE_REVIEW_MODEL:-}" ]; then
+    adapter_args+=(--model "${CLAUDE_REVIEW_MODEL}")
   fi
+
+  run_with_retries "claude" "${output_file}" "${RUNTIME_ADAPTER_SCRIPT}" "${adapter_args[@]}"
 }
 
 run_gemini_prompt_file() {
   local output_file="$1"
   local prompt_file="$2"
   local prompt_bytes
-  local gemini_args=()
-  local gemini_stdin_mode=0
+  local adapter_args=()
 
   prompt_bytes="$(wc -c < "${prompt_file}")"
 
@@ -635,43 +641,21 @@ run_gemini_prompt_file() {
     return 0
   fi
 
-  if help_supports_flag "${gemini_help}" "--prompt"; then
-    if [ "${prompt_bytes}" -gt "${GEMINI_PROMPT_ARG_MAX_BYTES}" ]; then
-      gemini_args=(--prompt "Review the Markdown prompt provided on stdin.")
-      gemini_stdin_mode=1
-    else
-      gemini_args=(--prompt "$(cat "${prompt_file}")")
-      gemini_stdin_mode=0
-    fi
-
-    if help_supports_flag "${gemini_help}" "--approval-mode"; then
-      gemini_args+=(--approval-mode plan)
-    fi
-
-    if help_supports_flag "${gemini_help}" "--skip-trust"; then
-      gemini_args+=(--skip-trust)
-    fi
-
-    if help_supports_flag "${gemini_help}" "--output-format"; then
-      gemini_args+=(--output-format text)
-    fi
-
-    if help_supports_flag "${gemini_help}" "--print-timeout"; then
-      gemini_args+=(--print-timeout "${GEMINI_REVIEW_TIMEOUT_SECONDS}s")
-    fi
-
-    if [ -n "${GEMINI_REVIEW_MODEL:-}" ] && help_supports_flag "${gemini_help}" "--model"; then
-      gemini_args+=(--model "${GEMINI_REVIEW_MODEL}")
-    fi
-
-    if [ "${gemini_stdin_mode}" -eq 1 ]; then
-      run_with_retries "gemini" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" "${GEMINI_REVIEW_COMMAND}" "${gemini_args[@]}"
-    else
-      run_with_retries "gemini" "${output_file}" run_review_command "${output_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" "${GEMINI_REVIEW_COMMAND}" "${gemini_args[@]}"
-    fi
-  else
-    run_with_retries "gemini" "${output_file}" run_review_command_stdin "${output_file}" "${prompt_file}" timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${GEMINI_REVIEW_TIMEOUT_SECONDS}" "${GEMINI_REVIEW_COMMAND}"
+  adapter_args=(
+    run-readonly
+    --runtime gemini
+    --capability review
+    --prompt-file "${prompt_file}"
+    --output "${output_file}"
+    --timeout "${GEMINI_REVIEW_TIMEOUT_SECONDS}"
+    --kill-after "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}"
+    --cd "$(pwd)"
+  )
+  if [ -n "${GEMINI_REVIEW_MODEL:-}" ]; then
+    adapter_args+=(--model "${GEMINI_REVIEW_MODEL}")
   fi
+
+  run_with_retries "gemini" "${output_file}" "${RUNTIME_ADAPTER_SCRIPT}" "${adapter_args[@]}"
 }
 
 run_with_retries() {
@@ -684,12 +668,27 @@ run_with_retries() {
 
   while [ "${attempt}" -le "${REVIEW_RETRY_LIMIT}" ]; do
     echo "[review] ${reviewer} attempt ${attempt}/${REVIEW_RETRY_LIMIT}"
-    "$@"
+    local attempt_log
+    attempt_log="$(mktemp "${OUT_DIR}/.${reviewer}-adapter-${attempt}.XXXXXX.log")"
+    "$@" > "${attempt_log}" 2>&1
     status=$?
 
     if [ "${status}" -eq 0 ] && has_usable_verdict "${output_file}"; then
+      rm -f "${attempt_log}"
       return 0
     fi
+
+    {
+      echo
+      echo "---"
+      echo
+      echo "Adapter execution diagnostics:"
+      echo "Exit status: ${status}"
+      echo "Attempt: ${attempt}/${REVIEW_RETRY_LIMIT}"
+      echo
+      tail -80 "${attempt_log}" 2>/dev/null || true
+    } >> "${output_file}"
+    rm -f "${attempt_log}"
 
     if is_limit_failure "${output_file}"; then
       local reason
@@ -1150,12 +1149,15 @@ MSG
     return 0
   fi
 
-  if ! command -v claude >/dev/null 2>&1; then
-    echo "[review] claude command not found; skipping Claude review"
+  local claude_command
+  claude_command="$(runtime_adapter_command claude)"
+
+  if ! command -v "${claude_command}" >/dev/null 2>&1; then
+    echo "[review] ${claude_command} command not found; skipping Claude review"
     cat > "${CLAUDE_OUT}" <<MSG
 # Claude Review
 
-Skipped: claude command not found.
+Skipped: ${claude_command} command not found.
 MSG
     return 0
   fi
@@ -1163,7 +1165,7 @@ MSG
   echo "[review] running Claude review..."
 
   set +e
-  claude_help="$(claude --help 2>/dev/null)"
+  claude_help="$(command_help_text "${claude_command}")"
   REVIEWER_PREFLIGHT_DETAILS="$(preflight_details claude "${claude_help}" "${CLAUDE_PROMPT}")"
   if run_claude_split_review; then
     status=0
@@ -1216,20 +1218,23 @@ MSG
     return 0
   fi
 
-  if ! command -v "${GEMINI_REVIEW_COMMAND}" >/dev/null 2>&1; then
-    echo "[review] ${GEMINI_REVIEW_COMMAND} command not found; skipping Gemini review"
+  local gemini_command
+  gemini_command="$(runtime_adapter_command gemini)"
+
+  if ! command -v "${gemini_command}" >/dev/null 2>&1; then
+    echo "[review] ${gemini_command} command not found; skipping Gemini review"
     cat > "${GEMINI_OUT}" <<MSG
 # Gemini Review
 
-Skipped: ${GEMINI_REVIEW_COMMAND} command not found.
+Skipped: ${gemini_command} command not found.
 MSG
     return 0
   fi
 
-  echo "[review] running Gemini review via ${GEMINI_REVIEW_COMMAND}..."
+  echo "[review] running Gemini review via ${gemini_command}..."
 
   set +e
-  gemini_help="$(command_help_text "${GEMINI_REVIEW_COMMAND}")"
+  gemini_help="$(command_help_text "${gemini_command}")"
   gemini_prompt_file="${GEMINI_PROMPT}"
   gemini_prompt_bytes="$(wc -c < "${GEMINI_PROMPT}")"
   REVIEWER_PREFLIGHT_DETAILS="$(preflight_details gemini "${gemini_help}" "${GEMINI_PROMPT}")"
@@ -1504,7 +1509,7 @@ run_codex_fallback_review() {
   local prompt_file="${OUT_DIR}/${persona}-${TIMESTAMP}-prompt.md"
   local log_file="${output_file}.log"
   local codex_model=""
-  local codex_model_args=()
+  local adapter_args=()
 
   case "${persona}" in
     codex-architect-review)
@@ -1520,26 +1525,29 @@ run_codex_fallback_review() {
     return 0
   fi
 
-  if ! command -v codex >/dev/null 2>&1; then
-    write_codex_fallback_skipped "${output_file}" "${persona}" "codex command not found"
+  if [ ! -x "${RUNTIME_ADAPTER_SCRIPT}" ]; then
+    write_codex_fallback_skipped "${output_file}" "${persona}" "${RUNTIME_ADAPTER_SCRIPT} not found"
     return 0
-  fi
-
-  if [ -n "${codex_model}" ]; then
-    codex_exec_help="$(codex exec --help 2>/dev/null || true)"
-    if help_supports_flag "${codex_exec_help}" "--model"; then
-      codex_model_args=(--model "${codex_model}")
-    else
-      echo "[review] Codex model selector ignored for ${persona}: codex exec does not advertise --model"
-    fi
   fi
 
   write_codex_fallback_prompt "${prompt_file}" "${persona}" "${disabled_reviewer}" "${focus}"
   echo "[review] running ${persona} Codex fallback review..."
 
+  adapter_args=(
+    run-readonly
+    --runtime codex
+    --capability review
+    --prompt-file "${prompt_file}"
+    --output "${output_file}"
+    --timeout "${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}"
+    --cd "$(pwd)"
+  )
+  if [ -n "${codex_model}" ]; then
+    adapter_args+=(--model "${codex_model}")
+  fi
+
   set +e
-  timeout -k "${REVIEW_TIMEOUT_KILL_AFTER_SECONDS}" "${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}" \
-    codex exec "${codex_model_args[@]}" --cd "$(pwd)" --sandbox read-only --ephemeral -o "${output_file}" - < "${prompt_file}" > "${log_file}" 2>&1
+  "${RUNTIME_ADAPTER_SCRIPT}" "${adapter_args[@]}" > "${log_file}" 2>&1
   status=$?
   set -e
 
@@ -1556,6 +1564,10 @@ run_codex_fallback_review() {
       echo "Exit status: ${status}"
       echo "Timeout seconds: ${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}"
       echo "Log file: ${log_file}"
+      echo
+      echo "Adapter execution diagnostics:"
+      echo
+      tail -80 "${log_file}" 2>/dev/null || true
       echo
       echo "## Verdict"
       echo

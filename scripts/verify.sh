@@ -18,6 +18,7 @@ echo "[verify] checking shell script syntax..."
 for script in \
   scripts/bootstrap-ai-lab.sh \
   scripts/archive-omx-artifacts.sh \
+  scripts/ai-runtime-adapter.sh \
   scripts/automation-doctor.sh \
   scripts/collect-review-context.sh \
   scripts/doc-budget.sh \
@@ -36,6 +37,7 @@ for script in \
   scripts/test-review-summary.sh \
   scripts/write-session-checkpoint.sh \
   templates/automation-base/scripts/archive-omx-artifacts.sh \
+  templates/automation-base/scripts/ai-runtime-adapter.sh \
   templates/automation-base/scripts/automation-doctor.sh \
   templates/automation-base/scripts/collect-review-context.sh \
   templates/automation-base/scripts/doc-budget.sh \
@@ -262,6 +264,405 @@ echo "[verify] testing Stage 2 guidance duplicate reporter fallback..."
 
 echo "[verify] testing review summary decisions..."
 ./scripts/test-review-summary.sh
+
+echo "[verify] testing AI runtime adapter contract..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_runtime_adapter_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_runtime_adapter_tmp EXIT
+
+  prompt_file="${tmp_dir}/prompt.md"
+  output_file="${tmp_dir}/out/review.md"
+  printf '# Review Prompt\n\nCheck this fixture.\n' > "${prompt_file}"
+  mkdir -p "${tmp_dir}/bin"
+
+  cat > "${tmp_dir}/bin/claude" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: claude --print"
+  exit 0
+fi
+if [ "${1:-}" = "--print" ]; then
+  cat > "${CLAUDE_STDIN_CAPTURE}"
+  printf '# Claude Review\n\n## Verdict\n\napprove\n'
+  exit 0
+fi
+exit 64
+SH
+
+  cat > "${tmp_dir}/bin/agy" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: agy --prompt-file PATH --output-format text --sandbox"
+  exit 0
+fi
+printf '%s\n' "$@" > "${AGY_ARGV_CAPTURE}"
+prompt_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prompt-file)
+      prompt_file="$2"
+      shift 2
+      ;;
+    --output-format)
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat "${prompt_file}" > "${AGY_PROMPT_CAPTURE}"
+printf '# Gemini Review\n\n## Verdict\n\napprove_with_notes\n'
+SH
+
+  chmod +x "${tmp_dir}/bin/claude" "${tmp_dir}/bin/agy"
+
+  ./scripts/ai-runtime-adapter.sh capability claude review > "${tmp_dir}/claude-capability.out"
+  grep -q "supported: yes" "${tmp_dir}/claude-capability.out"
+  grep -q "execution_mode: logical_readonly" "${tmp_dir}/claude-capability.out"
+
+  ./scripts/ai-runtime-adapter.sh capability codex review > "${tmp_dir}/codex-capability.out"
+  grep -q "execution_mode: readonly_sandbox" "${tmp_dir}/codex-capability.out"
+
+  if ./scripts/ai-runtime-adapter.sh capability agy commit > "${tmp_dir}/agy-commit.out"; then
+    echo "[verify] agy commit capability unexpectedly succeeded"
+    exit 1
+  fi
+  grep -q "supported: no" "${tmp_dir}/agy-commit.out"
+
+  if ./scripts/ai-runtime-adapter.sh capability codex edit_files > "${tmp_dir}/codex-edit.out"; then
+    echo "[verify] codex edit_files capability should not be executable through runtime adapter"
+    exit 1
+  fi
+  grep -q "supported: no" "${tmp_dir}/codex-edit.out"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+  CLAUDE_STDIN_CAPTURE="${tmp_dir}/claude.stdin" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime claude \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  grep -q "## Verdict" "${output_file}"
+  grep -q "Check this fixture" "${tmp_dir}/claude.stdin"
+
+  rm -f "${output_file}"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  AGY_PROMPT_CAPTURE="${tmp_dir}/agy.prompt" \
+  AGY_ARGV_CAPTURE="${tmp_dir}/agy.argv" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime agy \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  grep -q "approve_with_notes" "${output_file}"
+  grep -q "Check this fixture" "${tmp_dir}/agy.prompt"
+  grep -qx -- "--sandbox" "${tmp_dir}/agy.argv"
+
+  if PATH="${tmp_dir}/bin:${PATH}" ./scripts/ai-runtime-adapter.sh run-readonly \
+    --runtime claude \
+    --capability edit_files \
+    --prompt-file "${prompt_file}" \
+    --output "${tmp_dir}/write.md" > "${tmp_dir}/write-refusal.out" 2>&1; then
+    echo "[verify] write-capable adapter mode unexpectedly succeeded"
+    exit 1
+  fi
+  grep -q "capability_refused" "${tmp_dir}/write-refusal.out"
+  test ! -f "${tmp_dir}/write.md"
+
+  cat > "${tmp_dir}/bin/no-prompt-runtime" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: no-prompt-runtime"
+  exit 0
+fi
+printf 'should not run without a noninteractive prompt flag\n'
+exit 64
+SH
+  chmod +x "${tmp_dir}/bin/no-prompt-runtime"
+
+  if PATH="${tmp_dir}/bin:${PATH}" RUNTIME_ADAPTER_CLAUDE_COMMAND=no-prompt-runtime \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime claude \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${tmp_dir}/no-prompt.md" > "${tmp_dir}/no-prompt.out" 2>&1; then
+    echo "[verify] adapter ran a runtime without noninteractive prompt support"
+    exit 1
+  fi
+  grep -q "missing_noninteractive_prompt_mode" "${tmp_dir}/no-prompt.out"
+  test ! -f "${tmp_dir}/no-prompt.md"
+
+  mkdir -p "${tmp_dir}/relative/prompts" "${tmp_dir}/relative/work"
+  printf '# Relative Prompt\n\nCheck absolute path handling.\n' > "${tmp_dir}/relative/prompts/in.md"
+  (
+    cd "${tmp_dir}/relative"
+    PATH="${tmp_dir}/bin:${PATH}" \
+    CLAUDE_STDIN_CAPTURE="${tmp_dir}/relative/claude-relative.stdin" \
+      "${repo_root}/scripts/ai-runtime-adapter.sh" run-readonly \
+        --runtime claude \
+        --capability review \
+        --prompt-file prompts/in.md \
+        --output out/review.md \
+        --cd work
+  )
+  test -f "${tmp_dir}/relative/out/review.md"
+  grep -q "Check absolute path handling" "${tmp_dir}/relative/claude-relative.stdin"
+)
+
+echo "[verify] testing Codex fallback uses runtime adapter read-only mode..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_codex_adapter_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_codex_adapter_tmp EXIT
+
+  mkdir -p "${tmp_dir}/repo/.omx/review-prompts" "${tmp_dir}/repo/.omx/review-context" "${tmp_dir}/repo/scripts" "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  cp "${repo_root}/scripts/ai-runtime-adapter.sh" scripts/ai-runtime-adapter.sh
+  cp "${repo_root}/scripts/run-ai-reviews.sh" scripts/run-ai-reviews.sh
+  cp "${repo_root}/scripts/summarize-ai-reviews.sh" scripts/summarize-ai-reviews.sh
+  chmod +x scripts/ai-runtime-adapter.sh
+  chmod +x scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+
+  printf '# Claude Review\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n' > .omx/review-prompts/gemini-review.md
+  printf '# Context\n\nsrc/runtime-target.py\n' > .omx/review-context/latest-review-context.md
+
+  cat > "${tmp_dir}/bin/codex" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--help" ]; then
+  echo "usage: codex exec --model --cd --sandbox --ephemeral -o"
+  exit 0
+fi
+printf '%s\n' "$@" > "${CODEX_ARGV_CAPTURE}"
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+cat > "${CODEX_STDIN_CAPTURE}"
+cat > "${out}" <<'MSG'
+# Codex Fallback
+
+## Verdict
+
+approve_with_notes
+
+## Direct File Inspection
+
+- src/runtime-target.py
+MSG
+SH
+  chmod +x "${tmp_dir}/bin/codex"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+  CODEX_ARGV_CAPTURE="${tmp_dir}/codex.argv" \
+  CODEX_STDIN_CAPTURE="${tmp_dir}/codex.stdin" \
+  SKIP_CONTEXT_GENERATION=1 \
+  AI_MODEL_DISCOVERY=0 \
+  RUN_CLAUDE_REVIEW=0 \
+  RUN_GEMINI_REVIEW=0 \
+  OUT_DIR=.omx/review-results \
+  CONTEXT_DIR=.omx/review-context \
+  PROMPT_DIR=.omx/review-prompts \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  grep -qx "exec" "${tmp_dir}/codex.argv"
+  grep -qx -- "--cd" "${tmp_dir}/codex.argv"
+  grep -qx "$(pwd)" "${tmp_dir}/codex.argv"
+  grep -qx -- "--sandbox" "${tmp_dir}/codex.argv"
+  grep -qx "read-only" "${tmp_dir}/codex.argv"
+  grep -qx -- "--ephemeral" "${tmp_dir}/codex.argv"
+  grep -qx -- "-o" "${tmp_dir}/codex.argv"
+  ! grep -q "workspace-write" "${tmp_dir}/codex.argv"
+  ! grep -q "danger-full-access" "${tmp_dir}/codex.argv"
+  grep -q "Codex/GPT fallback reviewer" "${tmp_dir}/codex.stdin"
+)
+
+echo "[verify] testing review runner honors runtime adapter command overrides..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_override_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_override_tmp EXIT
+
+  mkdir -p "${tmp_dir}/repo/.omx/review-prompts" "${tmp_dir}/repo/.omx/review-context" "${tmp_dir}/repo/scripts" "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  cp "${repo_root}/scripts/ai-runtime-adapter.sh" scripts/ai-runtime-adapter.sh
+  cp "${repo_root}/scripts/run-ai-reviews.sh" scripts/run-ai-reviews.sh
+  cp "${repo_root}/scripts/summarize-ai-reviews.sh" scripts/summarize-ai-reviews.sh
+  chmod +x scripts/ai-runtime-adapter.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+
+  printf '# Claude Review\n\n## Verdict\n\napprove\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n\n## Verdict\n\napprove\n' > .omx/review-prompts/gemini-review.md
+  printf '# Context\n' > .omx/review-context/latest-review-context.md
+
+  cat > "${tmp_dir}/bin/custom-claude" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: custom-claude --print"
+  exit 0
+fi
+printf '%s\n' "$@" > "${CUSTOM_CLAUDE_ARGV_CAPTURE}"
+cat > "${CUSTOM_CLAUDE_STDIN_CAPTURE}"
+printf '# Claude Review\n\n## Verdict\n\napprove\n'
+SH
+  chmod +x "${tmp_dir}/bin/custom-claude"
+
+  cat > "${tmp_dir}/bin/custom-agy" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: custom-agy --prompt --sandbox --output-format"
+  exit 0
+fi
+printf '%s\n' "$@" > "${CUSTOM_AGY_ARGV_CAPTURE}"
+printf '# Gemini Review\n\n## Verdict\n\napprove_with_notes\n'
+SH
+  chmod +x "${tmp_dir}/bin/custom-agy"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_CLAUDE_COMMAND=custom-claude \
+  GEMINI_REVIEW_COMMAND=custom-agy \
+  CUSTOM_CLAUDE_ARGV_CAPTURE="${tmp_dir}/custom-claude.argv" \
+  CUSTOM_CLAUDE_STDIN_CAPTURE="${tmp_dir}/custom-claude.stdin" \
+  CUSTOM_AGY_ARGV_CAPTURE="${tmp_dir}/custom-agy.argv" \
+  SKIP_CONTEXT_GENERATION=1 \
+  AI_MODEL_DISCOVERY=0 \
+  RUN_CODEX_FALLBACK_REVIEW=0 \
+  OUT_DIR=.omx/review-results \
+  CONTEXT_DIR=.omx/review-context \
+  PROMPT_DIR=.omx/review-prompts \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  grep -q "running Gemini review via custom-agy" "${tmp_dir}/run.out"
+  grep -qx -- "--print" "${tmp_dir}/custom-claude.argv"
+  grep -q "Claude Review" "${tmp_dir}/custom-claude.stdin"
+  grep -qx -- "--sandbox" "${tmp_dir}/custom-agy.argv"
+
+  rm -f "${tmp_dir}/custom-claude.argv" "${tmp_dir}/custom-claude.stdin" "${tmp_dir}/custom-agy.argv"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_CLAUDE_COMMAND=custom-claude \
+  GEMINI_REVIEW_COMMAND=custom-agy \
+  CUSTOM_CLAUDE_ARGV_CAPTURE="${tmp_dir}/custom-claude.argv" \
+  CUSTOM_CLAUDE_STDIN_CAPTURE="${tmp_dir}/custom-claude.stdin" \
+  CUSTOM_AGY_ARGV_CAPTURE="${tmp_dir}/custom-agy.argv" \
+  SKIP_CONTEXT_GENERATION=1 \
+  AI_MODEL_DISCOVERY=0 \
+  REVIEW_EXECUTION_MODE=external \
+  RUN_CODEX_FALLBACK_REVIEW=0 \
+  OUT_DIR=.omx/review-results \
+  CONTEXT_DIR=.omx/review-context \
+  PROMPT_DIR=.omx/review-prompts \
+  EXTERNAL_REVIEW_DIR=.omx/external-review \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/external.out" 2>&1 || test "$?" -eq 2
+
+  grep -q 'RUNTIME_ADAPTER_CLAUDE_COMMAND="${RUNTIME_ADAPTER_CLAUDE_COMMAND}"' .omx/external-review/run-reviewers-latest.sh
+  grep -q 'RUNTIME_ADAPTER_AGY_COMMAND="${RUNTIME_ADAPTER_AGY_COMMAND}"' .omx/external-review/run-reviewers-latest.sh
+  grep -q 'RUNTIME_ADAPTER_CODEX_COMMAND="${RUNTIME_ADAPTER_CODEX_COMMAND}"' .omx/external-review/run-reviewers-latest.sh
+  PATH="${tmp_dir}/bin:${PATH}" \
+  CUSTOM_CLAUDE_ARGV_CAPTURE="${tmp_dir}/custom-claude.argv" \
+  CUSTOM_CLAUDE_STDIN_CAPTURE="${tmp_dir}/custom-claude.stdin" \
+  CUSTOM_AGY_ARGV_CAPTURE="${tmp_dir}/custom-agy.argv" \
+    .omx/external-review/run-reviewers-latest.sh > "${tmp_dir}/external-run.out" || true
+  grep -q "running Gemini review via custom-agy" "${tmp_dir}/external-run.out"
+  grep -qx -- "--print" "${tmp_dir}/custom-claude.argv"
+  grep -qx -- "--sandbox" "${tmp_dir}/custom-agy.argv"
+)
+
+echo "[verify] testing adapter failure diagnostics reach review artifacts..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_diagnostics_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_diagnostics_tmp EXIT
+
+  mkdir -p "${tmp_dir}/repo/.omx/review-prompts" "${tmp_dir}/repo/.omx/review-context" "${tmp_dir}/repo/scripts" "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  cp "${repo_root}/scripts/ai-runtime-adapter.sh" scripts/ai-runtime-adapter.sh
+  chmod +x scripts/ai-runtime-adapter.sh
+
+  printf '# Claude Review\n\nadapter diagnostics fixture\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n\n## Verdict\n\napprove\n' > .omx/review-prompts/gemini-review.md
+  printf '# Context\n' > .omx/review-context/latest-review-context.md
+
+  cat > "${tmp_dir}/bin/no-print-claude" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: no-print-claude"
+  exit 0
+fi
+printf 'should not execute without --print support\n'
+exit 64
+SH
+  chmod +x "${tmp_dir}/bin/no-print-claude"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_CLAUDE_COMMAND=no-print-claude \
+  SKIP_CONTEXT_GENERATION=1 \
+  AI_MODEL_DISCOVERY=0 \
+  RUN_GEMINI_REVIEW=0 \
+  RUN_CODEX_FALLBACK_REVIEW=0 \
+  REVIEW_RETRY_LIMIT=1 \
+  OUT_DIR=.omx/review-results \
+  CONTEXT_DIR=.omx/review-context \
+  PROMPT_DIR=.omx/review-prompts \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  latest_claude="$(find .omx/review-results -maxdepth 1 -name 'claude-review-*.md' -print | sort | tail -1)"
+  grep -q "Adapter execution diagnostics" "${latest_claude}"
+  grep -q "missing_noninteractive_prompt_mode" "${latest_claude}"
+  grep -q "tail=.*missing_noninteractive_prompt_mode" .omx/reviewer-state/claude.disabled
+
+  cat > "${tmp_dir}/bin/bad-codex" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--help" ]; then
+  echo "usage: bad-codex exec --cd --sandbox --ephemeral -o"
+  exit 0
+fi
+printf 'codex adapter diagnostic marker\n'
+exit 64
+SH
+  chmod +x "${tmp_dir}/bin/bad-codex"
+
+  rm -f .omx/reviewer-state/claude.disabled
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_CLAUDE_COMMAND=no-print-claude \
+  RUNTIME_ADAPTER_CODEX_COMMAND=bad-codex \
+  SKIP_CONTEXT_GENERATION=1 \
+  AI_MODEL_DISCOVERY=0 \
+  RUN_GEMINI_REVIEW=0 \
+  REVIEW_RETRY_LIMIT=1 \
+  OUT_DIR=.omx/review-results \
+  CONTEXT_DIR=.omx/review-context \
+  PROMPT_DIR=.omx/review-prompts \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/codex-fallback.out"
+
+  latest_codex="$(find .omx/review-results -maxdepth 1 -name 'codex-architect-fallback-*.md' -print | sort | tail -1)"
+  grep -q "Adapter execution diagnostics" "${latest_codex}"
+  grep -q "codex adapter diagnostic marker" "${latest_codex}"
+)
 
 echo "[verify] testing ai-refactor-scan..."
 (
@@ -1351,7 +1752,9 @@ echo "[verify] testing Codex fallback direct-file review prompts..."
 
   git -c init.defaultBranch=main init -q "${tmp_dir}/repo"
   cd "${tmp_dir}/repo"
-  mkdir -p .omx/review-prompts .omx/review-context src "${tmp_dir}/bin"
+  mkdir -p .omx/review-prompts .omx/review-context scripts src "${tmp_dir}/bin"
+  cp "${repo_root}/scripts/ai-runtime-adapter.sh" scripts/ai-runtime-adapter.sh
+  chmod +x scripts/ai-runtime-adapter.sh
   printf 'print("review me")\n' > src/review_target.py
   printf '# Claude Review\n' > .omx/review-prompts/claude-review.md
   printf '# Gemini Review\n' > .omx/review-prompts/gemini-review.md
@@ -1452,7 +1855,16 @@ for arg in "$@"; do
   fi
 done
 
-cat > "${AGY_STDIN_CAPTURE}"
+prompt_file=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prompt-file" ]; then
+    prompt_file="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+cat "${prompt_file}" > "${AGY_STDIN_CAPTURE}"
 printf '# Gemini Review\n\n## Verdict\n\napprove_with_notes\n'
 STUB
   chmod +x "${tmp_dir}/bin/agy"
@@ -2156,6 +2568,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
   printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
+  printf '# AI Runtime Adapters\n' > docs/AI_RUNTIME_ADAPTERS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
@@ -2171,6 +2584,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
 
   for script in \
     archive-omx-artifacts.sh \
+    ai-runtime-adapter.sh \
     automation-doctor.sh \
     collect-review-context.sh \
     doc-budget.sh \
@@ -2226,6 +2640,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   mkdir -p docs scripts .omx/reviewer-state .omx/review-results
   printf '# Agents\n' > AGENTS.md
   printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
+  printf '# AI Runtime Adapters\n' > docs/AI_RUNTIME_ADAPTERS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
@@ -2241,6 +2656,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
 
   for script in \
     archive-omx-artifacts.sh \
+    ai-runtime-adapter.sh \
     automation-doctor.sh \
     collect-review-context.sh \
     doc-budget.sh \
@@ -2294,6 +2710,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   mkdir -p docs scripts .omx/reviewer-state
   printf '# Agents\n' > AGENTS.md
   printf '# Chrome CDP Access\n' > docs/CHROME_CDP_ACCESS.md
+  printf '# AI Runtime Adapters\n' > docs/AI_RUNTIME_ADAPTERS.md
   printf '# AI Model Routing\n' > docs/AI_MODEL_ROUTING.md
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
@@ -2303,6 +2720,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
 
   for script in \
     archive-omx-artifacts.sh \
+    ai-runtime-adapter.sh \
     automation-doctor.sh \
     collect-review-context.sh \
     doc-budget.sh \
@@ -2560,8 +2978,9 @@ echo "[verify] testing automation template installer..."
   target_dir="${tmp_dir}/target"
   installer_output="${tmp_dir}/installer.out"
   git -c init.defaultBranch=main init -q "${target_dir}"
-  ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
   test -x "${target_dir}/scripts/archive-omx-artifacts.sh"
+  test -x "${target_dir}/scripts/ai-runtime-adapter.sh"
   test -x "${target_dir}/scripts/discover-ai-models.sh"
   test -x "${target_dir}/scripts/doc-budget.sh"
   test -x "${target_dir}/scripts/guidance-duplicate-report.sh"
@@ -2571,6 +2990,7 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
   test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   test -f "${target_dir}/docs/CHROME_CDP_ACCESS.md"
+  test -f "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
   test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
   test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
@@ -2591,6 +3011,7 @@ echo "[verify] testing automation template installer..."
   cmp -s "templates/automation-base/AI_AUTO_TEMPLATE_VERSION" "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "Chrome CDP Access" "${target_dir}/docs/CHROME_CDP_ACCESS.md"
+  grep -q "AI 런타임 어댑터" "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Auxiliary Rebuild Tool Gates" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -2620,6 +3041,7 @@ echo "[verify] testing automation template installer..."
   grep -q "resource-aware parallelism" "${target_dir}/AGENTS.md"
   grep -q "Planning And Interview Escalation" "${target_dir}/AGENTS.md"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${target_dir}/AGENTS.md"
+  grep -q "template_patch_enabled: no" "${target_dir}/AGENTS.md"
   grep -q "codemod apply" "${target_dir}/AGENTS.md"
   grep -q '`none`' "${target_dir}/AGENTS.md"
   grep -q '`light`' "${target_dir}/AGENTS.md"
@@ -2644,6 +3066,7 @@ echo "[verify] testing automation template installer..."
   grep -q "User-facing report language" "templates/automation-base/README.md"
   grep -q "Guidance context budget" "templates/automation-base/README.md"
   grep -q "ai-auto-template-status" "templates/automation-base/README.md"
+  grep -q "template_patch_enabled: no" "templates/automation-base/README.md"
   grep -q "unused completion pack" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACKS.md" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "docs/NEW_PROJECT_GUIDE.md"
@@ -2656,6 +3079,7 @@ echo "[verify] testing automation template installer..."
   grep -q "spec/design alignment 기준" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "사용자 보고를 쉬운 한국어" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "Template Status Comparison" "docs/NEW_PROJECT_GUIDE.md"
+  grep -q "template_patch_enabled: no" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "ai-auto-template-status" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "rejected as non-goals" "docs/NEW_PROJECT_GUIDE.md"
   grep -q "프로젝트 초기설정 해줘" "${installer_output}"
@@ -2692,7 +3116,20 @@ echo "[verify] testing automation template installer..."
 
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-current.out"
   grep -q "status: current" "${tmp_dir}/template-status-current.out"
+  grep -q "template_source_branch:" "${tmp_dir}/template-status-current.out"
+  grep -q "template_source_channel:" "${tmp_dir}/template-status-current.out"
+  grep -q "template_patch_enabled:" "${tmp_dir}/template-status-current.out"
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-main.out"
+  grep -q "template_source_branch: main" "${tmp_dir}/template-status-main.out"
+  grep -q "template_source_channel: stable" "${tmp_dir}/template-status-main.out"
+  grep -q "template_patch_enabled: yes" "${tmp_dir}/template-status-main.out"
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/runtime-adapters "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-exp.out"
+  grep -q "template_source_branch: exp/runtime-adapters" "${tmp_dir}/template-status-exp.out"
+  grep -q "template_source_channel: experimental" "${tmp_dir}/template-status-exp.out"
+  grep -q "template_patch_enabled: no" "${tmp_dir}/template-status-exp.out"
+  grep -q "template_patch_block_reason: experimental_source_branch" "${tmp_dir}/template-status-exp.out"
   grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/AI_RUNTIME_ADAPTERS.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/PATCH_NOTES.md" "${tmp_dir}/template-status-current.out"
   grep -q $'STATE\tPATH\tTEMPLATE_PATH\tOWNERSHIP\tPATCH_POLICY' "${tmp_dir}/template-status-current.out"
@@ -2700,7 +3137,9 @@ echo "[verify] testing automation template installer..."
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/CHROME_CDP_ACCESS.md\tdocs/CHROME_CDP_ACCESS.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/AI_RUNTIME_ADAPTERS.md\tdocs/AI_RUNTIME_ADAPTERS.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tscripts/ai-runtime-adapter.sh\tscripts/ai-runtime-adapter.sh\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/PATCH_NOTES.md\tdocs/PATCH_NOTES.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/verify.sh\tscripts/verify.example.sh\tproject-owned\tinspect-only' "${tmp_dir}/template-status-current.out"
 
@@ -2718,6 +3157,29 @@ echo "[verify] testing automation template installer..."
   rm "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-missing-version.out"
   grep -q "status: missing_version" "${tmp_dir}/template-status-missing-version.out"
+)
+
+echo "[verify] testing automation template experimental source guard..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_template_guard_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_template_guard_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/runtime-adapters ./scripts/install-automation-template.sh "${target_dir}" > "${tmp_dir}/guard.out" 2>&1; then
+    echo "[verify] install-automation-template accepted experimental source without override"
+    exit 1
+  fi
+  grep -q "Refusing to install automation template from a non-stable AI_AUTO source" "${tmp_dir}/guard.out"
+  grep -q "source_branch: exp/runtime-adapters" "${tmp_dir}/guard.out"
+  grep -q "source_channel: experimental" "${tmp_dir}/guard.out"
+  grep -q "manual review-only merge" "${tmp_dir}/guard.out"
+  test ! -e "${target_dir}/AGENTS.md"
 )
 
 echo "[verify] checking optional domain pack structure..."
@@ -2806,7 +3268,7 @@ echo "[verify] testing domain pack copy preserves existing references..."
   mkdir -p "${target_dir}/.omx/domain-packs/odoo"
   printf 'keep me\n' > "${target_dir}/.omx/domain-packs/odoo/README.md"
 
-  ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
 
   grep -q "keep me" "${target_dir}/.omx/domain-packs/odoo/README.md"
 )
@@ -2826,7 +3288,7 @@ echo "[verify] testing automation template conflict guidance..."
   git -c init.defaultBranch=main init -q "${target_dir}"
   printf '# Existing instructions\n' > "${target_dir}/AGENTS.md"
 
-  if ./scripts/install-automation-template.sh "${target_dir}" > "${conflict_output}"; then
+  if AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" > "${conflict_output}"; then
     echo "[verify] installer unexpectedly overwrote existing automation file"
     exit 1
   fi
@@ -2850,7 +3312,9 @@ echo "[verify] testing aiinit wrapper onboarding handoff..."
   aiinit_output="${tmp_dir}/aiinit.out"
   registry_file="${tmp_dir}/projects.tsv"
   git -c init.defaultBranch=main init -q "${target_dir}"
-  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
   grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
   grep -q "docs/\\*_COMPLETION.md" "${aiinit_output}"
   grep -q "docs/DOMAIN_PACKS.md" "${aiinit_output}"
@@ -3402,6 +3866,7 @@ echo "[verify] checking automation template sync..."
 for script in \
   automation-doctor.sh \
   archive-omx-artifacts.sh \
+  ai-runtime-adapter.sh \
   collect-review-context.sh \
   doc-budget.sh \
   guidance-duplicate-report.sh \

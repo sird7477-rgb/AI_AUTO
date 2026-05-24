@@ -217,10 +217,14 @@ First review `docs/PATCH_NOTES.md` in the AI_AUTO template or installed project
 to understand what changed in each template version.
 
 The command reports the installed template version, current template version,
-overall status, per-managed-file states, ownership, and patch policy. It is
+overall status, AI_AUTO source branch/channel, per-managed-file states,
+ownership, and patch policy. It is
 status-only and never auto-merges. Generated/runtime files such as `.omx/`
 review artifacts are outside the managed-file manifest. Treat `different` as
 "customized or outdated" until a human or AI reviews the file in context.
+If it reports `template_patch_enabled: no`, stop the patch workflow and treat
+the source as review-only; experimental AI_AUTO branches must not be used as
+project patch sources.
 Patch policies mean:
 
 - `update`: template-owned file; a newer template can normally replace or patch

@@ -118,11 +118,35 @@ missing_count=0
 total_count=0
 rows=""
 
+source_branch() {
+  if [ -n "${AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE:-}" ]; then
+    printf '%s\n' "${AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE}"
+    return 0
+  fi
+
+  git -C "${AI_LAB_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\n'
+}
+
+template_source_branch="$(source_branch)"
+case "${template_source_branch}" in
+  main)
+    template_source_channel="stable"
+    template_patch_enabled="yes"
+    template_patch_block_reason="none"
+    ;;
+  *)
+    template_source_channel="experimental"
+    template_patch_enabled="no"
+    template_patch_block_reason="experimental_source_branch"
+    ;;
+esac
+
 managed_files() {
   cat <<'FILES'
 AI_AUTO_TEMPLATE_VERSION|AI_AUTO_TEMPLATE_VERSION|template-owned|update
 AGENTS.md|AGENTS.md|hybrid|review-merge
 docs/CHROME_CDP_ACCESS.md|docs/CHROME_CDP_ACCESS.md|template-owned|update
+docs/AI_RUNTIME_ADAPTERS.md|docs/AI_RUNTIME_ADAPTERS.md|template-owned|update
 docs/AI_MODEL_ROUTING.md|docs/AI_MODEL_ROUTING.md|template-owned|update
 docs/AUTOMATION_OPERATING_POLICY.md|docs/AUTOMATION_OPERATING_POLICY.md|template-owned|update
 docs/DATA_COMPLETION.md|docs/DATA_COMPLETION.md|template-owned|update
@@ -139,6 +163,7 @@ docs/SESSION_QUALITY_PLAN.md|docs/SESSION_QUALITY_PLAN.md|template-owned|update
 docs/UI_COMPLETION.md|docs/UI_COMPLETION.md|template-owned|update
 docs/WORKFLOW.md|docs/WORKFLOW.md|hybrid|review-merge
 scripts/archive-omx-artifacts.sh|scripts/archive-omx-artifacts.sh|template-owned|update
+scripts/ai-runtime-adapter.sh|scripts/ai-runtime-adapter.sh|template-owned|update
 scripts/automation-doctor.sh|scripts/automation-doctor.sh|template-owned|update
 scripts/collect-review-context.sh|scripts/collect-review-context.sh|template-owned|update
 scripts/discover-ai-models.sh|scripts/discover-ai-models.sh|template-owned|update
@@ -204,6 +229,10 @@ target: ${target_abs}
 installed_version: ${installed_version:-missing}
 current_version: ${current_version}
 status: ${overall_status}
+template_source_branch: ${template_source_branch}
+template_source_channel: ${template_source_channel}
+template_patch_enabled: ${template_patch_enabled}
+template_patch_block_reason: ${template_patch_block_reason}
 managed_files: ${total_count}
 same: ${same_count}
 different: ${different_count}

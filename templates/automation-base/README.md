@@ -71,7 +71,9 @@ prints version, per-file states, ownership, and patch policy. Generated/runtime
 files such as `.omx/` review artifacts are outside the managed-file manifest.
 Review `docs/PATCH_NOTES.md` first to understand version-level changes. The
 status command is status-only: review differences manually before copying or
-editing files. Use `--record-feedback` only when the detected drift should
+editing files. If it reports `template_patch_enabled: no`, do not apply the
+template as a patch source; switch AI_AUTO to `main` or do a manual review-only
+merge. Use `--record-feedback` only when the detected drift should
 become a project queue item; feedback is written through AI_AUTO's trusted
 helper, not by executing scripts from the inspected project.
 

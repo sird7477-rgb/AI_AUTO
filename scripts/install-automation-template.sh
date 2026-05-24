@@ -2,7 +2,28 @@
 set -euo pipefail
 
 TARGET_DIR="${1:-}"
-TEMPLATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/templates/automation-base"
+AI_LAB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMPLATE_DIR="${AI_LAB_ROOT}/templates/automation-base"
+
+template_source_branch() {
+  if [ -n "${AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE:-}" ]; then
+    printf '%s\n' "${AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE}"
+    return 0
+  fi
+
+  git -C "${AI_LAB_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\n'
+}
+
+template_source_channel() {
+  case "$1" in
+    main)
+      printf 'stable\n'
+      ;;
+    *)
+      printf 'experimental\n'
+      ;;
+  esac
+}
 
 if [ -z "${TARGET_DIR}" ]; then
   echo "Usage: $0 /path/to/target-repo"
@@ -24,12 +45,24 @@ if [ ! -d "${TEMPLATE_DIR}" ]; then
   exit 1
 fi
 
+source_branch="$(template_source_branch)"
+source_channel="$(template_source_channel "${source_branch}")"
+if [ "${source_channel}" != "stable" ] && [ "${AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE:-0}" != "1" ]; then
+  echo "Refusing to install automation template from a non-stable AI_AUTO source."
+  echo "source_branch: ${source_branch}"
+  echo "source_channel: ${source_channel}"
+  echo "target: ${TARGET_DIR}"
+  echo "next_action: switch AI_AUTO to main, or perform a manual review-only merge."
+  exit 3
+fi
+
 conflicts=()
 
 for path in \
   "AI_AUTO_TEMPLATE_VERSION" \
   "AGENTS.md" \
   "docs/CHROME_CDP_ACCESS.md" \
+  "docs/AI_RUNTIME_ADAPTERS.md" \
   "docs/AI_MODEL_ROUTING.md" \
   "docs/AUTOMATION_OPERATING_POLICY.md" \
   "docs/DATA_COMPLETION.md" \
@@ -46,6 +79,7 @@ for path in \
   "docs/UI_COMPLETION.md" \
   "docs/WORKFLOW.md" \
   "scripts/archive-omx-artifacts.sh" \
+  "scripts/ai-runtime-adapter.sh" \
   "scripts/automation-doctor.sh" \
   "scripts/collect-review-context.sh" \
   "scripts/doc-budget.sh" \
@@ -97,6 +131,7 @@ fi
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"
 cp "${TEMPLATE_DIR}/AI_AUTO_TEMPLATE_VERSION" "${TARGET_DIR}/AI_AUTO_TEMPLATE_VERSION"
 cp "${TEMPLATE_DIR}/docs/CHROME_CDP_ACCESS.md" "${TARGET_DIR}/docs/CHROME_CDP_ACCESS.md"
+cp "${TEMPLATE_DIR}/docs/AI_RUNTIME_ADAPTERS.md" "${TARGET_DIR}/docs/AI_RUNTIME_ADAPTERS.md"
 cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTING.md"
 cp "${TEMPLATE_DIR}/docs/AUTOMATION_OPERATING_POLICY.md" "${TARGET_DIR}/docs/AUTOMATION_OPERATING_POLICY.md"
 cp "${TEMPLATE_DIR}/docs/DATA_COMPLETION.md" "${TARGET_DIR}/docs/DATA_COMPLETION.md"
@@ -114,6 +149,7 @@ cp "${TEMPLATE_DIR}/docs/UI_COMPLETION.md" "${TARGET_DIR}/docs/UI_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 
 cp "${TEMPLATE_DIR}/scripts/archive-omx-artifacts.sh" "${TARGET_DIR}/scripts/archive-omx-artifacts.sh"
+cp "${TEMPLATE_DIR}/scripts/ai-runtime-adapter.sh" "${TARGET_DIR}/scripts/ai-runtime-adapter.sh"
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
 cp "${TEMPLATE_DIR}/scripts/doc-budget.sh" "${TARGET_DIR}/scripts/doc-budget.sh"

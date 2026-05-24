@@ -202,6 +202,9 @@ then calls the real Codex binary with the original arguments.
 The warning includes `patch keyword: AI_AUTO 최신 패치 적용해줘`; type that
 keyword in Codex to ask the agent to run the documented AI_AUTO template patch
 workflow.
+If `ai-auto-template-status` reports `template_patch_enabled: no`, the keyword
+workflow must stop before applying managed-file changes because the current
+AI_AUTO source is experimental or unknown.
 
 Disable the notice for a shell command with:
 
