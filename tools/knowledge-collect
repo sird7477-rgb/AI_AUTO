@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""List and optionally push validated AI_AUTO knowledge drafts across projects."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+STATE_ROOT = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+PROJECT_REGISTRY = Path(os.environ.get("AI_AUTO_PROJECT_REGISTRY_FILE") or STATE_ROOT / "ai-auto/projects.tsv")
+DEFAULT_WORKSPACE = Path.home() / "workspace"
+DEFAULT_DEPTH_RAW = os.environ.get("AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH", "2")
+AI_LAB_ROOT = Path(__file__).resolve().parents[1]
+KNOWLEDGE_HELPER = AI_LAB_ROOT / "scripts/knowledge-notes.py"
+
+
+def positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
+def default_depth() -> int:
+    try:
+        return positive_int(DEFAULT_DEPTH_RAW)
+    except argparse.ArgumentTypeError as exc:
+        raise SystemExit(f"[knowledge-collect] invalid AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH: {exc}") from exc
+
+
+def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def normalized_parts(value: str) -> list[str]:
+    return [part for part in value.replace("\\", "/").split("/") if part not in ("", ".")]
+
+
+def has_symlink_component(path: Path) -> bool:
+    current = Path(path.anchor) if path.is_absolute() else Path(".")
+    for part in path.parts:
+        if part in ("", ".") or part == path.anchor:
+            continue
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def validate_vault_dir(path: Path) -> None:
+    parts = normalized_parts(str(path))
+    if path.is_absolute():
+        try:
+            parts = list(path.resolve(strict=False).relative_to(Path.cwd().resolve()).parts)
+        except ValueError:
+            parts = list(path.parts)
+    if any(part == ".omx" for part in parts):
+        raise SystemExit("[knowledge-collect] [vault-dot-omx] refusing to push into .omx; use an explicit durable vault path")
+    if has_symlink_component(path):
+        raise SystemExit(f"[knowledge-collect] [vault-path-symlink] refusing vault directory with symlink component: {path}")
+
+
+def git_root(path: Path) -> Path | None:
+    result = run(["git", "-C", str(path), "rev-parse", "--show-toplevel"])
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.strip()).resolve()
+
+
+def registry_repos() -> set[Path]:
+    repos: set[Path] = set()
+    if not PROJECT_REGISTRY.exists():
+        return repos
+    with PROJECT_REGISTRY.open(encoding="utf-8", newline="") as handle:
+        for row in csv.reader(handle, delimiter="\t"):
+            if len(row) >= 2:
+                root = git_root(Path(row[1]))
+                if root:
+                    repos.add(root)
+    return repos
+
+
+def workspace_repos(workspace: Path, depth: int) -> set[Path]:
+    repos: set[Path] = set()
+    if not workspace.exists():
+        return repos
+    for current, dirs, files in os.walk(workspace):
+        current_path = Path(current)
+        relative_depth = len(current_path.relative_to(workspace).parts)
+        if relative_depth > depth:
+            dirs[:] = []
+            continue
+        if ".git" in dirs or ".git" in files:
+            root = git_root(current_path)
+            if root:
+                repos.add(root)
+            dirs[:] = [item for item in dirs if item != ".git"]
+    return repos
+
+
+def explicit_project_repos(args: argparse.Namespace) -> list[Path]:
+    repos: set[Path] = set()
+    invalid: list[str] = []
+    for repo in args.project:
+        root = git_root(Path(repo))
+        if root:
+            repos.add(root)
+        else:
+            invalid.append(str(repo))
+    if getattr(args, "strict_project", False) and invalid:
+        raise SystemExit("[knowledge-collect] [project-invalid] explicit --project path is not a git repository: " + ", ".join(invalid[:5]))
+    return sorted(repos)
+
+
+def project_repos(args: argparse.Namespace) -> list[Path]:
+    repos: set[Path] = set()
+    if args.include_registry:
+        repos.update(registry_repos())
+    if args.include_workspace:
+        repos.update(workspace_repos(args.workspace, args.depth))
+    repos.update(explicit_project_repos(args))
+    current = git_root(Path.cwd())
+    if current:
+        repos.add(current)
+    return sorted(repos)
+
+
+def parse_frontmatter(path: Path) -> dict[str, str]:
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    if not text.startswith("---\n"):
+        raise ValueError("missing frontmatter")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        raise ValueError("unterminated frontmatter")
+    data: dict[str, str] = {}
+    for line in text[4:end].splitlines():
+        if not line.strip() or ":" not in line:
+            continue
+        key, raw = line.split(":", 1)
+        value = raw.strip()
+        if value.startswith('"') and value.endswith('"'):
+            value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        data[key.strip()] = value
+    return data
+
+
+def validate_note(path: Path) -> bool:
+    result = run([str(KNOWLEDGE_HELPER), "validate", str(path)])
+    if result.returncode != 0:
+        print(f"[knowledge-collect] skipped invalid note: {path}: {result.stderr.strip()}", file=sys.stderr)
+        return False
+    return True
+
+
+def note_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def project_namespace(repo: Path) -> str:
+    digest = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:12]
+    return f"{repo.name}--{digest}"
+
+
+def copy_note(note: Path, repo: Path, vault_dir: Path, force: bool) -> str:
+    target_dir = vault_dir / "Inbox" / project_namespace(repo)
+    if has_symlink_component(target_dir):
+        raise RuntimeError(f"[vault-target-symlink] refusing target directory with symlink component: {target_dir}")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / note.name
+    existed = target.exists()
+    if target.exists():
+        if note_hash(target) == note_hash(note):
+            return "unchanged"
+        if not force:
+            raise RuntimeError(f"target exists with different content: {target}")
+    shutil.copy2(note, target)
+    return "updated" if existed else "created"
+
+
+def validate_push_sync_classes(rows: list[tuple[Path, Path, dict[str, str]]], allow_local_private: bool) -> None:
+    allowed = {"external_private_vault", "shareable_summary"}
+    if allow_local_private:
+        allowed.add("local_private")
+    blocked = [
+        f"{repo.name}:{data.get('repeat_key', note.name)}:{data.get('sync_class', '')}"
+        for repo, note, data in rows
+        if data.get("sync_class") not in allowed
+    ]
+    if blocked:
+        raise SystemExit(
+            "[knowledge-collect] [push-sync-class] refusing to push notes whose sync_class is not allowed for this vault: "
+            + ", ".join(blocked[:5])
+        )
+
+
+def collect_rows(repos: list[Path]) -> list[tuple[Path, Path, dict[str, str]]]:
+    rows: list[tuple[Path, Path, dict[str, str]]] = []
+    for repo in repos:
+        drafts_dir = repo / ".omx/knowledge/drafts"
+        if not drafts_dir.exists():
+            continue
+        if has_symlink_component(drafts_dir):
+            print(f"[knowledge-collect] [draft-dir-symlink] skipped symlink draft directory: {drafts_dir}", file=sys.stderr)
+            continue
+        drafts_root = drafts_dir.resolve(strict=False)
+        for note in sorted(drafts_dir.glob("*.md")):
+            if note.name == "AI_AUTO_INDEX.md":
+                continue
+            resolved_note = note.resolve(strict=False)
+            if not resolved_note.is_relative_to(drafts_root):
+                print(f"[knowledge-collect] [draft-file-symlink] skipped symlink escape note: {note}", file=sys.stderr)
+                continue
+            if not validate_note(note):
+                continue
+            rows.append((repo, note, parse_frontmatter(note)))
+    return rows
+
+
+def print_rows(rows: list[tuple[Path, Path, dict[str, str]]]) -> None:
+    print("PROJECT\tUPDATED\tTYPE\tSTATUS\tREPEAT_KEY\tNOTE_PATH\tTITLE")
+    for repo, note, data in rows:
+        print(
+            "\t".join(
+                [
+                    repo.name,
+                    data.get("updated", ""),
+                    data.get("type", ""),
+                    data.get("status", ""),
+                    data.get("repeat_key", ""),
+                    str(note),
+                    data.get("title", ""),
+                ]
+            )
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Collect validated AI_AUTO knowledge drafts across projects.")
+    parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
+    parser.add_argument("--depth", type=positive_int)
+    parser.add_argument("--include-registry", action="store_true")
+    parser.add_argument("--include-workspace", action="store_true")
+    parser.add_argument("--project", action="append", default=[])
+    parser.add_argument("--vault-dir", type=Path)
+    parser.add_argument("--push", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--allow-local-private",
+        action="store_true",
+        help="Allow local_private drafts to be copied into an explicitly local/private vault.",
+    )
+    args = parser.parse_args()
+    if args.depth is None:
+        args.depth = default_depth() if args.include_workspace else 2
+
+    if args.push:
+        if not args.vault_dir:
+            raise SystemExit("[knowledge-collect] --push requires --vault-dir")
+        if not args.project:
+            raise SystemExit("[knowledge-collect] [push-explicit-project] --push requires at least one explicit --project path")
+        validate_vault_dir(args.vault_dir)
+        args.strict_project = True
+        explicit_repos = explicit_project_repos(args)
+        if not explicit_repos:
+            raise SystemExit("[knowledge-collect] [push-no-valid-project] --push requires at least one valid explicit --project git repository")
+        rows = collect_rows(explicit_repos)
+        validate_push_sync_classes(rows, args.allow_local_private)
+    else:
+        rows = collect_rows(project_repos(args))
+
+    print_rows(rows)
+    if not args.push:
+        return
+    copied = 0
+    for repo, note, _data in rows:
+        result = copy_note(note, repo, args.vault_dir, args.force)
+        if result in {"created", "updated"}:
+            copied += 1
+    index = args.vault_dir / "AI_AUTO_INDEX.md"
+    run_result = run([str(KNOWLEDGE_HELPER), "index", "--notes-dir", str(args.vault_dir), "--output", str(index)])
+    if run_result.returncode != 0:
+        raise SystemExit(run_result.stderr.strip())
+    print(f"[knowledge-collect] pushed {copied} note(s) to {args.vault_dir}")
+    print(run_result.stdout.strip())
+
+
+if __name__ == "__main__":
+    main()

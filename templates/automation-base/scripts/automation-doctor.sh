@@ -4,6 +4,7 @@ set -euo pipefail
 FIX=0
 SKIP_DIRTY_CHECK="${DOCTOR_SKIP_DIRTY_CHECK:-0}"
 OMX_ARTIFACT_WARN_COUNT="${OMX_ARTIFACT_WARN_COUNT:-200}"
+OMX_KNOWLEDGE_DRAFT_WARN_COUNT="${OMX_KNOWLEDGE_DRAFT_WARN_COUNT:-50}"
 
 usage() {
   cat <<'USAGE'
@@ -18,6 +19,8 @@ With --fix, the doctor may apply safe non-overwriting automation setup fixes.
 Environment:
   DOCTOR_SKIP_DIRTY_CHECK=1  skip the uncommitted-changes check
   OMX_ARTIFACT_WARN_COUNT=N   warn when a .omx artifact directory has more than N files
+  OMX_KNOWLEDGE_DRAFT_WARN_COUNT=N
+                              warn when .omx/knowledge/drafts has more than N notes
 USAGE
 }
 
@@ -61,7 +64,7 @@ if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
   HOME_READY=1
 fi
 
-if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-auto-template-status" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
+if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-auto-template-status" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ]; then
   IN_AI_LAB=1
 fi
 
@@ -116,6 +119,13 @@ case "${OMX_ARTIFACT_WARN_COUNT}" in
     ;;
 esac
 
+case "${OMX_KNOWLEDGE_DRAFT_WARN_COUNT}" in
+  ''|*[!0-9]*)
+    say_warn "invalid OMX_KNOWLEDGE_DRAFT_WARN_COUNT='${OMX_KNOWLEDGE_DRAFT_WARN_COUNT}'; using 50"
+    OMX_KNOWLEDGE_DRAFT_WARN_COUNT=50
+    ;;
+esac
+
 copy_from_template_if_missing() {
   local path="$1"
   local source_path="${TEMPLATE_DIR}/${path}"
@@ -131,7 +141,7 @@ copy_from_template_if_missing() {
   mkdir -p "$(dirname "$path")"
   cp "$source_path" "$path"
   case "$path" in
-    scripts/*.sh)
+    scripts/*.sh|scripts/*.py)
       chmod +x "$path"
       ;;
   esac
@@ -210,6 +220,19 @@ check_command() {
   else
     say_warn "optional command missing: ${name}"
     suggest "install ${name} if this workflow needs it"
+  fi
+}
+
+check_python3_version() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    return
+  fi
+
+  if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+    say_pass "python3 version is >= 3.9"
+  else
+    say_fail "python3 version must be >= 3.9 for scripts/knowledge-notes.py"
+    suggest "install Python 3.9 or newer"
   fi
 }
 
@@ -456,15 +479,18 @@ REQUIRED_FILES=(
   "docs/AUTOMATION_OPERATING_POLICY.md"
   "docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
   "docs/INTERVIEW_PLAN_LAYER.md"
+  "docs/OBSIDIAN_INTEGRATION.md"
   "docs/SESSION_QUALITY_PLAN.md"
   "docs/WORKFLOW.md"
   "scripts/archive-omx-artifacts.sh"
   "scripts/ai-runtime-adapter.sh"
   "scripts/review-gate.sh"
   "scripts/collect-review-context.sh"
+  "scripts/capture-knowledge-drafts.py"
   "scripts/doc-budget.sh"
   "scripts/guidance-duplicate-report.sh"
   "scripts/discover-ai-models.sh"
+  "scripts/knowledge-notes.py"
   "scripts/make-review-prompts.sh"
   "scripts/record-feedback.sh"
   "scripts/record-project-memory.sh"
@@ -496,7 +522,7 @@ else
   check_required_file "scripts/verify.sh"
 fi
 
-for path in scripts/*.sh; do
+for path in scripts/*.sh scripts/*.py; do
   [ -e "$path" ] || continue
   check_executable "$path"
 done
@@ -506,6 +532,8 @@ check_legacy_pointer_targets
 echo
 echo "[doctor] checking optional runtime tools"
 
+check_command python3 fail
+check_python3_version
 check_command docker warn
 
 if command -v docker >/dev/null 2>&1; then
@@ -597,6 +625,20 @@ if [ -d ".omx" ]; then
     fi
   done
 
+  knowledge_drafts_dir=".omx/knowledge/drafts"
+  if [ -d "$knowledge_drafts_dir" ]; then
+    knowledge_draft_count="$(find "$knowledge_drafts_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "$knowledge_draft_count" -gt "$OMX_KNOWLEDGE_DRAFT_WARN_COUNT" ]; then
+      say_warn "knowledge draft directory has ${knowledge_draft_count} notes: ${knowledge_drafts_dir}"
+      suggest "knowledge-collect --project \"$(pwd)\""
+      suggest "triage duplicate repeat_key notes before vault push"
+    else
+      say_pass "knowledge draft directory size ok: ${knowledge_drafts_dir} (${knowledge_draft_count} notes)"
+    fi
+  else
+    say_skip "knowledge draft directory missing: ${knowledge_drafts_dir}"
+  fi
+
   latest_manifest="$(ls -t .omx/review-results/review-run-*.md 2>/dev/null | head -n 1 || true)"
   if [ -n "$latest_manifest" ]; then
     say_pass "latest review run manifest: ${latest_manifest}"
@@ -628,6 +670,7 @@ if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   check_helper_link "${HOME_DIR}/bin/ai-plan-review" "${ROOT}/tools/ai-plan-review"
   check_helper_link "${HOME_DIR}/bin/ai-plan-export" "${ROOT}/tools/ai-plan-export"
   check_helper_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
+  check_helper_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   check_helper_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)

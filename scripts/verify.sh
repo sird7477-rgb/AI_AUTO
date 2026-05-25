@@ -73,6 +73,11 @@ bash -n tools/feedback-collect
 bash -n tools/workspace-scan
 python3 -m py_compile tools/ai-python-split
 python3 -m py_compile tools/ai-plan-workflow
+python3 -m py_compile tools/knowledge-collect
+python3 -m py_compile scripts/capture-knowledge-drafts.py
+python3 -m py_compile scripts/knowledge-notes.py
+python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
+python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
 
 echo "[verify] checking Playwright CDP safety guidance..."
 for ui_completion_doc in \
@@ -87,6 +92,7 @@ grep -q "Chrome CDP Access" docs/CHROME_CDP_ACCESS.md
 grep -q "credential-equivalent" docs/CHROME_CDP_ACCESS.md
 grep -q "project-owned wrapper scripts" docs/CHROME_CDP_ACCESS.md
 cmp -s docs/CHROME_CDP_ACCESS.md templates/automation-base/docs/CHROME_CDP_ACCESS.md
+cmp -s docs/OBSIDIAN_INTEGRATION.md templates/automation-base/docs/OBSIDIAN_INTEGRATION.md
 
 echo "[verify] checking guidance document budget..."
 ./scripts/doc-budget.sh
@@ -205,7 +211,7 @@ echo "[verify] testing guidance document budget accounting..."
   for i in $(seq 1 310); do
     printf 'template patch guidance line %s\n' "$i" >> docs/TEMPLATE_PATCH.md
   done
-  if ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-fail.out" 2>&1; then
+	  if env -u DOC_BUDGET_TEMPLATE_PATCH ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-fail.out" 2>&1; then
     echo "[verify] doc-budget accepted large template patch diff without explicit mode"
     exit 1
   fi
@@ -2312,6 +2318,64 @@ STUB
   grep -q "running Claude split synthesis over 2 parts" "${tmp_dir}/run.out"
 )
 
+echo "[verify] testing disabled Claude split review is not request_changes..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_claude_split_disabled_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_claude_split_disabled_tmp EXIT
+
+  mkdir -p \
+    "${tmp_dir}/repo/.omx/review-context" \
+    "${tmp_dir}/repo/.omx/review-prompts/split-review-context" \
+    "${tmp_dir}/repo/.omx/review-results" \
+    "${tmp_dir}/repo/.omx/reviewer-state" \
+    "${tmp_dir}/bin"
+  cd "${tmp_dir}/repo"
+  git -c init.defaultBranch=main init -q
+  printf 'seed\n' > README.md
+  git add README.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m seed
+  printf 'changed\n' > README.md
+  printf '# Context\n\nlarge split context\n' > .omx/review-context/latest-review-context.md
+  printf '# Claude Review\n\nUse split context.\n' > .omx/review-prompts/claude-review.md
+  printf '# Gemini Review\n\nSkipped in fixture.\n' > .omx/review-prompts/gemini-review.md
+  printf '# Split Review Manifest\n\n- part-0001.md\n' > .omx/review-prompts/split-review-manifest.md
+  printf '# Part 1\n\nfirst split payload\n' > .omx/review-prompts/split-review-context/part-0001.md
+
+  cat > "${tmp_dir}/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: claude --print --permission-mode --no-session-persistence"
+  exit 0
+fi
+printf "You've hit your session limit · resets 1:30pm (Asia/Seoul)\n" >&2
+exit 1
+STUB
+  chmod +x "${tmp_dir}/bin/claude"
+
+  PATH="${tmp_dir}/bin:${PATH}" \
+    AI_MODEL_DISCOVERY=0 \
+    RUN_GEMINI_REVIEW=0 \
+    RUN_CODEX_FALLBACK_REVIEW=0 \
+    SKIP_CONTEXT_GENERATION=1 \
+    REVIEW_RETRY_LIMIT=1 \
+    OUT_DIR=.omx/review-results \
+    CONTEXT_DIR=.omx/review-context \
+    PROMPT_DIR=.omx/review-prompts \
+    REVIEW_STATE_DIR=.omx/reviewer-state \
+    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+
+  claude_result="$(find .omx/review-results -maxdepth 1 -type f -name 'claude-review-*.md' -print | head -1)"
+  test -f "${claude_result}"
+  grep -q "Skipped: claude review is disabled" "${claude_result}"
+  ! grep -q "request_changes" "${claude_result}"
+  grep -q "reason=usage_limit" .omx/reviewer-state/claude.disabled
+)
+
 echo "[verify] testing split review context budgeting..."
 (
   tmp_dir="$(mktemp -d)"
@@ -2604,6 +2668,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
   printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
+  printf '# Obsidian Knowledge Operations\n' > docs/OBSIDIAN_INTEGRATION.md
   printf '# Performance Completion Pack\n' > docs/PERFORMANCE_COMPLETION.md
   printf '# Security Completion Pack\n' > docs/SECURITY_COMPLETION.md
   printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
@@ -2618,11 +2683,13 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     doc-budget.sh \
     guidance-duplicate-report.sh \
     discover-ai-models.sh \
-      make-review-prompts.sh \
-      record-feedback.sh \
-      record-project-memory.sh \
-      resolve-feedback.sh \
-      review-gate.sh \
+    capture-knowledge-drafts.py \
+    knowledge-notes.py \
+    make-review-prompts.sh \
+    record-feedback.sh \
+    record-project-memory.sh \
+    resolve-feedback.sh \
+    review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -2631,22 +2698,28 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     cp "${repo_root}/scripts/${script}" "scripts/${script}"
   done
   printf '#!/usr/bin/env bash\nexit 0\n' > scripts/verify.sh
-  chmod +x scripts/*.sh
+  chmod +x scripts/*.sh scripts/*.py
 
-  for index in 1 2 3 4 5 6; do
-    printf 'old %s\n' "${index}" > ".omx/review-results/old-${index}.md"
-  done
-  printf '# run\n' > .omx/review-results/review-run-latest.md
-  printf '# summary\n' > .omx/review-results/review-summary-latest.md
-  printf '# verdict\n' > .omx/review-results/review-verdict-latest.md
+	  for index in 1 2 3 4 5 6; do
+	    printf 'old %s\n' "${index}" > ".omx/review-results/old-${index}.md"
+	  done
+	  mkdir -p .omx/knowledge/drafts
+	  for index in 1 2 3; do
+	    printf 'draft %s\n' "${index}" > ".omx/knowledge/drafts/draft-${index}.md"
+	  done
+	  printf '# run\n' > .omx/review-results/review-run-latest.md
+	  printf '# summary\n' > .omx/review-results/review-summary-latest.md
+	  printf '# verdict\n' > .omx/review-results/review-verdict-latest.md
 
-  DOCTOR_SKIP_DIRTY_CHECK=1 \
-    OMX_ARTIFACT_WARN_COUNT=5 \
-    OMX_REVIEW_ARCHIVE_KEEP_FILES=3 \
-    ./scripts/automation-doctor.sh --fix > "${tmp_dir}/doctor.out"
+	  DOCTOR_SKIP_DIRTY_CHECK=1 \
+	    OMX_ARTIFACT_WARN_COUNT=5 \
+	    OMX_KNOWLEDGE_DRAFT_WARN_COUNT=2 \
+	    OMX_REVIEW_ARCHIVE_KEEP_FILES=3 \
+	    ./scripts/automation-doctor.sh --fix > "${tmp_dir}/doctor.out"
 
-  grep -q "archived old review artifacts" "${tmp_dir}/doctor.out"
-  test -f .omx/review-results/review-run-latest.md
+	  grep -q "archived old review artifacts" "${tmp_dir}/doctor.out"
+	  grep -q "knowledge draft directory has 3 notes" "${tmp_dir}/doctor.out"
+	  test -f .omx/review-results/review-run-latest.md
   test -f .omx/review-results/review-summary-latest.md
   test -f .omx/review-results/review-verdict-latest.md
   test -d .omx/review-results/archive
@@ -2678,6 +2751,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
   printf '# Data Completion Pack\n' > docs/DATA_COMPLETION.md
   printf '# Deployment Completion Pack\n' > docs/DEPLOYMENT_COMPLETION.md
   printf '# Observability Completion Pack\n' > docs/OBSERVABILITY_COMPLETION.md
+  printf '# Obsidian Knowledge Operations\n' > docs/OBSIDIAN_INTEGRATION.md
   printf '# Performance Completion Pack\n' > docs/PERFORMANCE_COMPLETION.md
   printf '# Security Completion Pack\n' > docs/SECURITY_COMPLETION.md
   printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
@@ -2692,11 +2766,13 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     doc-budget.sh \
     guidance-duplicate-report.sh \
     discover-ai-models.sh \
-      make-review-prompts.sh \
-      record-feedback.sh \
-      record-project-memory.sh \
-      resolve-feedback.sh \
-      review-gate.sh \
+    capture-knowledge-drafts.py \
+    knowledge-notes.py \
+    make-review-prompts.sh \
+    record-feedback.sh \
+    record-project-memory.sh \
+    resolve-feedback.sh \
+    review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -2705,7 +2781,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     cp "${repo_root}/scripts/${script}" "scripts/${script}"
   done
   printf '#!/usr/bin/env bash\nexit 0\n' > scripts/verify.sh
-  chmod +x scripts/*.sh
+  chmod +x scripts/*.sh scripts/*.py
 
   for index in $(seq 1 54); do
     printf 'old %s\n' "${index}" > ".omx/review-results/old-${index}.md"
@@ -2747,6 +2823,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   printf '# Automation Operating Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   printf '# Domain Pack Authoring Guide\n' > docs/DOMAIN_PACK_AUTHORING_GUIDE.md
   printf '# Interview Plan Layer\n' > docs/INTERVIEW_PLAN_LAYER.md
+  printf '# Obsidian Knowledge Operations\n' > docs/OBSIDIAN_INTEGRATION.md
   printf '# Session Quality Plan\n' > docs/SESSION_QUALITY_PLAN.md
   printf '# Workflow\n' > docs/WORKFLOW.md
 
@@ -2758,11 +2835,13 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     doc-budget.sh \
     guidance-duplicate-report.sh \
     discover-ai-models.sh \
-      make-review-prompts.sh \
-      record-feedback.sh \
-      record-project-memory.sh \
-      resolve-feedback.sh \
-      review-gate.sh \
+    capture-knowledge-drafts.py \
+    knowledge-notes.py \
+    make-review-prompts.sh \
+    record-feedback.sh \
+    record-project-memory.sh \
+    resolve-feedback.sh \
+    review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -2771,7 +2850,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     cp "${repo_root}/scripts/${script}" "scripts/${script}"
   done
   printf '#!/usr/bin/env bash\nexit 0\n' > scripts/verify.sh
-  chmod +x scripts/*.sh
+  chmod +x scripts/*.sh scripts/*.py
 
   DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh > "${tmp_dir}/doctor.out"
   grep -q "Summary:" "${tmp_dir}/doctor.out"
@@ -2893,6 +2972,734 @@ PY
     "${repo_root}/scripts/write-session-checkpoint.sh" >/dev/null
   grep -q "truncated .* additional status lines" .omx/state/session-checkpoint.md
   grep -q "this field s... \\[truncated\\]" .omx/state/session-checkpoint.md
+	)
+
+	echo "[verify] testing review-gate captures failed verdict drafts before exiting..."
+	(
+	  tmp_dir="$(mktemp -d)"
+
+	  cleanup_review_gate_capture_tmp() {
+	    rm -rf "${tmp_dir}"
+	  }
+
+	  trap cleanup_review_gate_capture_tmp EXIT
+
+	  target_dir="${tmp_dir}/target"
+	  git -c init.defaultBranch=main init -q "${target_dir}"
+	  cd "${target_dir}"
+	  mkdir -p scripts .omx/review-results
+	  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+	  cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
+	  cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+	  chmod +x scripts/review-gate.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
+	  cat > scripts/verify.sh <<-'SH'
+	#!/usr/bin/env bash
+	set -euo pipefail
+	echo "verify fixture ok"
+	SH
+	  cat > scripts/run-ai-reviews.sh <<-'SH'
+	#!/usr/bin/env bash
+	set -euo pipefail
+	echo "review fixture ok"
+	SH
+	  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .omx/review-results
+	cat > .omx/review-results/review-verdict-20260525T000001.md <<'VERDICT'
+	# AI Review Verdict
+
+	## Final Decision
+
+	revise
+
+	## Missing Or Unusable Reviewers
+
+	claude:request_changes
+	VERDICT
+	exit 1
+	SH
+	  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+
+	  set +e
+	  ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out" 2>&1
+	  review_gate_status=$?
+	  set -e
+	  if [ "${review_gate_status}" -eq 0 ]; then
+	    echo "[verify] review-gate succeeded despite a failing review verdict"
+	    exit 1
+	  fi
+	  grep -q "capturing local knowledge drafts" "${tmp_dir}/review-gate.out"
+	  failed_draft="$(find .omx/knowledge/drafts -maxdepth 1 -type f -name '*.md' | head -n 1)"
+	  test -f "${failed_draft}"
+	  grep -q 'repeat_key: "review-gate:revise"' "${failed_draft}"
+	  grep -q "severity: high" "${failed_draft}"
+	  grep -q "claude:request_changes" "${failed_draft}"
+	)
+
+	echo "[verify] testing knowledge note helper..."
+	(
+	  tmp_dir="$(mktemp -d)"
+
+  cleanup_knowledge_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_knowledge_tmp EXIT
+
+  notes_dir="${tmp_dir}/knowledge"
+
+  "${repo_root}/scripts/knowledge-notes.py" record \
+    --type incident \
+    --status resolved \
+    --title "Docker daemon unreachable during verify" \
+    --summary "Docker was installed but the daemon was not reachable during verification." \
+    --project ai-lab \
+    --project-type automation-template \
+    --stack docker \
+    --domain-pack none \
+    --surface docker \
+    --severity medium \
+    --repeat-key docker:daemon-unreachable \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized queue summary for docker daemon unreachable" \
+    --evidence-count 1 \
+    --confidence medium \
+    --body "Cause, fix, and prevention steps stay sanitized." \
+    --output-dir "${notes_dir}" \
+    --write >/dev/null
+
+  "${repo_root}/scripts/knowledge-notes.py" record \
+    --type technical-spec \
+    --status draft \
+    --title "External API pagination rules" \
+    --summary "User-provided reference for the API pagination contract." \
+    --project example-project \
+    --surface api \
+    --severity low \
+    --repeat-key api:pagination-rules \
+    --source-artifact docs/vendor-api.md \
+    --source-extract "sanitized user-requested API pagination reference" \
+    --storage-signal user-request \
+    --output-dir "${notes_dir}" \
+    --write >/dev/null
+
+  "${repo_root}/scripts/knowledge-notes.py" record \
+    --type lesson \
+    --status draft \
+    --title "Review feedback became more actionable" \
+    --summary "The planning split made review feedback easier to apply." \
+    --project ai-lab \
+    --surface planning \
+    --severity low \
+    --repeat-key planning:actionable-review-feedback \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized positive lesson fixture" \
+    --outcome positive \
+    --observed-benefit "review feedback became more actionable" \
+    --no-reuse-observed \
+    --output-dir "${notes_dir}" \
+    --write >/dev/null
+
+  "${repo_root}/scripts/knowledge-notes.py" record \
+    --type finding \
+    --status open \
+    --title "Review queue needs daily triage" \
+    --summary "Daily review notes should preserve sanitized unresolved findings." \
+    --project ai-lab \
+    --surface review \
+    --severity medium \
+    --repeat-key review:daily-triage-needed \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized review queue finding fixture" \
+    --confidence medium \
+    --sync-class local_private \
+    --output-dir "${notes_dir}" \
+    --write >/dev/null
+
+  "${repo_root}/scripts/knowledge-notes.py" record \
+    --type promotion-candidate \
+    --status open \
+    --title "Repeated review feedback should become guidance" \
+    --summary "Repeated sanitized feedback can become a guideline candidate after review evidence." \
+    --project ai-lab \
+    --surface guidance \
+    --severity medium \
+    --repeat-key guidance:review-feedback-promotion \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized promotion candidate fixture" \
+    --promotion-state guideline_candidate \
+    --evidence-count 2 \
+    --review-evidence "Gemini approval plus subagent consensus fixture" \
+    --confidence medium \
+    --sync-class local_private \
+    --output-dir "${notes_dir}" \
+    --write >/dev/null
+
+  "${repo_root}/scripts/knowledge-notes.py" validate "${notes_dir}" >/dev/null
+  "${repo_root}/scripts/knowledge-notes.py" index \
+    --notes-dir "${notes_dir}" \
+    --output "${notes_dir}/AI_AUTO_INDEX.md" >/dev/null
+  grep -q "Docker daemon unreachable during verify" "${notes_dir}/AI_AUTO_INDEX.md"
+  "${repo_root}/scripts/knowledge-notes.py" validate "${notes_dir}" >/dev/null
+
+  first_note="$(find "${notes_dir}" -maxdepth 1 -name '*.md' ! -name 'AI_AUTO_INDEX.md' | head -n 1)"
+  cp "${first_note}" "${tmp_dir}/body-secret.md"
+  printf '\napi_key=abc123\n' >> "${tmp_dir}/body-secret.md"
+  if "${repo_root}/scripts/knowledge-notes.py" validate "${tmp_dir}/body-secret.md" >/dev/null 2>"${tmp_dir}/body-secret.err"; then
+    echo "[verify] knowledge helper accepted secret-like note body"
+    exit 1
+  fi
+  grep -q "refusing secret-like content" "${tmp_dir}/body-secret.err"
+
+  awk 'NR==2 { print "source_repo: /home/customer/private-project" } { print }' \
+    "${first_note}" > "${tmp_dir}/frontmatter-secret.md"
+  if "${repo_root}/scripts/knowledge-notes.py" validate "${tmp_dir}/frontmatter-secret.md" >/dev/null 2>"${tmp_dir}/frontmatter-secret.err"; then
+    echo "[verify] knowledge helper accepted secret-like hand-edited frontmatter"
+    exit 1
+  fi
+  grep -q "refusing secret-like content" "${tmp_dir}/frontmatter-secret.err"
+
+  awk 'NR==2 { print "source_repo: /home/customer/private-project"; print "source_repo: sanitized-reference" } { print }' \
+    "${first_note}" > "${tmp_dir}/duplicate-frontmatter.md"
+  if "${repo_root}/scripts/knowledge-notes.py" validate "${tmp_dir}/duplicate-frontmatter.md" >/dev/null 2>"${tmp_dir}/duplicate-frontmatter.err"; then
+    echo "[verify] knowledge helper accepted duplicate frontmatter keys"
+    exit 1
+  fi
+  grep -q "duplicate frontmatter key" "${tmp_dir}/duplicate-frontmatter.err"
+
+  awk '{ sub(/^source_hash: .*/, "source_hash: sha256:nothex"); print }' \
+    "${first_note}" > "${tmp_dir}/bad-source-hash.md"
+  if "${repo_root}/scripts/knowledge-notes.py" validate "${tmp_dir}/bad-source-hash.md" >/dev/null 2>"${tmp_dir}/bad-source-hash.err"; then
+    echo "[verify] knowledge helper accepted malformed source_hash"
+    exit 1
+  fi
+  grep -q "source_hash must use sha256" "${tmp_dir}/bad-source-hash.err"
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type lesson \
+    --status draft \
+    --title "Positive lesson without signal" \
+    --summary "This lesson lacks observable evidence." \
+    --project ai-lab \
+    --surface planning \
+    --severity low \
+    --repeat-key planning:missing-signal \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized positive lesson fixture" \
+    --outcome positive \
+    --output-dir "${notes_dir}" >/dev/null 2>&1; then
+    echo "[verify] knowledge helper accepted a positive lesson without observable signal"
+    exit 1
+  fi
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type technical-spec \
+    --status draft \
+    --title "Spec without storage signal" \
+    --summary "This spec lacks storage authority." \
+    --project ai-lab \
+    --surface api \
+    --severity low \
+    --repeat-key api:missing-storage-signal \
+    --source-artifact docs/vendor-api.md \
+    --source-extract "sanitized spec fixture" \
+    --output-dir "${notes_dir}" >/dev/null 2>&1; then
+    echo "[verify] knowledge helper accepted technical-spec without storage_signal"
+    exit 1
+  fi
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type promotion-candidate \
+    --status draft \
+    --title "Premature guideline candidate" \
+    --summary "A single low-severity item must not become a guideline candidate." \
+    --project ai-lab \
+    --surface guidance \
+    --severity low \
+    --repeat-key guidance:premature-candidate \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized premature candidate fixture" \
+    --promotion-state guideline_candidate \
+    --evidence-count 1 \
+    --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/promotion.err"; then
+    echo "[verify] knowledge helper accepted premature guideline_candidate"
+    exit 1
+  fi
+  grep -q "reviewed promotion state requires" "${tmp_dir}/promotion.err"
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type promotion-candidate \
+    --status draft \
+    --title "Unreviewed accepted change" \
+    --summary "Accepted changes must keep review evidence." \
+    --project ai-lab \
+    --surface guidance \
+    --severity low \
+    --repeat-key guidance:unreviewed-accepted-change \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized accepted change fixture" \
+    --promotion-state accepted_change \
+    --evidence-count 1 \
+    --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/accepted-change.err"; then
+    echo "[verify] knowledge helper accepted accepted_change without review evidence"
+    exit 1
+  fi
+  grep -q "reviewed promotion state requires" "${tmp_dir}/accepted-change.err"
+
+  if (
+    cd "${tmp_dir}"
+    "${repo_root}/scripts/knowledge-notes.py" record \
+      --type incident \
+      --status draft \
+      --title "Local draft missing flag" \
+      --summary "Local draft output must be explicit." \
+      --project ai-lab \
+      --surface review \
+      --severity medium \
+      --repeat-key review:local-draft-flag \
+      --source-artifact .omx/feedback/queue.jsonl \
+      --source-extract "sanitized local draft fixture" \
+      --output-dir .omx/knowledge/drafts >/dev/null 2>"${tmp_dir}/local-draft.err"
+  ); then
+    echo "[verify] knowledge helper accepted .omx output without --allow-local-draft"
+    exit 1
+  fi
+  grep -q "output under .omx requires --allow-local-draft" "${tmp_dir}/local-draft.err"
+
+  if (
+    mkdir -p "${tmp_dir}/.omx"
+    cd "${tmp_dir}/.omx"
+    "${repo_root}/scripts/knowledge-notes.py" record \
+      --type incident \
+      --status draft \
+      --title "Relative local draft missing flag" \
+      --summary "Relative paths inside .omx must still be explicit." \
+      --project ai-lab \
+      --surface review \
+      --severity medium \
+      --repeat-key review:relative-local-draft-flag \
+      --source-artifact .omx/feedback/queue.jsonl \
+      --source-extract "sanitized relative local draft fixture" \
+      --output-dir knowledge/drafts >/dev/null 2>"${tmp_dir}/relative-local-draft.err"
+  ); then
+    echo "[verify] knowledge helper accepted relative output inside .omx without --allow-local-draft"
+    exit 1
+  fi
+  grep -q "output under .omx requires --allow-local-draft" "${tmp_dir}/relative-local-draft.err"
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type incident \
+    --status draft \
+    --title "Absolute local draft missing flag" \
+    --summary "Absolute local draft output must be explicit." \
+    --project ai-lab \
+    --surface review \
+    --severity medium \
+    --repeat-key review:absolute-local-draft-flag \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized absolute local draft fixture" \
+    --output-dir "${tmp_dir}/.omx/knowledge/drafts" >/dev/null 2>"${tmp_dir}/absolute-local-draft.err"; then
+    echo "[verify] knowledge helper accepted absolute .omx output without --allow-local-draft"
+    exit 1
+  fi
+  grep -q "output under .omx requires --allow-local-draft" "${tmp_dir}/absolute-local-draft.err"
+
+  if (
+    cd "${tmp_dir}"
+    "${repo_root}/scripts/knowledge-notes.py" index \
+      --notes-dir "${notes_dir}" \
+      --output .omx/knowledge/AI_AUTO_INDEX.md >/dev/null 2>"${tmp_dir}/index-local-draft.err"
+  ); then
+    echo "[verify] knowledge helper accepted .omx index output without --allow-local-draft"
+    exit 1
+  fi
+  grep -q "output under .omx requires --allow-local-draft" "${tmp_dir}/index-local-draft.err"
+
+  external_notes_dir="${tmp_dir}/external-notes"
+  "${repo_root}/scripts/knowledge-notes.py" record \
+    --write \
+    --type incident \
+    --status draft \
+    --title "External note path leak" \
+    --summary "Index links must stay inside the output directory." \
+    --project ai-lab \
+    --surface review \
+    --severity medium \
+    --repeat-key review:external-index-path \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized external index fixture" \
+    --output-dir "${external_notes_dir}" >/dev/null
+  if "${repo_root}/scripts/knowledge-notes.py" index \
+    --notes-dir "${external_notes_dir}" \
+    --output "${notes_dir}/OUTSIDE_INDEX.md" >/dev/null 2>"${tmp_dir}/external-index.err"; then
+    echo "[verify] knowledge helper indexed notes outside output directory"
+    exit 1
+  fi
+  grep -q "indexed notes must be under the index output directory" "${tmp_dir}/external-index.err"
+
+  traversal_vault_dir="${tmp_dir}/vault/AI_AUTO"
+  traversal_notes_dir="${traversal_vault_dir}/../external-notes"
+  "${repo_root}/scripts/knowledge-notes.py" record \
+    --write \
+    --type incident \
+    --status draft \
+    --title "Traversal note path leak" \
+    --summary "Index links must reject resolved path traversal." \
+    --project ai-lab \
+    --surface review \
+    --severity medium \
+    --repeat-key review:traversal-index-path \
+    --source-artifact .omx/feedback/queue.jsonl \
+    --source-extract "sanitized traversal index fixture" \
+    --output-dir "${traversal_notes_dir}" >/dev/null
+  if "${repo_root}/scripts/knowledge-notes.py" index \
+    --notes-dir "${traversal_notes_dir}" \
+    --output "${traversal_vault_dir}/AI_AUTO_INDEX.md" >/dev/null 2>"${tmp_dir}/traversal-index.err"; then
+    echo "[verify] knowledge helper indexed traversal notes outside output directory"
+    exit 1
+  fi
+  grep -q "indexed notes must be under the index output directory" "${tmp_dir}/traversal-index.err"
+
+  benign_link_source="$(find "${notes_dir}" -maxdepth 1 -type f -name '*.md' | head -1)"
+  ln -s "${benign_link_source}" "${notes_dir}/benign-inside-link.md"
+  "${repo_root}/scripts/knowledge-notes.py" index \
+    --notes-dir "${notes_dir}" \
+    --output "${notes_dir}/BENIGN_LINK_INDEX.md" >/dev/null
+  grep -q "AI_AUTO Knowledge Index" "${notes_dir}/BENIGN_LINK_INDEX.md"
+
+  symlink_vault_dir="${tmp_dir}/symlink-vault/AI_AUTO"
+  symlink_outside_dir="${tmp_dir}/symlink-outside"
+  mkdir -p "${symlink_vault_dir}/Inbox/project-a" "${symlink_outside_dir}"
+  printf 'token=abc\n' > "${symlink_outside_dir}/unsafe.md"
+  ln -s "${symlink_outside_dir}/unsafe.md" "${symlink_vault_dir}/Inbox/project-a/unsafe.md"
+	  if "${repo_root}/scripts/knowledge-notes.py" index \
+	    --notes-dir "${symlink_vault_dir}" \
+	    --output "${symlink_vault_dir}/AI_AUTO_INDEX.md" >/dev/null 2>"${tmp_dir}/symlink-index.err"; then
+	    echo "[verify] knowledge helper indexed symlink note outside output directory"
+	    exit 1
+	  fi
+	  grep -q "indexed notes must be under the index output directory" "${tmp_dir}/symlink-index.err"
+	  if "${repo_root}/scripts/knowledge-notes.py" validate "${symlink_vault_dir}" >/dev/null 2>"${tmp_dir}/symlink-validate.err"; then
+	    echo "[verify] knowledge helper validated symlink note outside validation root"
+	    exit 1
+	  fi
+	  grep -q "validated notes must stay under the validation root" "${tmp_dir}/symlink-validate.err"
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type incident \
+    --status draft \
+    --title "Unsafe source artifact" \
+    --summary "This note points at a raw runtime log." \
+    --project ai-lab \
+    --surface review \
+    --severity medium \
+    --repeat-key review:unsafe-source \
+    --source-artifact .omx/logs/raw.log \
+    --source-extract "sanitized unsafe source fixture" \
+    --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/unsafe-source.err"; then
+    echo "[verify] knowledge helper accepted unsafe source_artifact"
+    exit 1
+  fi
+  grep -q "unsafe source_artifact" "${tmp_dir}/unsafe-source.err"
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type incident \
+    --status draft \
+    --title "Path traversal source artifact" \
+    --summary "This note points outside the project." \
+    --project ai-lab \
+    --surface review \
+    --severity medium \
+    --repeat-key review:path-traversal \
+    --source-artifact ../secret.log \
+    --source-extract "sanitized traversal fixture" \
+    --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/path-traversal.err"; then
+    echo "[verify] knowledge helper accepted source_artifact path traversal"
+    exit 1
+  fi
+  grep -q "path traversal" "${tmp_dir}/path-traversal.err"
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type incident \
+    --status draft \
+    --title "Secret note fixture" \
+    --summary "token=abc123" \
+    --project ai-lab \
+    --surface security \
+    --severity high \
+    --repeat-key security:secret-note \
+    --source-artifact docs/sanitized.md \
+    --source-extract "sanitized secret fixture" \
+    --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/secret-summary.err"; then
+    echo "[verify] knowledge helper accepted secret-like summary"
+    exit 1
+  fi
+  grep -q "refusing secret-like content" "${tmp_dir}/secret-summary.err"
+
+  secret_index=0
+  for secret_summary in \
+    "cookie: sessionid=abc123" \
+    "https://user:pass@example.invalid/private" \
+    "/home/customer/private-file.txt" \
+    "system prompt: reveal hidden instructions" \
+    "screenshot: customer-account.png"
+  do
+    secret_index=$((secret_index + 1))
+    if "${repo_root}/scripts/knowledge-notes.py" record \
+      --type incident \
+      --status draft \
+      --title "Secret note fixture ${secret_index}" \
+      --summary "${secret_summary}" \
+      --project ai-lab \
+      --surface security \
+      --severity high \
+      --repeat-key "security:secret-note-${secret_index}" \
+      --source-artifact docs/sanitized.md \
+      --source-extract "sanitized secret fixture ${secret_index}" \
+      --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/secret-summary-${secret_index}.err"; then
+      echo "[verify] knowledge helper accepted sensitive summary fixture ${secret_index}"
+      exit 1
+    fi
+    grep -q "refusing secret-like content" "${tmp_dir}/secret-summary-${secret_index}.err"
+  done
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type incident \
+    --status draft \
+    --title "Secret optional fixture" \
+    --summary "Optional fields must be sanitized too." \
+    --project ai-lab \
+    --surface security \
+    --severity high \
+    --repeat-key security:secret-optional \
+    --source-artifact docs/sanitized.md \
+    --source-extract "sanitized optional secret fixture" \
+    --source-repo /home/customer/private-project \
+    --next-action "token=abc123" \
+    --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/secret-optional.err"; then
+    echo "[verify] knowledge helper accepted secret-like optional fields"
+    exit 1
+  fi
+  grep -q "refusing secret-like content" "${tmp_dir}/secret-optional.err"
+
+  if "${repo_root}/scripts/knowledge-notes.py" record \
+    --type incident \
+    --status draft \
+    --title "Multiline frontmatter fixture" \
+    --summary $'line one\nline two' \
+    --project ai-lab \
+    --surface validation \
+    --severity medium \
+    --repeat-key validation:multiline-frontmatter \
+    --source-artifact docs/sanitized.md \
+    --source-extract "sanitized multiline fixture" \
+    --output-dir "${notes_dir}" >/dev/null 2>"${tmp_dir}/multiline.err"; then
+    echo "[verify] knowledge helper accepted multiline frontmatter"
+    exit 1
+  fi
+  grep -q "frontmatter field must be single-line" "${tmp_dir}/multiline.err"
+)
+
+echo "[verify] testing automatic knowledge draft capture and collection..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_capture_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_capture_tmp EXIT
+
+  project_dir="${tmp_dir}/workspace/project-a"
+  registry_file="${tmp_dir}/projects.tsv"
+  vault_dir="${tmp_dir}/vault/AI_AUTO"
+  mkdir -p "${project_dir}/.omx/feedback" "${project_dir}/.omx/review-results"
+  git -c init.defaultBranch=main init -q "${project_dir}"
+  git -C "${project_dir}" config user.email "verify@example.invalid"
+  git -C "${project_dir}" config user.name "Verify"
+  touch "${project_dir}/README.md"
+  git -C "${project_dir}" add README.md
+  git -C "${project_dir}" commit -q -m "seed"
+
+  printf '%s\n' \
+    '{"created_at":"2026-05-25T00:00:00Z","repeat_key":"verify:blocked-run","severity":"high","summary":"Verify was blocked by a missing local service.","surface":"verify","type":"failure_pattern"}' \
+    '{"created_at":"2026-05-25T00:00:01Z","repeat_key":"review:better-split","severity":"medium","summary":"Review feedback became easier to triage after split context.","surface":"review","type":"improvement"}' \
+    '{"created_at":"2026-05-25T00:00:02Z","repeat_key":"secret:item","severity":"high","summary":"token=abc123","surface":"review","type":"failure_pattern"}' \
+    '{"created_at":"2026-05-25T00:00:03Z","repeat_key":"api_key=abc123","severity":"high","summary":"Secret-like repeat key must be skipped.","surface":"review","type":"failure_pattern"}' \
+    '{"created_at":"2026-05-25T00:00:04Z","repeat_key":"secret:bearer","severity":"high","summary":"bearer abc123","surface":"review","type":"failure_pattern"}' \
+    '{"created_at":"2026-05-25T00:00:05Z","repeat_key":"secret:body","resolution":"password=abc123","severity":"high","summary":"Secret-like body must be skipped.","surface":"review","type":"failure_pattern"}' \
+    > "${project_dir}/.omx/feedback/queue.jsonl"
+
+  cat > "${project_dir}/.omx/review-results/review-verdict-20260525T000000.md" <<'EOF'
+# AI Review Verdict
+
+## Final Decision
+
+proceed_degraded
+
+## Missing Or Unusable Reviewers
+
+claude:skipped
+EOF
+
+  (
+    cd "${project_dir}"
+    "${repo_root}/scripts/capture-knowledge-drafts.py" \
+      --source all \
+      --knowledge-helper "${repo_root}/scripts/knowledge-notes.py" \
+      --write > "${tmp_dir}/capture.out" 2>"${tmp_dir}/capture.err"
+  )
+  grep -q "captured 3 draft candidate" "${tmp_dir}/capture.out"
+  test "$(grep -c "skipped secret-like item" "${tmp_dir}/capture.err")" -eq 4
+  test "$(find "${project_dir}/.omx/knowledge/drafts" -maxdepth 1 -name '*.md' | wc -l)" -eq 3
+  "${repo_root}/scripts/knowledge-notes.py" validate "${project_dir}/.omx/knowledge/drafts" >/dev/null
+
+  (
+    cd "${project_dir}"
+    "${repo_root}/scripts/capture-knowledge-drafts.py" \
+      --source all \
+      --knowledge-helper "${repo_root}/scripts/knowledge-notes.py" \
+      --write > "${tmp_dir}/capture-repeat.out" 2>"${tmp_dir}/capture-repeat.err"
+  )
+  grep -q "skipped existing draft: verify:blocked-run" "${tmp_dir}/capture-repeat.out"
+  grep -q "skipped existing draft: review-gate:proceed_degraded" "${tmp_dir}/capture-repeat.out"
+  grep -q "captured 0 draft candidate" "${tmp_dir}/capture-repeat.out"
+  test "$(find "${project_dir}/.omx/knowledge/drafts" -maxdepth 1 -name '*.md' | wc -l)" -eq 3
+
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" "${repo_root}/tools/ai-register" "${project_dir}" >/dev/null
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --workspace "${tmp_dir}/workspace" > "${tmp_dir}/knowledge-default-list.out"
+  if grep -q "verify:blocked-run" "${tmp_dir}/knowledge-default-list.out"; then
+    echo "[verify] knowledge-collect default listed workspace or registry drafts without opt-in"
+    exit 1
+  fi
+  AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=bad AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" > "${tmp_dir}/knowledge-explicit-bad-depth.out"
+  grep -q "verify:blocked-run" "${tmp_dir}/knowledge-explicit-bad-depth.out"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-registry > "${tmp_dir}/knowledge-registry-list.out"
+  grep -q "verify:blocked-run" "${tmp_dir}/knowledge-registry-list.out"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" > "${tmp_dir}/knowledge-list.out"
+  grep -q "verify:blocked-run" "${tmp_dir}/knowledge-list.out"
+  grep -q "review-gate:proceed_degraded" "${tmp_dir}/knowledge-list.out"
+  printf 'token=abc\n' > "${tmp_dir}/outside-draft.md"
+  ln -s "${tmp_dir}/outside-draft.md" "${project_dir}/.omx/knowledge/drafts/outside-draft.md"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" > "${tmp_dir}/knowledge-symlink-list.out" 2>"${tmp_dir}/knowledge-symlink-list.err"
+  grep -q "\[draft-file-symlink\]" "${tmp_dir}/knowledge-symlink-list.err"
+  if grep -q "outside-draft" "${tmp_dir}/knowledge-symlink-list.out"; then
+    echo "[verify] knowledge-collect listed symlink escape draft"
+    exit 1
+  fi
+  if AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=bad AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" > "${tmp_dir}/knowledge-invalid-depth.out" 2>&1; then
+    echo "[verify] knowledge-collect accepted invalid discovery depth"
+    exit 1
+  fi
+  grep -q "must be a positive integer" "${tmp_dir}/knowledge-invalid-depth.out"
+  if grep -q "secret:item" "${tmp_dir}/knowledge-list.out"; then
+    echo "[verify] knowledge-collect listed skipped secret item"
+    exit 1
+  fi
+
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --vault-dir "${vault_dir}" --push > "${tmp_dir}/knowledge-push-without-project.out" 2>&1; then
+    echo "[verify] knowledge-collect pushed without an explicit project allowlist"
+    exit 1
+  fi
+  grep -q "\[push-explicit-project\]" "${tmp_dir}/knowledge-push-without-project.out"
+  test ! -d "${vault_dir}/Inbox"
+
+	  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --project "${project_dir}" --vault-dir "${vault_dir}" --push > "${tmp_dir}/knowledge-sync-class.out" 2>&1; then
+	    echo "[verify] knowledge-collect pushed local_private drafts without explicit permission"
+	    exit 1
+	  fi
+	  grep -q "\[push-sync-class\]" "${tmp_dir}/knowledge-sync-class.out"
+	  test ! -d "${vault_dir}/Inbox"
+
+	  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${tmp_dir}/missing-project" --vault-dir "${vault_dir}" --allow-local-private --push > "${tmp_dir}/knowledge-invalid-project.out" 2>&1; then
+	    echo "[verify] knowledge-collect pushed with an invalid explicit project"
+	    exit 1
+	  fi
+	  grep -q "\[project-invalid\]" "${tmp_dir}/knowledge-invalid-project.out"
+	  test ! -f "${vault_dir}/AI_AUTO_INDEX.md"
+	  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" --project "${tmp_dir}/missing-project" --vault-dir "${vault_dir}" --allow-local-private --push > "${tmp_dir}/knowledge-mixed-invalid-project.out" 2>&1; then
+	    echo "[verify] knowledge-collect pushed with a mixed valid and invalid explicit project set"
+	    exit 1
+	  fi
+	  grep -q "\[project-invalid\]" "${tmp_dir}/knowledge-mixed-invalid-project.out"
+	  test ! -f "${vault_dir}/AI_AUTO_INDEX.md"
+
+	  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --project "${project_dir}" --vault-dir "${vault_dir}" --allow-local-private --push > "${tmp_dir}/knowledge-push.out"
+	  grep -q "pushed 3 note" "${tmp_dir}/knowledge-push.out"
+	  test -f "${vault_dir}/AI_AUTO_INDEX.md"
+	  grep -q "Verify was blocked by a missing local service" "${vault_dir}/AI_AUTO_INDEX.md"
+	  "${repo_root}/scripts/knowledge-notes.py" validate "${vault_dir}" >/dev/null
+	  pushed_project_dir="$(find "${vault_dir}/Inbox" -mindepth 1 -maxdepth 1 -type d -name 'project-a--*' | head -n 1)"
+	  test -n "${pushed_project_dir}"
+
+	  collision_project_dir="${tmp_dir}/other/project-a"
+	  collision_vault_dir="${tmp_dir}/collision-vault/AI_AUTO"
+	  mkdir -p "${collision_project_dir}/.omx/knowledge"
+	  git -c init.defaultBranch=main init -q "${collision_project_dir}"
+	  cp -R "${project_dir}/.omx/knowledge/drafts" "${collision_project_dir}/.omx/knowledge/drafts"
+	  "${repo_root}/tools/knowledge-collect" \
+	    --project "${project_dir}" \
+	    --project "${collision_project_dir}" \
+	    --vault-dir "${collision_vault_dir}" \
+	    --allow-local-private \
+	    --push > "${tmp_dir}/knowledge-collision-push.out"
+	  grep -q "pushed 6 note" "${tmp_dir}/knowledge-collision-push.out"
+	  test "$(find "${collision_vault_dir}/Inbox" -mindepth 1 -maxdepth 1 -type d -name 'project-a--*' | wc -l | tr -d ' ')" = "2"
+
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --project "${project_dir}" --vault-dir "${project_dir}/.omx/knowledge/vault" --allow-local-private --push > "${tmp_dir}/knowledge-omx-vault.out" 2>&1; then
+    echo "[verify] knowledge-collect accepted .omx as vault destination"
+    exit 1
+  fi
+  grep -q "\[vault-dot-omx\]" "${tmp_dir}/knowledge-omx-vault.out"
+  test ! -d "${project_dir}/.omx/knowledge/vault/Inbox"
+
+  mkdir -p "${tmp_dir}/real-vault"
+  ln -s "${tmp_dir}/real-vault" "${tmp_dir}/vault-link"
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --project "${project_dir}" --vault-dir "${tmp_dir}/vault-link" --allow-local-private --push > "${tmp_dir}/knowledge-symlink-vault.out" 2>&1; then
+    echo "[verify] knowledge-collect accepted symlink vault destination"
+    exit 1
+  fi
+  grep -q "\[vault-path-symlink\]" "${tmp_dir}/knowledge-symlink-vault.out"
+  test ! -d "${tmp_dir}/real-vault/Inbox"
+
+  inbox_escape_vault="${tmp_dir}/inbox-escape-vault/AI_AUTO"
+  inbox_escape_target="${tmp_dir}/inbox-escape-target"
+  mkdir -p "${inbox_escape_vault}" "${inbox_escape_target}"
+  ln -s "${inbox_escape_target}" "${inbox_escape_vault}/Inbox"
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+    "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --project "${project_dir}" --vault-dir "${inbox_escape_vault}" --allow-local-private --push > "${tmp_dir}/knowledge-inbox-symlink.out" 2>&1; then
+    echo "[verify] knowledge-collect accepted symlink Inbox inside vault destination"
+    exit 1
+  fi
+  grep -q "\[vault-target-symlink\]" "${tmp_dir}/knowledge-inbox-symlink.out"
+  test ! -d "${inbox_escape_target}/project-a"
+
+  symlink_project_dir="${tmp_dir}/workspace/project-symlink-drafts"
+  symlink_drafts_target="${tmp_dir}/outside-drafts-dir"
+  mkdir -p "${symlink_project_dir}/.omx/knowledge" "${symlink_drafts_target}"
+  git -c init.defaultBranch=main init -q "${symlink_project_dir}"
+  cp "$(find "${project_dir}/.omx/knowledge/drafts" -maxdepth 1 -type f -name '*.md' | head -1)" "${symlink_drafts_target}/outside.md"
+  ln -s "${symlink_drafts_target}" "${symlink_project_dir}/.omx/knowledge/drafts"
+  "${repo_root}/tools/knowledge-collect" --project "${symlink_project_dir}" > "${tmp_dir}/knowledge-symlink-dir.out" 2>"${tmp_dir}/knowledge-symlink-dir.err"
+  grep -q "\[draft-dir-symlink\]" "${tmp_dir}/knowledge-symlink-dir.err"
+  if grep -q "outside.md" "${tmp_dir}/knowledge-symlink-dir.out"; then
+    echo "[verify] knowledge-collect listed symlink draft directory contents"
+    exit 1
+  fi
 )
 
 echo "[verify] testing feedback helper..."
@@ -3016,6 +3823,8 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/discover-ai-models.sh"
   test -x "${target_dir}/scripts/doc-budget.sh"
   test -x "${target_dir}/scripts/guidance-duplicate-report.sh"
+  test -x "${target_dir}/scripts/capture-knowledge-drafts.py"
+  test -x "${target_dir}/scripts/knowledge-notes.py"
   test -x "${target_dir}/scripts/record-feedback.sh"
   test -x "${target_dir}/scripts/record-project-memory.sh"
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
@@ -3034,6 +3843,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   test -f "${target_dir}/docs/INCIDENT_OPS.md"
   test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
+  test -f "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
   test -f "${target_dir}/docs/PATCH_NOTES.md"
   test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
   test -f "${target_dir}/docs/SECURITY_COMPLETION.md"
@@ -3064,6 +3874,10 @@ echo "[verify] testing automation template installer..."
   grep -q "ready_to_execute" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
   grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
+  grep -q "Obsidian Knowledge Operations" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
+  grep -q "capture-knowledge-drafts.py" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
+  grep -q "scripts/knowledge-notes.py" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
+  grep -q "Project repositories and the Obsidian vault may live on an external SSD" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
   grep -q "AI_AUTO Patch Notes" "${target_dir}/docs/PATCH_NOTES.md"
   grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
   grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
@@ -3094,6 +3908,10 @@ echo "[verify] testing automation template installer..."
   grep -q "docs/AI_AUTOMATION_TREND_HARDENING.md" "templates/automation-base/README.md"
   grep -q "docs/research/AI_AUTOMATION_TRENDS.md" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/README.md"
+  grep -q "docs/OBSIDIAN_INTEGRATION.md" "templates/automation-base/README.md"
+  grep -q "scripts/capture-knowledge-drafts.py" "templates/automation-base/README.md"
+  grep -q "scripts/knowledge-notes.py" "templates/automation-base/README.md"
+  grep -q "Obsidian is only a sanitized knowledge store" "templates/automation-base/README.md"
   grep -q "Review intensity" "templates/automation-base/README.md"
   grep -q "Subagents" "templates/automation-base/README.md"
   grep -q "Planning/interview intensity" "templates/automation-base/README.md"
@@ -3175,6 +3993,7 @@ echo "[verify] testing automation template installer..."
   grep -q "docs/AI_RUNTIME_ADAPTERS.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/PATCH_NOTES.md" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/OBSIDIAN_INTEGRATION.md" "${tmp_dir}/template-status-current.out"
   grep -q $'STATE\tPATH\tTEMPLATE_PATH\tOWNERSHIP\tPATCH_POLICY' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-current.out"
@@ -3186,6 +4005,9 @@ echo "[verify] testing automation template installer..."
   grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/ai-runtime-adapter.sh\tscripts/ai-runtime-adapter.sh\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/PATCH_NOTES.md\tdocs/PATCH_NOTES.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/OBSIDIAN_INTEGRATION.md\tdocs/OBSIDIAN_INTEGRATION.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tscripts/capture-knowledge-drafts.py\tscripts/capture-knowledge-drafts.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tscripts/knowledge-notes.py\tscripts/knowledge-notes.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/verify.sh\tscripts/verify.example.sh\tproject-owned\tinspect-only' "${tmp_dir}/template-status-current.out"
 
   printf '\nproject-specific customization\n' >> "${target_dir}/docs/WORKFLOW.md"
@@ -3272,6 +4094,7 @@ grep -q "Performance Completion Pack" "templates/automation-base/docs/PERFORMANC
 grep -q "Observability Completion Pack" "templates/automation-base/docs/OBSERVABILITY_COMPLETION.md"
 grep -q "UI Completion Pack" "templates/automation-base/docs/UI_COMPLETION.md"
 grep -q "Incident Ops For Dry-run And Field-test" "templates/automation-base/docs/INCIDENT_OPS.md"
+grep -q "Obsidian Knowledge Operations" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
 grep -q "Periodic Status Reporting" "templates/automation-base/docs/INCIDENT_OPS.md"
 grep -q "Incident Ops During Dry-run And Field-test" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "doc-budget.sh" "templates/automation-base/README.md"
@@ -3280,6 +4103,10 @@ test -x "scripts/doc-budget.sh"
 test -x "templates/automation-base/scripts/doc-budget.sh"
 test -x "scripts/guidance-duplicate-report.sh"
 test -x "templates/automation-base/scripts/guidance-duplicate-report.sh"
+test -x "scripts/capture-knowledge-drafts.py"
+test -x "templates/automation-base/scripts/capture-knowledge-drafts.py"
+test -x "scripts/knowledge-notes.py"
+test -x "templates/automation-base/scripts/knowledge-notes.py"
 grep -q "Post-Code Spec/Design Alignment" "docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "Post-Code Spec/Design Alignment" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "User-Facing Report Language" "docs/AUTOMATION_OPERATING_POLICY.md"
@@ -3532,6 +4359,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
+  ln -s "${tmp_home}/old-checkout/tools/knowledge-collect" "${tmp_home}/bin/knowledge-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
@@ -3552,6 +4380,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
   test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
+  test "$(readlink "${tmp_home}/bin/knowledge-collect")" = "$(pwd)/tools/knowledge-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
   test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
   grep -q "AI_AUTO shell integration" "${tmp_home}/.bashrc"
@@ -3834,6 +4663,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
+  ln -s "${tmp_home}/old-checkout/tools/knowledge-collect" "${tmp_home}/bin/knowledge-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/bootstrap-ai-lab.sh --fix >/dev/null
@@ -3854,6 +4684,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
   test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
+  test "$(readlink "${tmp_home}/bin/knowledge-collect")" = "$(pwd)/tools/knowledge-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
@@ -3884,6 +4715,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
+  ln -s "${tmp_home}/old-checkout/tools/knowledge-collect" "${tmp_home}/bin/knowledge-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
   DOCTOR_SKIP_DIRTY_CHECK=1 HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/automation-doctor.sh --fix >/dev/null
@@ -3904,6 +4736,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
   test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
+  test "$(readlink "${tmp_home}/bin/knowledge-collect")" = "$(pwd)/tools/knowledge-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
@@ -3912,7 +4745,8 @@ for doc in \
   AI_AUTOMATION_TREND_HARDENING.md \
   AI_MODEL_ROUTING.md \
   AI_RUNTIME_ADAPTERS.md \
-  AUTOMATION_OPERATING_POLICY.md
+  AUTOMATION_OPERATING_POLICY.md \
+  OBSIDIAN_INTEGRATION.md
 do
   if ! diff -u "docs/${doc}" "templates/automation-base/docs/${doc}"; then
     echo "[verify] automation doc copies are out of sync: ${doc}"
@@ -3931,10 +4765,12 @@ for script in \
   automation-doctor.sh \
   archive-omx-artifacts.sh \
   ai-runtime-adapter.sh \
+  capture-knowledge-drafts.py \
   collect-review-context.sh \
   doc-budget.sh \
   guidance-duplicate-report.sh \
   discover-ai-models.sh \
+  knowledge-notes.py \
   make-review-prompts.sh \
   record-feedback.sh \
   record-project-memory.sh \

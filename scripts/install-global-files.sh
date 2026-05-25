@@ -33,6 +33,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/ai-plan-review
   ~/bin/ai-plan-export
   ~/bin/feedback-collect
+  ~/bin/knowledge-collect
   ~/bin/workspace-scan
 
 It may also add a managed AI_AUTO shell function under ~/.config/ai-lab and a
@@ -473,6 +474,7 @@ check_source_helper "${ROOT}/tools/ai-interview-record"
 check_source_helper "${ROOT}/tools/ai-plan-review"
 check_source_helper "${ROOT}/tools/ai-plan-export"
 check_source_helper "${ROOT}/tools/feedback-collect"
+check_source_helper "${ROOT}/tools/knowledge-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
@@ -503,6 +505,7 @@ else
   install_link "${HOME_DIR}/bin/ai-plan-review" "${ROOT}/tools/ai-plan-review"
   install_link "${HOME_DIR}/bin/ai-plan-export" "${ROOT}/tools/ai-plan-export"
   install_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
+  install_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_shell_function
   install_codex_drift_notice

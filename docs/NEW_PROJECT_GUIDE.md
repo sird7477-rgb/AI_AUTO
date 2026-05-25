@@ -28,8 +28,10 @@ Equivalent detailed request:
 
     프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
     .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
-    리뷰 강도, 실패 패턴 기록, 승인 마찰 관리, 서브에이전트 사용 기준을 정하고
+    리뷰 강도, Advisory reviewer 사용 여부, 실패 패턴 기록, 승인 마찰 관리,
+    서브에이전트 사용 기준을 정하고
     작업 중 플랜/인터뷰 강도와 Incident Ops 감시/장애대응 기준까지 정한 뒤,
+    AI 자동화 hardening 적용 여부와 guidance context budget 기준을 정하고,
     AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
 
 This should start the `docs/INTERVIEW_PLAN_LAYER.md` onboarding interview before
@@ -46,6 +48,9 @@ assumptions. Capture:
 - recurring approval/permission friction to handle with narrow approved command
   prefixes or repo helpers, without bypassing destructive or credentialed
   approvals
+- whether warm Claude/Gemini advisory sessions may be used for local iteration;
+  they are advisory only and never replace stateless `review-gate` for commit
+  candidates
 - native subagent usage boundaries for lookup, implementation slices, testing,
   UX review, dependency research, and critique; final integration remains with
   the leader
@@ -68,6 +73,9 @@ assumptions. Capture:
   leading with internal variable names unless they are needed for reproduction
   or user action
 - guidance context budget: what belongs in `AGENTS.md` versus linked docs
+- AI automation hardening: use `docs/AI_AUTOMATION_TREND_HARDENING.md` when
+  agent identity, tool permissions, revocation, local automation observability,
+  or recurring trend research are in scope
 - selected and rejected completion packs from `docs/*_COMPLETION.md`
 - whether a domain pack applies, such as the Odoo pack for Odoo projects
 - stack and runtime commands
@@ -155,8 +163,6 @@ Use this request when asking Codex to initialize a new project:
 Use this after `aiinit` has already installed the template:
 
     프로젝트 초기설정 해줘
-
-## Project Registry
 
 ## Finding AI_AUTO Again
 

@@ -780,6 +780,11 @@ MSG
 
     echo "[review] running Claude split review for ${part_name}..."
     if ! run_claude_prompt_file "${part_out}" "${part_prompt}"; then
+      local disabled
+      if disabled="$(disabled_reason claude)"; then
+        write_disabled_result "claude" "${CLAUDE_OUT}" "${disabled}"
+        return 0
+      fi
       {
         echo "# Claude Review"
         echo
@@ -868,6 +873,11 @@ MSG
 
   echo "[review] running Claude split synthesis over ${part_count} parts..."
   if ! run_claude_prompt_file "${CLAUDE_OUT}" "${synthesis_prompt}"; then
+    local disabled
+    if disabled="$(disabled_reason claude)"; then
+      write_disabled_result "claude" "${CLAUDE_OUT}" "${disabled}"
+      return 0
+    fi
     {
       echo "# Claude Review"
       echo
@@ -991,6 +1001,11 @@ MSG
 
     echo "[review] running Gemini split review for ${part_name}..."
     if ! run_gemini_prompt_file "${part_out}" "${part_prompt}"; then
+      local disabled
+      if disabled="$(disabled_reason gemini)"; then
+        write_disabled_result "gemini" "${GEMINI_OUT}" "${disabled}"
+        return 0
+      fi
       {
         echo "# Gemini Review"
         echo
@@ -1079,6 +1094,11 @@ MSG
 
   echo "[review] running Gemini split synthesis over ${part_count} parts..."
   if ! run_gemini_prompt_file "${GEMINI_OUT}" "${synthesis_prompt}"; then
+    local disabled
+    if disabled="$(disabled_reason gemini)"; then
+      write_disabled_result "gemini" "${GEMINI_OUT}" "${disabled}"
+      return 0
+    fi
     {
       echo "# Gemini Review"
       echo

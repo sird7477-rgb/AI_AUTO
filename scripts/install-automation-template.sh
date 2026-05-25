@@ -74,6 +74,7 @@ for path in \
   "docs/INTERVIEW_PLAN_LAYER.md" \
   "docs/INCIDENT_OPS.md" \
   "docs/OBSERVABILITY_COMPLETION.md" \
+  "docs/OBSIDIAN_INTEGRATION.md" \
   "docs/PATCH_NOTES.md" \
   "docs/PERFORMANCE_COMPLETION.md" \
   "docs/SECURITY_COMPLETION.md" \
@@ -83,10 +84,12 @@ for path in \
   "scripts/archive-omx-artifacts.sh" \
   "scripts/ai-runtime-adapter.sh" \
   "scripts/automation-doctor.sh" \
+  "scripts/capture-knowledge-drafts.py" \
   "scripts/collect-review-context.sh" \
   "scripts/doc-budget.sh" \
   "scripts/guidance-duplicate-report.sh" \
   "scripts/discover-ai-models.sh" \
+  "scripts/knowledge-notes.py" \
   "scripts/make-review-prompts.sh" \
   "scripts/record-feedback.sh" \
   "scripts/record-project-memory.sh" \
@@ -145,6 +148,7 @@ cp "${TEMPLATE_DIR}/docs/DOMAIN_PACKS.md" "${TARGET_DIR}/docs/DOMAIN_PACKS.md"
 cp "${TEMPLATE_DIR}/docs/INTERVIEW_PLAN_LAYER.md" "${TARGET_DIR}/docs/INTERVIEW_PLAN_LAYER.md"
 cp "${TEMPLATE_DIR}/docs/INCIDENT_OPS.md" "${TARGET_DIR}/docs/INCIDENT_OPS.md"
 cp "${TEMPLATE_DIR}/docs/OBSERVABILITY_COMPLETION.md" "${TARGET_DIR}/docs/OBSERVABILITY_COMPLETION.md"
+cp "${TEMPLATE_DIR}/docs/OBSIDIAN_INTEGRATION.md" "${TARGET_DIR}/docs/OBSIDIAN_INTEGRATION.md"
 cp "${TEMPLATE_DIR}/docs/PATCH_NOTES.md" "${TARGET_DIR}/docs/PATCH_NOTES.md"
 cp "${TEMPLATE_DIR}/docs/PERFORMANCE_COMPLETION.md" "${TARGET_DIR}/docs/PERFORMANCE_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/SECURITY_COMPLETION.md" "${TARGET_DIR}/docs/SECURITY_COMPLETION.md"
@@ -155,10 +159,12 @@ cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 cp "${TEMPLATE_DIR}/scripts/archive-omx-artifacts.sh" "${TARGET_DIR}/scripts/archive-omx-artifacts.sh"
 cp "${TEMPLATE_DIR}/scripts/ai-runtime-adapter.sh" "${TARGET_DIR}/scripts/ai-runtime-adapter.sh"
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
+cp "${TEMPLATE_DIR}/scripts/capture-knowledge-drafts.py" "${TARGET_DIR}/scripts/capture-knowledge-drafts.py"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
 cp "${TEMPLATE_DIR}/scripts/doc-budget.sh" "${TARGET_DIR}/scripts/doc-budget.sh"
 cp "${TEMPLATE_DIR}/scripts/guidance-duplicate-report.sh" "${TARGET_DIR}/scripts/guidance-duplicate-report.sh"
 cp "${TEMPLATE_DIR}/scripts/discover-ai-models.sh" "${TARGET_DIR}/scripts/discover-ai-models.sh"
+cp "${TEMPLATE_DIR}/scripts/knowledge-notes.py" "${TARGET_DIR}/scripts/knowledge-notes.py"
 cp "${TEMPLATE_DIR}/scripts/make-review-prompts.sh" "${TARGET_DIR}/scripts/make-review-prompts.sh"
 cp "${TEMPLATE_DIR}/scripts/record-feedback.sh" "${TARGET_DIR}/scripts/record-feedback.sh"
 cp "${TEMPLATE_DIR}/scripts/record-project-memory.sh" "${TARGET_DIR}/scripts/record-project-memory.sh"
@@ -189,7 +195,10 @@ if [ -d "${domain_packs_dir}" ]; then
   done
 fi
 
-chmod +x "${TARGET_DIR}"/scripts/*.sh
+for script_path in "${TARGET_DIR}"/scripts/*.sh "${TARGET_DIR}"/scripts/*.py; do
+  [ -e "${script_path}" ] || continue
+  chmod +x "${script_path}"
+done
 
 echo "Automation template installed into: ${TARGET_DIR}"
 echo "Local git exclude updated for .omx/ runtime artifacts."
@@ -206,9 +215,10 @@ echo "5. Use ai-auto-template-status later to compare this project with newer AI
 echo "6. Select applicable completion packs under ${TARGET_DIR}/docs/*_COMPLETION.md."
 echo "7. Use ${TARGET_DIR}/docs/DOMAIN_PACKS.md to check ${TARGET_DIR}/.omx/domain-packs for any applicable optional domain pack."
 echo "8. Use ${TARGET_DIR}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md only when creating or changing reusable domain packs."
-echo "9. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "10. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards such as ${TARGET_DIR}/scripts/doc-budget.sh and ${TARGET_DIR}/scripts/guidance-duplicate-report.sh."
-echo "11. Run:"
+echo "9. Use ${TARGET_DIR}/docs/OBSIDIAN_INTEGRATION.md and ${TARGET_DIR}/scripts/knowledge-notes.py for sanitized debugging notes, work-review notes, and technical references."
+echo "10. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
+echo "11. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards such as ${TARGET_DIR}/scripts/doc-budget.sh and ${TARGET_DIR}/scripts/guidance-duplicate-report.sh."
+echo "12. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
 echo "   ./scripts/verify.sh"

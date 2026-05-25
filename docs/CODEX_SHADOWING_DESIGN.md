@@ -36,10 +36,13 @@ Example warning:
 
 ```text
 [AI_AUTO] automation template update recommended for /path/to/project
-[AI_AUTO] installed: 2026.05.17  current: 2026.05.18  status: customized_or_outdated
-[AI_AUTO] latest patch note: 2026.05.20.2
+[AI_AUTO] installed_version: 2026.05.21.1
+[AI_AUTO] current_version: 2026.05.25.3
+[AI_AUTO] status: customized_or_outdated
+[AI_AUTO] latest patch note: 2026.05.25.3
 [AI_AUTO] review notes: /path/to/ai-lab/templates/automation-base/docs/PATCH_NOTES.md
 [AI_AUTO] inspect: ai-auto-template-status /path/to/project
+[AI_AUTO] patch keyword: AI_AUTO 최신 패치 적용해줘
 ```
 
 No notice is printed when:
@@ -101,7 +104,13 @@ codex() {
     repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" &&
     [ -f "${repo_root}/AI_AUTO_TEMPLATE_VERSION" ] &&
     command -v ai-auto-template-status >/dev/null 2>&1; then
-    notice_key="$(printf '%s' "${repo_root}" | sha256sum | awk '{print $1}')"
+    if command -v sha256sum >/dev/null 2>&1; then
+      notice_key="$(printf '%s' "${repo_root}" | sha256sum | awk '{print $1}')"
+    elif command -v cksum >/dev/null 2>&1; then
+      notice_key="$(printf '%s' "${repo_root}" | cksum | awk '{print $1 "-" $2}')"
+    else
+      notice_key="$(printf '%s' "${repo_root}" | sed 's/|/%7C/g')"
+    fi
     case "${AI_AUTO_CODEX_DRIFT_NOTICE_SEEN:-}" in
       *"|${notice_key}|"*) ;;
       *)
@@ -117,6 +126,7 @@ codex() {
             printf '%s\n' "[AI_AUTO] latest patch note: ${latest_note#\#\# }" >&2
           printf '%s\n' "[AI_AUTO] review notes: ${patch_notes}" >&2
           printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status ${repo_root}" >&2
+          printf '%s\n' "[AI_AUTO] patch keyword: AI_AUTO 최신 패치 적용해줘" >&2
         fi
         ;;
     esac

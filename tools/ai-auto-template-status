@@ -158,6 +158,7 @@ docs/DOMAIN_PACKS.md|docs/DOMAIN_PACKS.md|template-owned|update
 docs/INTERVIEW_PLAN_LAYER.md|docs/INTERVIEW_PLAN_LAYER.md|template-owned|update
 docs/INCIDENT_OPS.md|docs/INCIDENT_OPS.md|template-owned|update
 docs/OBSERVABILITY_COMPLETION.md|docs/OBSERVABILITY_COMPLETION.md|template-owned|update
+docs/OBSIDIAN_INTEGRATION.md|docs/OBSIDIAN_INTEGRATION.md|template-owned|update
 docs/PATCH_NOTES.md|docs/PATCH_NOTES.md|template-owned|update
 docs/PERFORMANCE_COMPLETION.md|docs/PERFORMANCE_COMPLETION.md|template-owned|update
 docs/SECURITY_COMPLETION.md|docs/SECURITY_COMPLETION.md|template-owned|update
@@ -167,8 +168,10 @@ docs/WORKFLOW.md|docs/WORKFLOW.md|hybrid|review-merge
 scripts/archive-omx-artifacts.sh|scripts/archive-omx-artifacts.sh|template-owned|update
 scripts/ai-runtime-adapter.sh|scripts/ai-runtime-adapter.sh|template-owned|update
 scripts/automation-doctor.sh|scripts/automation-doctor.sh|template-owned|update
+scripts/capture-knowledge-drafts.py|scripts/capture-knowledge-drafts.py|template-owned|update
 scripts/collect-review-context.sh|scripts/collect-review-context.sh|template-owned|update
 scripts/discover-ai-models.sh|scripts/discover-ai-models.sh|template-owned|update
+scripts/knowledge-notes.py|scripts/knowledge-notes.py|template-owned|update
 scripts/make-review-prompts.sh|scripts/make-review-prompts.sh|template-owned|update
 scripts/record-feedback.sh|scripts/record-feedback.sh|template-owned|update
 scripts/record-project-memory.sh|scripts/record-project-memory.sh|template-owned|update

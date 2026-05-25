@@ -4,6 +4,35 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.25.3
+
+- Hardened Obsidian knowledge vault pushes so invalid explicit projects cannot
+  regenerate an empty index, validation rejects symlink note escapes, failed
+  review-gate verdicts can still produce local drafts, and same-name projects
+  use hash-suffixed vault inbox namespaces.
+- Clarified `knowledge-collect` operating docs, sync boundaries, global helper
+  lists, Codex drift notice output, and local/private vault push requirements.
+
+## 2026.05.25.2
+
+- Added automatic local knowledge draft capture from sanitized feedback and
+  review-gate signals, plus AI_AUTO home `knowledge-collect` for validated
+  cross-project inspection and explicit vault push.
+
+## 2026.05.25.1
+
+- Added `docs/OBSIDIAN_INTEGRATION.md` to define Obsidian as a sanitized
+  knowledge store under AI_AUTO control, not a review, approval, or runtime
+  authority.
+- Added `scripts/knowledge-notes.py` for curated incident, finding, lesson,
+  technical-spec, and promotion-candidate notes with frontmatter validation,
+  dry-run default behavior, explicit write/output controls, local-draft guards,
+  secret checks, source hashing, and generated indexes.
+- Wired the Obsidian knowledge workflow into template installation, doctor,
+  template-status, and verification coverage, including external SSD/vault
+  operating guidance. Because the helper is Python-based, doctor now treats
+  `python3 >= 3.9` as a required runtime.
+
 ## 2026.05.24.5
 
 - Split AI automation trend hardening so the always-loaded control contract

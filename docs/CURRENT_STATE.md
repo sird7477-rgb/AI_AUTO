@@ -186,9 +186,18 @@ A reusable template exists under:
 It contains:
 
 - repo-local AGENTS.md
+- AI_AUTO_TEMPLATE_VERSION
+- template patch notes
 - workflow documentation
+- automation operating policy, model routing, runtime adapter, session quality,
+  interview/plan, Obsidian, incident ops, domain-pack, and AI automation
+  hardening guides
+- optional completion packs for UI, deployment, security, data, performance,
+  and observability
 - onboarding placeholder verification script
 - automation doctor
+- archive, checkpoint, model-discovery, feedback, knowledge, doc-budget, and
+  duplicate-guidance helpers
 - review context collector
 - review prompt generator
 - AI review runner
@@ -285,6 +294,18 @@ Global helper tool sources are tracked in:
 - tools/ai-auto-init
 - tools/ai-home
 - tools/ai-register
+- tools/ai-auto-template-status
+- tools/ai-refactor-scan
+- tools/ai-rebuild-plan
+- tools/ai-split-plan
+- tools/ai-split-dry-run
+- tools/ai-split-apply
+- tools/ai-plan-status
+- tools/ai-interview-record
+- tools/ai-plan-review
+- tools/ai-plan-export
+- tools/feedback-collect
+- tools/knowledge-collect
 - tools/workspace-scan
 
 Expected links:
@@ -294,6 +315,18 @@ Expected links:
 - ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
+- ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
+- ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
+- ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
+- ~/bin/ai-split-plan -> ~/workspace/ai-lab/tools/ai-split-plan
+- ~/bin/ai-split-dry-run -> ~/workspace/ai-lab/tools/ai-split-dry-run
+- ~/bin/ai-split-apply -> ~/workspace/ai-lab/tools/ai-split-apply
+- ~/bin/ai-plan-status -> ~/workspace/ai-lab/tools/ai-plan-status
+- ~/bin/ai-interview-record -> ~/workspace/ai-lab/tools/ai-interview-record
+- ~/bin/ai-plan-review -> ~/workspace/ai-lab/tools/ai-plan-review
+- ~/bin/ai-plan-export -> ~/workspace/ai-lab/tools/ai-plan-export
+- ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
+- ~/bin/knowledge-collect -> ~/workspace/ai-lab/tools/knowledge-collect
 - ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
 Clone recovery command:
@@ -401,6 +434,18 @@ For ai-lab itself:
     ai-home
     ai-register
     ai-register --prune
+    ai-auto-template-status
+    ai-refactor-scan
+    ai-rebuild-plan
+    ai-split-plan
+    ai-split-dry-run
+    ai-split-apply
+    ai-plan-status
+    ai-interview-record
+    ai-plan-review
+    ai-plan-export
+    feedback-collect
+    knowledge-collect
     workspace-scan
 
 For a new project:

@@ -25,9 +25,10 @@ if [ "${review_status}" -ne 0 ]; then
 fi
 
 echo "[gate] summarizing AI review verdicts..."
+summary_status=0
 if ! ./scripts/summarize-ai-reviews.sh; then
   echo "[gate] review gate did not proceed"
-  exit 1
+  summary_status=1
 fi
 
 if [ "${OMX_AUTO_ARCHIVE:-1}" != "0" ] && [ -x "./scripts/archive-omx-artifacts.sh" ]; then
@@ -38,6 +39,17 @@ fi
 if [ "${OMX_AUTO_CHECKPOINT:-1}" != "0" ] && [ -x "./scripts/write-session-checkpoint.sh" ]; then
   echo "[gate] writing session checkpoint..."
   ./scripts/write-session-checkpoint.sh
+fi
+
+if [ "${OMX_AUTO_KNOWLEDGE_DRAFTS:-1}" != "0" ] && [ -x "./scripts/capture-knowledge-drafts.py" ]; then
+  echo "[gate] capturing local knowledge drafts..."
+  if ! ./scripts/capture-knowledge-drafts.py --source review-gate --write; then
+    echo "[gate] warning: knowledge draft capture failed; review gate result is unchanged"
+  fi
+fi
+
+if [ "${summary_status}" -ne 0 ]; then
+  exit "${summary_status}"
 fi
 
 echo "[gate] complete"

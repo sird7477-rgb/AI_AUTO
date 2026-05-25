@@ -15,6 +15,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - docs/DOMAIN_PACK_AUTHORING_GUIDE.md: authoring standard for reusable domain packs
 - docs/INTERVIEW_PLAN_LAYER.md: reusable interview, plan, ambiguity, and execution-gate contract
 - docs/INCIDENT_OPS.md: dry-run and field-test incident operations policy
+- docs/OBSIDIAN_INTEGRATION.md: curated Obsidian knowledge-store operating rules
 - docs/SECURITY_COMPLETION.md: optional security/auth completion pack
 - docs/DATA_COMPLETION.md: optional data/migration completion pack
 - docs/PERFORMANCE_COMPLETION.md: optional performance completion pack
@@ -28,6 +29,8 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/doc-budget.sh: reports guidance document volume and bloat warnings
 - scripts/guidance-duplicate-report.sh: creates read-only Stage 2 guidance duplicate reports
 - scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
+- scripts/capture-knowledge-drafts.py: captures sanitized local knowledge draft candidates
+- scripts/knowledge-notes.py: creates and validates sanitized knowledge notes
 - scripts/make-review-prompts.sh: generates reviewer prompts
 - scripts/record-feedback.sh: appends sanitized failure/improvement feedback
 - scripts/record-project-memory.sh: appends sanitized durable memory entries
@@ -106,6 +109,19 @@ For Python rebuilds, `ai-split-plan` can turn conservative domain-pack
 `ai-split-dry-run` to inspect the diff first; `ai-split-apply` requires
 `--execute-approved-plan` plus completed approval-gate fields and writes rollback
 backups under `.omx/rebuild/backups/`.
+
+Use `docs/OBSIDIAN_INTEGRATION.md` and `scripts/knowledge-notes.py` when a
+project needs curated debugging notes, work-review notes, or user-requested
+technical references. Obsidian is only a sanitized knowledge store; AI_AUTO
+keeps authority for verification, review gates, approvals, commits, patches, and
+runtime state. `record` is dry-run by default; note writes require `--write` and
+an explicit output path. `.omx/knowledge` requires the local-draft flag and is
+not durable vault storage. `review-gate` captures local review-gate draft
+candidates by default. The AI_AUTO home checkout uses
+`knowledge-collect --include-registry` for broad review. Vault writes require
+`knowledge-collect --project <repo> --vault-dir <vault-path>/AI_AUTO --push`;
+local/private vaults additionally require `--allow-local-private`. Do not copy
+raw `.omx/` logs or prompts into an Obsidian vault.
 
 Then ask the AI:
 

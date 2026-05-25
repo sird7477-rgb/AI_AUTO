@@ -90,6 +90,11 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Uses the same `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH` setting for workspace discovery
   - Treats missing item status as `open`
 
+- `knowledge-collect`
+  - Lists validated `.omx/knowledge/drafts/*.md` from the current repository and any explicit `--project` paths
+  - Broad review is opt-in with `--include-registry` or `--include-workspace`
+  - Vault writes require `--project <repo> --vault-dir <vault-path>/AI_AUTO --push`; local/private drafts additionally require `--allow-local-private`
+
 Repo-local command installed by the automation template:
 
 - `./scripts/automation-doctor.sh`
@@ -141,13 +146,16 @@ Expected links:
     ~/bin/ai-plan-review -> ~/workspace/ai-lab/tools/ai-plan-review
     ~/bin/ai-plan-export -> ~/workspace/ai-lab/tools/ai-plan-export
     ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
+    ~/bin/knowledge-collect -> ~/workspace/ai-lab/tools/knowledge-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
 To recreate the links:
 
     ./scripts/install-global-files.sh
 
-Manual equivalent:
+Manual equivalent for a clean helper directory. Prefer the installer above; it
+refuses to overwrite non-symlink files, while manual `ln -sf` commands can
+replace existing paths if used carelessly.
 
     mkdir -p ~/bin
     ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/AI_AUTO
@@ -166,6 +174,7 @@ Manual equivalent:
     ln -sf ~/workspace/ai-lab/tools/ai-plan-review ~/bin/ai-plan-review
     ln -sf ~/workspace/ai-lab/tools/ai-plan-export ~/bin/ai-plan-export
     ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
+    ln -sf ~/workspace/ai-lab/tools/knowledge-collect ~/bin/knowledge-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
 
 Make sure `~/bin` is in PATH:
