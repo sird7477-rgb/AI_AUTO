@@ -4,6 +4,16 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.27.2
+
+- Added opt-in `codex` tmux auto-entry support through the managed shell
+  wrapper. The feature activates only with `AI_AUTO_CODEX_TMUX_AUTO=1` for
+  interactive terminal calls outside tmux, and it preserves direct execution for
+  scripts, pipes, redirects, nested tmux sessions, and normal Codex calls.
+- Kept the tmux wrapper in the same generated `codex()` chain as the existing
+  template drift notice so opt-in shell integrations do not overwrite each
+  other.
+
 ## 2026.05.27.1
 
 - Added managed shell shortcuts `jwlist` and `sirdlist` for drilling into local

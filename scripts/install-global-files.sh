@@ -8,10 +8,11 @@ FIX_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
 INSTALL_CODEX_DRIFT_NOTICE=0
+INSTALL_CODEX_TMUX_AUTO_ENTRY=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/install-global-files.sh [--install-codex-drift-notice]
+Usage: ./scripts/install-global-files.sh [--install-codex-drift-notice] [--install-codex-tmux-auto-entry]
 
 Install or repair ai-lab global helper files for this checkout.
 
@@ -45,6 +46,10 @@ Options:
       Install an opt-in managed shell function that shows an AI_AUTO template
       update notice once per shell session before the first real codex call in
       each AI_AUTO-managed project.
+  --install-codex-tmux-auto-entry
+      Install the same managed codex shell function with support for
+      AI_AUTO_CODEX_TMUX_AUTO=1. When enabled per shell or command, interactive
+      codex calls outside tmux attach to a project-scoped tmux session.
   -h, --help
       Show this help.
 
@@ -57,6 +62,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --install-codex-drift-notice)
       INSTALL_CODEX_DRIFT_NOTICE=1
+      ;;
+    --install-codex-tmux-auto-entry)
+      INSTALL_CODEX_TMUX_AUTO_ENTRY=1
       ;;
     -h|--help)
       usage
@@ -349,7 +357,7 @@ EOF
   say_fix "installed AI_AUTO shell function file: ${function_path}"
 }
 
-install_codex_drift_notice() {
+install_codex_wrapper() {
   local bashrc_path="${HOME_DIR}/.bashrc"
   local config_dir="${HOME_DIR}/.config/ai-lab"
   local function_path="${config_dir}/codex-drift-notice.sh"
@@ -360,18 +368,19 @@ install_codex_drift_notice() {
   local tmp_path
   local begin_count end_count
   local real_codex real_codex_dir real_codex_base real_codex_quoted patch_notes_quoted
+  local drift_default
 
-  if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ]; then
+  if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ] && [ "$INSTALL_CODEX_TMUX_AUTO_ENTRY" -ne 1 ]; then
     return
   fi
 
   if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
-    say_fail "HOME is not ready; cannot install codex drift notice shell function"
+    say_fail "HOME is not ready; cannot install codex shell function"
     return
   fi
 
   if ! real_codex="$(command -v codex 2>/dev/null)"; then
-    say_fail "codex is not on PATH; cannot install codex drift notice"
+    say_fail "codex is not on PATH; cannot install codex shell function"
     return
   fi
 
@@ -451,20 +460,68 @@ install_codex_drift_notice() {
   function_tmp_path="${function_path}.tmp.$$"
   real_codex_quoted="$(printf '%q' "$real_codex")"
   patch_notes_quoted="$(printf '%q' "${ROOT}/templates/automation-base/docs/PATCH_NOTES.md")"
+  drift_default="$INSTALL_CODEX_DRIFT_NOTICE"
+  if [ "$drift_default" -ne 1 ] &&
+    [ -f "$function_path" ] &&
+    grep -q '^  local drift_notice_default=1$' "$function_path"; then
+    drift_default=1
+  fi
 
   cat > "$function_tmp_path" <<EOF
 ${function_marker}
+_ai_auto_codex_tmux_session_name() {
+  local base="\$1"
+  local hash=""
+  local slug=""
+
+  slug="\$(basename "\$base" | tr -cs '[:alnum:]_.-' '-' | sed 's/^-//; s/-\$//')"
+  if [ -z "\$slug" ]; then
+    slug="workspace"
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash="\$(printf '%s' "\$base" | sha256sum | awk '{print substr(\$1,1,8)}')"
+  elif command -v cksum >/dev/null 2>&1; then
+    hash="\$(printf '%s' "\$base" | cksum | awk '{print \$1}')"
+  else
+    hash="nohash"
+  fi
+
+  printf 'ai-%s-%s\n' "\$slug" "\$hash"
+}
+
+_ai_auto_codex_shell_quote() {
+  local arg=""
+  local escaped=""
+  local quoted=""
+
+  for arg in "\$@"; do
+    escaped="\${arg//\\'/\\'\\\\\\'\\'}"
+    quoted="\${quoted} '\${escaped}'"
+  done
+
+  printf '%s\n' "\${quoted# }"
+}
+
 codex() {
   local real_codex=${real_codex_quoted}
   local patch_notes=${patch_notes_quoted}
+  local drift_notice_default=${drift_default}
   local repo_root=""
   local status_output=""
   local notice_key=""
   local latest_note=""
+  local tmux_binary=""
+  local tmux_base=""
+  local tmux_command=""
+  local tmux_session=""
 
-  if [ "\${AI_AUTO_CODEX_DRIFT_NOTICE:-1}" != "0" ] &&
-    command -v git >/dev/null 2>&1 &&
-    repo_root="\$(git rev-parse --show-toplevel 2>/dev/null)" &&
+  if command -v git >/dev/null 2>&1; then
+    repo_root="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+
+  if [ "\${AI_AUTO_CODEX_DRIFT_NOTICE:-\${drift_notice_default}}" != "0" ] &&
+    [ -n "\${repo_root}" ] &&
     [ -f "\${repo_root}/AI_AUTO_TEMPLATE_VERSION" ] &&
     command -v ai-auto-template-status >/dev/null 2>&1; then
     if command -v sha256sum >/dev/null 2>&1; then
@@ -495,6 +552,20 @@ codex() {
     esac
     fi
 
+  if [ "\${AI_AUTO_CODEX_TMUX_AUTO:-0}" = "1" ] &&
+    [ -z "\${TMUX:-}" ] &&
+    [ -t 0 ] &&
+    [ -t 1 ]; then
+    tmux_binary="\$(type -P tmux 2>/dev/null || true)"
+    if [ -n "\${tmux_binary}" ]; then
+      tmux_base="\${repo_root:-\$(pwd)}"
+      tmux_session="\$(_ai_auto_codex_tmux_session_name "\${tmux_base}")"
+      tmux_command="\$(_ai_auto_codex_shell_quote "\${real_codex}" "\$@")"
+      command "\${tmux_binary}" new-session -A -s "\${tmux_session}" -c "\$(pwd)" "\${tmux_command}"
+      return
+    fi
+  fi
+
   "\$real_codex" "\$@"
 }
 EOF
@@ -517,20 +588,20 @@ EOF
 
   if [ -f "$bashrc_path" ] && cmp -s "$tmp_path" "$bashrc_path"; then
     rm -f "$tmp_path"
-    say_pass "codex drift notice source block already installed in ${bashrc_path}"
+    say_pass "codex shell source block already installed in ${bashrc_path}"
   else
     mv "$tmp_path" "$bashrc_path"
-    say_fix "installed codex drift notice source block in ${bashrc_path}"
+    say_fix "installed codex shell source block in ${bashrc_path}"
   fi
 
   if [ -f "$function_path" ] && cmp -s "$function_tmp_path" "$function_path"; then
     rm -f "$function_tmp_path"
-    say_pass "codex drift notice shell function already installed: ${function_path}"
+    say_pass "codex shell function already installed: ${function_path}"
     return
   fi
 
   mv "$function_tmp_path" "$function_path"
-  say_fix "installed codex drift notice shell function file: ${function_path}"
+  say_fix "installed codex shell function file: ${function_path}"
 }
 
 echo "[global-files] installing ai-lab global helper files"
@@ -585,7 +656,7 @@ else
   install_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_shell_function
-  install_codex_drift_notice
+  install_codex_wrapper
 
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)

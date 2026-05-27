@@ -195,6 +195,18 @@ Bare `tmux` is convenient too: typing `tmux` with no arguments creates a new
 session named with the first available number, starting from `1`. Normal tmux
 commands such as `tmux ls` and `tmux attach -t 1` still pass through unchanged.
 
+For long interactive Codex work, AI_AUTO can also install an opt-in tmux
+auto-entry wrapper:
+
+    ./scripts/install-global-files.sh --install-codex-tmux-auto-entry
+
+After that, use `AI_AUTO_CODEX_TMUX_AUTO=1 codex` when you want an interactive
+Codex call to attach to a stable project-scoped tmux session. The wrapper stays
+out of the way for scripts, pipes, redirects, calls already inside tmux, and
+normal `codex` calls without the environment variable. Re-running the command
+for a project with an existing tmux session attaches to that session instead of
+starting a second Codex command.
+
 ## Project Registry
 
 New `aiinit` runs register the target repository in:

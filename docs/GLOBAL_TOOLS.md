@@ -121,6 +121,9 @@ ai-lab-only bootstrap command:
   - With `--install-codex-drift-notice`, adds an opt-in managed `codex` shell
     function that prints a read-only AI_AUTO template update notice before
     calling the real Codex binary
+  - With `--install-codex-tmux-auto-entry`, adds support for
+    `AI_AUTO_CODEX_TMUX_AUTO=1 codex` to enter a project-scoped tmux session
+    only for interactive terminal calls outside tmux
   - When drift is detected, the notice prints the patch-request keyword
     `AI_AUTO 최신 패치 적용해줘`; project `AGENTS.md` expands that keyword into
     the full template patch workflow
@@ -245,3 +248,19 @@ Disable the notice for a shell command with:
 
 The notice path is read-only. It does not run `--record-feedback`, merge
 template files, patch projects, or install a `~/bin/codex` executable.
+
+The same managed `codex` shell wrapper can optionally support tmux auto-entry:
+
+    ./scripts/install-global-files.sh --install-codex-tmux-auto-entry
+
+The feature remains off until explicitly enabled for a shell or command:
+
+    AI_AUTO_CODEX_TMUX_AUTO=1 codex
+
+When enabled, interactive `codex` calls outside tmux attach to a stable
+project-scoped tmux session and start in the current directory. If that session
+already exists, tmux attaches to it instead of starting a second Codex command.
+Calls already inside tmux, calls with non-terminal stdin/stdout such as pipes or
+redirects, calls without `tmux` on `PATH`, and calls with
+`AI_AUTO_CODEX_TMUX_AUTO=0` continue to run the real Codex binary directly. This
+keeps scripts and short non-interactive checks from being captured by tmux.

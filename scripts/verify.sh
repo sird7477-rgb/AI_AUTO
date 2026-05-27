@@ -4470,7 +4470,7 @@ echo "[verify] testing opt-in codex drift notice shell function..."
 
   fake_bin="${tmp_home}/fake-bin"
   repo_dir="${tmp_home}/project"
-  mkdir -p "${fake_bin}" "${repo_dir}"
+  mkdir -p "${fake_bin}" "${repo_dir}/subdir"
 
   cat > "${fake_bin}/codex" <<'STUB'
 #!/usr/bin/env bash
@@ -4608,6 +4608,93 @@ echo "[verify] testing codex drift notice unmanaged-file conflict..."
     exit 1
   fi
   grep -q "user owned" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+)
+
+echo "[verify] testing opt-in codex tmux auto-entry shell function..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_codex_tmux_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_codex_tmux_tmp EXIT
+
+  fake_bin="${tmp_home}/fake-bin"
+  repo_dir="${tmp_home}/project"
+  mkdir -p "${fake_bin}" "${repo_dir}/subdir"
+
+  cat > "${fake_bin}/codex" <<'STUB'
+#!/bin/bash
+stdin_content="$(/bin/cat)"
+printf 'real codex'
+for arg in "$@"; do
+  printf ' <%s>' "$arg"
+done
+printf '\n'
+printf 'stdin <%s>\n' "$stdin_content"
+exit "${CODEX_STUB_EXIT:-0}"
+STUB
+
+  cat > "${fake_bin}/tmux" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "${TMUX_FAKE_LOG}"
+exit "${TMUX_STUB_EXIT:-0}"
+STUB
+
+  chmod +x "${fake_bin}/codex" "${fake_bin}/tmux"
+  git -C "${repo_dir}" init -q
+  tmux_tty_cmd="${tmp_home}/run-codex-tmux.sh"
+  cat > "${tmux_tty_cmd}" <<'STUB'
+#!/bin/bash
+. "$HOME/.config/ai-lab/codex-drift-notice.sh"
+cd "$REPO_DIR/subdir" || exit
+AI_AUTO_CODEX_TMUX_AUTO=1 codex --alpha "two words" "quote's"
+STUB
+  chmod +x "${tmux_tty_cmd}"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-tmux-auto-entry >/dev/null
+  grep -q "AI_AUTO codex drift notice integration" "${tmp_home}/.bashrc"
+  grep -q "AI_AUTO_CODEX_TMUX_AUTO" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q "_ai_auto_codex_tmux_session_name" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-tmux-auto-entry >/dev/null
+  grep -q '^  local drift_notice_default=1$' "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX_FAKE_LOG="${tmp_home}/tmux-default-off.log" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex default-off' \
+    > "${tmp_home}/codex-default-off.out"
+  grep -q "real codex <default-off>" "${tmp_home}/codex-default-off.out"
+  test ! -e "${tmp_home}/tmux-default-off.log"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX="" TMUX_FAKE_LOG="${tmp_home}/tmux-on.log" \
+    /usr/bin/script -q -c "${tmux_tty_cmd}" /dev/null >/dev/null
+  grep -Eq '^new-session -A -s ai-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-on.log"
+  grep -q "'--alpha' 'two words'" "${tmp_home}/tmux-on.log"
+  grep -Fq "'quote'\\''s'" "${tmp_home}/tmux-on.log"
+
+  printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX_FAKE_LOG="${tmp_home}/tmux-nontty.log" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CODEX_TMUX_AUTO=1 codex --stdin-check' \
+    > "${tmp_home}/codex-nontty.out"
+  grep -q "real codex <--stdin-check>" "${tmp_home}/codex-nontty.out"
+  grep -q "stdin <input stream>" "${tmp_home}/codex-nontty.out"
+  test ! -e "${tmp_home}/tmux-nontty.log"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX="/tmp/fake-tmux,1,0" TMUX_FAKE_LOG="${tmp_home}/tmux-nested.log" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CODEX_TMUX_AUTO=1 codex nested' \
+    > "${tmp_home}/codex-nested.out"
+  grep -q "real codex <nested>" "${tmp_home}/codex-nested.out"
+  test ! -e "${tmp_home}/tmux-nested.log"
+
+  HOME="${tmp_home}" PATH="${fake_bin}" REPO_DIR="${repo_dir}" \
+    /bin/bash -c '. "$HOME/.config/ai-lab/AI_AUTO.sh"; . "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CODEX_TMUX_AUTO=1 codex no-tmux' \
+    > "${tmp_home}/codex-no-tmux.out"
+  grep -q "real codex <no-tmux>" "${tmp_home}/codex-no-tmux.out"
 )
 
 echo "[verify] testing global helper non-symlink conflict handling..."
