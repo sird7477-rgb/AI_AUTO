@@ -191,10 +191,30 @@ Reload the shell or run:
 
     source ~/.bashrc
 
-The same managed shell integration adds a small `tmux()` convenience function:
-when called with no arguments, it starts a new tmux session named with the first
-available positive integer (`1`, `2`, `3`, ...). Calls with arguments are passed
-through to the real tmux command unchanged.
+The same managed shell integration adds small convenience functions:
+
+- `jwlist`
+  - Lists project folders directly under `/mnt/c/JSJEON/Project_JW/99. 개발개발`
+  - Prompts for a number; choose `0` to enter the current folder, or choose a
+    subfolder to drill down through grouped projects
+  - Stops drilling down and enters a folder when common project markers are
+    present, such as `.git`, `AGENTS.md`, `package.json`, `pyproject.toml`,
+    `requirements.txt`, `docker-compose.yml`, or `scripts/verify.sh`
+  - Override the root with `AI_AUTO_JW_PROJECT_ROOT=/path/to/root`
+
+- `sirdlist`
+  - Lists project folders directly under `/mnt/c/JSJEON/Project_SirD`
+  - Prompts for a number; choose `0` to enter the current folder, or choose a
+    subfolder to drill down through grouped projects
+  - Stops drilling down and enters a folder when common project markers are
+    present, such as `.git`, `AGENTS.md`, `package.json`, `pyproject.toml`,
+    `requirements.txt`, `docker-compose.yml`, or `scripts/verify.sh`
+  - Override the root with `AI_AUTO_SIRD_PROJECT_ROOT=/path/to/root`
+
+- `tmux`
+  - When called with no arguments, starts a new tmux session named with the
+    first available positive integer (`1`, `2`, `3`, ...)
+  - Calls with arguments are passed through to the real tmux command unchanged
 
 ## Codex Drift Notice
 

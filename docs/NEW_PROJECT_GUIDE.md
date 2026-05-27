@@ -178,10 +178,22 @@ the shell, typing `AI_AUTO` with no arguments moves the current terminal to the
 AI_AUTO checkout. Use `AI_AUTO --path` when you only need the path, or
 `AI_AUTO --status` to inspect the checkout status.
 
-The managed shell integration also makes bare `tmux` convenient: typing `tmux`
-with no arguments creates a new session named with the first available number,
-starting from `1`. Normal tmux commands such as `tmux ls` and
-`tmux attach -t 1` still pass through unchanged.
+The managed shell integration also adds two local project-list shortcuts:
+`jwlist` lists project folders directly under
+`/mnt/c/JSJEON/Project_JW/99. 개발개발`, and `sirdlist` lists project folders
+directly under `/mnt/c/JSJEON/Project_SirD`. The folders do not need to be git
+repositories or AI_AUTO-initialized projects. Each command prompts for a number:
+choose `0` to enter the currently displayed folder, or choose a subfolder to
+drill down through grouped project folders. When a selected folder contains
+common project markers such as `.git`, `AGENTS.md`, `package.json`,
+`pyproject.toml`, `requirements.txt`, `docker-compose.yml`, or
+`scripts/verify.sh`, the command enters that folder instead of drilling into
+internal directories. Override the roots with `AI_AUTO_JW_PROJECT_ROOT` or
+`AI_AUTO_SIRD_PROJECT_ROOT` only for a different local machine layout.
+
+Bare `tmux` is convenient too: typing `tmux` with no arguments creates a new
+session named with the first available number, starting from `1`. Normal tmux
+commands such as `tmux ls` and `tmux attach -t 1` still pass through unchanged.
 
 ## Project Registry
 

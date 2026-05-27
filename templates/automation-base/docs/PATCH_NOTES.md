@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.27.1
+
+- Added managed shell shortcuts `jwlist` and `sirdlist` for drilling into local
+  project folders and entering directories once common project markers are
+  found.
+- Documented the local project-list shortcuts alongside the existing `AI_AUTO`
+  and bare `tmux` shell integration, with verification coverage for generated
+  shell functions and override roots.
+
 ## 2026.05.25.3
 
 - Hardened Obsidian knowledge vault pushes so invalid explicit projects cannot

@@ -222,6 +222,83 @@ AI_AUTO() {
   fi
 }
 
+_ai_auto_project_list_cd() {
+  local root="\$1"
+  local label="\$2"
+  local -a projects
+  local choice choice_num selected i current
+
+  if [ ! -d "\$root" ]; then
+    printf '%s\n' "[AI_AUTO] project root not found for \${label}: \${root}" >&2
+    return 1
+  fi
+
+  current="\$root"
+  while true; do
+    mapfile -t projects < <(
+      find "\$current" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -print 2>/dev/null |
+        sort -V
+    )
+
+    if [ "\${#projects[@]}" -eq 0 ]; then
+      cd "\$current" || return
+      return
+    fi
+
+    printf '%s\n' ""
+    printf '%s\n' "\${label}: \${current}"
+    printf '[0] 여기로 이동\n'
+    i=1
+    for selected in "\${projects[@]}"; do
+      printf '[%d] %s\n' "\$i" "\$(basename "\$selected")"
+      printf '    %s\n' "\$selected"
+      i=\$((i + 1))
+    done
+
+    printf '번호 입력: '
+    IFS= read -r choice || return 1
+    case "\$choice" in
+      ''|*[!0-9]*)
+        printf '%s\n' "[AI_AUTO] invalid selection: \${choice}" >&2
+        return 1
+        ;;
+    esac
+    choice_num=\$((10#\$choice))
+
+    if [ "\$choice_num" -eq 0 ]; then
+      cd "\$current" || return
+      return
+    fi
+
+    if [ "\$choice_num" -lt 1 ] || [ "\$choice_num" -gt "\${#projects[@]}" ]; then
+      printf '%s\n' "[AI_AUTO] selection out of range: \${choice}" >&2
+      return 1
+    fi
+
+    selected="\${projects[\$((choice_num - 1))]}"
+    if [ -e "\$selected/.git" ] ||
+      [ -e "\$selected/AGENTS.md" ] ||
+      [ -e "\$selected/package.json" ] ||
+      [ -e "\$selected/pyproject.toml" ] ||
+      [ -e "\$selected/requirements.txt" ] ||
+      [ -e "\$selected/docker-compose.yml" ] ||
+      [ -e "\$selected/scripts/verify.sh" ]; then
+      cd "\$selected" || return
+      return
+    fi
+
+    current="\$selected"
+  done
+}
+
+jwlist() {
+  _ai_auto_project_list_cd "\${AI_AUTO_JW_PROJECT_ROOT:-/mnt/c/JSJEON/Project_JW/99. 개발개발}" "jwlist"
+}
+
+sirdlist() {
+  _ai_auto_project_list_cd "\${AI_AUTO_SIRD_PROJECT_ROOT:-/mnt/c/JSJEON/Project_SirD}" "sirdlist"
+}
+
 tmux() {
   if [ "\$#" -ne 0 ]; then
     command tmux "\$@"

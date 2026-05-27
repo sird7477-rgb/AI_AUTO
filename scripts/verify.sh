@@ -4387,8 +4387,23 @@ echo "[verify] testing global helper link repair..."
   grep -q '. "$HOME/.config/ai-lab/AI_AUTO.sh"' "${tmp_home}/.bashrc"
   grep -q "Managed by AI_AUTO" "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
   grep -q 'cd "$(command AI_AUTO --path)"' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  grep -q 'jwlist()' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  grep -q 'sirdlist()' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  grep -q 'AI_AUTO_JW_PROJECT_ROOT' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  grep -q 'AI_AUTO_SIRD_PROJECT_ROOT' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
   grep -q 'tmux()' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
   grep -q 'command tmux new-session -s "${session_name}"' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  project_list_root="${tmp_home}/projects"
+  mkdir -p "${project_list_root}/alpha" "${project_list_root}/beta/grouped/leaf" "${project_list_root}/gamma-no-git"
+  printf '{}\n' > "${project_list_root}/beta/grouped/leaf/package.json"
+  test "$(
+    HOME="${tmp_home}" AI_AUTO_JW_PROJECT_ROOT="${project_list_root}" PATH="${tmp_home}/bin:${PATH}" bash -c \
+      'source "$HOME/.config/ai-lab/AI_AUTO.sh"; jwlist <<< $'"'"'02\n01\n01'"'"' >/dev/null; pwd'
+  )" = "${project_list_root}/beta/grouped/leaf"
+  test "$(
+    HOME="${tmp_home}" AI_AUTO_SIRD_PROJECT_ROOT="${project_list_root}" PATH="${tmp_home}/bin:${PATH}" bash -c \
+      'source "$HOME/.config/ai-lab/AI_AUTO.sh"; sirdlist <<< $'"'"'3'"'"' >/dev/null; pwd'
+  )" = "${project_list_root}/gamma-no-git"
   mkdir -p "${tmp_home}/fake-bin"
   cat > "${tmp_home}/fake-bin/tmux" <<'STUB'
 #!/usr/bin/env bash
