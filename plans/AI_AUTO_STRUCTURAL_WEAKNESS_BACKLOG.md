@@ -32,6 +32,12 @@ Each item uses:
 - `status`
 - `deferred_tool_note`
 
+Status values:
+
+- `open`: identified backlog item with no scoped implementation started.
+- `contract_started`: tracked pure contract or test coverage exists, but no
+  runtime caller or fail-closed gate has been adopted.
+
 ## P0: False Completion And Authority Leakage
 
 `blocker` severity describes the structural risk class. It is not a current
@@ -56,8 +62,9 @@ verdict cites it as unresolved.
 
 | ID | Slice | Severity | Evidence | Failure Mode | Blast Radius | Fix Type | Dependency | Status | Deferred Tool Note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SA-P1-04 | Self-Demo | high | `plans/AI_AUTO_REFLECTION_LOOP_V1_ENHANCEMENT_REVIEW.md`, `plans/AI_AUTO_STRUCTURAL_AUDIT_PLAN.md` | AI_AUTO upgrade is called ready without representative user-action evidence. | User has to manually validate every upgrade; hidden workflow regressions. | document + demo schema | upgrade class definition | open | Demo runner tool deferred. |
-| SA-P1-05 | Self-Demo | medium | `scripts/verify.sh`, `scripts/review-gate.sh` | Demo evidence is confused with formal verification or review-gate approval. | Completion reporting and readiness claims. | document | verify/review authority | open | No new gate in this branch. |
+| SA-P1-04 | Self-Demo | high | `plans/AI_AUTO_REFLECTION_LOOP_V1_ENHANCEMENT_REVIEW.md`, `plans/AI_AUTO_STRUCTURAL_AUDIT_PLAN.md`, `scripts/self_demo_contracts.py` | AI_AUTO upgrade is called ready without representative user-action evidence. | User has to manually validate every upgrade; hidden workflow regressions. | pure contract + demo schema | upgrade class definition | contract_started | Runtime demo runner/global helper remains deferred. |
+| SA-P1-05 | Self-Demo | medium | `scripts/verify.sh`, `scripts/review-gate.sh`, `tests/test_self_demo_contracts.py` | Demo evidence is confused with formal verification or review-gate approval. | Completion reporting and readiness claims. | pure contract + tests | verify/review authority | contract_started | No new fail-closed gate in this branch. |
+| SA-P1-06 | Benchmark Runtime Evidence | high | `scripts/self_demo_contracts.py`, `tests/test_self_demo_contracts.py` | Benchmark contract exists, but no representative workflow benchmark has been run, sampled, baselined, or recorded as evidence. | Performance readiness may be inferred from contract tests instead of measured runtime evidence. | benchmark run plan + evidence artifact | self-demo representative workflow | open | Runner/tooling deferred; first step is a measured baseline artifact, not adoption. |
 
 ## P2: Structural Audit Evidence Quality
 
@@ -76,6 +83,7 @@ verdict cites it as unresolved.
 | Guidance-budget cleanup | Excluded with item 7. Existing warnings may be reported but not fixed here. |
 | Runtime GStack installation | Explicitly rejected by benchmark boundary. |
 | Parallel sprint execution | Recorded as benchmark observation only. |
+| Self-demo global helper or runtime runner | Deferred until SA-P1-04 moves beyond `contract_started` with tracked evidence that pure contracts catch real workflow regressions. |
 
 ## Current Status
 
