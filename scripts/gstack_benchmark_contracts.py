@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
+from json import JSONDecodeError
 from typing import Any
 
 from scripts.reflection_contracts import sanitize_payload
@@ -215,7 +216,11 @@ def _main(argv: list[str]) -> int:
         names = ", ".join(sorted(CONTRACTS))
         print(f"usage: {argv[0]} <{names}> < input.json", file=sys.stderr)
         return 2
-    payload = json.load(sys.stdin)
+    try:
+        payload = json.load(sys.stdin)
+    except JSONDecodeError as exc:
+        print(json.dumps({"accepted": False, "reason": "invalid_json", "error": str(exc)}, sort_keys=True))
+        return 2
     result = CONTRACTS[argv[1]](payload)
     print(json.dumps({"accepted": result.accepted, "reason": result.reason, **result.data}, ensure_ascii=False, sort_keys=True))
     return 0 if result.accepted else 1

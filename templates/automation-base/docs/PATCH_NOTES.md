@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.28.3
+
+- Added the read-only `ai-gstack-contract` helper wiring for AI_AUTO's GStack
+  benchmark adoption contracts, including global helper installation,
+  bootstrap/doctor checks, and verification coverage.
+- Added missing-root override hints for `jwlist` and `sirdlist` so users see the
+  exact environment variable to set when local project folders live elsewhere.
+- Synced automation-doctor's ai-lab helper-link awareness with
+  `ai-gstack-contract` so global helper repair checks stay consistent between
+  the repo copy and template copy.
+
 ## 2026.05.28.2
 
 - Clarified ambiguity handling for follow-up meta requests so root-cause,

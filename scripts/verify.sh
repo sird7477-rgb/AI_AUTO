@@ -60,6 +60,7 @@ bash -n tools/ai-auto-init
 bash -n tools/ai-home
 bash -n tools/ai-register
 bash -n tools/ai-auto-template-status
+bash -n tools/ai-gstack-contract
 bash -n tools/ai-refactor-scan
 bash -n tools/ai-rebuild-plan
 bash -n tools/ai-split-plan
@@ -78,6 +79,137 @@ python3 -m py_compile scripts/capture-knowledge-drafts.py
 python3 -m py_compile scripts/knowledge-notes.py
 python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
 python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
+
+echo "[verify] testing GStack contract helper..."
+python3 - <<'PY'
+import json
+import subprocess
+import sys
+
+cases = [
+    (
+        "product",
+        {
+            "flags": ["strategic"],
+            "problem": "broad rebuild",
+            "smallest_wedge": "contract only",
+            "non_goals": ["runtime"],
+            "risks": ["scope"],
+            "acceptance_evidence": ["tests"],
+            "decision": "narrow",
+        },
+        True,
+        "product_challenge_ready",
+    ),
+    (
+        "browser-qa",
+        {
+            "route": "/todos",
+            "viewports": ["desktop"],
+            "screenshots": ["desktop.png"],
+            "console_checked": True,
+            "network_checked": True,
+            "user_path": "open list",
+            "regression_decision": "smoke",
+            "mode": "report_only",
+            "source_of_truth": "user_template",
+        },
+        True,
+        "browser_qa_ready",
+    ),
+    (
+        "retro",
+        {
+            "repeated_failure": "late finding",
+            "gate_caught": "review-gate",
+            "gate_missed": "manual artifact sync",
+            "evidence": "review note",
+            "proposed_update": "add sync check",
+        },
+        True,
+        "retro_draft_ready",
+    ),
+    (
+        "persona",
+        {
+            "requested_lenses": ["product"],
+            "task_shapes": ["broad_product_work"],
+        },
+        True,
+        "persona_lenses_ready",
+    ),
+    (
+        "security-release",
+        {"triggers": ["tokens"]},
+        True,
+        "security_release_ops_ready",
+    ),
+    (
+        "parallel",
+        {
+            "research_only": True,
+            "worktree_owner": "owner",
+            "branch_owner": "branch",
+            "conductor": "integrator",
+            "integration_gate": "review-gate",
+            "lock_strategy": "exclusive",
+            "duplicate_draft_strategy": "dedupe",
+            "reviewer_coverage": "defined",
+        },
+        True,
+        "parallel_conductor_contract_ready",
+    ),
+    (
+        "browser-qa",
+        {"route": "/todos"},
+        False,
+        "missing_browser_qa_evidence",
+    ),
+]
+
+for name, payload, accepted, reason in cases:
+    proc = subprocess.run(
+        ["tools/ai-gstack-contract", name],
+        input=json.dumps(payload),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    try:
+        output = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        print(f"invalid JSON from ai-gstack-contract {name}: {exc}", file=sys.stderr)
+        print(proc.stdout, file=sys.stderr)
+        sys.exit(1)
+    if output.get("accepted") is not accepted or output.get("reason") != reason:
+        print(f"unexpected ai-gstack-contract result for {name}: {output}", file=sys.stderr)
+        sys.exit(1)
+    if accepted and proc.returncode != 0:
+        print(f"accepted ai-gstack-contract case failed for {name}: {proc.stderr}", file=sys.stderr)
+        sys.exit(1)
+    if not accepted and proc.returncode == 0:
+        print(f"rejected ai-gstack-contract case exited 0 for {name}", file=sys.stderr)
+        sys.exit(1)
+
+invalid = subprocess.run(
+    ["tools/ai-gstack-contract", "product"],
+    input="{",
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    check=False,
+)
+try:
+    invalid_output = json.loads(invalid.stdout)
+except json.JSONDecodeError as exc:
+    print(f"invalid JSON case did not return JSON: {exc}", file=sys.stderr)
+    print(invalid.stdout, file=sys.stderr)
+    sys.exit(1)
+if invalid.returncode == 0 or invalid_output.get("reason") != "invalid_json":
+    print(f"unexpected invalid JSON result: rc={invalid.returncode} out={invalid_output}", file=sys.stderr)
+    sys.exit(1)
+PY
 
 echo "[verify] checking Playwright CDP safety guidance..."
 for ui_completion_doc in \
@@ -4349,6 +4481,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
   ln -s "${tmp_home}/old-checkout/tools/ai-split-plan" "${tmp_home}/bin/ai-split-plan"
@@ -4370,6 +4503,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
   test "$(readlink "${tmp_home}/bin/ai-split-plan")" = "$(pwd)/tools/ai-split-plan"
@@ -4393,6 +4527,22 @@ echo "[verify] testing global helper link repair..."
   grep -q 'AI_AUTO_SIRD_PROJECT_ROOT' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
   grep -q 'tmux()' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
   grep -q 'command tmux new-session -s "${session_name}"' "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
+  if HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" bash -c \
+    'source "$HOME/.config/ai-lab/AI_AUTO.sh"; AI_AUTO_JW_PROJECT_ROOT="$HOME/missing-root" jwlist' \
+    > "${tmp_home}/jwlist-missing.out" 2> "${tmp_home}/jwlist-missing.err"; then
+    echo "[verify] jwlist succeeded for a missing project root"
+    exit 1
+  fi
+  grep -q "project root not found for jwlist" "${tmp_home}/jwlist-missing.err"
+  grep -q "AI_AUTO_JW_PROJECT_ROOT=/path/to/root" "${tmp_home}/jwlist-missing.err"
+  if HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" bash -c \
+    'source "$HOME/.config/ai-lab/AI_AUTO.sh"; AI_AUTO_SIRD_PROJECT_ROOT="$HOME/missing-root" sirdlist' \
+    > "${tmp_home}/sirdlist-missing.out" 2> "${tmp_home}/sirdlist-missing.err"; then
+    echo "[verify] sirdlist succeeded for a missing project root"
+    exit 1
+  fi
+  grep -q "project root not found for sirdlist" "${tmp_home}/sirdlist-missing.err"
+  grep -q "AI_AUTO_SIRD_PROJECT_ROOT=/path/to/root" "${tmp_home}/sirdlist-missing.err"
   project_list_root="${tmp_home}/projects"
   mkdir -p "${project_list_root}/alpha" "${project_list_root}/beta/grouped/leaf" "${project_list_root}/gamma-no-git"
   printf '{}\n' > "${project_list_root}/beta/grouped/leaf/package.json"
@@ -4503,6 +4653,7 @@ STUB
   grep -q "AI_AUTO codex drift notice integration" "${tmp_home}/.bashrc"
   grep -q "Managed by AI_AUTO install-global-files.sh codex drift notice" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
   grep -q "${fake_bin}/codex" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q '^  local tmux_auto_default=0$' "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
 
   set +e
   HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
@@ -4756,6 +4907,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
   ln -s "${tmp_home}/old-checkout/tools/ai-split-plan" "${tmp_home}/bin/ai-split-plan"
@@ -4777,6 +4929,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
   test "$(readlink "${tmp_home}/bin/ai-split-plan")" = "$(pwd)/tools/ai-split-plan"
@@ -4808,6 +4961,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
   ln -s "${tmp_home}/old-checkout/tools/ai-split-plan" "${tmp_home}/bin/ai-split-plan"
@@ -4829,6 +4983,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
   test "$(readlink "${tmp_home}/bin/ai-split-plan")" = "$(pwd)/tools/ai-split-plan"

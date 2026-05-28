@@ -36,6 +36,11 @@ AI review context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked diffs
 use a lightweight diff-centered context; set `REVIEW_CONTEXT_DETAIL=full` for
 reviews that need planning artifacts or full workflow reference file excerpts.
 
+- `ai-gstack-contract`
+  - Runs one side-effect-free GStack benchmark adoption contract against JSON stdin
+  - Supported contracts: `product`, `browser-qa`, `retro`, `persona`, `security-release`, `parallel`
+  - Does not install GStack, create agents, start worktrees, push notes, deploy, or modify files
+
 - `ai-refactor-scan`
   - Scans a repository without modifying files and reports likely refactoring candidates
   - Highlights large source files, long Python functions/classes, and import-heavy files
@@ -139,6 +144,7 @@ Expected links:
     ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
     ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
+    ~/bin/ai-gstack-contract -> ~/workspace/ai-lab/tools/ai-gstack-contract
     ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
     ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
     ~/bin/ai-split-plan -> ~/workspace/ai-lab/tools/ai-split-plan
@@ -167,6 +173,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
     ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
+    ln -sf ~/workspace/ai-lab/tools/ai-gstack-contract ~/bin/ai-gstack-contract
     ln -sf ~/workspace/ai-lab/tools/ai-refactor-scan ~/bin/ai-refactor-scan
     ln -sf ~/workspace/ai-lab/tools/ai-rebuild-plan ~/bin/ai-rebuild-plan
     ln -sf ~/workspace/ai-lab/tools/ai-split-plan ~/bin/ai-split-plan
@@ -200,6 +207,8 @@ The same managed shell integration adds small convenience functions:
   - Lists project folders directly under `/mnt/z/JSJEON/Project_JW`
   - Set `AI_AUTO_JW_PROJECT_ROOT` if your JW projects still live under an extra
     grouping folder such as `Project_JW/99. 개발개발`
+  - If the default root does not exist, the function prints a hint to set
+    `AI_AUTO_JW_PROJECT_ROOT=/path/to/root`
   - Prompts for a number; choose `0` to enter the current folder, or choose a
     subfolder to drill down through grouped projects
   - Stops drilling down and enters a folder when common project markers are
@@ -209,6 +218,8 @@ The same managed shell integration adds small convenience functions:
 
 - `sirdlist`
   - Lists project folders directly under `/mnt/z/JSJEON/Project_SirD`
+  - If the default root does not exist, the function prints a hint to set
+    `AI_AUTO_SIRD_PROJECT_ROOT=/path/to/root`
   - Prompts for a number; choose `0` to enter the current folder, or choose a
     subfolder to drill down through grouped projects
   - Stops drilling down and enters a folder when common project markers are

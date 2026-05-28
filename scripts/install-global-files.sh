@@ -24,6 +24,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/aiinit
   ~/bin/ai-register
   ~/bin/ai-auto-template-status
+  ~/bin/ai-gstack-contract
   ~/bin/ai-refactor-scan
   ~/bin/ai-rebuild-plan
   ~/bin/ai-split-plan
@@ -233,11 +234,15 @@ AI_AUTO() {
 _ai_auto_project_list_cd() {
   local root="\$1"
   local label="\$2"
+  local override_var="\${3:-}"
   local -a projects
   local choice choice_num selected i current
 
   if [ ! -d "\$root" ]; then
     printf '%s\n' "[AI_AUTO] project root not found for \${label}: \${root}" >&2
+    if [ -n "\$override_var" ]; then
+      printf '%s\n' "[AI_AUTO] set \${override_var}=/path/to/root if this project group lives elsewhere" >&2
+    fi
     return 1
   fi
 
@@ -300,11 +305,11 @@ _ai_auto_project_list_cd() {
 }
 
 jwlist() {
-  _ai_auto_project_list_cd "\${AI_AUTO_JW_PROJECT_ROOT:-/mnt/z/JSJEON/Project_JW}" "jwlist"
+  _ai_auto_project_list_cd "\${AI_AUTO_JW_PROJECT_ROOT:-/mnt/z/JSJEON/Project_JW}" "jwlist" "AI_AUTO_JW_PROJECT_ROOT"
 }
 
 sirdlist() {
-  _ai_auto_project_list_cd "\${AI_AUTO_SIRD_PROJECT_ROOT:-/mnt/z/JSJEON/Project_SirD}" "sirdlist"
+  _ai_auto_project_list_cd "\${AI_AUTO_SIRD_PROJECT_ROOT:-/mnt/z/JSJEON/Project_SirD}" "sirdlist" "AI_AUTO_SIRD_PROJECT_ROOT"
 }
 
 tmux() {
@@ -622,6 +627,7 @@ check_source_helper "${ROOT}/tools/ai-auto-init"
 check_source_helper "${ROOT}/tools/ai-home"
 check_source_helper "${ROOT}/tools/ai-register"
 check_source_helper "${ROOT}/tools/ai-auto-template-status"
+check_source_helper "${ROOT}/tools/ai-gstack-contract"
 check_source_helper "${ROOT}/tools/ai-refactor-scan"
 check_source_helper "${ROOT}/tools/ai-rebuild-plan"
 check_source_helper "${ROOT}/tools/ai-split-plan"
@@ -653,6 +659,7 @@ else
   install_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
   install_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   install_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
+  install_link "${HOME_DIR}/bin/ai-gstack-contract" "${ROOT}/tools/ai-gstack-contract"
   install_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
   install_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"
   install_link "${HOME_DIR}/bin/ai-split-plan" "${ROOT}/tools/ai-split-plan"

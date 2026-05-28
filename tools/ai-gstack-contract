@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Wrapper only: dispatch JSON stdin to pure contract checks without side effects.
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-gstack-contract <product|browser-qa|retro|persona|security-release|parallel> < input.json
+
+Run one side-effect-free GStack benchmark adoption contract against a JSON
+payload. This helper does not install GStack, create agents, start worktrees,
+push notes, deploy, or modify repository files.
+USAGE
+}
+
+case "${1:-}" in
+  "")
+    usage >&2
+    exit 2
+    ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  case "$LINK_TARGET" in
+    /*)
+      SOURCE="$LINK_TARGET"
+      ;;
+    *)
+      SOURCE="${SOURCE_DIR}/${LINK_TARGET}"
+      ;;
+  esac
+done
+
+TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
+
+cd "$AI_LAB_ROOT"
+# Keep repo root on sys.path so scripts.* imports resolve when invoked via ~/bin.
+export PYTHONPATH="${AI_LAB_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 scripts/gstack_benchmark_contracts.py "$@"
