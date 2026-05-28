@@ -99,3 +99,29 @@ def test_parallel_conductor_is_research_only_without_separate_execution_plan() -
     assert parallel_conductor_contract({**valid, "research_only": False}).reason == "parallel_sprint_execution_requires_separate_approval"
     assert parallel_conductor_contract({**valid, "starts_worktrees": True}).reason == "worktree_execution_forbidden_without_plan"
     assert parallel_conductor_contract({"research_only": True}).reason == "missing_parallel_conductor_contract"
+
+
+def test_gstack_benchmark_language_does_not_imply_runtime_adoption() -> None:
+    assert product_challenge_contract({"flags": ["small_maintenance"], "installs_gstack": True}).reason == (
+        "runtime_gstack_adoption_requires_separate_approval"
+    )
+    assert product_challenge_contract({"flags": ["strategic"], "runtime_gstack_adoption": True}).reason == (
+        "runtime_gstack_adoption_requires_separate_approval"
+    )
+    assert persona_lens_contract({"standing_roster": True, "benchmark_research": True}).reason == "standing_persona_roster_forbidden"
+    assert (
+        parallel_conductor_contract(
+            {
+                "research_only": True,
+                "worktree_owner": "owner",
+                "branch_owner": "branch",
+                "conductor": "integrator",
+                "integration_gate": "review-gate",
+                "lock_strategy": "exclusive",
+                "duplicate_draft_strategy": "dedupe",
+                "reviewer_coverage": "defined",
+                "starts_worktrees": True,
+            }
+        ).reason
+        == "worktree_execution_forbidden_without_plan"
+    )

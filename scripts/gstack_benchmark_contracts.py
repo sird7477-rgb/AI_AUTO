@@ -98,6 +98,9 @@ PARALLEL_CONTRACT_FIELDS = {
 
 
 def product_challenge_contract(task: dict[str, Any]) -> ContractResult:
+    if task.get("installs_gstack") or task.get("runtime_gstack_adoption"):
+        return ContractResult(False, "runtime_gstack_adoption_requires_separate_approval", {})
+
     flags = set(task.get("flags", []))
     if flags & SMALL_MAINTENANCE_TRIGGERS and not flags & PRODUCT_CHALLENGE_TRIGGERS:
         return ContractResult(False, "skip_small_maintenance", {"triggered": False})
