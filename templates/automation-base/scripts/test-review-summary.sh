@@ -186,10 +186,11 @@ assert_summary() {
     exit 1
   fi
 
-  local decision coverage missing
+  local decision coverage missing trust
   decision="$(summary_value "${summary_file}" "Final Decision")"
   coverage="$(summary_value "${summary_file}" "Review Coverage")"
   missing="$(summary_value "${summary_file}" "Missing Or Unusable Reviewers")"
+  trust="$(summary_value "${summary_file}" "Trust Level")"
 
   if [ "${decision}" != "${expected_decision}" ]; then
     echo "[summary-test] ${name}: expected decision ${expected_decision}, got ${decision}"
@@ -217,6 +218,18 @@ assert_summary() {
 
   if [ -n "${expected_missing}" ] && ! grep -q "Disabled Reviewer Reporting" "${summary_file}"; then
     echo "[summary-test] ${name}: missing disabled reviewer reporting section"
+    cat "${summary_file}"
+    exit 1
+  fi
+
+  if [ "${decision}" = "proceed" ] && { [ "${coverage}" != "multi_reviewer" ] || [ "${trust}" != "normal" ]; }; then
+    echo "[summary-test] ${name}: proceed must require multi_reviewer coverage and normal trust"
+    cat "${summary_file}"
+    exit 1
+  fi
+
+  if [ "${decision}" = "proceed_degraded" ] && [ "${trust}" != "degraded" ]; then
+    echo "[summary-test] ${name}: proceed_degraded must report degraded trust"
     cat "${summary_file}"
     exit 1
   fi
@@ -276,6 +289,60 @@ case_codex_only_degraded() {
     "${dir}/codex-fallback-summary-current.md"
 
   assert_summary "codex_only_degraded" "proceed_degraded" "codex_only_degraded" 0
+}
+
+case_failed_external_codex_only_degraded() {
+  local dir="${TMP_ROOT}/failed_external_codex_only_degraded"
+  mkdir -p "${dir}"
+
+  write_failed_with_prompt_verdict "${dir}/claude-review-current.md"
+  write_failed_with_prompt_verdict "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_verdict "${dir}/codex-test-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "failed_external_codex_only_degraded" "proceed_degraded" "codex_only_degraded" 0 "claude:failed, gemini:failed"
+}
+
+case_missing_external_codex_only_degraded() {
+  local dir="${TMP_ROOT}/missing_external_codex_only_degraded"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_verdict "${dir}/codex-test-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/missing-claude.md" \
+    "${dir}/missing-gemini.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "missing_external_codex_only_degraded" "proceed_degraded" "codex_only_degraded" 0 "claude:missing, gemini:missing"
+}
+
+case_partial_codex_fallback_blocks() {
+  local dir="${TMP_ROOT}/partial_codex_fallback_blocks"
+  mkdir -p "${dir}"
+
+  write_skipped "${dir}/claude-review-current.md"
+  write_skipped "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "partial_codex_fallback_blocks" "blocked" "partial_codex_fallback_only" 1 "claude:skipped, gemini:skipped"
 }
 
 case_missing_fallback_blocks() {
@@ -565,6 +632,9 @@ case_codex_fallback_without_direct_inspection_blocks() {
 case_multi_reviewer
 case_single_external_plus_codex
 case_codex_only_degraded
+case_failed_external_codex_only_degraded
+case_missing_external_codex_only_degraded
+case_partial_codex_fallback_blocks
 case_missing_fallback_blocks
 case_request_changes_blocks
 case_stale_fallback_ignored

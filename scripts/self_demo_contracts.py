@@ -217,10 +217,21 @@ def completion_authority(evidence: dict[str, Any]) -> ContractResult:
     missing = [field for field in required if not evidence.get(field)]
     if missing:
         return ContractResult(False, "missing_completion_fields", {"missing": missing})
-    if evidence.get("sidecar_claims_authority"):
+    if (
+        evidence.get("sidecar_claims_authority")
+        or evidence.get("subagent_claims_authority")
+        or evidence.get("checkpoint_claims_authority")
+        or evidence.get("delegated_claims_authority")
+    ):
         return ContractResult(False, "sidecar_authority_forbidden", {})
     if evidence.get("review_gate_decision") not in {"proceed", "proceed_degraded"}:
         return ContractResult(False, "review_gate_not_ready", {"decision": evidence.get("review_gate_decision")})
+    if evidence.get("review_gate_decision") == "proceed_degraded":
+        missing_degraded = [
+            field for field in ("degraded_trust_reported", "missing_reviewers_reported") if not evidence.get(field)
+        ]
+        if missing_degraded:
+            return ContractResult(False, "degraded_review_reporting_required", {"missing": missing_degraded})
     return ContractResult(True, "completion_authority_ready", {})
 
 

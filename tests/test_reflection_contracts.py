@@ -27,6 +27,12 @@ def test_reflection_cannot_own_field_transition() -> None:
     result = validate_transition("reflection", "pending_field_validation", "field_verified")
     assert not result.accepted
     assert result.reason == "reflection_may_mirror_but_not_own_work_transition"
+    assert validate_transition("reflection", "editing", "code_ready", {"verify": True}).reason == (
+        "reflection_may_mirror_but_not_own_work_transition"
+    )
+    assert validate_transition("reflection", "review_ready", "committed").reason == (
+        "reflection_may_mirror_but_not_own_work_transition"
+    )
 
 
 def test_state_transition_rejects_unknown_and_cross_owner() -> None:
@@ -52,7 +58,13 @@ def test_review_integrity_does_not_claim_unanimity_for_degraded_fallback() -> No
     report = review_integrity_report(
         [
             {"name": "Claude", "status": "skipped", "coverage": "independent", "verdict": "skipped"},
-            {"name": "Gemini", "status": "available", "coverage": "independent", "verdict": "approve"},
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
             {"name": "Codex", "status": "available", "coverage": "fallback", "verdict": "approve_with_notes"},
         ]
     )
@@ -60,6 +72,30 @@ def test_review_integrity_does_not_claim_unanimity_for_degraded_fallback() -> No
     assert report["unanimous"] is False
     assert report["unavailable"] == ["Claude"]
     assert report["degraded"] == ["Codex"]
+
+
+def test_review_integrity_accepts_two_independent_available_approvals() -> None:
+    report = review_integrity_report(
+        [
+            {
+                "name": "Claude",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve_with_notes",
+                "context_completeness": 1.0,
+            },
+        ]
+    )
+    assert report["decision"] == "proceed"
+    assert report["unanimous"] is True
+    assert report["independent_approvals"] == ["Claude", "Gemini"]
 
 
 def test_review_integrity_blocks_empty_reviewer_set() -> None:
@@ -73,7 +109,13 @@ def test_review_integrity_blocks_empty_reviewer_set() -> None:
 def test_review_integrity_blocks_request_changes_and_block_verdicts() -> None:
     request_changes = review_integrity_report(
         [
-            {"name": "Gemini", "status": "available", "coverage": "independent", "verdict": "approve"},
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
             {"name": "Codex", "status": "available", "coverage": "fallback", "verdict": "request_changes"},
         ]
     )
@@ -84,11 +126,162 @@ def test_review_integrity_blocks_request_changes_and_block_verdicts() -> None:
     block = review_integrity_report(
         [
             {"name": "Claude", "status": "available", "coverage": "independent", "verdict": "block"},
-            {"name": "Gemini", "status": "available", "coverage": "independent", "verdict": "approve"},
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
         ]
     )
     assert block["decision"] == "blocked"
     assert block["blocking"] == ["Claude"]
+
+
+def test_review_integrity_requires_schema_and_enough_independent_context() -> None:
+    malformed = review_integrity_report(
+        [
+            {"status": "available", "coverage": "independent", "verdict": "approve"},
+            {"name": "Mystery", "status": "available", "coverage": "independent", "verdict": "approve_later"},
+        ]
+    )
+    assert malformed["decision"] == "blocked"
+    assert malformed["reason"] == "malformed_reviewer_record"
+    assert malformed["malformed"][0]["missing"] == ["name"]
+    assert malformed["malformed"][1]["reason"] == "invalid_reviewer_verdict"
+
+    duplicated = review_integrity_report(
+        [
+            {
+                "name": "Claude",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
+            {
+                "name": "Claude",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
+        ]
+    )
+    assert duplicated["decision"] == "blocked"
+    assert duplicated["malformed"][0]["reason"] == "duplicate_reviewer_name"
+
+    one_approval = review_integrity_report(
+        [
+            {
+                "name": "Claude",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            }
+        ]
+    )
+    assert one_approval["decision"] == "proceed_degraded"
+    assert one_approval["unanimous"] is False
+    assert one_approval["insufficient_independent"] is True
+
+    low_context = review_integrity_report(
+        [
+            {
+                "name": "Claude",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 0.5,
+            },
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
+        ]
+    )
+    assert low_context["decision"] == "proceed_degraded"
+    assert low_context["degraded"] == ["Claude"]
+    assert low_context["degraded_reasons"] == {"Claude": "context_completeness_below_threshold"}
+
+    failed_reviewer = review_integrity_report(
+        [
+            {"name": "Claude", "status": "failed", "coverage": "independent", "verdict": "failed"},
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
+        ]
+    )
+    assert failed_reviewer["decision"] == "proceed_degraded"
+    assert failed_reviewer["unavailable"] == ["Claude"]
+
+    missing_context = review_integrity_report(
+        [
+            {"name": "Claude", "status": "available", "coverage": "independent", "verdict": "approve"},
+            {"name": "Gemini", "status": "available", "coverage": "independent", "verdict": "approve"},
+        ]
+    )
+    assert missing_context["decision"] == "blocked"
+    assert missing_context["reason"] == "no_usable_approvals"
+    assert missing_context["degraded"] == ["Claude", "Gemini"]
+    assert missing_context["degraded_reasons"] == {
+        "Claude": "missing_context_completeness",
+        "Gemini": "missing_context_completeness",
+    }
+
+    invalid_context = review_integrity_report(
+        [
+            {
+                "name": "Claude",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": True,
+            },
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
+        ]
+    )
+    assert invalid_context["decision"] == "proceed_degraded"
+    assert invalid_context["degraded_reasons"] == {"Claude": "invalid_context_completeness"}
+
+    no_usable_approvals = review_integrity_report(
+        [
+            {"name": "Claude", "status": "missing", "coverage": "independent", "verdict": "missing"},
+            {"name": "Gemini", "status": "failed", "coverage": "independent", "verdict": "failed"},
+        ]
+    )
+    assert no_usable_approvals["decision"] == "blocked"
+    assert no_usable_approvals["reason"] == "no_usable_approvals"
+
+    skipped_block = review_integrity_report(
+        [
+            {"name": "Claude", "status": "skipped", "coverage": "independent", "verdict": "block"},
+            {
+                "name": "Gemini",
+                "status": "available",
+                "coverage": "independent",
+                "verdict": "approve",
+                "context_completeness": 1.0,
+            },
+        ]
+    )
+    assert skipped_block["decision"] == "proceed_degraded"
+    assert skipped_block["blocking"] == []
 
 
 def test_sidecar_failure_preserves_core_verdict() -> None:
@@ -99,8 +292,26 @@ def test_sidecar_failure_preserves_core_verdict() -> None:
             {"name": "trace", "status": "ok"},
         ],
     )
+    assert result["accepted"]
     assert result["core_verdict"] == "proceed"
     assert result["warnings"] == [{"name": "knowledge-draft", "status": "failed"}]
+
+
+def test_sidecar_cannot_claim_completion_or_override_core_verdict() -> None:
+    result = preserve_core_verdict(
+        "revise",
+        [
+            {"name": "reflection-draft", "status": "ok", "claims_completion": True},
+            {"name": "knowledge-draft", "status": "ok", "overrides_core_verdict": True},
+        ],
+    )
+    assert not result["accepted"]
+    assert result["core_verdict"] == "revise"
+    assert [item["name"] for item in result["authority_violations"]] == ["reflection-draft", "knowledge-draft"]
+
+    blocked = preserve_core_verdict("blocked", [{"name": "knowledge-draft", "status": "ok"}])
+    assert blocked["accepted"]
+    assert blocked["core_verdict"] == "blocked"
 
 
 def test_duplicate_draft_keys_are_idempotent() -> None:
@@ -179,7 +390,12 @@ def test_resource_execution_mode_degrades_before_contention() -> None:
         "subagents": 0,
         "obsidian_push": "blocked",
     }
-    assert resource_execution_mode({"exclusive_lock_missing": True})["mode"] == "manual-only"
+    assert resource_execution_mode({"exclusive_lock_missing": True}) == {
+        "mode": "manual-only",
+        "sidecar": "defer",
+        "subagents": 0,
+        "obsidian_push": "blocked",
+    }
 
 
 def test_backfill_requires_explicit_projects_and_dry_run() -> None:
@@ -199,6 +415,14 @@ def test_promotion_requires_repo_edit_proposal_verify_and_review_gate() -> None:
         "repo_edit_proposal": True,
         "verify": True,
         "review_gate": True,
+        "review_integrity": {
+            "decision": "proceed",
+            "unanimous": True,
+            "independent_approvals": ["Claude", "Gemini"],
+            "unavailable": [],
+            "degraded": [],
+            "blocking": [],
+        },
     }
     assert validate_promotion_request(valid).accepted
     assert validate_promotion_request({**valid, "source": "raw_obsidian"}).reason == "unsupported_promotion_source"
@@ -208,6 +432,42 @@ def test_promotion_requires_repo_edit_proposal_verify_and_review_gate() -> None:
     assert validate_promotion_request({**valid, "repo_edit_proposal": False}).reason == "missing_repo_edit_proposal"
     assert validate_promotion_request({**valid, "verify": False}).reason == "missing_verify_gate"
     assert validate_promotion_request({**valid, "review_gate": False}).reason == "missing_review_gate"
+    assert validate_promotion_request({key: value for key, value in valid.items() if key != "review_integrity"}).reason == (
+        "missing_review_integrity"
+    )
+    assert validate_promotion_request({**valid, "review_integrity": {"decision": "blocked"}}).reason == (
+        "review_integrity_blocked"
+    )
+    degraded_integrity = {
+        "decision": "proceed_degraded",
+        "independent_approvals": ["Gemini"],
+        "unavailable": ["Claude"],
+        "degraded": [],
+        "blocking": [],
+    }
+    assert validate_promotion_request({**valid, "review_integrity": degraded_integrity}).reason == (
+        "degraded_review_requires_acknowledgement"
+    )
+    assert validate_promotion_request(
+        {**valid, "review_integrity": degraded_integrity, "degraded_review_acknowledged": True}
+    ).accepted
+    assert validate_promotion_request({**valid, "review_integrity": {"decision": "proceed", "unanimous": True}}).reason == (
+        "review_integrity_not_ready"
+    )
+    assert validate_promotion_request(
+        {
+            **valid,
+            "review_integrity": {
+                "decision": "proceed",
+                "unanimous": True,
+                "independent_approvals": ["Claude", "Gemini"],
+                "degraded": ["Codex"],
+            },
+        }
+    ).reason == "review_integrity_not_ready"
+    assert validate_promotion_request(
+        {**valid, "review_integrity": {"decision": "proceed_degraded"}, "degraded_review_acknowledged": True}
+    ).reason == "review_integrity_not_ready"
 
 
 def test_observability_trace_is_diagnostic_without_raw_transcript() -> None:

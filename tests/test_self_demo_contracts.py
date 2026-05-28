@@ -212,6 +212,18 @@ def test_reviewer_eligibility_blocks_false_unanimity() -> None:
     assert report["ineligible"]["DegradedSignals"] == "degraded_signals_present"
 
 
+def test_reviewer_eligibility_accepts_all_independent_eligible_reviewers() -> None:
+    report = reviewer_eligibility(
+        [
+            {"name": "Claude", "coverage": "independent", "context_completeness": 1.0, "verdict": "approve"},
+            {"name": "Gemini", "coverage": "independent", "context_completeness": 1.0, "verdict": "approve_with_notes"},
+        ]
+    )
+    assert report["eligible"] == ["Claude", "Gemini"]
+    assert report["ineligible"] == {}
+    assert report["unanimous_eligible"] is True
+
+
 def test_completion_authority_remains_leader_owned() -> None:
     valid = {
         "diff_inspected": True,
@@ -223,9 +235,40 @@ def test_completion_authority_remains_leader_owned() -> None:
     }
     assert completion_authority(valid).accepted
     assert completion_authority({**valid, "sidecar_claims_authority": True}).reason == "sidecar_authority_forbidden"
+    assert completion_authority({**valid, "subagent_claims_authority": True}).reason == "sidecar_authority_forbidden"
+    assert completion_authority({**valid, "checkpoint_claims_authority": True}).reason == "sidecar_authority_forbidden"
+    assert completion_authority({**valid, "delegated_claims_authority": True}).reason == "sidecar_authority_forbidden"
     missing = completion_authority({**valid, "verify": False, "review_gate": False})
     assert missing.reason == "missing_completion_fields"
     assert missing.data["missing"] == ["verify", "review_gate"]
+    individually_missing = {
+        field: completion_authority({**valid, field: False}).data["missing"] for field in (
+            "diff_inspected",
+            "plan_alignment",
+            "leader_owned_final",
+        )
+    }
+    assert individually_missing == {
+        "diff_inspected": ["diff_inspected"],
+        "plan_alignment": ["plan_alignment"],
+        "leader_owned_final": ["leader_owned_final"],
+    }
+    assert completion_authority({key: value for key, value in valid.items() if key != "review_gate_decision"}).reason == (
+        "review_gate_not_ready"
+    )
+    for decision in ("blocked", "revise", "review_manually", "missing"):
+        assert completion_authority({**valid, "review_gate_decision": decision}).reason == "review_gate_not_ready"
+    degraded = completion_authority({**valid, "review_gate_decision": "proceed_degraded"})
+    assert degraded.reason == "degraded_review_reporting_required"
+    assert degraded.data["missing"] == ["degraded_trust_reported", "missing_reviewers_reported"]
+    assert completion_authority(
+        {
+            **valid,
+            "review_gate_decision": "proceed_degraded",
+            "degraded_trust_reported": True,
+            "missing_reviewers_reported": True,
+        }
+    ).accepted
 
 
 def test_reviewer_eligibility_handles_invalid_context_and_duplicate_names() -> None:

@@ -34,11 +34,8 @@ KNOWLEDGE_TRANSITIONS = {
 
 WORK_STATES = {state for transition in WORK_TRANSITIONS for state in transition}
 KNOWLEDGE_STATES = {state for transition in KNOWLEDGE_TRANSITIONS for state in transition}
-
-REFLECTION_FORBIDDEN_WORK_TRANSITIONS = {
-    ("pending_field_validation", "field_verified"),
-    ("field_verified", "done"),
-}
+REVIEW_MIN_CONTEXT_COMPLETENESS = 0.9
+REVIEW_MIN_INDEPENDENT_APPROVALS = 2
 
 PRIVATE_PATTERN = re.compile(
     r"("
@@ -72,7 +69,7 @@ def validate_transition(owner: str, from_state: str, to_state: str, evidence: di
     if from_state in KNOWLEDGE_STATES and to_state in WORK_STATES:
         return ContractResult(False, "cross_owned_transition")
 
-    if owner == "reflection" and transition in REFLECTION_FORBIDDEN_WORK_TRANSITIONS:
+    if owner == "reflection" and from_state in WORK_STATES and to_state in WORK_STATES:
         return ContractResult(False, "reflection_may_mirror_but_not_own_work_transition")
 
     if transition in WORK_TRANSITIONS:
@@ -100,8 +97,28 @@ def sanitize_payload(payload: str) -> dict[str, Any]:
     }
 
 
-def review_integrity_report(reviewers: list[dict[str, str]]) -> dict[str, Any]:
-    """Summarize reviewer coverage without overstating degraded/fallback results."""
+def review_integrity_report(reviewers: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize reviewer coverage without overstating degraded/fallback results.
+
+    Available independent reviewers without context evidence are degraded by
+    default; normal approval requires explicit context completeness.
+    """
+
+    required_fields = {"name", "status", "coverage", "verdict"}
+    allowed_statuses = {"available", "skipped", "missing", "failed"}
+    allowed_coverages = {"independent", "degraded", "fallback"}
+    allowed_verdicts = {
+        "approve",
+        "approve_with_notes",
+        "request_changes",
+        "block",
+        "blocked",
+        "revise",
+        "review_manually",
+        "skipped",
+        "missing",
+        "failed",
+    }
 
     if not reviewers:
         return {
@@ -113,12 +130,73 @@ def review_integrity_report(reviewers: list[dict[str, str]]) -> dict[str, Any]:
             "reason": "missing_reviewers",
         }
 
-    unavailable = [r["name"] for r in reviewers if r.get("status") in {"skipped", "missing"}]
-    degraded = [r["name"] for r in reviewers if r.get("coverage") in {"degraded", "fallback"}]
+    malformed = []
+    seen_names: set[str] = set()
+    for index, reviewer in enumerate(reviewers, start=1):
+        missing_fields = sorted(field for field in required_fields if field not in reviewer)
+        if missing_fields:
+            malformed.append({"index": index, "reason": "missing_reviewer_fields", "missing": missing_fields})
+            continue
+        if reviewer["name"] in seen_names:
+            malformed.append({"index": index, "name": reviewer["name"], "reason": "duplicate_reviewer_name"})
+            continue
+        seen_names.add(reviewer["name"])
+        if reviewer["status"] not in allowed_statuses:
+            malformed.append({"index": index, "name": reviewer["name"], "reason": "invalid_reviewer_status"})
+        elif reviewer["coverage"] not in allowed_coverages:
+            malformed.append({"index": index, "name": reviewer["name"], "reason": "invalid_reviewer_coverage"})
+        elif reviewer["verdict"] not in allowed_verdicts:
+            malformed.append({"index": index, "name": reviewer["name"], "reason": "invalid_reviewer_verdict"})
+    if malformed:
+        return {
+            "decision": "blocked",
+            "unanimous": False,
+            "independent_approvals": [],
+            "unavailable": [],
+            "degraded": [],
+            "malformed": malformed,
+            "reason": "malformed_reviewer_record",
+        }
+
+    unavailable = [r["name"] for r in reviewers if r.get("status") in {"skipped", "missing", "failed"}]
+    degraded = []
+    degraded_reasons: dict[str, str] = {}
+    for reviewer in reviewers:
+        name = reviewer["name"]
+        if reviewer.get("status") != "available":
+            continue
+        context_value = reviewer.get("context_completeness")
+        try:
+            context_completeness = (
+                float(context_value) if context_value is not None and not isinstance(context_value, bool) else 0.0
+            )
+        except (TypeError, ValueError):
+            context_completeness = 0.0
+        if reviewer.get("coverage") in {"degraded", "fallback"}:
+            degraded.append(name)
+            degraded_reasons[name] = "fallback_or_degraded_coverage"
+        elif reviewer.get("same_session_executor") or reviewer.get("host_executor"):
+            degraded.append(name)
+            degraded_reasons[name] = "executor_not_independent"
+        elif reviewer.get("degraded_signals"):
+            degraded.append(name)
+            degraded_reasons[name] = "degraded_signals_present"
+        elif context_completeness < REVIEW_MIN_CONTEXT_COMPLETENESS:
+            degraded.append(name)
+            degraded_reasons[name] = (
+                "missing_context_completeness"
+                if context_value is None
+                else (
+                    "invalid_context_completeness"
+                    if isinstance(context_value, bool)
+                    else "context_completeness_below_threshold"
+                )
+            )
     blocking = [
         r["name"]
         for r in reviewers
-        if r.get("verdict") in {"request_changes", "block", "blocked", "revise", "review_manually"}
+        if r.get("status") == "available"
+        and r.get("verdict") in {"request_changes", "block", "blocked", "revise", "review_manually"}
     ]
     independent_approvals = [
         r["name"]
@@ -126,6 +204,7 @@ def review_integrity_report(reviewers: list[dict[str, str]]) -> dict[str, Any]:
         if r.get("verdict", "").startswith("approve")
         and r.get("status") == "available"
         and r.get("coverage") == "independent"
+        and r["name"] not in degraded
     ]
     if blocking:
         return {
@@ -134,10 +213,24 @@ def review_integrity_report(reviewers: list[dict[str, str]]) -> dict[str, Any]:
             "independent_approvals": independent_approvals,
             "unavailable": unavailable,
             "degraded": degraded,
+            "degraded_reasons": degraded_reasons,
             "blocking": blocking,
         }
 
-    unanimous = not unavailable and not degraded and len(independent_approvals) == len(reviewers)
+    if not independent_approvals:
+        return {
+            "decision": "blocked",
+            "unanimous": False,
+            "independent_approvals": independent_approvals,
+            "unavailable": unavailable,
+            "degraded": degraded,
+            "degraded_reasons": degraded_reasons,
+            "reason": "no_usable_approvals",
+            "blocking": blocking,
+        }
+
+    insufficient_independent = len(independent_approvals) < REVIEW_MIN_INDEPENDENT_APPROVALS
+    unanimous = not unavailable and not degraded and not insufficient_independent and len(independent_approvals) == len(reviewers)
     decision = "proceed" if unanimous else "proceed_degraded"
     return {
         "decision": decision,
@@ -145,13 +238,47 @@ def review_integrity_report(reviewers: list[dict[str, str]]) -> dict[str, Any]:
         "independent_approvals": independent_approvals,
         "unavailable": unavailable,
         "degraded": degraded,
+        "degraded_reasons": degraded_reasons,
+        "insufficient_independent": insufficient_independent,
         "blocking": blocking,
     }
 
 
 def preserve_core_verdict(core_verdict: str, sidecar_results: list[dict[str, str]]) -> dict[str, Any]:
     warnings = [item for item in sidecar_results if item.get("status") == "failed"]
-    return {"core_verdict": core_verdict, "warnings": warnings}
+    authority_violations = [
+        item
+        for item in sidecar_results
+        if item.get("claims_completion") or item.get("claims_core_verdict") or item.get("overrides_core_verdict")
+    ]
+    return {
+        "accepted": not authority_violations,
+        "core_verdict": core_verdict,
+        "warnings": warnings,
+        "authority_violations": authority_violations,
+    }
+
+
+def _review_integrity_ready(review_integrity: dict[str, Any]) -> bool:
+    # Normal proceed needs the strict unanimous shape; degraded proceed remains
+    # usable only when at least one independent approval exists and nothing blocks.
+    if review_integrity.get("decision") == "proceed":
+        return (
+            review_integrity.get("unanimous") is True
+            and not review_integrity.get("unavailable")
+            and not review_integrity.get("degraded")
+            and not review_integrity.get("malformed")
+            and not review_integrity.get("blocking")
+            and not review_integrity.get("insufficient_independent")
+            and len(review_integrity.get("independent_approvals") or []) >= REVIEW_MIN_INDEPENDENT_APPROVALS
+        )
+    if review_integrity.get("decision") == "proceed_degraded":
+        return (
+            not review_integrity.get("malformed")
+            and not review_integrity.get("blocking")
+            and bool(review_integrity.get("independent_approvals"))
+        )
+    return False
 
 
 def merge_drafts(candidates: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -264,6 +391,15 @@ def validate_promotion_request(request: dict[str, Any]) -> ContractResult:
         return ContractResult(False, "missing_verify_gate")
     if not request.get("review_gate"):
         return ContractResult(False, "missing_review_gate")
+    review_integrity = request.get("review_integrity")
+    if not isinstance(review_integrity, dict):
+        return ContractResult(False, "missing_review_integrity")
+    if review_integrity.get("decision") == "blocked":
+        return ContractResult(False, "review_integrity_blocked")
+    if not _review_integrity_ready(review_integrity):
+        return ContractResult(False, "review_integrity_not_ready")
+    if review_integrity.get("decision") == "proceed_degraded" and not request.get("degraded_review_acknowledged"):
+        return ContractResult(False, "degraded_review_requires_acknowledgement")
     return ContractResult(True, "promotion_request_ready")
 
 

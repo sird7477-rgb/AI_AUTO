@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.28.4
+
+- Tightened review summary regression coverage so `proceed` requires normal
+  multi-reviewer trust, degraded fallback success reports degraded trust, and
+  failed or missing external reviewers cannot be silently counted as normal
+  approvals.
+- Added contract expectations for degraded review reporting: callers must
+  provide explicit degraded-trust and missing-reviewer reporting evidence before
+  a degraded review gate can support completion authority.
+- Documented the P0 contract-shape changes: reflection sidecars cannot own any
+  work-state transition, promotion requests must carry review-integrity
+  evidence, and sidecar verdict preservation now exposes authority violations
+  for consumers to handle explicitly.
+
 ## 2026.05.28.3
 
 - Added the read-only `ai-gstack-contract` helper wiring for AI_AUTO's GStack
