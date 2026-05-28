@@ -122,8 +122,8 @@ ai-lab-only bootstrap command:
     function that prints a read-only AI_AUTO template update notice before
     calling the real Codex binary
   - With `--install-codex-tmux-auto-entry`, adds support for
-    `AI_AUTO_CODEX_TMUX_AUTO=1 codex` to enter a project-scoped tmux session
-    only for interactive terminal calls outside tmux
+    default-on project-scoped tmux auto-entry for interactive terminal `codex`
+    calls outside tmux; use `AI_AUTO_CODEX_TMUX_AUTO=0 codex` to opt out
   - When drift is detected, the notice prints the patch-request keyword
     `AI_AUTO 최신 패치 적용해줘`; project `AGENTS.md` expands that keyword into
     the full template patch workflow
@@ -197,7 +197,9 @@ Reload the shell or run:
 The same managed shell integration adds small convenience functions:
 
 - `jwlist`
-  - Lists project folders directly under `/mnt/c/JSJEON/Project_JW/99. 개발개발`
+  - Lists project folders directly under `/mnt/z/JSJEON/Project_JW`
+  - Set `AI_AUTO_JW_PROJECT_ROOT` if your JW projects still live under an extra
+    grouping folder such as `Project_JW/99. 개발개발`
   - Prompts for a number; choose `0` to enter the current folder, or choose a
     subfolder to drill down through grouped projects
   - Stops drilling down and enters a folder when common project markers are
@@ -206,7 +208,7 @@ The same managed shell integration adds small convenience functions:
   - Override the root with `AI_AUTO_JW_PROJECT_ROOT=/path/to/root`
 
 - `sirdlist`
-  - Lists project folders directly under `/mnt/c/JSJEON/Project_SirD`
+  - Lists project folders directly under `/mnt/z/JSJEON/Project_SirD`
   - Prompts for a number; choose `0` to enter the current folder, or choose a
     subfolder to drill down through grouped projects
   - Stops drilling down and enters a folder when common project markers are
@@ -253,13 +255,15 @@ The same managed `codex` shell wrapper can optionally support tmux auto-entry:
 
     ./scripts/install-global-files.sh --install-codex-tmux-auto-entry
 
-The feature remains off until explicitly enabled for a shell or command:
+After installation, normal interactive `codex` calls outside tmux enter a stable
+project-scoped tmux session automatically. Disable it for a shell or command
+when direct execution is needed:
 
-    AI_AUTO_CODEX_TMUX_AUTO=1 codex
+    AI_AUTO_CODEX_TMUX_AUTO=0 codex
 
-When enabled, interactive `codex` calls outside tmux attach to a stable
-project-scoped tmux session and start in the current directory. If that session
-already exists, tmux attaches to it instead of starting a second Codex command.
+Interactive `codex` calls outside tmux attach to a stable project-scoped tmux
+session and start in the current directory. If that session already exists,
+tmux attaches to it instead of starting a second Codex command.
 Calls already inside tmux, calls with non-terminal stdin/stdout such as pipes or
 redirects, calls without `tmux` on `PATH`, and calls with
 `AI_AUTO_CODEX_TMUX_AUTO=0` continue to run the real Codex binary directly. This

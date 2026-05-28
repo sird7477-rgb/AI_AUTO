@@ -4649,7 +4649,7 @@ STUB
 #!/bin/bash
 . "$HOME/.config/ai-lab/codex-drift-notice.sh"
 cd "$REPO_DIR/subdir" || exit
-AI_AUTO_CODEX_TMUX_AUTO=1 codex --alpha "two words" "quote's"
+codex --alpha "two words" "quote's"
 STUB
   chmod +x "${tmux_tty_cmd}"
 
@@ -4661,13 +4661,14 @@ STUB
   HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
   HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-tmux-auto-entry >/dev/null
   grep -q '^  local drift_notice_default=1$' "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q '^  local tmux_auto_default=1$' "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
 
   HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    TMUX_FAKE_LOG="${tmp_home}/tmux-default-off.log" \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex default-off' \
-    > "${tmp_home}/codex-default-off.out"
-  grep -q "real codex <default-off>" "${tmp_home}/codex-default-off.out"
-  test ! -e "${tmp_home}/tmux-default-off.log"
+    TMUX_FAKE_LOG="${tmp_home}/tmux-env-off.log" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CODEX_TMUX_AUTO=0 codex env-off' \
+    > "${tmp_home}/codex-env-off.out"
+  grep -q "real codex <env-off>" "${tmp_home}/codex-env-off.out"
+  test ! -e "${tmp_home}/tmux-env-off.log"
 
   HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     TMUX="" TMUX_FAKE_LOG="${tmp_home}/tmux-on.log" \
@@ -4678,7 +4679,7 @@ STUB
 
   printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     TMUX_FAKE_LOG="${tmp_home}/tmux-nontty.log" \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CODEX_TMUX_AUTO=1 codex --stdin-check' \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex --stdin-check' \
     > "${tmp_home}/codex-nontty.out"
   grep -q "real codex <--stdin-check>" "${tmp_home}/codex-nontty.out"
   grep -q "stdin <input stream>" "${tmp_home}/codex-nontty.out"
@@ -4686,13 +4687,13 @@ STUB
 
   HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     TMUX="/tmp/fake-tmux,1,0" TMUX_FAKE_LOG="${tmp_home}/tmux-nested.log" \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CODEX_TMUX_AUTO=1 codex nested' \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex nested' \
     > "${tmp_home}/codex-nested.out"
   grep -q "real codex <nested>" "${tmp_home}/codex-nested.out"
   test ! -e "${tmp_home}/tmux-nested.log"
 
   HOME="${tmp_home}" PATH="${fake_bin}" REPO_DIR="${repo_dir}" \
-    /bin/bash -c '. "$HOME/.config/ai-lab/AI_AUTO.sh"; . "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CODEX_TMUX_AUTO=1 codex no-tmux' \
+    /bin/bash -c '. "$HOME/.config/ai-lab/AI_AUTO.sh"; . "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex no-tmux' \
     > "${tmp_home}/codex-no-tmux.out"
   grep -q "real codex <no-tmux>" "${tmp_home}/codex-no-tmux.out"
 )

@@ -47,9 +47,9 @@ Options:
       update notice once per shell session before the first real codex call in
       each AI_AUTO-managed project.
   --install-codex-tmux-auto-entry
-      Install the same managed codex shell function with support for
-      AI_AUTO_CODEX_TMUX_AUTO=1. When enabled per shell or command, interactive
-      codex calls outside tmux attach to a project-scoped tmux session.
+      Install the same managed codex shell function with default-on tmux
+      auto-entry. Interactive codex calls outside tmux attach to a
+      project-scoped tmux session; use AI_AUTO_CODEX_TMUX_AUTO=0 to opt out.
   -h, --help
       Show this help.
 
@@ -300,11 +300,11 @@ _ai_auto_project_list_cd() {
 }
 
 jwlist() {
-  _ai_auto_project_list_cd "\${AI_AUTO_JW_PROJECT_ROOT:-/mnt/c/JSJEON/Project_JW/99. 개발개발}" "jwlist"
+  _ai_auto_project_list_cd "\${AI_AUTO_JW_PROJECT_ROOT:-/mnt/z/JSJEON/Project_JW}" "jwlist"
 }
 
 sirdlist() {
-  _ai_auto_project_list_cd "\${AI_AUTO_SIRD_PROJECT_ROOT:-/mnt/c/JSJEON/Project_SirD}" "sirdlist"
+  _ai_auto_project_list_cd "\${AI_AUTO_SIRD_PROJECT_ROOT:-/mnt/z/JSJEON/Project_SirD}" "sirdlist"
 }
 
 tmux() {
@@ -368,7 +368,7 @@ install_codex_wrapper() {
   local tmp_path
   local begin_count end_count
   local real_codex real_codex_dir real_codex_base real_codex_quoted patch_notes_quoted
-  local drift_default
+  local drift_default tmux_auto_default
 
   if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ] && [ "$INSTALL_CODEX_TMUX_AUTO_ENTRY" -ne 1 ]; then
     return
@@ -466,6 +466,15 @@ install_codex_wrapper() {
     grep -q '^  local drift_notice_default=1$' "$function_path"; then
     drift_default=1
   fi
+  tmux_auto_default="${INSTALL_CODEX_TMUX_AUTO_ENTRY:-0}"
+  if [ "$tmux_auto_default" -ne 1 ] &&
+    [ -f "$function_path" ] &&
+    grep -q '^  local tmux_auto_default=1$' "$function_path"; then
+    tmux_auto_default=1
+    say_warn "preserving existing codex tmux auto-entry default; use AI_AUTO_CODEX_TMUX_AUTO=0 or remove the managed shell function to opt out"
+  elif [ "$tmux_auto_default" -eq 1 ]; then
+    printf '[info] installing codex tmux auto-entry as the default; use AI_AUTO_CODEX_TMUX_AUTO=0 to opt out for a shell\n'
+  fi
 
   cat > "$function_tmp_path" <<EOF
 ${function_marker}
@@ -507,6 +516,7 @@ codex() {
   local real_codex=${real_codex_quoted}
   local patch_notes=${patch_notes_quoted}
   local drift_notice_default=${drift_default}
+  local tmux_auto_default=${tmux_auto_default}
   local repo_root=""
   local status_output=""
   local notice_key=""
@@ -552,7 +562,7 @@ codex() {
     esac
     fi
 
-  if [ "\${AI_AUTO_CODEX_TMUX_AUTO:-0}" = "1" ] &&
+  if [ "\${AI_AUTO_CODEX_TMUX_AUTO:-\${tmux_auto_default}}" = "1" ] &&
     [ -z "\${TMUX:-}" ] &&
     [ -t 0 ] &&
     [ -t 1 ]; then

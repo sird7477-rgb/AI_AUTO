@@ -206,6 +206,9 @@ Fail closed on material ambiguity:
   persistence, ask before acting.
 - Do not hide an assumption inside best-effort execution when the missing answer
   determines whether work should proceed, stop, or be analysis-only.
+- For follow-up meta requests about root cause, guidance, or recurrence, anchor
+  to the failure event the user identified. If the target may also mean an
+  adjacent technical topic, ask before proposing or editing guidance.
 - Proceed from a labeled assumption only for safe, reversible work where the
   assumption does not change the user's intended outcome.
 

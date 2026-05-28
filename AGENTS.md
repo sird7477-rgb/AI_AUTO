@@ -31,7 +31,6 @@ If `./scripts/verify.sh` fails, the task is not complete.
 If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
 
 ## Scope
-
 Allowed:
 
 - documentation cleanup
@@ -137,14 +136,19 @@ small reversible work. `codemod apply`, autofix, or any write-capable tool
 requires an explicit execution command tied to an approved scoped plan, reviewed
 dry-run diff or summary, rollback path, and post-apply verification.
 
+## Local Environment Boundaries
+
+- Treat `/mnt/z/JSJEON` as the intended SSD project/vault root; use one approved
+  real write probe before disk/remount troubleshooting; see `docs/OBSIDIAN_INTEGRATION.md`.
+- After Ralph, analyze guidance bloat first and propose a two-stage cleanup plan
+  before editing guidance documents.
+
 ## Completion Report Format
 
-When reporting completion, include:
+Completion reports must start with a plain Korean summary, avoiding internal
+variable names unless needed for reproduction or user action, then include:
 
 - changed files
 - diff summary
-- verification command
-- verification result
+- verification command and result
 - known warnings or limitations
-- user-facing summary in plain Korean first, avoiding internal variable names
-  unless they are needed for reproduction or user action

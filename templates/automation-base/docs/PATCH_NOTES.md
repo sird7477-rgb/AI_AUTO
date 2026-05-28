@@ -4,6 +4,26 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.28.2
+
+- Clarified ambiguity handling for follow-up meta requests so root-cause,
+  guidance-update, or recurrence-prevention questions stay anchored to the
+  specific failure event the user identified instead of drifting to adjacent
+  technical topics.
+- Moved the repo-owned default local project and vault paths from
+  `/mnt/c/JSJEON/...` to `/mnt/z/JSJEON/...`; users who keep projects on the old
+  drive or under the former `Project_JW/99. 개발개발` grouping should override
+  `AI_AUTO_JW_PROJECT_ROOT`, `AI_AUTO_SIRD_PROJECT_ROOT`, and local vault paths.
+- Made installed Codex tmux auto-entry default on after
+  `--install-codex-tmux-auto-entry`; use `AI_AUTO_CODEX_TMUX_AUTO=0 codex` for
+  direct execution while scripts, pipes, redirects, and nested tmux sessions
+  still bypass tmux. Reverting to direct execution is currently a per-shell
+  opt-out or managed shell-function removal.
+- Documented the external SSD sandbox boundary so `/mnt/z` sandbox read-only
+  evidence is not mistaken for SSD failure without an approved real write probe.
+- Added post-Ralph guidance-bloat handling guidance: analyze first, then propose
+  a two-stage cleanup plan before editing guidance documents.
+
 ## 2026.05.27.2
 
 - Added opt-in `codex` tmux auto-entry support through the managed shell

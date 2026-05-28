@@ -115,6 +115,19 @@ Project repositories and the Obsidian vault may live on an external SSD. Keep
 the AI_AUTO checkout, `~/bin`, `~/.config/ai-lab`, and
 `~/.local/state/ai-auto` on the internal Ubuntu/WSL filesystem.
 
+For the local `Z:` SSD, the expected WSL paths are
+`/mnt/z/JSJEON/Project_JW`, `/mnt/z/JSJEON/Project_SirD`, and
+`/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault`. If a Codex sandboxed command reports
+`/mnt/z` as read-only, treat it first as a sandbox writable-root boundary, not
+as SSD failure. Use one approved real write probe for the target path before
+diagnosing Windows disk state, WSL remounting, or drive health.
+
+Agent-written `aiinit`, AI_AUTO template patches, and Obsidian vault pushes under
+`/mnt/z` require either an approved write command for that target path or a Codex
+session configured with the target project/vault as a writable root. Human-run
+commands in a normal WSL shell can write to the SSD directly when the real probe
+passes.
+
 After moving a project, run `ai-register --prune`, register the new project
 path, then run the project doctor and verification.
 

@@ -1,7 +1,7 @@
 {
   "obsidian": {
-    "vault_root_windows": "C:\\JSJEON\\Obsidian\\AI_AUTO_Vault",
-    "vault_root_wsl": "/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault",
-    "ai_auto_vault_dir": "/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO"
+    "vault_root_windows": "Z:\\JSJEON\\Obsidian\\AI_AUTO_Vault",
+    "vault_root_wsl": "/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault",
+    "ai_auto_vault_dir": "/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO"
   }
 }
