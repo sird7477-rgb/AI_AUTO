@@ -14,14 +14,21 @@ Decision: do not adopt GStack wholesale for now.
 
 Recommended adoption style:
 
-1. Add GStack-style product challenge as a pre-plan/read-only gate.
-2. Strengthen UI/design review with anti-slop and reference-extraction checks.
-3. Convert browser QA ideas into AI_AUTO Playwright/CDP verification patterns.
-4. Feed retro patterns into Reflection Loop and Obsidian drafts.
-5. Keep security review as an explicit optional lane for security-sensitive work.
-6. Record GStack parallel sprints as an operating-model observation only; do not
-   treat them as an approved AI_AUTO implementation track.
-7. Compare GStack operating guidance and agent personas against AI_AUTO's
+The list below mixes advisory benchmark lenses and adoption recommendations.
+Advisory lenses do not become required gates unless separately promoted.
+
+1. Advisory: use GStack-style product challenge as a planning lens/checklist
+   unless a later scoped plan separately promotes it.
+2. Recommendation: strengthen UI/design review with anti-slop and
+   reference-extraction checks.
+3. Recommendation: convert browser QA ideas into AI_AUTO Playwright/CDP
+   verification patterns.
+4. Recommendation: feed retro patterns into Reflection Loop and Obsidian drafts.
+5. Recommendation: keep security review as an explicit optional lane for
+   security-sensitive work.
+6. Observation: record GStack parallel sprints as an operating-model note only;
+   do not treat them as an approved AI_AUTO implementation track.
+7. Recommendation: compare GStack operating guidance and agent personas against AI_AUTO's
    current roles, gates, and escalation rules. Absorb useful review lenses, not
    a permanently expanded 20+ persona roster.
 
@@ -347,8 +354,11 @@ this incident alone.
 Roadmap scope:
 
 - Phase A through Phase F are adoption planning phases.
-- The execution Ralph implements Phase A through Phase F as AI_AUTO-native
-  checklists and side-effect-free pure contracts only.
+- The previous GStack Ralph execution represented Phase A through Phase F as
+  AI_AUTO-native checklists and side-effect-free pure contracts only.
+- These prior benchmark/pure-contract artifacts are not new runtime adoption and
+  are retained for reference; they are not part of the current structural-audit
+  branch's item 6 small-tool adoption scope.
 - Product/runtime adoption begins only after the current Reflection Loop work is
   committed or otherwise stabilized and a phase-specific execution plan is
   approved.
