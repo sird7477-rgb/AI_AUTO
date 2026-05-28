@@ -1,4 +1,5 @@
 from scripts.self_demo_contracts import (
+    artifact_delta_check,
     artifact_sync,
     benchmark_evidence,
     completion_authority,
@@ -166,6 +167,10 @@ def test_benchmark_supports_higher_is_better() -> None:
     result = benchmark_evidence(valid)
     assert result.accepted
     assert result.reason == "benchmark_pass"
+    assert result.data["readiness_supported"] is False
+    readiness = benchmark_evidence({**valid, "claims_readiness": True})
+    assert readiness.accepted
+    assert readiness.data["readiness_supported"] is True
     zero_baseline = benchmark_evidence({**valid, "baseline": 0})
     assert zero_baseline.accepted
     assert zero_baseline.data["ratio"] == float("inf")
@@ -297,3 +302,58 @@ def test_artifact_sync_requires_material_findings_to_land_or_defer() -> None:
     missing = artifact_sync([{"id": "late-finding", "material": True}])
     assert missing.reason == "material_findings_missing_artifact_sync"
     assert missing.data["unsynced"] == ["late-finding"]
+
+
+def test_artifact_delta_check_blocks_late_or_final_unsynced_findings() -> None:
+    assert artifact_delta_check(
+        [
+            {
+                "id": "late-risk",
+                "material": True,
+                "learned_after_artifact_write": True,
+                "artifact": "plans/example.md",
+                "artifact_contains_finding": True,
+                "artifact_updated_after_finding": True,
+            },
+            {
+                "id": "deferred-axis",
+                "material": True,
+                "learned_after_artifact_write": True,
+                "deferred_with_reason": "needs separate approval",
+            },
+            {"id": "minor-note", "material": False, "appears_in_final_answer": True},
+        ]
+    ).accepted
+
+    late_missing_update = artifact_delta_check(
+        [
+            {
+                "id": "late-risk",
+                "material": True,
+                "learned_after_artifact_write": True,
+                "artifact": "plans/example.md",
+                "artifact_contains_finding": True,
+            }
+        ]
+    )
+    assert late_missing_update.reason == "late_findings_missing_artifact_update"
+    assert late_missing_update.data["unsynced"] == ["late-risk"]
+
+    final_answer_missing_artifact = artifact_delta_check(
+        [{"id": "final-claim", "material": True, "appears_in_final_answer": True}]
+    )
+    assert final_answer_missing_artifact.reason == "final_answer_contains_unsynced_findings"
+    assert final_answer_missing_artifact.data["unsynced"] == ["final-claim"]
+
+    final_answer_missing_artifact_path = artifact_delta_check(
+        [
+            {
+                "id": "final-claim",
+                "material": True,
+                "appears_in_final_answer": True,
+                "artifact_contains_finding": True,
+            }
+        ]
+    )
+    assert final_answer_missing_artifact_path.reason == "final_answer_contains_unsynced_findings"
+    assert final_answer_missing_artifact_path.data["unsynced"] == ["final-claim"]

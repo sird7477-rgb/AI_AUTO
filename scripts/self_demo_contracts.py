@@ -164,7 +164,7 @@ def benchmark_evidence(record: dict[str, Any]) -> ContractResult:
             "ratio": ratio,
             "metric": record["metric"],
             "unit": record["unit"],
-            "readiness_supported": verdict == "pass",
+            "readiness_supported": verdict == "pass" and bool(record.get("claims_readiness")),
         },
     )
 
@@ -248,3 +248,38 @@ def artifact_sync(findings: list[dict[str, Any]]) -> ContractResult:
     if unsynced:
         return ContractResult(False, "material_findings_missing_artifact_sync", {"unsynced": unsynced})
     return ContractResult(True, "artifact_sync_ready", {})
+
+
+def artifact_delta_check(findings: list[dict[str, Any]]) -> ContractResult:
+    late_unsynced = []
+    final_answer_unsynced = []
+    for finding in findings:
+        if not finding.get("material"):
+            continue
+        if finding.get("deferred_with_reason"):
+            continue
+
+        finding_id = finding.get("id", "unknown")
+        artifact_contains_finding = bool(finding.get("artifact_contains_finding"))
+        artifact_updated_after_finding = bool(finding.get("artifact_updated_after_finding"))
+
+        if finding.get("learned_after_artifact_write") and not (
+            finding.get("artifact") and artifact_contains_finding and artifact_updated_after_finding
+        ):
+            late_unsynced.append(finding_id)
+        if finding.get("appears_in_final_answer") and not (finding.get("artifact") and artifact_contains_finding):
+            final_answer_unsynced.append(finding_id)
+
+    if final_answer_unsynced:
+        return ContractResult(
+            False,
+            "final_answer_contains_unsynced_findings",
+            {"unsynced": final_answer_unsynced},
+        )
+    if late_unsynced:
+        return ContractResult(
+            False,
+            "late_findings_missing_artifact_update",
+            {"unsynced": late_unsynced},
+        )
+    return ContractResult(True, "artifact_delta_ready", {})
