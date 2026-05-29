@@ -267,6 +267,27 @@ split_context_active() {
   [ -n "${SPLIT_CONTEXT_MANIFEST_FILE:-}" ] && [ "${SPLIT_CONTEXT_MANIFEST_FILE}" != "none" ] && [ -f "${SPLIT_CONTEXT_MANIFEST_FILE}" ]
 }
 
+untracked_guard_block_reason() {
+  local context_file="$1"
+  local guard_text
+
+  [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
+  guard_text="$(awk '
+    /^## Untracked Review Guard$/ { in_guard=1; next }
+    /^## / && in_guard { exit }
+    in_guard { print }
+  ' "${context_file}")"
+  if ! printf '%s\n' "${guard_text}" | grep -q "^guard_status: material_untracked_artifacts_present$" && \
+     ! printf '%s\n' "${guard_text}" | grep -q "Material untracked review artifacts are present, but content inclusion is disabled."; then
+    return 1
+  fi
+  if [ "${REVIEW_UNTRACKED_MANUAL_REVIEWED:-0}" = "1" ]; then
+    return 1
+  fi
+  echo "material_untracked_artifacts_require_manual_review"
+  return 0
+}
+
 review_covers_split_context() {
   local review_file="$1"
   local manifest_file="$2"
@@ -450,6 +471,7 @@ missing_reviewers() {
 }
 
 REVIEW_RUN_SUMMARY_FILE="$(latest_file 'review-summary-*.md')"
+REVIEW_CONTEXT_FILE="$(manifest_file 'Context' 'latest-review-context.md')"
 CLAUDE_FILE="$(manifest_file 'Claude result' 'claude-review-*.md')"
 GEMINI_FILE="$(manifest_file 'Gemini result' 'gemini-review-*.md')"
 CODEX_ARCHITECT_FALLBACK_FILE="$(manifest_file 'Codex architect fallback' 'codex-architect-fallback-*.md')"
@@ -473,6 +495,14 @@ FINAL_DECISION="$(final_decision "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODE
 REVIEW_COVERAGE="$(review_coverage "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}" "${CODEX_TEST_VERDICT}")"
 DECISION_REASON="$(decision_reason "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}" "${CODEX_TEST_VERDICT}")"
 POLICY_BLOCK_REASON="$(policy_block_reason "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}" "${CODEX_TEST_VERDICT}")"
+UNTRACKED_BLOCK_REASON="$(untracked_guard_block_reason "${REVIEW_CONTEXT_FILE}" || true)"
+if [ -n "${UNTRACKED_BLOCK_REASON}" ]; then
+  if [ "${POLICY_BLOCK_REASON}" = "none" ]; then
+    POLICY_BLOCK_REASON="${UNTRACKED_BLOCK_REASON}"
+  else
+    POLICY_BLOCK_REASON="${POLICY_BLOCK_REASON},${UNTRACKED_BLOCK_REASON}"
+  fi
+fi
 if [ "${POLICY_BLOCK_REASON}" != "none" ] && { [ "${FINAL_DECISION}" = "proceed" ] || [ "${FINAL_DECISION}" = "proceed_degraded" ]; }; then
   FINAL_DECISION="review_manually"
   DECISION_REASON="${POLICY_BLOCK_REASON}"
@@ -499,6 +529,15 @@ cat > "${SUMMARY_FILE}" <<SUMMARY
 # AI Review Verdict
 
 Generated at: $(date -Iseconds)
+
+## Short Summary
+
+- decision: ${FINAL_DECISION}
+- reason: ${DECISION_REASON}
+- coverage: ${REVIEW_COVERAGE}
+- trust: ${TRUST_LEVEL}
+- missing_or_unusable_reviewers: ${MISSING_REVIEWERS}
+- authority: ${FINAL_DECISION} is not commit approval unless normal verification and user commit approval are also satisfied.
 
 ## Final Decision
 
@@ -529,6 +568,14 @@ Codex fallback coverage is degraded and informational-only. It is not independen
 ## Split Context Manifest
 
 ${SPLIT_CONTEXT_MANIFEST_FILE:-none}
+
+## Review Context
+
+${REVIEW_CONTEXT_FILE:-missing}
+
+## Untracked Artifact Guard
+
+${UNTRACKED_BLOCK_REASON:-clear}
 
 ## Disabled Reviewer Reporting
 

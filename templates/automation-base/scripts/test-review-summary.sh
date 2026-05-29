@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)"
 SUMMARY_SCRIPT="${REPO_ROOT}/scripts/summarize-ai-reviews.sh"
 TMP_ROOT="$(mktemp -d)"
 
@@ -129,9 +129,14 @@ write_run_summary() {
   local test_fallback="$5"
   local fallback_summary="$6"
   local split_manifest="${7:-none}"
+  local context_file="${8:-none}"
 
   cat > "${dir}/review-summary-current.md" <<MSG
 # AI Review Summary
+
+## Inputs
+
+- Context: ${context_file}
 
 ## Outputs
 
@@ -173,7 +178,8 @@ assert_summary() {
   mkdir -p "${out_dir}"
 
   set +e
-  RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+  REVIEW_UNTRACKED_MANUAL_REVIEWED="${REVIEW_UNTRACKED_MANUAL_REVIEWED_FOR_TEST:-0}" \
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
   status=$?
   set -e
 
@@ -233,6 +239,13 @@ assert_summary() {
     cat "${summary_file}"
     exit 1
   fi
+
+  grep -q "## Short Summary" "${summary_file}"
+  grep -q -- "- decision: ${expected_decision}" "${summary_file}"
+  grep -q -- "- reason:" "${summary_file}"
+  grep -q -- "- coverage: ${expected_coverage}" "${summary_file}"
+  grep -q -- "- trust: ${trust}" "${summary_file}"
+  grep -q -- "- authority:" "${summary_file}"
 
   echo "[summary-test] ${name}: pass"
 }
@@ -629,6 +642,105 @@ case_codex_fallback_without_direct_inspection_blocks() {
   assert_summary "codex_fallback_without_direct_inspection_blocks" "review_manually" "codex_only_degraded" 1 "claude:skipped, gemini:skipped"
 }
 
+case_untracked_guard_blocks_omitted_material_artifacts() {
+  local dir="${TMP_ROOT}/untracked_guard_blocks_omitted_material_artifacts"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Untracked Review Guard
+
+guard_status: material_untracked_artifacts_present
+manual_review_required: true
+manual_review_override: 0
+content_included: false
+Material untracked review artifacts are present, but content inclusion is disabled.
+Set INCLUDE_UNTRACKED_CONTENT=1 or require manual review before commit readiness.
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "untracked_guard_blocks_omitted_material_artifacts" "review_manually" "multi_reviewer" 1
+}
+
+case_untracked_guard_blocks_enabled_content_without_manual_review() {
+  local dir="${TMP_ROOT}/untracked_guard_blocks_enabled_content_without_manual_review"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Untracked Review Guard
+
+guard_status: material_untracked_artifacts_present
+manual_review_required: true
+manual_review_override: 0
+content_included: true
+Material untracked review artifacts are present and content inclusion is enabled.
+
+## Diff
+
++Material untracked review artifacts are present, but content inclusion is disabled.
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "untracked_guard_blocks_enabled_content_without_manual_review" "review_manually" "multi_reviewer" 1
+}
+
+case_untracked_guard_allows_manual_review_override() {
+  local dir="${TMP_ROOT}/untracked_guard_allows_manual_review_override"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Untracked Review Guard
+
+guard_status: material_untracked_artifacts_present
+manual_review_required: true
+manual_review_override: 1
+content_included: true
+Material untracked review artifacts are present and content inclusion is enabled.
+
+## Diff
+
++Material untracked review artifacts are present, but content inclusion is disabled.
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  REVIEW_UNTRACKED_MANUAL_REVIEWED_FOR_TEST=1 assert_summary "untracked_guard_allows_manual_review_override" "proceed" "multi_reviewer" 0
+}
+
 case_multi_reviewer
 case_single_external_plus_codex
 case_codex_only_degraded
@@ -648,5 +760,8 @@ case_split_manifest_prompt_echo_blocks_without_synthesis_section
 case_split_manifest_synthesis_lists_only_blocks
 case_split_manifest_synthesis_allows_approval
 case_codex_fallback_without_direct_inspection_blocks
+case_untracked_guard_blocks_omitted_material_artifacts
+case_untracked_guard_blocks_enabled_content_without_manual_review
+case_untracked_guard_allows_manual_review_override
 
 echo "[summary-test] success"

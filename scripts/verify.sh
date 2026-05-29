@@ -56,6 +56,7 @@ for script in \
 do
   bash -n "${script}"
 done
+shellcheck -S warning scripts/*.sh templates/automation-base/scripts/*.sh
 bash -n tools/ai-auto-init
 bash -n tools/ai-home
 bash -n tools/ai-register
@@ -75,10 +76,17 @@ bash -n tools/workspace-scan
 python3 -m py_compile tools/ai-python-split
 python3 -m py_compile tools/ai-plan-workflow
 python3 -m py_compile tools/knowledge-collect
+python3 -m py_compile scripts/benchmark-command.py
+python3 -m py_compile scripts/todo-report.py
 python3 -m py_compile scripts/capture-knowledge-drafts.py
 python3 -m py_compile scripts/knowledge-notes.py
+python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
+python3 -m py_compile templates/automation-base/scripts/todo-report.py
 python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
 python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
+
+echo "[verify] checking canonical TODO report..."
+python3 scripts/todo-report.py --fail-on-active >/dev/null
 
 echo "[verify] testing GStack contract helper..."
 python3 - <<'PY'
@@ -1700,6 +1708,8 @@ echo "[verify] testing review context edge cases..."
   fi
   grep -qx "full" .omx/review-context/latest-review-context.md
   grep -q "No staged or unstaged tracked diff detected" .omx/review-context/latest-review-context.md
+  grep -q "Diff Scope Summary" .omx/review-context/latest-review-context.md
+  grep -q "Untracked Review Guard" .omx/review-context/latest-review-context.md
 
   mkdir -p .omx/plans
   printf '# PRD Fixture\n\nModule boundaries are documented here.\n' > .omx/plans/prd-fixture.md
@@ -1708,6 +1718,14 @@ echo "[verify] testing review context edge cases..."
   grep -q "Local Planning Artifacts" .omx/review-context/latest-review-context.md
   grep -q "prd-fixture.md" .omx/review-context/latest-review-context.md
   grep -q "test-spec-fixture.md" .omx/review-context/latest-review-context.md
+  mkdir -p plans
+  printf '# Candidate Plan\n' > plans/candidate.md
+  mkdir -p tests
+  printf 'def test_candidate():\n    assert True\n' > tests/test_candidate.py
+  "${context_script}" >/dev/null
+  grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md
+  grep -q "plans/candidate.md" .omx/review-context/latest-review-context.md
+  grep -q "tests/test_candidate.py" .omx/review-context/latest-review-context.md
 
   printf 'small tracked edit\n' >> staged.txt
   mkdir -p .omx/review-context
@@ -1783,7 +1801,7 @@ MARKER
     PROMPT_DIR="${tmp_dir}/prompts" \
     EXTERNAL_REVIEW_DIR="${tmp_dir}/external" \
     REVIEW_STATE_DIR="${tmp_dir}/state" \
-    RESET_DISABLED_AI_REVIEWERS= \
+    RESET_DISABLED_AI_REVIEWERS='' \
     REVIEW_RUN_ID='fixture/run id' \
     ./scripts/run-ai-reviews.sh > "${tmp_dir}/external.out"
   status=$?
@@ -2811,6 +2829,8 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     archive-omx-artifacts.sh \
     ai-runtime-adapter.sh \
     automation-doctor.sh \
+    benchmark-command.py \
+    todo-report.py \
     collect-review-context.sh \
     doc-budget.sh \
     guidance-duplicate-report.sh \
@@ -2894,6 +2914,8 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     archive-omx-artifacts.sh \
     ai-runtime-adapter.sh \
     automation-doctor.sh \
+    benchmark-command.py \
+    todo-report.py \
     collect-review-context.sh \
     doc-budget.sh \
     guidance-duplicate-report.sh \
@@ -2963,6 +2985,8 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     archive-omx-artifacts.sh \
     ai-runtime-adapter.sh \
     automation-doctor.sh \
+    benchmark-command.py \
+    todo-report.py \
     collect-review-context.sh \
     doc-budget.sh \
     guidance-duplicate-report.sh \
@@ -3952,6 +3976,8 @@ echo "[verify] testing automation template installer..."
   AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
   test -x "${target_dir}/scripts/archive-omx-artifacts.sh"
   test -x "${target_dir}/scripts/ai-runtime-adapter.sh"
+  test -x "${target_dir}/scripts/benchmark-command.py"
+  test -x "${target_dir}/scripts/todo-report.py"
   test -x "${target_dir}/scripts/discover-ai-models.sh"
   test -x "${target_dir}/scripts/doc-budget.sh"
   test -x "${target_dir}/scripts/guidance-duplicate-report.sh"
@@ -4138,6 +4164,8 @@ echo "[verify] testing automation template installer..."
   grep -q $'same\tscripts/ai-runtime-adapter.sh\tscripts/ai-runtime-adapter.sh\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/PATCH_NOTES.md\tdocs/PATCH_NOTES.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/OBSIDIAN_INTEGRATION.md\tdocs/OBSIDIAN_INTEGRATION.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tscripts/benchmark-command.py\tscripts/benchmark-command.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tscripts/todo-report.py\tscripts/todo-report.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/capture-knowledge-drafts.py\tscripts/capture-knowledge-drafts.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/knowledge-notes.py\tscripts/knowledge-notes.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/verify.sh\tscripts/verify.example.sh\tproject-owned\tinspect-only' "${tmp_dir}/template-status-current.out"
@@ -4235,6 +4263,10 @@ test -x "scripts/doc-budget.sh"
 test -x "templates/automation-base/scripts/doc-budget.sh"
 test -x "scripts/guidance-duplicate-report.sh"
 test -x "templates/automation-base/scripts/guidance-duplicate-report.sh"
+test -x "scripts/benchmark-command.py"
+test -x "templates/automation-base/scripts/benchmark-command.py"
+test -x "scripts/todo-report.py"
+test -x "templates/automation-base/scripts/todo-report.py"
 test -x "scripts/capture-knowledge-drafts.py"
 test -x "templates/automation-base/scripts/capture-knowledge-drafts.py"
 test -x "scripts/knowledge-notes.py"
@@ -5023,6 +5055,8 @@ for script in \
   automation-doctor.sh \
   archive-omx-artifacts.sh \
   ai-runtime-adapter.sh \
+  benchmark-command.py \
+  todo-report.py \
   capture-knowledge-drafts.py \
   collect-review-context.sh \
   doc-budget.sh \

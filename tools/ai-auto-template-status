@@ -168,6 +168,7 @@ docs/WORKFLOW.md|docs/WORKFLOW.md|hybrid|review-merge
 scripts/archive-omx-artifacts.sh|scripts/archive-omx-artifacts.sh|template-owned|update
 scripts/ai-runtime-adapter.sh|scripts/ai-runtime-adapter.sh|template-owned|update
 scripts/automation-doctor.sh|scripts/automation-doctor.sh|template-owned|update
+scripts/benchmark-command.py|scripts/benchmark-command.py|template-owned|update
 scripts/capture-knowledge-drafts.py|scripts/capture-knowledge-drafts.py|template-owned|update
 scripts/collect-review-context.sh|scripts/collect-review-context.sh|template-owned|update
 scripts/discover-ai-models.sh|scripts/discover-ai-models.sh|template-owned|update
@@ -179,6 +180,7 @@ scripts/resolve-feedback.sh|scripts/resolve-feedback.sh|template-owned|update
 scripts/run-ai-reviews.sh|scripts/run-ai-reviews.sh|template-owned|update
 scripts/summarize-ai-reviews.sh|scripts/summarize-ai-reviews.sh|template-owned|update
 scripts/test-review-summary.sh|scripts/test-review-summary.sh|template-owned|update
+scripts/todo-report.py|scripts/todo-report.py|template-owned|update
 scripts/review-gate.sh|scripts/review-gate.sh|template-owned|update
 scripts/write-session-checkpoint.sh|scripts/write-session-checkpoint.sh|template-owned|update
 scripts/verify.sh|scripts/verify.example.sh|project-owned|inspect-only

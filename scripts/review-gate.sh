@@ -4,6 +4,29 @@ set -euo pipefail
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
 
+latest_review_context() {
+  find ".omx/review-context" -maxdepth 1 -type f -name 'latest-review-context.md' -print 2>/dev/null | head -1
+}
+
+print_diff_scope_gate() {
+  local context_file
+  context_file="$(latest_review_context)"
+  [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 0
+
+  local scope_summary
+  scope_summary="$(
+    awk '
+      /^## Diff Scope Summary$/ { in_scope=1; next }
+      /^## / && in_scope { exit }
+      in_scope && /^- / { print }
+    ' "${context_file}"
+  )"
+  [ -n "${scope_summary}" ] || return 0
+
+  echo "[gate] consuming diff scope summary..."
+  printf '%s\n' "${scope_summary}" | sed 's/^/[gate] /'
+}
+
 echo "[gate] running verification..."
 env \
   -u RUN_CLAUDE_REVIEW \
@@ -23,6 +46,8 @@ if [ "${review_status}" -ne 0 ]; then
   fi
   exit "${review_status}"
 fi
+
+print_diff_scope_gate
 
 echo "[gate] summarizing AI review verdicts..."
 summary_status=0

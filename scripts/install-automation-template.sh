@@ -84,6 +84,7 @@ for path in \
   "scripts/archive-omx-artifacts.sh" \
   "scripts/ai-runtime-adapter.sh" \
   "scripts/automation-doctor.sh" \
+  "scripts/benchmark-command.py" \
   "scripts/capture-knowledge-drafts.py" \
   "scripts/collect-review-context.sh" \
   "scripts/doc-budget.sh" \
@@ -97,6 +98,7 @@ for path in \
   "scripts/run-ai-reviews.sh" \
   "scripts/summarize-ai-reviews.sh" \
   "scripts/test-review-summary.sh" \
+  "scripts/todo-report.py" \
   "scripts/review-gate.sh" \
   "scripts/write-session-checkpoint.sh" \
   "scripts/verify.sh"
@@ -159,6 +161,7 @@ cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 cp "${TEMPLATE_DIR}/scripts/archive-omx-artifacts.sh" "${TARGET_DIR}/scripts/archive-omx-artifacts.sh"
 cp "${TEMPLATE_DIR}/scripts/ai-runtime-adapter.sh" "${TARGET_DIR}/scripts/ai-runtime-adapter.sh"
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
+cp "${TEMPLATE_DIR}/scripts/benchmark-command.py" "${TARGET_DIR}/scripts/benchmark-command.py"
 cp "${TEMPLATE_DIR}/scripts/capture-knowledge-drafts.py" "${TARGET_DIR}/scripts/capture-knowledge-drafts.py"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
 cp "${TEMPLATE_DIR}/scripts/doc-budget.sh" "${TARGET_DIR}/scripts/doc-budget.sh"
@@ -172,6 +175,7 @@ cp "${TEMPLATE_DIR}/scripts/resolve-feedback.sh" "${TARGET_DIR}/scripts/resolve-
 cp "${TEMPLATE_DIR}/scripts/run-ai-reviews.sh" "${TARGET_DIR}/scripts/run-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/summarize-ai-reviews.sh" "${TARGET_DIR}/scripts/summarize-ai-reviews.sh"
 cp "${TEMPLATE_DIR}/scripts/test-review-summary.sh" "${TARGET_DIR}/scripts/test-review-summary.sh"
+cp "${TEMPLATE_DIR}/scripts/todo-report.py" "${TARGET_DIR}/scripts/todo-report.py"
 cp "${TEMPLATE_DIR}/scripts/review-gate.sh" "${TARGET_DIR}/scripts/review-gate.sh"
 cp "${TEMPLATE_DIR}/scripts/write-session-checkpoint.sh" "${TARGET_DIR}/scripts/write-session-checkpoint.sh"
 cp "${TEMPLATE_DIR}/scripts/verify.example.sh" "${TARGET_DIR}/scripts/verify.sh"

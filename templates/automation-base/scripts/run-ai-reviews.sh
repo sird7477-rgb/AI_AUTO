@@ -28,7 +28,7 @@ AI_MODEL_DISCOVERY="${AI_MODEL_DISCOVERY:-1}"
 AI_MODEL_DISCOVERY_DIR="${AI_MODEL_DISCOVERY_DIR:-.omx/model-routing}"
 AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV:-${AI_MODEL_DISCOVERY_DIR}/latest.env}"
 AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT:-${AI_MODEL_DISCOVERY_DIR}/latest.md}"
-RUN_AI_REVIEWS_SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RUN_AI_REVIEWS_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_ADAPTER_SCRIPT="${RUNTIME_ADAPTER_SCRIPT:-${RUN_AI_REVIEWS_SCRIPT_DIR}/ai-runtime-adapter.sh}"
 : "${RUNTIME_ADAPTER_AGY_COMMAND:=${GEMINI_REVIEW_COMMAND}}"
 export RUNTIME_ADAPTER_AGY_COMMAND
@@ -1256,7 +1256,6 @@ MSG
   set +e
   gemini_help="$(command_help_text "${gemini_command}")"
   gemini_prompt_file="${GEMINI_PROMPT}"
-  gemini_prompt_bytes="$(wc -c < "${GEMINI_PROMPT}")"
   REVIEWER_PREFLIGHT_DETAILS="$(preflight_details gemini "${gemini_help}" "${GEMINI_PROMPT}")"
   if run_gemini_split_review; then
     status=0

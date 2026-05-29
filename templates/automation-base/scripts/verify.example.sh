@@ -5,6 +5,7 @@
 set -euo pipefail
 
 # Detection marker for automation-doctor; remove only after customizing this file.
+# shellcheck disable=SC2034
 VERIFY_TEMPLATE_UNCONFIGURED=1
 
 echo "[verify] project verification is not configured yet."

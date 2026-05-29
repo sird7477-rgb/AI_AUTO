@@ -1,0 +1,32 @@
+{
+  "benchmark_run_status": "pass",
+  "captured_at": "20260528T203315Z",
+  "claims_readiness": false,
+  "command": ".venv/bin/python -c 'print('\"'\"'ok'\"'\"')'",
+  "environment": {
+    "cwd": "/root/workspace/ai-lab",
+    "git_commit": "fb7cd6cc04825d800db24df5ef01c4884c1e5e4c",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "hyperfine_stdout": "Benchmark 1: .venv/bin/python -c 'print('\"'\"'ok'\"'\"')'\n  Time (mean \u00b1 \u03c3):      17.7 ms \u00b1   3.7 ms    [User: 10.0 ms, System: 8.1 ms]\n  Range (min \u2026 max):    14.7 ms \u2026  21.8 ms    3 runs\n \n",
+  "max_ms": 21.828,
+  "measured_ms": 17.736,
+  "metric": "runtime_ms",
+  "min_ms": 14.737,
+  "name": "verify-smoke-installed",
+  "raw_output_json": "plans/benchmarks/20260528T203315Z-verify-smoke-installed.hyperfine.json",
+  "reason": "measurement_recorded_without_readiness_claim",
+  "replaces_review_gate": false,
+  "replaces_verify": false,
+  "sample_count": 3,
+  "schema_version": "ai_auto_benchmark_v1",
+  "stddev_ms": 3.67,
+  "threshold_stage": "observe",
+  "tool": {
+    "available": true,
+    "name": "hyperfine",
+    "version": "hyperfine 1.18.0"
+  },
+  "verdict": "observed"
+}

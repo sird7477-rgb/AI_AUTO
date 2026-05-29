@@ -315,7 +315,8 @@ run_readonly() {
   local output_file=""
   local timeout_seconds="${RUNTIME_ADAPTER_TIMEOUT_SECONDS:-180}"
   local kill_after_seconds="${RUNTIME_ADAPTER_TIMEOUT_KILL_AFTER_SECONDS:-${REVIEW_TIMEOUT_KILL_AFTER_SECONDS:-5}}"
-  local work_dir="$(pwd)"
+  local work_dir
+  work_dir="$(pwd)"
   local model=""
   local mode command_name
 

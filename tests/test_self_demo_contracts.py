@@ -1,10 +1,17 @@
 from scripts.self_demo_contracts import (
     artifact_delta_check,
     artifact_sync,
+    benchmark_capture_record,
+    benchmark_wrapper_plan,
     benchmark_evidence,
     completion_authority,
+    diff_scope_classification,
+    process_cleanup_evidence,
     reviewer_eligibility,
+    review_gate_short_summary,
     self_demo_record,
+    todo_report_reconciliation,
+    untracked_artifact_review_guard,
 )
 
 
@@ -357,3 +364,210 @@ def test_artifact_delta_check_blocks_late_or_final_unsynced_findings() -> None:
     )
     assert final_answer_missing_artifact_path.reason == "final_answer_contains_unsynced_findings"
     assert final_answer_missing_artifact_path.data["unsynced"] == ["final-claim"]
+
+
+def test_review_gate_short_summary_blocks_overstated_authority() -> None:
+    valid = {
+        "final_decision": "proceed_degraded",
+        "decision_reason": "single_external_plus_codex_fallback_approval",
+        "review_coverage": "single_external_plus_codex_fallback",
+        "trust_level": "degraded",
+        "missing_or_unusable_reviewers": "claude:skipped",
+        "authority_statement": "degraded approval only",
+        "degraded_trust_reported": True,
+        "missing_reviewers_reported": True,
+    }
+    assert review_gate_short_summary(valid).accepted
+    assert review_gate_short_summary({**valid, "degraded_trust_reported": False}).reason == (
+        "degraded_summary_missing_disclosure"
+    )
+    assert review_gate_short_summary({**valid, "trust_level": "normal"}).reason == (
+        "normal_trust_requires_multi_reviewer"
+    )
+    assert review_gate_short_summary({**valid, "authority_statement": "unanimous approval"}).reason == (
+        "unanimity_requires_multi_reviewer_coverage"
+    )
+
+
+def test_untracked_artifact_review_guard_requires_context_or_manual_review() -> None:
+    valid = {
+        "guard_status": "clear",
+        "files": [
+            {"path": "plans/new-plan.md", "material": True, "included_in_context": True},
+            {"path": "notes/private.md", "material": True, "secret_risk": True, "manual_review_required": True},
+            {"path": "scratch.tmp", "material": False},
+        ]
+    }
+    assert untracked_artifact_review_guard(valid).accepted
+    missing = untracked_artifact_review_guard(
+        {"files": [{"path": "plans/new-plan.md", "material": True, "included_in_context": False}]}
+    )
+    assert missing.reason == "material_untracked_artifacts_not_reviewed"
+    assert missing.data["files"] == ["plans/new-plan.md"]
+    structured_missing = untracked_artifact_review_guard(
+        {
+            "guard_status": "material_untracked_artifacts_present",
+            "manual_review_required": True,
+            "manual_reviewed": False,
+            "files": [{"path": "plans/new-plan.md", "material": True, "included_in_context": True}],
+        }
+    )
+    assert structured_missing.reason == "material_untracked_artifacts_require_manual_review"
+    structured_reviewed = untracked_artifact_review_guard(
+        {
+            "guard_status": "material_untracked_artifacts_present",
+            "manual_review_required": True,
+            "manual_reviewed": True,
+            "files": [{"path": "plans/new-plan.md", "material": True, "included_in_context": True}],
+        }
+    )
+    assert structured_reviewed.accepted
+
+
+def test_todo_report_reconciliation_separates_unresolved_and_deferred_work() -> None:
+    result = todo_report_reconciliation(
+        [
+            {"id": "done", "status": "complete", "evidence": "./scripts/verify.sh pass"},
+            {"id": "contract-done", "status": "complete_contract", "evidence": "contract and runtime caller verified"},
+            {"id": "planned", "status": "planned_not_run"},
+            {"id": "later", "status": "later_gated", "reason": "separate trigger"},
+            {"id": "reference", "status": "reference_only", "reason": "not active work"},
+            {"id": "contract", "status": "contract_started"},
+        ]
+    )
+    assert result.accepted
+    assert result.data["unresolved"] == ["planned", "contract"]
+    assert todo_report_reconciliation([{"id": "bad-contract-done", "status": "complete_contract"}]).reason == (
+        "invalid_todo_report"
+    )
+    assert todo_report_reconciliation([{"id": "bad-done", "status": "complete"}]).reason == "invalid_todo_report"
+    assert todo_report_reconciliation([{"id": "bad-later", "status": "later_gated"}]).data["invalid"] == {
+        "bad-later": "non_active_status_requires_reason"
+    }
+
+
+def test_diff_scope_classification_maps_paths_to_review_intensity() -> None:
+    docs_only = diff_scope_classification(["plans/example.md", "docs/WORKFLOW.md"])
+    assert docs_only.accepted
+    assert docs_only.data["scopes"] == ["docs", "plans"]
+    assert docs_only.data["review_intensity"] == "lightweight"
+
+    nested_docs = diff_scope_classification(["docs/research/example.md", "tests/fixtures/example.txt"])
+    assert nested_docs.accepted
+    assert nested_docs.data["scopes"] == ["docs", "tests"]
+
+    strict = diff_scope_classification(["AGENTS.md", "scripts/verify.sh", "templates/automation-base/AGENTS.md"])
+    assert strict.accepted
+    assert strict.data["scopes"] == ["guidance", "scripts", "templates"]
+    assert strict.data["review_intensity"] == "strict"
+
+    unknown = diff_scope_classification(["mystery.file"])
+    assert unknown.accepted
+    assert unknown.reason == "diff_scope_ready"
+    assert unknown.data["unknown_paths"] is True
+
+
+def test_benchmark_wrapper_plan_requires_contract_evidence_without_install_claims() -> None:
+    valid = {
+        "command": "python -m scripts.benchmark_wrapper fixture",
+        "output_json": "plans/benchmark.json",
+        "output_markdown": "plans/benchmark.md",
+        "sample_count": 3,
+        "environment": "local fixture",
+        "external_tool_optional": True,
+        "evidence_record": valid_benchmark_record(),
+    }
+    assert benchmark_wrapper_plan(valid).accepted
+    assert benchmark_wrapper_plan({**valid, "requires_external_tool": True, "external_tool_optional": False}).reason == (
+        "benchmark_external_tool_must_be_optional"
+    )
+    assert benchmark_wrapper_plan({**valid, "claims_readiness_from_single_run": True}).reason == (
+        "single_benchmark_run_cannot_claim_readiness"
+    )
+    assert benchmark_wrapper_plan({**valid, "output_json": "plans/benchmark.txt"}).reason == (
+        "benchmark_json_output_required"
+    )
+    degraded = {
+        **valid,
+        "evidence_record": {
+            **valid_benchmark_record(),
+            "threshold_source": "project_baseline",
+            "baseline_evidence": "captured by tests",
+            "threshold_rationale": "fixture threshold",
+            "measured": 150,
+        },
+    }
+    assert benchmark_wrapper_plan(degraded).reason == "benchmark_wrapper_degraded_evidence"
+
+
+def test_benchmark_capture_record_separates_unavailable_from_evidence_pass() -> None:
+    unavailable = {
+        "schema_version": "ai_auto_benchmark_v1",
+        "name": "verify",
+        "command": "./scripts/verify.sh",
+        "benchmark_run_status": "unavailable",
+        "verdict": "unavailable",
+        "environment": {"git_commit": "abc"},
+        "tool": {"name": "hyperfine", "available": False, "version": None},
+        "sample_count": 0,
+        "claims_readiness": False,
+        "replaces_verify": False,
+        "replaces_review_gate": False,
+    }
+    result = benchmark_capture_record(unavailable)
+    assert result.accepted
+    assert result.reason == "benchmark_capture_unavailable_recorded"
+    assert result.data["readiness_supported"] is False
+    assert benchmark_capture_record({**unavailable, "claims_readiness": True}).reason == (
+        "benchmark_capture_cannot_claim_readiness"
+    )
+    assert benchmark_capture_record({**unavailable, "claims_readiness": "false"}).reason == (
+        "benchmark_capture_boolean_fields_required"
+    )
+    assert benchmark_capture_record({**unavailable, "tool": {"name": "hyperfine", "available": True}}).reason == (
+        "unavailable_capture_requires_missing_tool"
+    )
+    assert benchmark_capture_record({**unavailable, "tool": {"name": "hyperfine", "available": "false"}}).reason == (
+        "benchmark_capture_boolean_fields_required"
+    )
+
+
+def test_benchmark_capture_record_accepts_observed_measurement_without_readiness() -> None:
+    observed = {
+        "schema_version": "ai_auto_benchmark_v1",
+        "name": "verify",
+        "command": "./scripts/verify.sh",
+        "benchmark_run_status": "pass",
+        "verdict": "observed",
+        "environment": {"git_commit": "abc"},
+        "tool": {"name": "hyperfine", "available": True, "version": "hyperfine 1.0"},
+        "sample_count": 3,
+        "measured_ms": 123.0,
+        "claims_readiness": False,
+        "replaces_verify": False,
+        "replaces_review_gate": False,
+    }
+    result = benchmark_capture_record(observed)
+    assert result.accepted
+    assert result.reason == "benchmark_capture_pass"
+    assert benchmark_capture_record({**observed, "sample_count": 0}).reason == (
+        "invalid_benchmark_capture_measurement"
+    )
+
+
+def test_process_cleanup_evidence_rejects_lingering_or_unreaped_timeout() -> None:
+    valid = {
+        "command": "timeout 1 fake-reviewer",
+        "timeout_seconds": 180,
+        "kill_after_seconds": 5,
+        "exit_status": 124,
+        "cleanup_checked": True,
+        "timed_out": True,
+        "forced_kill_or_reaped": True,
+    }
+    assert process_cleanup_evidence(valid).accepted
+    assert process_cleanup_evidence({**valid, "lingering_processes": ["fake-reviewer"]}).reason == (
+        "lingering_processes_detected"
+    )
+    assert process_cleanup_evidence({**valid, "kill_after_seconds": 0}).reason == "invalid_process_timeout"
+    assert process_cleanup_evidence({**valid, "forced_kill_or_reaped": False}).reason == "timed_out_process_not_reaped"

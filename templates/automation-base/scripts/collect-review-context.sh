@@ -193,6 +193,155 @@ collect_review_reference_files() {
   fi
 }
 
+classify_review_scope_for_path() {
+  local file="$1"
+  case "${file}" in
+    templates/automation-base/*)
+      echo "templates"
+      ;;
+    AGENTS.md|*/AGENTS.md)
+      echo "guidance"
+      ;;
+    docs/*)
+      echo "docs"
+      ;;
+    plans/*|.omx/plans/*)
+      echo "plans"
+      ;;
+    scripts/*)
+      echo "scripts"
+      ;;
+    tools/*|bin/*)
+      echo "tools"
+      ;;
+    tests/*)
+      echo "tests"
+      ;;
+    Dockerfile|docker-compose.yml|docker/*)
+      echo "docker"
+      ;;
+    .github/workflows/*)
+      echo "github_actions"
+      ;;
+    *.py|*.js|*.ts|*.tsx|*.jsx|*.html|*.css)
+      echo "app"
+      ;;
+    *)
+      echo "unknown"
+      ;;
+  esac
+}
+
+review_intensity_for_scopes() {
+  local scopes="$1"
+  case "${scopes}" in
+    *guidance*|*scripts*|*templates*|*docker*|*github_actions*)
+      echo "strict"
+      ;;
+    docs|plans|*"docs"*","*"plans"*|*"plans"*","*"docs"*)
+      echo "lightweight"
+      ;;
+    *)
+      echo "standard"
+      ;;
+  esac
+}
+
+required_checks_for_scopes() {
+  local scopes="$1"
+  local checks=("./scripts/verify.sh")
+
+  case "${scopes}" in
+    *scripts*|*tools*|*tests*)
+      checks+=("targeted script/test fixtures")
+      ;;
+  esac
+  case "${scopes}" in
+    *templates*)
+      checks+=("template version and patch notes")
+      ;;
+  esac
+  case "${scopes}" in
+    *guidance*)
+      checks+=("guidance budget check")
+      ;;
+  esac
+  case "${scopes}" in
+    *docker*|*app*)
+      checks+=("docker smoke")
+      ;;
+  esac
+
+  local joined="${checks[0]}"
+  local check
+  for check in "${checks[@]:1}"; do
+    joined="${joined}, ${check}"
+  done
+  echo "${joined}"
+}
+
+write_diff_scope_summary() {
+  local files scopes
+  files="$(
+    {
+      git diff --name-only 2>/dev/null || true
+      git diff --cached --name-only 2>/dev/null || true
+      git ls-files --others --exclude-standard 2>/dev/null || true
+    } | sort -u
+  )"
+
+  if [ -z "${files}" ]; then
+    echo "No changed files detected."
+    return 0
+  fi
+
+  scopes="$(printf '%s\n' "${files}" | while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    classify_review_scope_for_path "${file}"
+  done | sort -u | paste -sd ',' -)"
+
+  echo "- scopes: ${scopes}"
+  echo "- review intensity hint: $(review_intensity_for_scopes "${scopes}")"
+  echo "- required checks: $(required_checks_for_scopes "${scopes}")"
+  echo
+  echo "| File | Scope |"
+  echo "| --- | --- |"
+  printf '%s\n' "${files}" | while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    echo "| ${file} | $(classify_review_scope_for_path "${file}") |"
+  done
+}
+
+write_untracked_review_guard() {
+  local material
+  material="$(
+    git ls-files --others --exclude-standard 2>/dev/null |
+      grep -E '^(plans|docs|scripts|tools|tests|templates/automation-base)/|^AGENTS\.md$' || true
+  )"
+
+  if [ -z "${material}" ]; then
+    echo "guard_status: clear"
+    echo "No material untracked review artifacts detected."
+    return 0
+  fi
+
+  echo "guard_status: material_untracked_artifacts_present"
+  echo "manual_review_required: true"
+  echo "manual_review_override: ${REVIEW_UNTRACKED_MANUAL_REVIEWED:-0}"
+  if [ "${INCLUDE_UNTRACKED_CONTENT}" = "1" ]; then
+    echo "content_included: true"
+    echo "Material untracked review artifacts are present and content inclusion is enabled."
+  else
+    echo "content_included: false"
+    echo "Material untracked review artifacts are present, but content inclusion is disabled."
+    echo "Set INCLUDE_UNTRACKED_CONTENT=1 or require manual review before commit readiness."
+  fi
+  echo
+  echo '```text'
+  printf '%s\n' "${material}"
+  echo '```'
+}
+
 LIGHTWEIGHT_CONTEXT=0
 if use_lightweight_context; then
   LIGHTWEIGHT_CONTEXT=1
@@ -232,6 +381,10 @@ fi
   echo
   write_diff_stat
   echo
+  echo "## Diff Scope Summary"
+  echo
+  write_diff_scope_summary
+  echo
   echo "## Untracked Files"
   echo
   echo '```text'
@@ -239,6 +392,10 @@ fi
   echo '```'
   echo
   echo "Untracked text file content is omitted by default. Set INCLUDE_UNTRACKED_CONTENT=1 to include text files up to ${MAX_UNTRACKED_BYTES} bytes after confirming .gitignore excludes secrets."
+  echo
+  echo "## Untracked Review Guard"
+  echo
+  write_untracked_review_guard
   echo
   echo "## Diff"
   echo
@@ -306,7 +463,7 @@ fi
       echo "### $file"
       echo
       echo '```markdown'
-      sed -n '1,180p' "$file"
+      sed -n '1,240p' "$file"
       echo '```'
       echo
     done

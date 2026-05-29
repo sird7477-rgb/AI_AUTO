@@ -30,6 +30,31 @@ Before marking any work complete, run the repository verification script:
 ./scripts/verify.sh
 ```
 
+`verify.sh` now includes:
+
+- pytest
+- shell syntax checks
+- ShellCheck at warning severity for repo/template shell scripts
+- automation contract tests
+- Docker Compose API/Postgres smoke checks
+
+ShellCheck info/style findings are not part of the required gate yet. Treat them
+as cleanup candidates unless a later plan promotes a narrower rule set.
+
+Before a commit candidate, run the review gate after verification:
+
+```bash
+./scripts/review-gate.sh
+```
+
+When a candidate includes untracked text artifacts that should be reviewed, run
+the gate with untracked content included after confirming generated output and
+secrets are ignored:
+
+```bash
+REVIEW_INCLUDE_UNTRACKED_CONTENT=1 REVIEW_UNTRACKED_MANUAL_REVIEWED=1 ./scripts/review-gate.sh
+```
+
 Check first-time ai-lab checkout setup:
 
 ```bash
@@ -151,6 +176,8 @@ cd AI_AUTO
 - `python3`, `python3-venv`, `python3-pip`
 - `nodejs`, `npm`
 - `docker.io`와 사용 가능한 Docker Compose v2 plugin 패키지
+- `shellcheck`
+- `hyperfine`
 - `.venv` 가상환경과 `requirements.txt` Python 패키지
 - `./scripts/install-global-files.sh`를 통한 `~/bin` helper symlink
 
@@ -326,6 +353,23 @@ source ~/.bashrc
 ./scripts/automation-doctor.sh
 ./scripts/verify.sh
 ```
+
+## Installed Local Tools
+
+AI_AUTO currently expects these local tools for the full source-checkout
+workflow:
+
+- `shellcheck`: required by `./scripts/verify.sh` at warning severity.
+- `hyperfine`: used by `scripts/benchmark-command.py` for optional benchmark
+  evidence capture.
+- `scripts/todo-report.py`: reads the canonical backlog and fails with
+  `--fail-on-active` if active TODO items remain.
+- `docker`: required for the final API/Postgres smoke check in `verify.sh`.
+- `claude` and `agy`: used by `review-gate`; if Claude is unavailable because
+  of a usage limit, report the degraded reviewer state explicitly.
+
+Benchmark evidence is observational. It does not replace `verify.sh` or
+`review-gate`.
 
 정리하면, 클론 직후의 권장 흐름은 다음과 같습니다.
 

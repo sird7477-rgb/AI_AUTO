@@ -4,6 +4,49 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.29.4
+
+- Added `scripts/todo-report.py` to read the canonical backlog and fail
+  verification when active TODO items remain.
+- Wired review-gate diff-scope consumption so generated scope, review intensity,
+  and required checks are printed before verdict synthesis.
+- Added process-cleanup runtime fixture coverage for timeout/reap evidence.
+
+## 2026.05.29.3
+
+- Promoted ShellCheck warning-level diagnostics for the AI_AUTO source checkout
+  by wiring `shellcheck -S warning` into `scripts/verify.sh`.
+- Split guidance budget accounting into primary project guidance and template
+  guidance budgets so intentional template mirrors do not trip a single
+  aggregate 9000-line warning.
+- Updated template documentation for the installed ShellCheck/Hyperfine tool
+  relationship and required-vs-observational gate boundaries.
+
+## 2026.05.29.2
+
+- Added optional `scripts/benchmark-command.py` evidence capture. It uses
+  `hyperfine` only when already available and otherwise records unavailable
+  evidence without installing tools or claiming readiness.
+- Added benchmark helper wiring to template installation and doctor checks.
+- Scoped the untracked-artifact review guard to its own context section so
+  fixture text inside diffs cannot falsely force manual review.
+- Treat untracked tests as material review artifacts so new tests cannot be
+  omitted from commit-candidate review context without a manual-review signal.
+
+## 2026.05.29.1
+
+- Added a short review-verdict summary block so final decision, coverage, trust,
+  missing reviewers, and authority caveats are visible without reading the whole
+  reviewer artifact.
+- Added diff-scope and untracked-review guard sections to review context
+  generation so material untracked plan/doc/script/tool artifacts are visible or
+  explicitly require manual review before commit readiness.
+- Wired the untracked-review guard into review verdict summarization so material
+  untracked artifacts without included content force manual review instead of
+  proceeding from reviewer approvals alone.
+- Synced review-summary and review-context regression fixtures with the new
+  summary and untracked-artifact safeguards.
+
 ## 2026.05.28.4
 
 - Tightened review summary regression coverage so `proceed` requires normal

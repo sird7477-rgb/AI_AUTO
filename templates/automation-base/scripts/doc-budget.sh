@@ -78,12 +78,22 @@ if [ -f "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md" ]; then
   check_number "template AUTOMATION_OPERATING_POLICY.md lines" "$(line_count templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md)" 650 800
 fi
 
-guidance_total="$(
+primary_guidance_total="$(
   {
     printf '%s\n' AGENTS.md
     if [ -d docs ]; then
       find docs -maxdepth 1 -name '*.md' -print
     fi
+  } | while IFS= read -r path; do
+    if [ -f "$path" ]; then
+      line_count "$path"
+    fi
+  done | awk '{ total += $1 } END { print total + 0 }'
+)"
+check_number "primary guidance markdown total lines" "$primary_guidance_total" 6500 8000
+
+template_guidance_total="$(
+  {
     if [ -d templates/automation-base ]; then
       printf '%s\n' templates/automation-base/AGENTS.md templates/automation-base/README.md
       if [ -d templates/automation-base/docs ]; then
@@ -96,7 +106,10 @@ guidance_total="$(
     fi
   done | awk '{ total += $1 } END { print total + 0 }'
 )"
-check_number "guidance markdown total lines" "$guidance_total" 9000 11000
+check_number "template guidance markdown total lines" "$template_guidance_total" 4500 6500
+
+guidance_total=$((primary_guidance_total + template_guidance_total))
+printf '[budget] guidance markdown total lines: %s\n' "$guidance_total"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   diff_added="$(
@@ -115,7 +128,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git ls-files -z --others --exclude-standard -- AGENTS.md docs templates/automation-base 2>/dev/null |
       while IFS= read -r -d '' path; do
         case "$path" in
-          AGENTS.md|docs/*.md|templates/automation-base/*.md|templates/automation-base/docs/*.md)
+          AGENTS.md|docs/*.md|templates/automation-base/docs/*.md|templates/automation-base/*.md)
             if [ -f "$path" ]; then
               line_count "$path"
             fi

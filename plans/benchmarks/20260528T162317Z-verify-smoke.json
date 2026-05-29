@@ -1,0 +1,24 @@
+{
+  "benchmark_run_status": "unavailable",
+  "captured_at": "20260528T162317Z",
+  "claims_readiness": false,
+  "command": ".venv/bin/python -c 'print('\"'\"'ok'\"'\"')'",
+  "environment": {
+    "cwd": "/root/workspace/ai-lab",
+    "git_commit": "fb7cd6cc04825d800db24df5ef01c4884c1e5e4c",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "name": "verify-smoke",
+  "reason": "hyperfine_not_installed",
+  "replaces_review_gate": false,
+  "replaces_verify": false,
+  "sample_count": 0,
+  "schema_version": "ai_auto_benchmark_v1",
+  "tool": {
+    "available": false,
+    "name": "hyperfine",
+    "version": null
+  },
+  "verdict": "unavailable"
+}

@@ -78,10 +78,16 @@ override_fingerprint() {
 
 override_fingerprint_digest() {
   if [ -x /usr/bin/cksum ]; then
-    set -- $(override_fingerprint | /usr/bin/cksum)
+    read -r checksum byte_count _ <<EOF
+$(override_fingerprint | /usr/bin/cksum)
+EOF
+    set -- "${checksum}" "${byte_count}"
     printf "%s-%s" "$1" "$2"
   elif command -v cksum >/dev/null 2>&1; then
-    set -- $(override_fingerprint | cksum)
+    read -r checksum byte_count _ <<EOF
+$(override_fingerprint | cksum)
+EOF
+    set -- "${checksum}" "${byte_count}"
     printf "%s-%s" "$1" "$2"
   else
     override_fingerprint

@@ -24,6 +24,9 @@ This template contains the base files for a CLI-based AI development workflow.
 - docs/UI_COMPLETION.md: optional UI completion and verification pack
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
 - scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
+- scripts/benchmark-command.py: optional benchmark evidence capture using
+  `hyperfine` when available
+- scripts/todo-report.py: canonical backlog TODO report and active-work guard
 - scripts/verify.example.sh: onboarding placeholder; replace with project-specific verification
 - scripts/collect-review-context.sh: collects git diff and workflow context
 - scripts/doc-budget.sh: reports guidance document volume and bloat warnings
@@ -89,12 +92,19 @@ full workflow reference excerpts are needed for the review.
 
 Guidance context budget is a staged workflow. The installed `scripts/doc-budget.sh`
 is Stage 1: it reports document-volume warnings during verification and
-recommends the next step. Stage 2 is a read-only duplicate or consolidation
+recommends the next step. It budgets primary project guidance and template
+guidance separately because template-owned mirrored docs are intentionally
+duplicated for distribution. Stage 2 is a read-only duplicate or consolidation
 report produced by `scripts/guidance-duplicate-report.sh` and should run only
-when the user asks for it after seeing the Stage 1 recommendation. The Stage 2
+when the user asks for it after seeing a Stage 1 recommendation. The Stage 2
 tool prefers an existing duplicate detector such as `jscpd` when available and
 uses a local read-only fallback otherwise. Do not edit guidance documents from a
 Stage 1 warning alone.
+
+ShellCheck may be promoted by a project-specific `scripts/verify.sh`. AI_AUTO's
+source checkout requires `shellcheck -S warning` for repo/template shell
+scripts; downstream projects should only make ShellCheck required after they
+have cleaned or explicitly suppressed warning-level findings.
 
 Use `ai-rebuild-plan /path/to/project` for `리빌드 플랜`, `리빌딩 플랜`, or
 `rebuild plan` requests. This is read-only: it checks git state, automation

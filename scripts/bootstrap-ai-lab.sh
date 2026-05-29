@@ -290,6 +290,8 @@ echo "[bootstrap] checking commands"
 
 check_command git fail
 check_command docker warn
+check_command shellcheck fail
+check_command hyperfine warn
 check_command claude warn
 check_command "${GEMINI_REVIEW_COMMAND:-agy}" warn
 check_command omx warn

@@ -16,6 +16,7 @@ Default mode installs only OS/repo prerequisites:
   - python3, python3-venv, python3-pip
   - nodejs, npm
   - docker.io, plus the available Docker Compose plugin package
+  - shellcheck and hyperfine for required shell lint and benchmark capture
   - Python packages from requirements.txt
   - repo helper links through ./scripts/install-global-files.sh
 
@@ -84,7 +85,8 @@ run_system_install() {
     git curl ca-certificates bash \
     python3 python3-venv python3-pip \
     nodejs npm \
-    docker.io
+    docker.io \
+    shellcheck hyperfine
 
   install_docker_compose_plugin
 

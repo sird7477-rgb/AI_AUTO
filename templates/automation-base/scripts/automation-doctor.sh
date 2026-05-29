@@ -134,7 +134,7 @@ copy_from_template_if_missing() {
     return 1
   fi
 
-  if [ "$IN_AI_LAB" -ne 1 ] || [ ! -f "$source_path" ]; then
+  if [ "${IN_AI_LAB:-0}" -ne 1 ] || [ ! -f "$source_path" ]; then
     return 1
   fi
 
@@ -179,7 +179,7 @@ check_required_file() {
   fi
 
   say_fail "required file missing: ${path}"
-  if [ "$IN_AI_LAB" -eq 1 ]; then
+  if [ "${IN_AI_LAB:-0}" -eq 1 ]; then
     suggest "./scripts/automation-doctor.sh --fix"
   else
     suggest "aiinit"
@@ -387,7 +387,7 @@ check_helper_link() {
   local link_path="$1"
   local target_path="$2"
 
-  if [ "$IN_AI_LAB" -ne 1 ]; then
+  if [ "${IN_AI_LAB:-0}" -ne 1 ]; then
     return
   fi
 
@@ -484,6 +484,8 @@ REQUIRED_FILES=(
   "docs/WORKFLOW.md"
   "scripts/archive-omx-artifacts.sh"
   "scripts/ai-runtime-adapter.sh"
+  "scripts/benchmark-command.py"
+  "scripts/todo-report.py"
   "scripts/review-gate.sh"
   "scripts/collect-review-context.sh"
   "scripts/capture-knowledge-drafts.py"
@@ -505,7 +507,7 @@ for path in "${REQUIRED_FILES[@]}"; do
   check_required_file "$path"
 done
 
-if [ "${IN_AI_LAB}" -eq 1 ]; then
+if [ "${IN_AI_LAB:-0}" -eq 1 ]; then
   check_required_file "docs/AI_ROLES.md"
 fi
 
@@ -535,6 +537,12 @@ echo "[doctor] checking optional runtime tools"
 check_command python3 fail
 check_python3_version
 check_command docker warn
+if [ "${IN_AI_LAB:-0}" -eq 1 ]; then
+  check_command shellcheck fail
+else
+  check_command shellcheck warn
+fi
+check_command hyperfine warn
 
 if command -v docker >/dev/null 2>&1; then
   if docker info >/dev/null 2>&1; then
@@ -653,7 +661,7 @@ fi
 echo
 echo "[doctor] checking ai-lab helper links"
 
-if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
+if [ "${IN_AI_LAB:-0}" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   check_helper_link "${HOME_DIR}/bin/AI_AUTO" "${ROOT}/tools/ai-home"
   check_helper_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   check_helper_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
@@ -682,10 +690,10 @@ if [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
       suggest 'export PATH="$HOME/bin:$PATH"'
       ;;
   esac
-elif [ "$IN_AI_LAB" -eq 1 ] && [ -n "$HOME_DIR" ]; then
+elif [ "${IN_AI_LAB:-0}" -eq 1 ] && [ -n "$HOME_DIR" ]; then
   say_warn "HOME directory does not exist; ai-lab helper link checks skipped: ${HOME_DIR}"
   suggest "set HOME to an existing user directory"
-elif [ "$IN_AI_LAB" -eq 1 ]; then
+elif [ "${IN_AI_LAB:-0}" -eq 1 ]; then
   say_warn "HOME is not set; ai-lab helper link checks skipped"
 else
   say_pass "not running inside ai-lab source checkout; helper link checks skipped"
