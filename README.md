@@ -1,26 +1,46 @@
-# AI Lab
+# AI_AUTO
 
-Lightweight testbed for validating a CLI-based AI development workflow with Codex and OmX.
-
-The Flask todo API in this repository is a stable sample target. It exists so an AI coding agent can exercise and verify the loop around a real but small backend stack:
+AI_AUTO is a Codex/OMX automation testbed for reusable AI development
+workflows. It keeps a small Flask todo API as the stable sample target, but the
+repository's main purpose is to build and verify the operating system around AI
+coding work:
 
 1. plan the change
 2. implement the change
 3. run tests
 4. review the diff
 5. debug failures
-6. commit with evidence
+6. collect reusable feedback or knowledge when appropriate
+7. commit with evidence
 
 This is not an end-user app, a deployment template, or a framework showcase.
 
 ## Stack
 
-- Flask API in `app.py`
+- Flask sample API in `app.py`
 - Todo persistence in `repository.py`
 - pytest coverage in `tests/`
 - Docker image in `Dockerfile`
 - API + Postgres runtime in `docker-compose.yml`
-- OmX workflow artifacts under `.omx/`
+- Reusable automation template under `templates/automation-base/`
+- Optional domain packs under `templates/domain-packs/`
+- Global helper source commands under `tools/`
+- Codex/OMX workflow artifacts under `.omx/`
+
+## What This Repository Maintains
+
+- `aiinit` / `ai-auto-init` for installing the automation template into another
+  git repository.
+- `ai-auto-template-status` for comparing a project against the current AI_AUTO
+  template without patching it.
+- `./scripts/verify.sh` and `./scripts/review-gate.sh` for the local
+  verify-review completion loop.
+- Domain-pack authoring and application rules for optional project-specific
+  guidance.
+- Feedback and knowledge collection helpers for promoting useful project
+  lessons back into the source workflow.
+- Read-only rebuild, split-planning, and plan-quality helper commands for
+  larger maintenance work.
 
 ## Verified Commands
 
@@ -106,13 +126,16 @@ docker compose down
 
 ## Workflow Target
 
-Use this repo to test whether an AI CLI development environment can move through a full change loop without expanding scope:
+Use this repo to test whether an AI CLI development environment can move
+through a full change loop without expanding scope:
 
 - capture requirements in a spec or plan
 - make a small, reviewable change
 - keep the Flask sample working
 - verify with pytest, Docker Compose, and smoke checks
 - review the final diff and evidence
+- preserve project-specific rules while updating shared automation guidance
+- record reusable feedback or knowledge without leaking private project details
 - commit only after the validation trail is clear
 
 ## Scope Guardrails
@@ -141,7 +164,10 @@ Out of scope:
 - `docs/CURRENT_STATE.md` is the current handoff document for completed automation capabilities, known limitations, and next-stage boundaries.
 - `docs/GLOBAL_TOOLS.md` describes `aiinit`, `workspace-scan`, and bootstrap helper setup.
 - `docs/NEW_PROJECT_GUIDE.md` explains how to apply the generic automation template to another repository.
+- `docs/DOMAIN_PACKS.md` explains reusable domain packs and their application lifecycle.
+- `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` defines quality rules for creating or changing domain packs.
 - `docs/MULTI_AI_COLLABORATION.md` documents the Claude/Gemini review gate, degraded-review behavior, and command keywords.
+- `plans/AI_AUTO_STRUCTURAL_WEAKNESS_BACKLOG.md` tracks structural workflow improvements that should stay outside immediate patch churn.
 - `.omx/plans/ralplan-ai-dev-testbed-cleanup.md` contains the approved cleanup plan for this pass.
 
 ## 클론 후 전역파일 설치 방법
