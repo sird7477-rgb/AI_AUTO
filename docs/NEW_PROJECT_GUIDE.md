@@ -276,11 +276,12 @@ through AI_AUTO's trusted feedback recorder rather than executing scripts from
 the inspected project.
 
 When Codex starts in a project with the optional drift notice installed, it may
-print `patch keyword: AI_AUTO 최신 패치 적용해줘`. Typing that keyword in the
-project is the short form for the full AI_AUTO template patch workflow: inspect
-template status and patch notes, merge only applicable managed-file changes,
-preserve project-specific rules, run verification and the review gate, and stop
-before commit/push unless explicitly asked.
+print an `AI_AUTO UPDATE CHECK` block with
+`action: AI_AUTO 최신 패치 적용해줘`. Typing that action in the project is the short
+form for the full AI_AUTO template patch workflow: inspect template status and
+patch notes, merge only applicable managed-file changes, preserve
+project-specific rules, run verification and the review gate, and stop before
+commit/push unless explicitly asked.
 If a legitimate template-owned guide addition trips only the current guidance
 diff hard limit, rerun with `DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
 

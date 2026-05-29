@@ -288,6 +288,85 @@ untracked_guard_block_reason() {
   return 0
 }
 
+phase_scope_guard_block_reason() {
+  local context_file="$1"
+  local guard_text
+
+  [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
+  guard_text="$(awk '
+    /^## Phase Scope Guard$/ { in_guard=1; next }
+    /^## / && in_guard { exit }
+    in_guard { print }
+  ' "${context_file}")"
+  if ! printf '%s\n' "${guard_text}" | grep -Eq "^phase_scope_status: (out_of_phase_edit|missing_deferral_record)$"; then
+    return 1
+  fi
+  if [ "${PHASE_SCOPE_MANUAL_REVIEWED:-0}" = "1" ]; then
+    return 1
+  fi
+  echo "phase_scope_requires_manual_review"
+  return 0
+}
+
+persona_gate_guard_block_reason() {
+  local context_file="$1"
+  local summary_text policy active_lenses integrator_required reasons
+
+  [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
+  summary_text="$(awk '
+    /^## Diff Scope Summary$/ { in_summary=1; next }
+    /^## / && in_summary { exit }
+    in_summary { print }
+  ' "${context_file}")"
+  [ -n "${summary_text}" ] || return 1
+  if printf '%s\n' "${summary_text}" | grep -q "^No changed files detected\.$"; then
+    return 1
+  fi
+
+  policy="$(printf '%s\n' "${summary_text}" | sed -n 's/^- review gate policy: //p' | head -1)"
+  active_lenses="$(printf '%s\n' "${summary_text}" | sed -n 's/^- active lenses: //p' | head -1)"
+  integrator_required="$(printf '%s\n' "${summary_text}" | sed -n 's/^- integrator required: //p' | head -1)"
+  reasons="$(printf '%s\n' "${summary_text}" | sed -n 's/^- review gate reasons: //p' | head -1)"
+
+  case "${policy}" in
+    strict_gate|review_gate|verify_only) ;;
+    "")
+      echo "persona_gate_classifier_missing"
+      return 0
+      ;;
+    *)
+      echo "persona_gate_classifier_malformed"
+      return 0
+      ;;
+  esac
+
+  case "${integrator_required}" in
+    true|false) ;;
+    *)
+      echo "persona_gate_classifier_malformed"
+      return 0
+      ;;
+  esac
+
+  [ -n "${active_lenses}" ] || {
+    echo "persona_gate_classifier_malformed"
+    return 0
+  }
+  [ -n "${reasons}" ] || {
+    echo "persona_gate_classifier_malformed"
+    return 0
+  }
+
+  if [ "${policy}" = "strict_gate" ]; then
+    if [ "${active_lenses}" = "none" ] || ! printf '%s\n' "${reasons}" | grep -q "lenses="; then
+      echo "persona_gate_classifier_malformed"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 review_covers_split_context() {
   local review_file="$1"
   local manifest_file="$2"
@@ -470,6 +549,134 @@ missing_reviewers() {
   fi
 }
 
+write_review_revision_task() {
+  local timestamp="$1"
+  local findings_file="${REVIEW_ACCEPTED_FINDINGS_FILE:-}"
+  local cycle_count="${REVIEW_REVISION_CYCLE_COUNT:-1}"
+  local verification_passed="${REVIEW_REVISION_VERIFICATION_PASSED:-1}"
+  local changed_diff="${REVIEW_REVISION_CHANGED_DIFF:-1}"
+  local task_file="${OUT_DIR}/review-revision-task-${timestamp}.md"
+  local accepted_lines
+
+  if [ -z "${findings_file}" ]; then
+    echo "none"
+    return 0
+  fi
+
+  if [ ! -f "${findings_file}" ]; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_stop:missing_findings_file
+source: ${findings_file}
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
+  if [ "${cycle_count}" -gt 2 ] 2>/dev/null; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_stop:cycle_limit
+cycle_count: ${cycle_count}
+max_cycles: 2
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
+  if [ "${REVIEW_REVISION_UNCLEAR_REVIEW:-0}" = "1" ]; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_stop:unclear_review
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
+  if [ "${REVIEW_REVISION_REVIEWER_DISAGREEMENT:-0}" = "1" ]; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_manual_review
+reason: reviewer_disagreement
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
+  if [ "${REVIEW_REVISION_REPEATED_VERIFY_FAILURE:-0}" = "1" ] || [ "${verification_passed}" != "1" ]; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_stop:verification_failure
+cycle_count: ${cycle_count}
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
+  if [ "${REVIEW_REVISION_SECOND_PASS_REQUESTED:-0}" = "1" ] && [ "${changed_diff}" != "1" ]; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_block:no_changed_diff
+cycle_count: ${cycle_count}
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
+  accepted_lines="$(
+    awk -F'|' '
+      $1 == "accepted" && $2 != "" && $3 != "" && $4 != "" && $5 != "" {
+        printf "- id: %s\n  reviewer: %s\n  file: %s\n  task: %s\n", $2, $3, $4, $5
+      }
+    ' "${findings_file}"
+  )"
+
+  if [ -z "${accepted_lines}" ]; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_task_skipped
+reason: no_structured_accepted_findings
+source: ${findings_file}
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
+  cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_task_created
+cycle_count: ${cycle_count}
+max_cycles: 2
+source: ${findings_file}
+
+## Scope
+
+Apply only the accepted structured reviewer findings listed below. Do not apply
+free-text, rejected, proposed, fixed, or deferred findings as automatic work.
+
+## Accepted Findings
+
+${accepted_lines}
+
+## Required Checks
+
+- Run ./scripts/verify.sh after the revision.
+- Run a second review pass only when the revision produced a changed diff.
+- Stop for manual decision if verification fails repeatedly, reviewer output is
+  unclear, reviewers disagree, or a third automatic revision cycle would start.
+TASK
+
+  echo "${task_file}"
+}
+
 REVIEW_RUN_SUMMARY_FILE="$(latest_file 'review-summary-*.md')"
 REVIEW_CONTEXT_FILE="$(manifest_file 'Context' 'latest-review-context.md')"
 CLAUDE_FILE="$(manifest_file 'Claude result' 'claude-review-*.md')"
@@ -503,6 +710,22 @@ if [ -n "${UNTRACKED_BLOCK_REASON}" ]; then
     POLICY_BLOCK_REASON="${POLICY_BLOCK_REASON},${UNTRACKED_BLOCK_REASON}"
   fi
 fi
+PHASE_SCOPE_BLOCK_REASON="$(phase_scope_guard_block_reason "${REVIEW_CONTEXT_FILE}" || true)"
+if [ -n "${PHASE_SCOPE_BLOCK_REASON}" ]; then
+  if [ "${POLICY_BLOCK_REASON}" = "none" ]; then
+    POLICY_BLOCK_REASON="${PHASE_SCOPE_BLOCK_REASON}"
+  else
+    POLICY_BLOCK_REASON="${POLICY_BLOCK_REASON},${PHASE_SCOPE_BLOCK_REASON}"
+  fi
+fi
+PERSONA_GATE_BLOCK_REASON="$(persona_gate_guard_block_reason "${REVIEW_CONTEXT_FILE}" || true)"
+if [ -n "${PERSONA_GATE_BLOCK_REASON}" ]; then
+  if [ "${POLICY_BLOCK_REASON}" = "none" ]; then
+    POLICY_BLOCK_REASON="${PERSONA_GATE_BLOCK_REASON}"
+  else
+    POLICY_BLOCK_REASON="${POLICY_BLOCK_REASON},${PERSONA_GATE_BLOCK_REASON}"
+  fi
+fi
 if [ "${POLICY_BLOCK_REASON}" != "none" ] && { [ "${FINAL_DECISION}" = "proceed" ] || [ "${FINAL_DECISION}" = "proceed_degraded" ]; }; then
   FINAL_DECISION="review_manually"
   DECISION_REASON="${POLICY_BLOCK_REASON}"
@@ -524,6 +747,7 @@ fi
 
 TIMESTAMP="$(date +%Y%m%dT%H%M%S)"
 SUMMARY_FILE="${OUT_DIR}/review-verdict-${TIMESTAMP}.md"
+REVISION_TASK_FILE="$(write_review_revision_task "${TIMESTAMP}")"
 
 cat > "${SUMMARY_FILE}" <<SUMMARY
 # AI Review Verdict
@@ -576,6 +800,18 @@ ${REVIEW_CONTEXT_FILE:-missing}
 ## Untracked Artifact Guard
 
 ${UNTRACKED_BLOCK_REASON:-clear}
+
+## Phase Scope Guard
+
+${PHASE_SCOPE_BLOCK_REASON:-clear}
+
+## Persona Gate Guard
+
+${PERSONA_GATE_BLOCK_REASON:-clear}
+
+## Review Revision Task
+
+${REVISION_TASK_FILE}
 
 ## Disabled Reviewer Reporting
 

@@ -372,7 +372,7 @@ install_codex_wrapper() {
   local end_marker="# <<< AI_AUTO codex drift notice integration <<<"
   local tmp_path
   local begin_count end_count
-  local real_codex real_codex_dir real_codex_base real_codex_quoted patch_notes_quoted
+  local real_codex real_codex_dir real_codex_base real_codex_quoted patch_notes_quoted ai_lab_root_quoted
   local drift_default tmux_auto_default
 
   if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ] && [ "$INSTALL_CODEX_TMUX_AUTO_ENTRY" -ne 1 ]; then
@@ -465,6 +465,7 @@ install_codex_wrapper() {
   function_tmp_path="${function_path}.tmp.$$"
   real_codex_quoted="$(printf '%q' "$real_codex")"
   patch_notes_quoted="$(printf '%q' "${ROOT}/templates/automation-base/docs/PATCH_NOTES.md")"
+  ai_lab_root_quoted="$(printf '%q' "$ROOT")"
   drift_default="$INSTALL_CODEX_DRIFT_NOTICE"
   if [ "$drift_default" -ne 1 ] &&
     [ -f "$function_path" ] &&
@@ -520,12 +521,16 @@ _ai_auto_codex_shell_quote() {
 codex() {
   local real_codex=${real_codex_quoted}
   local patch_notes=${patch_notes_quoted}
+  local ai_lab_root=${ai_lab_root_quoted}
   local drift_notice_default=${drift_default}
   local tmux_auto_default=${tmux_auto_default}
   local repo_root=""
   local status_output=""
   local notice_key=""
   local latest_note=""
+  local knowledge_output=""
+  local knowledge_timeout=""
+  local template_status_timeout=""
   local tmux_binary=""
   local tmux_base=""
   local tmux_command=""
@@ -538,6 +543,7 @@ codex() {
   if [ "\${AI_AUTO_CODEX_DRIFT_NOTICE:-\${drift_notice_default}}" != "0" ] &&
     [ -n "\${repo_root}" ] &&
     [ -f "\${repo_root}/AI_AUTO_TEMPLATE_VERSION" ] &&
+    command -v timeout >/dev/null 2>&1 &&
     command -v ai-auto-template-status >/dev/null 2>&1; then
     if command -v sha256sum >/dev/null 2>&1; then
       notice_key="\$(printf '%s' "\${repo_root}" | sha256sum | awk '{print \$1}')"
@@ -550,22 +556,44 @@ codex() {
       *"|"\${notice_key}"|"*)
         ;;
       *)
-        status_output="\$(ai-auto-template-status "\${repo_root}" 2>/dev/null || true)"
+        template_status_timeout="\${AI_AUTO_TEMPLATE_STATUS_NOTICE_TIMEOUT:-1}"
+        status_output="\$(timeout "\${template_status_timeout}" ai-auto-template-status "\${repo_root}" 2>/dev/null || true)"
         AI_AUTO_CODEX_DRIFT_NOTICE_SEEN="\${AI_AUTO_CODEX_DRIFT_NOTICE_SEEN:-}|\${notice_key}|"
         if printf '%s\n' "\$status_output" | grep -q '^status: customized_or_outdated'; then
           latest_note="\$(awk '/^## / {print; exit}' "\${patch_notes}" 2>/dev/null || true)"
-          printf '%s\n' "[AI_AUTO] automation template update recommended for \${repo_root}" >&2
+          printf '%s\n' "[AI_AUTO] ===== AI_AUTO UPDATE CHECK =====" >&2
+          printf '%s\n' "[AI_AUTO] state: update_available" >&2
+          printf '%s\n' "[AI_AUTO] project: \${repo_root}" >&2
           printf '%s\n' "\$status_output" | awk '/^(installed_version|current_version|status): / {print "[AI_AUTO] " \$0}' >&2
           if [ -n "\${latest_note}" ]; then
             printf '%s\n' "[AI_AUTO] latest patch note: \${latest_note#\#\# }" >&2
           fi
           printf '%s\n' "[AI_AUTO] review notes: \${patch_notes}" >&2
           printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status \${repo_root}" >&2
-          printf '%s\n' "[AI_AUTO] patch keyword: AI_AUTO 최신 패치 적용해줘" >&2
+          printf '%s\n' "[AI_AUTO] action: AI_AUTO 최신 패치 적용해줘" >&2
+          printf '%s\n' "[AI_AUTO] ================================" >&2
         fi
         ;;
     esac
     fi
+
+  if [ "\${AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE:-1}" != "0" ] &&
+    [ -n "\${repo_root}" ] &&
+    [ "\${repo_root}" = "\${ai_lab_root}" ] &&
+    command -v timeout >/dev/null 2>&1 &&
+    command -v knowledge-collect >/dev/null 2>&1; then
+    knowledge_timeout="\${AI_AUTO_KNOWLEDGE_NOTICE_TIMEOUT:-3}"
+    knowledge_output="\$(timeout "\${knowledge_timeout}" knowledge-collect --include-registry --project "\${repo_root}" 2>/dev/null || true)"
+    if printf '%s\n' "\${knowledge_output}" | awk 'NR > 1 && NF {found=1} END {exit found ? 0 : 1}'; then
+      printf '%s\n' "[AI_AUTO] ===== OBSIDIAN OUTPUT CHECK =====" >&2
+      printf '%s\n' "[AI_AUTO] state: pending_knowledge_drafts" >&2
+      printf '%s\n' "[AI_AUTO] scope: AI_AUTO home plus registered projects" >&2
+      printf '%s\n' "\${knowledge_output}" | awk 'NR == 1 {next} NF {print "[AI_AUTO] pending: " \$0; count++} count >= 10 {exit}' >&2
+      printf '%s\n' "[AI_AUTO] inspect: knowledge-collect --include-registry --project \${repo_root}" >&2
+      printf '%s\n' "[AI_AUTO] push after approval: knowledge-collect --project <repo> --push --vault-dir <vault-dir>" >&2
+      printf '%s\n' "[AI_AUTO] ================================" >&2
+    fi
+  fi
 
   if [ "\${AI_AUTO_CODEX_TMUX_AUTO:-\${tmux_auto_default}}" = "1" ] &&
     [ -z "\${TMUX:-}" ] &&

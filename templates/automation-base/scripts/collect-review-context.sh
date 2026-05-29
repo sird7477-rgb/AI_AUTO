@@ -280,8 +280,64 @@ required_checks_for_scopes() {
   echo "${joined}"
 }
 
+persona_lens_for_path() {
+  case "$1" in
+    AGENTS.md|*/AGENTS.md|docs/WORKFLOW.md|docs/AUTOMATION_OPERATING_POLICY.md)
+      echo "policy_compliance guidance_bloat"
+      ;;
+    scripts/verify.sh|scripts/review-gate.sh|scripts/run-ai-reviews.sh|scripts/collect-review-context.sh|scripts/summarize-ai-reviews.sh)
+      echo "policy_compliance test_strategy review_taxonomy"
+      ;;
+    templates/automation-base/*)
+      echo "policy_compliance guidance_bloat review_taxonomy"
+      ;;
+    *auth*|*token*|*cookie*|*secret*|*credential*)
+      echo "security"
+      ;;
+    *schema*|*migration*|*serialization*|*backfill*|*import*|*export*)
+      echo "data_migration"
+      ;;
+    *deploy*|*release*|*rollback*|*monitoring*|*production*)
+      echo "release"
+      ;;
+    scripts/*|tools/*|tests/*)
+      echo "test_strategy review_taxonomy"
+      ;;
+    docs/*|plans/*)
+      echo "docs_dx"
+      ;;
+    *.tsx|*.jsx|*.html|*.css)
+      echo "design browser_qa"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+persona_gate_policy_for_lenses() {
+  local lenses="$1"
+  case "${lenses}" in
+    *policy_compliance*|*security*|*data_migration*|*release*)
+      echo "strict_gate"
+      ;;
+    *test_strategy*|*review_taxonomy*|*design*|*browser_qa*)
+      echo "review_gate"
+      ;;
+    docs_dx)
+      echo "verify_only"
+      ;;
+    "")
+      echo "verify_only"
+      ;;
+    *)
+      echo "review_gate"
+      ;;
+  esac
+}
+
 write_diff_scope_summary() {
-  local files scopes
+  local files scopes active_lenses lens_count gate_policy integrator_required
   files="$(
     {
       git diff --name-only 2>/dev/null || true
@@ -300,8 +356,32 @@ write_diff_scope_summary() {
     classify_review_scope_for_path "${file}"
   done | sort -u | paste -sd ',' -)"
 
+  active_lenses="$(
+    printf '%s\n' "${files}" | while IFS= read -r file; do
+      [ -n "${file}" ] || continue
+      persona_lens_for_path "${file}" | tr ' ' '\n'
+    done | sed '/^[[:space:]]*$/d' | sort -u | paste -sd ',' -
+  )"
+  lens_count=0
+  if [ -n "${active_lenses}" ]; then
+    lens_count="$(printf '%s\n' "${active_lenses}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+  fi
+  integrator_required=false
+  if [ "${lens_count}" -gt 1 ]; then
+    integrator_required=true
+    case ",${active_lenses}," in
+      *,integrator,*) ;;
+      *) active_lenses="${active_lenses}${active_lenses:+,}integrator" ;;
+    esac
+  fi
+  gate_policy="$(persona_gate_policy_for_lenses "${active_lenses}")"
+
   echo "- scopes: ${scopes}"
   echo "- review intensity hint: $(review_intensity_for_scopes "${scopes}")"
+  echo "- active lenses: ${active_lenses:-none}"
+  echo "- integrator required: ${integrator_required}"
+  echo "- review gate policy: ${gate_policy}"
+  echo "- review gate reasons: scopes=${scopes}; lenses=${active_lenses:-none}"
   echo "- required checks: $(required_checks_for_scopes "${scopes}")"
   echo
   echo "| File | Scope |"
@@ -340,6 +420,380 @@ write_untracked_review_guard() {
   echo '```text'
   printf '%s\n' "${material}"
   echo '```'
+}
+
+split_csv_lines() {
+  local value="$1"
+  printf '%s\n' "${value}" | tr ',' '\n' | sed '/^[[:space:]]*$/d; s/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+path_in_list() {
+  local needle="$1"
+  local haystack="$2"
+  local item
+  while IFS= read -r item; do
+    [ -n "${item}" ] || continue
+    if [ "${item}" = "${needle}" ]; then
+      return 0
+    fi
+  done <<EOF
+${haystack}
+EOF
+  return 1
+}
+
+deferred_record_has_reason() {
+  local needle="$1"
+  local records="$2"
+  local item path reason
+
+  while IFS= read -r item; do
+    [ -n "${item}" ] || continue
+    path="${item%%|*}"
+    reason="${item#*|}"
+    if [ "${path}" = "${needle}" ] && [ "${reason}" != "${item}" ] && [ -n "${reason}" ]; then
+      return 0
+    fi
+  done <<EOF
+${records}
+EOF
+  return 1
+}
+
+write_phase_scope_guard() {
+  local phase="${PHASE_SCOPE_PHASE:-}"
+  local allowed deferred deferred_records changed unresolved missing_deferral file
+
+  if [ -z "${phase}" ]; then
+    echo "phase_scope_status: inactive"
+    echo "No phase/scope guard requested. Set PHASE_SCOPE_PHASE and PHASE_SCOPE_ALLOWED_FILES to enable."
+    return 0
+  fi
+
+  allowed="$(split_csv_lines "${PHASE_SCOPE_ALLOWED_FILES:-}")"
+  deferred="$(split_csv_lines "${PHASE_SCOPE_DEFERRED_FILES:-}")"
+  deferred_records="$(split_csv_lines "${PHASE_SCOPE_DEFERRED_RECORDS:-}")"
+  changed="$(
+    {
+      git diff --name-only 2>/dev/null || true
+      git diff --cached --name-only 2>/dev/null || true
+      git ls-files --others --exclude-standard 2>/dev/null || true
+    } | sort -u
+  )"
+
+  unresolved=""
+  missing_deferral=""
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    case "${file}" in
+      .omx/review-context/*)
+        continue
+        ;;
+    esac
+    if path_in_list "${file}" "${allowed}"; then
+      continue
+    fi
+    if path_in_list "${file}" "${deferred}"; then
+      if deferred_record_has_reason "${file}" "${deferred_records}"; then
+        continue
+      fi
+      missing_deferral="${missing_deferral}${missing_deferral:+
+}${file}"
+      continue
+    fi
+    unresolved="${unresolved}${unresolved:+
+}${file}"
+  done <<EOF
+${changed}
+EOF
+
+  echo "phase: ${phase}"
+  echo "manual_review_override: ${PHASE_SCOPE_MANUAL_REVIEWED:-0}"
+  if [ -n "${missing_deferral}" ]; then
+    echo "phase_scope_status: missing_deferral_record"
+    echo "manual_review_required: true"
+    echo "Deferred out-of-phase files require PHASE_SCOPE_DEFERRED_RECORDS entries in path|reason format."
+    echo
+    echo '```text'
+    printf '%s\n' "${missing_deferral}"
+    echo '```'
+  elif [ -n "${unresolved}" ]; then
+    echo "phase_scope_status: out_of_phase_edit"
+    echo "manual_review_required: true"
+    echo "Out-of-phase changed files require a plan update, deferral record, or manual review."
+    echo
+    echo '```text'
+    printf '%s\n' "${unresolved}"
+    echo '```'
+  else
+    echo "phase_scope_status: clear"
+    echo "Changed files are inside the allowed or deferred phase scope."
+  fi
+}
+
+completion_pack_trigger_for_shape() {
+  case "$1" in
+    security_review) echo "security_completion" ;;
+    deployment_files) echo "deployment_completion" ;;
+    persisted_data) echo "data_completion" ;;
+    ui_work) echo "ui_completion" ;;
+    performance_change) echo "performance_completion" ;;
+    observability_change) echo "observability_completion" ;;
+    docs_generation_lens) echo "reference_lens:not_completion_pack" ;;
+    *) echo "" ;;
+  esac
+}
+
+completion_pack_trigger_for_path() {
+  case "$1" in
+    docs/SECURITY_COMPLETION.md|*security*|*auth*|*secret*) echo "security_completion" ;;
+    docs/DEPLOYMENT_COMPLETION.md|*deploy*|*release*) echo "deployment_completion" ;;
+    docs/DATA_COMPLETION.md|*migration*|*schema*|*database*|*persist*) echo "data_completion" ;;
+    docs/UI_COMPLETION.md|*frontend*|*ui*|*.tsx|*.jsx|*.css) echo "ui_completion" ;;
+    docs/PERFORMANCE_COMPLETION.md|*benchmark*|*performance*|*perf*) echo "performance_completion" ;;
+    docs/OBSERVABILITY_COMPLETION.md|*observability*|*monitor*|*logging*) echo "observability_completion" ;;
+    *) echo "" ;;
+  esac
+}
+
+write_completion_pack_routing_audit() {
+  local pack missing shape trigger changed file inferred seen
+  local packs="DATA DEPLOYMENT OBSERVABILITY PERFORMANCE SECURITY UI"
+
+  missing=""
+  for pack in ${packs}; do
+    if [ ! -f "docs/${pack}_COMPLETION.md" ]; then
+      missing="${missing}${missing:+,}${pack}"
+    fi
+  done
+
+  echo "audit_status: report_only"
+  if [ -n "${missing}" ]; then
+    echo "packs_present: missing:${missing}"
+  else
+    echo "packs_present: data,deployment,observability,performance,security,ui"
+  fi
+
+  shape="${COMPLETION_PACK_INPUT_SHAPE:-}"
+  trigger="$(completion_pack_trigger_for_shape "${shape}")"
+  if [ -n "${shape}" ]; then
+    echo "input_shape: ${shape}"
+    echo "explicit_trigger: ${trigger:-none}"
+  else
+    echo "input_shape: none"
+    echo "explicit_trigger: none"
+  fi
+
+  changed="$(
+    {
+      git diff --name-only 2>/dev/null || true
+      git diff --cached --name-only 2>/dev/null || true
+      git ls-files --others --exclude-standard 2>/dev/null || true
+    } | sort -u
+  )"
+
+  inferred=""
+  seen=""
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    case "${file}" in
+      .omx/review-context/*)
+        continue
+        ;;
+    esac
+    trigger="$(completion_pack_trigger_for_path "${file}")"
+    [ -n "${trigger}" ] || continue
+    case ",${seen}," in
+      *",${trigger},"*) continue ;;
+    esac
+    seen="${seen}${seen:+,}${trigger}"
+    inferred="${inferred}${inferred:+
+}- ${trigger}: ${file}"
+  done <<EOF
+${changed}
+EOF
+
+  if [ -n "${inferred}" ]; then
+    echo "file_scope_triggers:"
+    printf '%s\n' "${inferred}"
+  else
+    echo "file_scope_triggers: none"
+  fi
+  echo "runtime_lane_added: false"
+}
+
+product_challenge_required_shape() {
+  local request_shape="$1"
+  local task_size="$2"
+
+  case "${request_shape}" in
+    broad_strategy|product_strategy|large_ui_workflow|unclear_value)
+      return 0
+      ;;
+  esac
+  [ "${task_size}" = "medium" ] || [ "${task_size}" = "large" ]
+}
+
+write_product_challenge_audit() {
+  local request_shape="${PRODUCT_CHALLENGE_REQUEST_SHAPE:-unspecified}"
+  local task_size="${PRODUCT_CHALLENGE_TASK_SIZE:-unspecified}"
+  local approved_plan="${PRODUCT_CHALLENGE_APPROVED_PLAN_EXISTS:-0}"
+  local reason="${PRODUCT_CHALLENGE_REASON:-}"
+  local questions="${PRODUCT_CHALLENGE_QUESTIONS:-}"
+  local question_count=0
+
+  echo "audit_status: report_only"
+  echo "request_shape: ${request_shape}"
+  echo "task_size: ${task_size}"
+  echo "approved_plan_exists: ${approved_plan}"
+
+  if [ "${approved_plan}" = "1" ]; then
+    echo "challenge_status: skipped_approved_plan"
+    return 0
+  fi
+
+  if [ "${task_size}" = "small" ] && { [ "${request_shape}" = "typo" ] || [ "${request_shape}" = "narrow_bugfix" ] || [ "${request_shape}" = "routine_doc" ]; }; then
+    echo "challenge_status: skipped_routine_small"
+    return 0
+  fi
+
+  if product_challenge_required_shape "${request_shape}" "${task_size}"; then
+    if [ -z "${reason}" ]; then
+      echo "challenge_status: missing_product_challenge_reason"
+      echo "manual_review_required: true"
+      return 0
+    fi
+
+    if [ -n "${questions}" ]; then
+      question_count="$(printf '%s\n' "${questions}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+    fi
+    if [ "${question_count}" -gt 3 ]; then
+      echo "challenge_status: too_many_product_challenge_questions"
+      echo "manual_review_required: true"
+      return 0
+    fi
+
+    echo "challenge_status: required"
+    echo "challenge_reason: ${reason}"
+    echo "question_count: ${question_count}"
+    return 0
+  fi
+
+  echo "challenge_status: not_required"
+}
+
+write_visual_artifact_audit() {
+  local changed file spec visual_export reviewed_specs status_line any_status
+
+  reviewed_specs="$(split_csv_lines "${VISUAL_HUMAN_REVIEWED_SPECS:-}")"
+  changed="$(
+    {
+      git diff --name-only 2>/dev/null || true
+      git diff --cached --name-only 2>/dev/null || true
+      git ls-files --others --exclude-standard 2>/dev/null || true
+    } | sort -u
+  )"
+
+  echo "audit_status: report_only"
+  echo "runtime_tool_install_required: false"
+  any_status=0
+
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    case "${file}" in
+      .omx/review-context/*)
+        continue
+        ;;
+      *.excalidraw)
+        spec="${file%.excalidraw}-spec.md"
+        visual_export="${file%.excalidraw}.svg"
+        if [ ! -f "${spec}" ]; then
+          status_line="visual_warning:explanatory_only ${file}"
+        elif ! path_in_list "${spec}" "${reviewed_specs}"; then
+          status_line="visual_warning:unreviewed_spec ${file} -> ${spec}"
+        else
+          status_line="visual_ok:implementation_facing_spec ${file} -> ${spec}"
+        fi
+        echo "${status_line}"
+        any_status=1
+        if [ -f "${visual_export}" ] && [ "${file}" -nt "${visual_export}" ]; then
+          echo "visual_warning:stale_export ${visual_export}"
+          any_status=1
+        fi
+        ;;
+      *-spec.md)
+        if ! path_in_list "${file}" "${reviewed_specs}"; then
+          echo "visual_warning:unreviewed_spec ${file}"
+          any_status=1
+        fi
+        ;;
+    esac
+  done <<EOF
+${changed}
+EOF
+
+  if [ "${VISUAL_AMBIGUOUS_SOURCE:-0}" = "1" ]; then
+    echo "visual_warning:ambiguous_source_of_truth"
+    any_status=1
+  fi
+
+  if [ "${any_status}" -eq 0 ]; then
+    echo "visual_status: none"
+  fi
+}
+
+write_browser_qa_evidence_audit() {
+  local target="${BROWSER_QA_TARGET:-}"
+  local report_only="${BROWSER_QA_REPORT_ONLY:-1}"
+  local attempts_patch="${BROWSER_QA_ATTEMPTS_PATCH:-0}"
+  local cdp_access="${BROWSER_QA_CDP_ACCESS:-0}"
+  local loopback="${BROWSER_QA_LOOPBACK_BOUND:-0}"
+  local user_launched="${BROWSER_QA_USER_LAUNCHED_OR_ISOLATED:-0}"
+  local approval="${BROWSER_QA_APPROVAL_RECORDED:-0}"
+  local exports_credentials="${BROWSER_QA_EXPORTS_COOKIES_OR_TOKENS:-0}"
+  local sensitive="${BROWSER_QA_SENSITIVE_EVIDENCE:-0}"
+  local redacted="${BROWSER_QA_REDACTED:-0}"
+  local visual="${BROWSER_QA_VISUAL_VERDICT:-0}"
+  local verify="${BROWSER_QA_VERIFY_EVIDENCE:-0}"
+  local review="${BROWSER_QA_REVIEW_GATE_EVIDENCE:-0}"
+  local screenshot="${BROWSER_QA_SCREENSHOT_NOTE:-none}"
+  local steps="${BROWSER_QA_STEPS:-none}"
+
+  echo "audit_status: report_only"
+  echo "target: ${target:-none}"
+  echo "steps: ${steps}"
+  echo "screenshot_note: ${screenshot}"
+
+  if [ "${report_only}" != "1" ] || [ "${attempts_patch}" = "1" ]; then
+    echo "qa_status: qa_block:auto_fix_not_allowed"
+    return 0
+  fi
+
+  if [ "${cdp_access}" = "1" ]; then
+    echo "cdp_access: requested"
+    if [ "${loopback}" != "1" ] || [ "${user_launched}" != "1" ] || [ "${approval}" != "1" ] || [ "${exports_credentials}" = "1" ]; then
+      echo "qa_status: qa_block:credential_boundary"
+      return 0
+    fi
+  else
+    echo "cdp_access: not_requested"
+  fi
+
+  if [ "${sensitive}" = "1" ] && [ "${redacted}" != "1" ]; then
+    echo "qa_status: qa_warning:redaction_required"
+    return 0
+  fi
+
+  if [ "${visual}" = "1" ] && { [ "${verify}" != "1" ] || [ "${review}" != "1" ]; }; then
+    echo "qa_status: qa_warning:visual_not_completion_authority"
+    return 0
+  fi
+
+  if [ "${cdp_access}" = "1" ]; then
+    echo "qa_status: qa_ok:cdp_report_only"
+  else
+    echo "qa_status: qa_ok:report_only"
+  fi
 }
 
 LIGHTWEIGHT_CONTEXT=0
@@ -396,6 +850,26 @@ fi
   echo "## Untracked Review Guard"
   echo
   write_untracked_review_guard
+  echo
+  echo "## Phase Scope Guard"
+  echo
+  write_phase_scope_guard
+  echo
+  echo "## Completion Pack Routing Audit"
+  echo
+  write_completion_pack_routing_audit
+  echo
+  echo "## Product Challenge Audit"
+  echo
+  write_product_challenge_audit
+  echo
+  echo "## Visual Artifact Audit"
+  echo
+  write_visual_artifact_audit
+  echo
+  echo "## Browser QA Evidence Audit"
+  echo
+  write_browser_qa_evidence_audit
   echo
   echo "## Diff"
   echo

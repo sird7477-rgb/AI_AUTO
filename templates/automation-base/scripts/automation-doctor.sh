@@ -223,6 +223,23 @@ check_command() {
   fi
 }
 
+check_tool_adoption() {
+  local name="$1"
+  local adoption_state="$2"
+  local severity="$3"
+  local next_gate="$4"
+
+  if command -v "$name" >/dev/null 2>&1; then
+    say_pass "tool adoption: ${name} state=${adoption_state} next=${next_gate}"
+  elif [ "$severity" = "fail" ]; then
+    say_fail "tool adoption missing: ${name} state=${adoption_state} next=${next_gate}"
+    suggest "install ${name} and ensure it is on PATH"
+  else
+    say_warn "tool adoption optional missing: ${name} state=${adoption_state} next=${next_gate}"
+    suggest "install ${name} if this workflow needs it"
+  fi
+}
+
 check_python3_version() {
   if ! command -v python3 >/dev/null 2>&1; then
     return
@@ -538,11 +555,11 @@ check_command python3 fail
 check_python3_version
 check_command docker warn
 if [ "${IN_AI_LAB:-0}" -eq 1 ]; then
-  check_command shellcheck fail
+  check_tool_adoption shellcheck required_gate fail verify
 else
-  check_command shellcheck warn
+  check_tool_adoption shellcheck optional warn verify
 fi
-check_command hyperfine warn
+check_tool_adoption hyperfine optional warn benchmark_capture
 
 if command -v docker >/dev/null 2>&1; then
   if docker info >/dev/null 2>&1; then

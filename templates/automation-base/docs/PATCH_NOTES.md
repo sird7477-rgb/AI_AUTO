@@ -4,6 +4,65 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.29.8
+
+- Enforced persona review-gate classifier integrity in the review summary:
+  missing or malformed `Diff Scope Summary` classifier fields now force manual
+  review instead of allowing a normal proceed verdict.
+- Added review-summary fixtures for missing policy, malformed strict policy,
+  valid strict policy, and docs-only `verify_only` classification.
+
+## 2026.05.29.7
+
+- Updated user-facing docs for the optional Codex startup notice so the
+  documented output matches the `AI_AUTO UPDATE CHECK` block and
+  `action: AI_AUTO 최신 패치 적용해줘` wording.
+- Documented the AI_AUTO home `OBSIDIAN OUTPUT CHECK` startup notice as a
+  bounded read-only pending-draft check that only prints an approval handoff and
+  never pushes to a vault automatically.
+
+## 2026.05.29.6
+
+- Added the `operational_clear` TODO status so completed workflow items can be
+  distinguished from contract-only coverage after their real caller, runtime
+  guard, synchronized surfaces, and verification evidence exist.
+- Added explicit tool-adoption status output to the template automation doctor
+  and source checkout bootstrap for `shellcheck` and `hyperfine` so
+  required-vs-optional tool state is visible in the regular readiness workflow.
+- Added a phase/scope guard section to review context and a matching review
+  summary block so out-of-phase edits require an allowed path, a deferred
+  `path|reason` record, or manual review before commit readiness.
+- Added a bounded review-revision task artifact path for explicitly accepted
+  structured reviewer findings, with stop artifacts for unclear output,
+  reviewer disagreement, repeated verification failure, missing changed diff,
+  or more than two revision cycles.
+- Added a report-only completion-pack routing audit to review context so pack
+  inventory, explicit triggers, file-scope trigger hints, and GStack
+  documentation-generation reference-lens handling are visible without adding a
+  new runtime lane.
+- Added a report-only product challenge audit to review context so broad or
+  strategic planning work records a challenge reason while routine small work
+  and already approved plans are explicitly skipped.
+- Added a report-only visual artifact audit to review context so Excalidraw,
+  paired specs, stale exports, and ambiguous source ownership are visible
+  without installing diagram tooling or treating unreviewed drawings as
+  implementation contracts.
+- Added a report-only browser QA evidence audit to review context so target,
+  steps, screenshot notes, CDP credential boundaries, redaction warnings, and
+  visual-verdict authority limits are visible without enabling an auto-fix loop.
+- Added persona lens fields to diff scope context so active lenses, integrator
+  requirement, review-gate policy, and policy reasons are visible without
+  creating a standing persona roster or new reviewer process.
+
+## 2026.05.29.5
+
+- Tightened `scripts/todo-report.py` so complete-status items that still mention
+  missing runtime wiring, contract-only coverage, non-active tooling, parity
+  drift, contract-cleared-only risk work, separate future work, or later
+  execution are reported as policy attention and fail active-TODO verification.
+- Kept the template-owned TODO report script in sync with the source checkout so
+  downstream AI_AUTO patch checks inherit the partial-completion guard.
+
 ## 2026.05.29.4
 
 - Added `scripts/todo-report.py` to read the canonical backlog and fail

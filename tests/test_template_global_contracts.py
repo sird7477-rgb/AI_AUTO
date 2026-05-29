@@ -82,3 +82,35 @@ def test_template_status_manifest_paths_exist_and_are_unique() -> None:
         }
     ]
     assert unexpected_policies == []
+
+
+def test_tool_adoption_status_surfaces_are_explicit() -> None:
+    for path in (
+        "scripts/automation-doctor.sh",
+        "templates/automation-base/scripts/automation-doctor.sh",
+        "scripts/bootstrap-ai-lab.sh",
+    ):
+        text = _read(path)
+        assert "check_tool_adoption" in text
+        assert "tool adoption: ${name} state=${adoption_state} next=${next_gate}" in text
+        assert "shellcheck required_gate" in text
+        assert "hyperfine optional" in text
+
+
+def test_codex_startup_notices_are_explicit_and_bounded() -> None:
+    text = _read("scripts/install-global-files.sh")
+
+    assert "===== AI_AUTO UPDATE CHECK =====" in text
+    assert "AI_AUTO_TEMPLATE_STATUS_NOTICE_TIMEOUT" in text
+    assert 'template_status_timeout="\\${AI_AUTO_TEMPLATE_STATUS_NOTICE_TIMEOUT:-1}"' in text
+    assert "timeout \"\\${template_status_timeout}\" ai-auto-template-status" in text
+    assert "state: update_available" in text
+    assert "action: AI_AUTO 최신 패치 적용해줘" in text
+
+    assert "AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE" in text
+    assert "AI_AUTO_KNOWLEDGE_NOTICE_TIMEOUT" in text
+    assert "command -v timeout >/dev/null 2>&1" in text
+    assert 'timeout "\\${knowledge_timeout}" knowledge-collect' in text
+    assert 'knowledge-collect --include-registry --project "\\${repo_root}"' in text
+    assert "state: pending_knowledge_drafts" in text
+    assert "push after approval: knowledge-collect --project <repo> --push --vault-dir <vault-dir>" in text

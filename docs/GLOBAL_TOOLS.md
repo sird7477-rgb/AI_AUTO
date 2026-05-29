@@ -244,9 +244,11 @@ source block. The generated function resolves the real Codex executable at
 install time, checks the current git repository with `ai-auto-template-status`,
 prints a warning to stderr only when the project is customized or outdated, and
 then calls the real Codex binary with the original arguments.
-The warning includes `patch keyword: AI_AUTO 최신 패치 적용해줘`; type that
-keyword in Codex to ask the agent to run the documented AI_AUTO template patch
-workflow.
+The warning is printed as an `AI_AUTO UPDATE CHECK` block. It includes
+`action: AI_AUTO 최신 패치 적용해줘`; type that action in Codex to ask the agent to
+run the documented AI_AUTO template patch workflow. The status check is wrapped
+in a short timeout and is skipped when `timeout` is unavailable so ordinary
+Codex startup is not blocked.
 If `ai-auto-template-status` reports `template_patch_enabled: no`, the keyword
 workflow must stop before applying managed-file changes because the current
 AI_AUTO source is experimental or unknown.
@@ -258,6 +260,18 @@ addition trips only the current guidance diff hard limit, rerun with
 Disable the notice for a shell command with:
 
     AI_AUTO_CODEX_DRIFT_NOTICE=0 codex
+
+When the same wrapper is invoked from the AI_AUTO home checkout, it also checks
+for validated knowledge drafts across AI_AUTO plus registered projects. If
+drafts are pending, it prints an `OBSIDIAN OUTPUT CHECK` block with up to ten
+pending rows, an inspect command, and an approval-only push handoff:
+
+    knowledge-collect --project <repo> --push --vault-dir <vault-dir>
+
+This startup check is read-only. It never writes to an Obsidian vault, never
+pushes automatically, and can be disabled with:
+
+    AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE=0 codex
 
 The notice path is read-only. It does not run `--record-feedback`, merge
 template files, patch projects, or install a `~/bin/codex` executable.

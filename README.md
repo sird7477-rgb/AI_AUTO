@@ -363,13 +363,27 @@ workflow:
 - `hyperfine`: used by `scripts/benchmark-command.py` for optional benchmark
   evidence capture.
 - `scripts/todo-report.py`: reads the canonical backlog and fails with
-  `--fail-on-active` if active TODO items remain.
+  `--fail-on-active` if active TODO or policy-attention items remain.
 - `docker`: required for the final API/Postgres smoke check in `verify.sh`.
 - `claude` and `agy`: used by `review-gate`; if Claude is unavailable because
   of a usage limit, report the degraded reviewer state explicitly.
 
 Benchmark evidence is observational. It does not replace `verify.sh` or
 `review-gate`.
+
+Optional Codex startup notices can be installed with:
+
+```bash
+./scripts/install-global-files.sh --install-codex-drift-notice
+```
+
+When an AI_AUTO-managed project is outdated, Codex startup prints an
+`AI_AUTO UPDATE CHECK` block with the project path, version status, latest patch
+note, inspection command, and `action: AI_AUTO 최신 패치 적용해줘`. In the AI_AUTO
+home checkout, the same startup hook can also print an `OBSIDIAN OUTPUT CHECK`
+block when validated knowledge drafts are waiting across AI_AUTO and registered
+projects. That notice is read-only and stops at an explicit
+`knowledge-collect --project <repo> --push --vault-dir <vault-dir>` handoff.
 
 정리하면, 클론 직후의 권장 흐름은 다음과 같습니다.
 

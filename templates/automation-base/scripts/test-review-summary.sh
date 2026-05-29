@@ -179,6 +179,7 @@ assert_summary() {
 
   set +e
   REVIEW_UNTRACKED_MANUAL_REVIEWED="${REVIEW_UNTRACKED_MANUAL_REVIEWED_FOR_TEST:-0}" \
+    PHASE_SCOPE_MANUAL_REVIEWED="${PHASE_SCOPE_MANUAL_REVIEWED_FOR_TEST:-0}" \
     RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
   status=$?
   set -e
@@ -741,6 +742,311 @@ CTX
   REVIEW_UNTRACKED_MANUAL_REVIEWED_FOR_TEST=1 assert_summary "untracked_guard_allows_manual_review_override" "proceed" "multi_reviewer" 0
 }
 
+case_phase_scope_guard_blocks_out_of_phase_edits() {
+  local dir="${TMP_ROOT}/phase_scope_guard_blocks_out_of_phase_edits"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Phase Scope Guard
+
+phase: docs
+manual_review_override: 0
+phase_scope_status: out_of_phase_edit
+manual_review_required: true
+Out-of-phase changed files require a plan update, deferral record, or manual review.
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "phase_scope_guard_blocks_out_of_phase_edits" "review_manually" "multi_reviewer" 1
+}
+
+case_phase_scope_guard_allows_manual_review_override() {
+  local dir="${TMP_ROOT}/phase_scope_guard_allows_manual_review_override"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Phase Scope Guard
+
+phase: docs
+manual_review_override: 1
+phase_scope_status: out_of_phase_edit
+manual_review_required: true
+Out-of-phase changed files require a plan update, deferral record, or manual review.
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  PHASE_SCOPE_MANUAL_REVIEWED_FOR_TEST=1 assert_summary "phase_scope_guard_allows_manual_review_override" "proceed" "multi_reviewer" 0
+}
+
+case_phase_scope_guard_blocks_missing_deferral_record() {
+  local dir="${TMP_ROOT}/phase_scope_guard_blocks_missing_deferral_record"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Phase Scope Guard
+
+phase: docs
+manual_review_override: 0
+phase_scope_status: missing_deferral_record
+manual_review_required: true
+Deferred out-of-phase files require PHASE_SCOPE_DEFERRED_RECORDS entries in path|reason format.
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "phase_scope_guard_blocks_missing_deferral_record" "review_manually" "multi_reviewer" 1
+}
+
+case_persona_gate_blocks_missing_policy() {
+  local dir="${TMP_ROOT}/persona_gate_blocks_missing_policy"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Diff Scope Summary
+
+- scopes: scripts
+- review intensity hint: strict
+- active lenses: policy_compliance,test_strategy
+- integrator required: true
+- review gate reasons: scopes=scripts; lenses=policy_compliance,test_strategy
+- required checks: verify,review-gate
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "persona_gate_blocks_missing_policy" "review_manually" "multi_reviewer" 1
+}
+
+case_persona_gate_blocks_malformed_strict_policy() {
+  local dir="${TMP_ROOT}/persona_gate_blocks_malformed_strict_policy"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Diff Scope Summary
+
+- scopes: scripts
+- review intensity hint: strict
+- active lenses: none
+- integrator required: maybe
+- review gate policy: strict_gate
+- review gate reasons: scopes=scripts; lenses=none
+- required checks: verify,review-gate
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "persona_gate_blocks_malformed_strict_policy" "review_manually" "multi_reviewer" 1
+}
+
+case_persona_gate_allows_valid_strict_policy() {
+  local dir="${TMP_ROOT}/persona_gate_allows_valid_strict_policy"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Diff Scope Summary
+
+- scopes: scripts
+- review intensity hint: strict
+- active lenses: policy_compliance,review_taxonomy,test_strategy,integrator
+- integrator required: true
+- review gate policy: strict_gate
+- review gate reasons: scopes=scripts; lenses=policy_compliance,review_taxonomy,test_strategy,integrator
+- required checks: verify,review-gate
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "persona_gate_allows_valid_strict_policy" "proceed" "multi_reviewer" 0
+}
+
+case_persona_gate_allows_docs_verify_only() {
+  local dir="${TMP_ROOT}/persona_gate_allows_docs_verify_only"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  cat > "${dir}/latest-review-context.md" <<'CTX'
+# Review Context
+
+## Diff Scope Summary
+
+- scopes: docs
+- review intensity hint: light
+- active lenses: docs_dx
+- integrator required: false
+- review gate policy: verify_only
+- review gate reasons: scopes=docs; lenses=docs_dx
+- required checks: verify
+CTX
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" \
+    "${dir}/latest-review-context.md"
+
+  assert_summary "persona_gate_allows_docs_verify_only" "proceed" "multi_reviewer" 0
+}
+
+case_review_revision_task_created_from_accepted_finding() {
+  local dir="${TMP_ROOT}/review_revision_task_created_from_accepted_finding"
+  local out_dir="${dir}/out"
+  mkdir -p "${dir}" "${out_dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "request_changes"
+  write_verdict "${dir}/gemini-review-current.md" "request_changes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf 'accepted|R1|claude|scripts/example.sh|Quote path variables safely\n' > "${dir}/accepted-findings.psv"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  set +e
+  REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
+    REVIEW_REVISION_CYCLE_COUNT=2 \
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+  status=$?
+  set -e
+
+  if [ "${status}" -ne 1 ]; then
+    echo "[summary-test] review_revision_task_created_from_accepted_finding: expected exit 1, got ${status}"
+    cat /tmp/review-summary-test-output.txt
+    exit 1
+  fi
+
+  local task_file
+  task_file="$(find "${out_dir}" -maxdepth 1 -type f -name 'review-revision-task-*.md' -print | head -1)"
+  if [ -z "${task_file}" ]; then
+    echo "[summary-test] review_revision_task_created_from_accepted_finding: missing task file"
+    cat /tmp/review-summary-test-output.txt
+    exit 1
+  fi
+
+  grep -q "status: revision_task_created" "${task_file}"
+  grep -q "reviewer: claude" "${task_file}"
+  grep -q "file: scripts/example.sh" "${task_file}"
+  grep -q "Run ./scripts/verify.sh" "${task_file}"
+
+  echo "[summary-test] review_revision_task_created_from_accepted_finding: pass"
+}
+
+case_review_revision_task_stops_at_cycle_limit() {
+  local dir="${TMP_ROOT}/review_revision_task_stops_at_cycle_limit"
+  local out_dir="${dir}/out"
+  mkdir -p "${dir}" "${out_dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "request_changes"
+  write_verdict "${dir}/gemini-review-current.md" "request_changes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf 'accepted|R1|gemini|scripts/example.sh|Tighten summary parsing\n' > "${dir}/accepted-findings.psv"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  set +e
+  REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
+    REVIEW_REVISION_CYCLE_COUNT=3 \
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+  status=$?
+  set -e
+
+  if [ "${status}" -ne 1 ]; then
+    echo "[summary-test] review_revision_task_stops_at_cycle_limit: expected exit 1, got ${status}"
+    cat /tmp/review-summary-test-output.txt
+    exit 1
+  fi
+
+  local task_file
+  task_file="$(find "${out_dir}" -maxdepth 1 -type f -name 'review-revision-task-*.md' -print | head -1)"
+  if [ -z "${task_file}" ]; then
+    echo "[summary-test] review_revision_task_stops_at_cycle_limit: missing task file"
+    cat /tmp/review-summary-test-output.txt
+    exit 1
+  fi
+
+  grep -q "status: revision_stop:cycle_limit" "${task_file}"
+  grep -q "max_cycles: 2" "${task_file}"
+
+  echo "[summary-test] review_revision_task_stops_at_cycle_limit: pass"
+}
+
 case_multi_reviewer
 case_single_external_plus_codex
 case_codex_only_degraded
@@ -763,5 +1069,14 @@ case_codex_fallback_without_direct_inspection_blocks
 case_untracked_guard_blocks_omitted_material_artifacts
 case_untracked_guard_blocks_enabled_content_without_manual_review
 case_untracked_guard_allows_manual_review_override
+case_phase_scope_guard_blocks_out_of_phase_edits
+case_phase_scope_guard_allows_manual_review_override
+case_phase_scope_guard_blocks_missing_deferral_record
+case_persona_gate_blocks_missing_policy
+case_persona_gate_blocks_malformed_strict_policy
+case_persona_gate_allows_valid_strict_policy
+case_persona_gate_allows_docs_verify_only
+case_review_revision_task_created_from_accepted_finding
+case_review_revision_task_stops_at_cycle_limit
 
 echo "[summary-test] success"

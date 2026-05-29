@@ -4,14 +4,31 @@ from scripts.self_demo_contracts import (
     benchmark_capture_record,
     benchmark_wrapper_plan,
     benchmark_evidence,
+    browser_qa_evidence_policy,
     completion_authority,
+    completion_pack_routing_policy,
     diff_scope_classification,
+    guidance_minimality_boundary,
+    obsidian_autopush_policy,
+    persona_lens_policy,
+    phase_scope_guard_policy,
+    product_challenge_policy,
     process_cleanup_evidence,
+    registry_scan_boundary,
+    review_revision_loop_policy,
     reviewer_eligibility,
+    review_context_boundary,
     review_gate_short_summary,
     self_demo_record,
+    startup_preflight_boundary,
+    status_notice_boundary,
+    template_parity_boundary,
     todo_report_reconciliation,
+    tool_adoption_status_policy,
     untracked_artifact_review_guard,
+    update_visibility_policy,
+    vault_write_boundary,
+    visual_artifact_policy,
 )
 
 
@@ -283,6 +300,177 @@ def test_completion_authority_remains_leader_owned() -> None:
     ).accepted
 
 
+def test_startup_preflight_boundary_requires_non_blocking_pass_through() -> None:
+    valid = {
+        "preflight_name": "project update notice",
+        "target_timeout_seconds": 0.5,
+        "hard_timeout_seconds": 1,
+        "failure_mode": "warning_only",
+        "passes_through_primary_invocation": True,
+    }
+    assert startup_preflight_boundary(valid).accepted
+    assert startup_preflight_boundary(
+        {
+            **valid,
+            "preflight_name": "obsidian knowledge auto-push",
+            "target_timeout_seconds": 2,
+            "hard_timeout_seconds": 5,
+        }
+    ).accepted
+    assert startup_preflight_boundary({**valid, "target_timeout_seconds": 4, "hard_timeout_seconds": 5}).reason == (
+        "project_update_notice_timeout_too_high"
+    )
+    assert startup_preflight_boundary(
+        {
+            **valid,
+            "preflight_name": "template update notice",
+            "target_timeout_seconds": 4,
+            "hard_timeout_seconds": 5,
+        }
+    ).reason == "project_update_notice_timeout_too_high"
+    assert startup_preflight_boundary(
+        {
+            **valid,
+            "preflight_name": "AI_AUTO update notice",
+            "target_timeout_seconds": 4,
+            "hard_timeout_seconds": 5,
+        }
+    ).reason == "project_update_notice_timeout_too_high"
+    assert startup_preflight_boundary(
+        {
+            **valid,
+            "preflight_name": "obsidian knowledge auto-push",
+            "target_timeout_seconds": 3,
+            "hard_timeout_seconds": 5,
+        }
+    ).reason == "knowledge_preflight_timeout_too_high"
+    assert startup_preflight_boundary({**valid, "failure_mode": "fail_closed"}).reason == (
+        "startup_preflight_must_be_warning_only"
+    )
+    assert startup_preflight_boundary({**valid, "passes_through_primary_invocation": False}).reason == (
+        "startup_preflight_must_pass_through"
+    )
+    assert startup_preflight_boundary({**valid, "hard_timeout_seconds": 6}).reason == (
+        "project_update_notice_timeout_too_high"
+    )
+    assert startup_preflight_boundary({**valid, "starts_daemon": True}).reason == (
+        "startup_preflight_must_not_start_runtime"
+    )
+
+
+def test_vault_write_boundary_requires_existing_guards_and_idempotent_failure() -> None:
+    valid = {
+        "explicit_vault_config": True,
+        "uses_existing_validator": True,
+        "preserves_sync_class_guard": True,
+        "rejects_symlink_escape": True,
+        "rejects_dot_omx_vault": True,
+        "idempotent_failure": True,
+        "failure_mode": "warning_only",
+    }
+    assert vault_write_boundary(valid).accepted
+    assert vault_write_boundary({**valid, "explicit_vault_config": False}).reason == (
+        "vault_boundary_missing_controls"
+    )
+    assert vault_write_boundary({**valid, "failure_mode": "raises"}).reason == (
+        "vault_write_failure_must_be_warning_only"
+    )
+    assert vault_write_boundary({**valid, "discovers_vault_by_mount_scan": True}).reason == (
+        "vault_boundary_must_not_mount_scan"
+    )
+    assert vault_write_boundary({**valid, "claims_obsidian_authority": True}).reason == (
+        "obsidian_authority_forbidden"
+    )
+
+
+def test_review_context_boundary_requires_complete_or_split_untracked_review() -> None:
+    valid = {
+        "material_untracked_artifacts": True,
+        "content_included": False,
+        "split_review": True,
+        "split_synthesis": True,
+        "focused_ai_council": False,
+    }
+    assert review_context_boundary(valid).accepted
+    assert review_context_boundary({**valid, "split_synthesis": False}).reason == "split_review_needs_synthesis"
+    assert review_context_boundary(
+        {
+            "material_untracked_artifacts": True,
+            "content_included": False,
+            "split_review": False,
+            "focused_ai_council": False,
+        }
+    ).reason == "material_untracked_review_needs_context"
+    assert review_context_boundary({**valid, "claims_complete_review": True, "truncated_context": True}).reason == (
+        "truncated_context_cannot_claim_complete_review"
+    )
+
+
+def test_registry_scan_boundary_keeps_startup_scans_bounded() -> None:
+    valid = {
+        "current_repo_scope": True,
+        "registry_scope": True,
+        "workspace_scan": False,
+        "mounted_drive_scan": False,
+        "startup_path": True,
+    }
+    assert registry_scan_boundary(valid).accepted
+    assert registry_scan_boundary({**valid, "workspace_scan": True}).reason == (
+        "startup_registry_scan_must_not_workspace_crawl"
+    )
+    assert registry_scan_boundary({**valid, "mounted_drive_scan": True}).reason == (
+        "registry_scan_must_not_mount_scan"
+    )
+    assert registry_scan_boundary({**valid, "current_repo_scope": False, "registry_scope": False}).reason == (
+        "registry_scan_needs_bounded_scope"
+    )
+
+
+def test_template_parity_boundary_requires_version_and_patch_notes_for_template_owned_changes() -> None:
+    assert template_parity_boundary({"template_owned_change": False}).accepted
+    valid = {
+        "template_owned_change": True,
+        "template_version_updated": True,
+        "patch_notes_updated": True,
+        "template_sync_check": True,
+    }
+    assert template_parity_boundary(valid).accepted
+    assert template_parity_boundary({**valid, "patch_notes_updated": False}).reason == (
+        "template_parity_missing_controls"
+    )
+
+
+def test_status_notice_boundary_stays_display_only_and_does_not_record_feedback() -> None:
+    valid = {
+        "display_only": True,
+        "passes_through_primary_invocation": True,
+        "records_feedback": False,
+    }
+    assert status_notice_boundary(valid).accepted
+    assert status_notice_boundary({**valid, "records_feedback": True}).reason == (
+        "status_notice_must_not_record_feedback"
+    )
+    assert status_notice_boundary({**valid, "applies_patch": True}).reason == "status_notice_must_not_apply_changes"
+    assert status_notice_boundary({**valid, "passes_through_primary_invocation": False}).reason == (
+        "status_notice_must_pass_through"
+    )
+
+
+def test_guidance_minimality_boundary_blocks_broad_rewrites_without_plan() -> None:
+    valid = {
+        "behavior_exists": True,
+        "doc_budget_ok": True,
+        "minimal_sections": True,
+    }
+    assert guidance_minimality_boundary(valid).accepted
+    assert guidance_minimality_boundary({**valid, "broad_policy_rewrite": True}).reason == (
+        "broad_guidance_rewrite_needs_plan"
+    )
+    assert guidance_minimality_boundary({**valid, "minimal_sections": False}).reason == (
+        "guidance_minimality_missing_controls"
+    )
+
+
 def test_reviewer_eligibility_handles_invalid_context_and_duplicate_names() -> None:
     report = reviewer_eligibility(
         [
@@ -424,26 +612,62 @@ def test_untracked_artifact_review_guard_requires_context_or_manual_review() -> 
     assert structured_reviewed.accepted
 
 
-def test_todo_report_reconciliation_separates_unresolved_and_deferred_work() -> None:
+def test_todo_report_reconciliation_rejects_unresolved_work() -> None:
     result = todo_report_reconciliation(
         [
             {"id": "done", "status": "complete", "evidence": "./scripts/verify.sh pass"},
+            {"id": "operational", "status": "operational_clear", "evidence": "caller, runtime guard, docs, and verification evidence exist"},
             {"id": "contract-done", "status": "complete_contract", "evidence": "contract and runtime caller verified"},
             {"id": "planned", "status": "planned_not_run"},
+            {"id": "deferred", "status": "deferred", "reason": "needs approval"},
+            {"id": "approval", "status": "approval_needed", "reason": "human approval"},
+            {"id": "blocked", "status": "blocked", "reason": "dependency unavailable"},
             {"id": "later", "status": "later_gated", "reason": "separate trigger"},
             {"id": "reference", "status": "reference_only", "reason": "not active work"},
             {"id": "contract", "status": "contract_started"},
         ]
     )
-    assert result.accepted
-    assert result.data["unresolved"] == ["planned", "contract"]
+    assert not result.accepted
+    assert result.reason == "unresolved_todo_report"
+    assert result.data["unresolved"] == ["planned", "deferred", "approval", "blocked", "contract"]
     assert todo_report_reconciliation([{"id": "bad-contract-done", "status": "complete_contract"}]).reason == (
         "invalid_todo_report"
     )
+    assert todo_report_reconciliation(
+        [{"id": "contract-only", "status": "complete_contract", "evidence": "contract-only helper exists"}]
+    ).data["invalid"] == {"contract-only": "complete_mentions_unfinished_operating_surface"}
+    assert todo_report_reconciliation(
+        [{"id": "pending-runtime", "status": "complete_contract", "evidence": "runtime wiring is pending"}]
+    ).data["invalid"] == {"pending-runtime": "complete_mentions_unfinished_operating_surface"}
+    assert todo_report_reconciliation(
+        [{"id": "contract-cleared", "status": "complete_contract", "evidence": "risk is contract-cleared"}]
+    ).data["invalid"] == {"contract-cleared": "complete_mentions_unfinished_operating_surface"}
+    assert todo_report_reconciliation(
+        [{"id": "future-work", "status": "complete_observe_mode", "evidence": "gate policy is separate future work"}]
+    ).data["invalid"] == {"future-work": "complete_mentions_unfinished_operating_surface"}
+    assert todo_report_reconciliation(
+        [{"id": "safe-note", "status": "complete_contract", "evidence": "optional future polish is not active TODO"}]
+    ).accepted
+    assert todo_report_reconciliation(
+        [{"id": "observe", "status": "complete_observe_mode", "evidence": "observe mode exists; policy is later-gated and not active"}]
+    ).accepted
     assert todo_report_reconciliation([{"id": "bad-done", "status": "complete"}]).reason == "invalid_todo_report"
     assert todo_report_reconciliation([{"id": "bad-later", "status": "later_gated"}]).data["invalid"] == {
         "bad-later": "non_active_status_requires_reason"
     }
+
+
+def test_todo_report_reconciliation_accepts_only_resolved_or_bounded_items() -> None:
+    result = todo_report_reconciliation(
+        [
+            {"id": "done", "status": "complete", "evidence": "./scripts/verify.sh pass"},
+            {"id": "operational", "status": "operational_clear", "evidence": "caller, runtime guard, docs, and verification evidence exist"},
+            {"id": "later", "status": "later_gated", "reason": "separate trigger"},
+            {"id": "reference", "status": "reference_only", "reason": "not active work"},
+        ]
+    )
+    assert result.accepted
+    assert result.data["unresolved"] == []
 
 
 def test_diff_scope_classification_maps_paths_to_review_intensity() -> None:
@@ -571,3 +795,231 @@ def test_process_cleanup_evidence_rejects_lingering_or_unreaped_timeout() -> Non
     )
     assert process_cleanup_evidence({**valid, "kill_after_seconds": 0}).reason == "invalid_process_timeout"
     assert process_cleanup_evidence({**valid, "forced_kill_or_reaped": False}).reason == "timed_out_process_not_reaped"
+
+
+def test_persona_lens_policy_promotes_lenses_without_slowing_small_tasks() -> None:
+    routine = {
+        "task_size": "small",
+        "hard_triggers": [],
+        "routine_small": True,
+        "active_lenses": [],
+        "classifier_status": "ok",
+    }
+    assert persona_lens_policy(routine).reason == "persona_lens_suppressed"
+    assert persona_lens_policy({**routine, "classifier_status": "error"}).reason == "persona_classifier_strict_gate"
+    assert persona_lens_policy({**routine, "active_lenses": ["security"]}).reason == (
+        "routine_small_must_suppress_lenses"
+    )
+    multi = {
+        **routine,
+        "task_size": "large",
+        "routine_small": False,
+        "hard_triggers": ["security", "deployment"],
+        "active_lenses": ["security", "deployment", "integrator"],
+        "minimum_review_gate": "strict",
+    }
+    assert persona_lens_policy(multi).accepted
+    assert persona_lens_policy({**multi, "active_lenses": ["security", "deployment"]}).reason == (
+        "multi_lens_requires_integrator"
+    )
+
+
+def test_obsidian_autopush_policy_is_dry_run_and_approval_bounded() -> None:
+    valid = {
+        "invoked_from_home_checkout": True,
+        "opt_in": True,
+        "pending_drafts": ["ai-lab.md", "project-a.md"],
+        "explicit_vault_config": True,
+        "dry_run_summary": True,
+        "uses_knowledge_collect": True,
+        "push_requested": False,
+        "user_push_approval": False,
+    }
+    assert obsidian_autopush_policy(valid).accepted
+    assert obsidian_autopush_policy({**valid, "invoked_from_home_checkout": False}).reason == (
+        "obsidian_autopush_skipped_not_home"
+    )
+    assert obsidian_autopush_policy({**valid, "push_requested": True}).reason == (
+        "obsidian_push_requires_user_approval"
+    )
+    assert obsidian_autopush_policy({**valid, "dry_run_summary": False}).reason == (
+        "obsidian_autopush_requires_dry_run_summary"
+    )
+
+
+def test_update_visibility_policy_is_display_only_fast_and_low_noise() -> None:
+    valid = {
+        "status": "stale",
+        "display_only": True,
+        "passes_through_primary_invocation": True,
+        "throttle_scope": "session",
+        "target_timeout_seconds": 0.5,
+        "hard_timeout_seconds": 1,
+        "clear_notice": True,
+    }
+    assert update_visibility_policy(valid).accepted
+    assert update_visibility_policy({**valid, "target_timeout_seconds": 0.8}).reason == (
+        "project_update_notice_timeout_too_high"
+    )
+    assert update_visibility_policy({**valid, "throttle_scope": "project_file"}).reason == (
+        "update_visibility_throttle_must_be_ephemeral"
+    )
+    assert update_visibility_policy({**valid, "status": "current", "notice_visible": True}).reason == (
+        "current_update_status_should_stay_quiet"
+    )
+
+
+def test_visual_artifact_policy_promotes_source_of_truth_checks() -> None:
+    mermaid = {
+        "artifact_type": "mermaid",
+        "owner_declared": True,
+        "paired_spec": False,
+        "human_reviewed": False,
+        "stale_export": False,
+        "ambiguous_source": False,
+    }
+    assert visual_artifact_policy(mermaid).accepted
+    assert visual_artifact_policy({**mermaid, "owner_declared": False}).reason == "visual_owner_required"
+    assert visual_artifact_policy({**mermaid, "stale_export": True}).reason == "visual_stale_export"
+    assert visual_artifact_policy({**mermaid, "ambiguous_source": True}).reason == (
+        "visual_ambiguous_source_of_truth"
+    )
+    excalidraw = {**mermaid, "artifact_type": "excalidraw", "owner_declared": False}
+    assert visual_artifact_policy(excalidraw).reason == "visual_excalidraw_explanatory_only"
+    assert visual_artifact_policy({**excalidraw, "paired_spec": True}).reason == "visual_unreviewed_spec"
+    assert visual_artifact_policy({**excalidraw, "paired_spec": True, "human_reviewed": True}).accepted
+
+
+def test_product_challenge_policy_triggers_only_for_broad_work() -> None:
+    broad = {
+        "request_shape": "broad_strategy",
+        "task_size": "large",
+        "approved_plan_exists": False,
+        "challenge_reason": "new workflow direction needs value and alternative pressure",
+        "questions": ["who uses it?", "what is non-goal?", "smallest useful outcome?"],
+    }
+    assert product_challenge_policy(broad).reason == "product_challenge_required"
+    assert product_challenge_policy({**broad, "challenge_reason": ""}).reason == (
+        "product_challenge_reason_required"
+    )
+    assert product_challenge_policy({**broad, "questions": ["1", "2", "3", "4"]}).reason == (
+        "product_challenge_max_three_questions"
+    )
+    small = {**broad, "request_shape": "typo", "task_size": "small", "challenge_reason": ""}
+    assert product_challenge_policy(small).reason == "product_challenge_skipped_routine_small"
+    assert product_challenge_policy({**broad, "approved_plan_exists": True}).reason == (
+        "product_challenge_skipped_approved_plan"
+    )
+
+
+def test_browser_qa_evidence_policy_stays_report_only_and_credential_safe() -> None:
+    valid = {
+        "target": "http://localhost:5001",
+        "report_only": True,
+        "attempts_patch": False,
+        "cdp_access": True,
+        "loopback_bound": True,
+        "user_launched_or_isolated": True,
+        "approval_recorded": True,
+        "exports_cookies_or_tokens": False,
+        "visual_verdict": True,
+        "verify_evidence": True,
+        "review_gate_evidence": True,
+    }
+    assert browser_qa_evidence_policy(valid).accepted
+    assert browser_qa_evidence_policy({**valid, "attempts_patch": True}).reason == "browser_qa_must_be_report_only"
+    assert browser_qa_evidence_policy({**valid, "approval_recorded": False}).reason == "browser_qa_cdp_boundary"
+    assert browser_qa_evidence_policy({**valid, "exports_cookies_or_tokens": True}).reason == (
+        "browser_qa_must_not_export_credentials"
+    )
+    assert browser_qa_evidence_policy({**valid, "sensitive_evidence": True, "redacted": False}).reason == (
+        "browser_qa_redaction_required"
+    )
+    assert browser_qa_evidence_policy({**valid, "verify_evidence": False}).reason == (
+        "visual_verdict_not_completion_authority"
+    )
+
+
+def test_phase_scope_guard_policy_detects_leakage_and_deferrals() -> None:
+    valid = {
+        "phase": "docs",
+        "allowed_files": ["docs/WORKFLOW.md"],
+        "changed_files": ["docs/WORKFLOW.md"],
+        "deferred_files": [],
+    }
+    assert phase_scope_guard_policy(valid).accepted
+    assert phase_scope_guard_policy({**valid, "changed_files": ["scripts/review-gate.sh"]}).reason == (
+        "phase_scope_out_of_phase_edit"
+    )
+    deferred = {
+        **valid,
+        "changed_files": ["docs/WORKFLOW.md", "scripts/review-gate.sh"],
+        "deferred_files": ["scripts/review-gate.sh"],
+    }
+    assert phase_scope_guard_policy(deferred).accepted
+    assert phase_scope_guard_policy({**valid, "material_finding_missing_deferral": True}).reason == (
+        "phase_scope_missing_deferral_record"
+    )
+
+
+def test_review_revision_loop_policy_bounds_review_fix_cycles() -> None:
+    valid = {
+        "finding_state": "accepted",
+        "structured": True,
+        "cycle_count": 1,
+        "verification_passed": True,
+        "changed_diff": True,
+    }
+    assert review_revision_loop_policy(valid).reason == "review_revision_task_ready"
+    assert review_revision_loop_policy({**valid, "finding_state": "rejected"}).reason == "review_revision_skipped"
+    assert review_revision_loop_policy({**valid, "structured": False}).reason == "review_revision_skipped"
+    assert review_revision_loop_policy({**valid, "second_pass_requested": True, "changed_diff": False}).reason == (
+        "review_revision_second_pass_requires_diff"
+    )
+    assert review_revision_loop_policy({**valid, "cycle_count": 3}).reason == "review_revision_cycle_limit"
+    assert review_revision_loop_policy({**valid, "verification_passed": False}).reason == (
+        "review_revision_verification_failure"
+    )
+    assert review_revision_loop_policy({**valid, "unclear_reviewer_output": True}).reason == (
+        "review_revision_unclear_review"
+    )
+
+
+def test_tool_adoption_status_policy_is_read_only_and_blocks_silent_promotion() -> None:
+    required = {
+        "tool": "shellcheck",
+        "installed": True,
+        "adoption_state": "required_gate",
+        "source": "automation-doctor",
+        "next_gate": "verify",
+    }
+    assert tool_adoption_status_policy(required).accepted
+    assert tool_adoption_status_policy({**required, "installed": False}).reason == "tool_required_missing"
+    assert tool_adoption_status_policy({**required, "installs_tool": True}).reason == "tool_status_must_be_read_only"
+    assert tool_adoption_status_policy({**required, "silent_required_promotion": True}).reason == (
+        "tool_silent_gate_promotion"
+    )
+    optional = {**required, "tool": "hyperfine", "installed": False, "adoption_state": "optional"}
+    assert tool_adoption_status_policy(optional).reason == "tool_optional_missing_warning"
+    reference = {**required, "tool": "ruff", "installed": True, "adoption_state": "reference_only"}
+    assert tool_adoption_status_policy(reference).reason == "tool_reference_installed_info"
+
+
+def test_completion_pack_routing_policy_audits_triggers_without_runtime_lane() -> None:
+    packs = {"security", "deployment", "observability", "performance", "data", "ui"}
+    security = {"input_shape": "security_review", "available_packs": packs, "adds_runtime_lane": False}
+    assert completion_pack_routing_policy(security).data["trigger"] == "security"
+    assert completion_pack_routing_policy({**security, "input_shape": "deployment_files"}).data["trigger"] == (
+        "deployment"
+    )
+    assert completion_pack_routing_policy({**security, "input_shape": "persisted_data"}).data["trigger"] == "data"
+    assert completion_pack_routing_policy({**security, "input_shape": "ui_work"}).data["trigger"] == "ui"
+    assert completion_pack_routing_policy({**security, "input_shape": "docs_generation_lens"}).reason == (
+        "completion_pack_reference_lens"
+    )
+    assert completion_pack_routing_policy({**security, "available_packs": {"security"}}).reason == (
+        "completion_pack_inventory_missing"
+    )
+    assert completion_pack_routing_policy({**security, "adds_runtime_lane": True}).reason == (
+        "completion_pack_audit_must_not_add_runtime_lane"
+    )

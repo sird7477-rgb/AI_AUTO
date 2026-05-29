@@ -35,14 +35,17 @@ adds a local preflight notice.
 Example warning:
 
 ```text
-[AI_AUTO] automation template update recommended for /path/to/project
+[AI_AUTO] ===== AI_AUTO UPDATE CHECK =====
+[AI_AUTO] state: update_available
+[AI_AUTO] project: /path/to/project
 [AI_AUTO] installed_version: 2026.05.21.1
 [AI_AUTO] current_version: 2026.05.25.3
 [AI_AUTO] status: customized_or_outdated
 [AI_AUTO] latest patch note: 2026.05.25.3
 [AI_AUTO] review notes: /path/to/ai-lab/templates/automation-base/docs/PATCH_NOTES.md
 [AI_AUTO] inspect: ai-auto-template-status /path/to/project
-[AI_AUTO] patch keyword: AI_AUTO 최신 패치 적용해줘
+[AI_AUTO] action: AI_AUTO 최신 패치 적용해줘
+[AI_AUTO] ================================
 ```
 
 No notice is printed when:
@@ -52,6 +55,7 @@ No notice is printed when:
 - `ai-auto-template-status` reports `status: current`
 - `AI_AUTO_CODEX_DRIFT_NOTICE=0` is set
 - the same shell session already printed a drift notice for that project
+- the `timeout` command is unavailable
 
 ## Safety Rules
 
@@ -118,7 +122,9 @@ codex() {
         AI_AUTO_CODEX_DRIFT_NOTICE_SEEN="${AI_AUTO_CODEX_DRIFT_NOTICE_SEEN:-}|${notice_key}|"
         if printf '%s\n' "$status_output" | grep -q '^status: customized_or_outdated'; then
           latest_note="$(awk '/^## / {print; exit}' "${patch_notes}" 2>/dev/null || true)"
-          printf '%s\n' "[AI_AUTO] automation template update recommended for ${repo_root}" >&2
+          printf '%s\n' "[AI_AUTO] ===== AI_AUTO UPDATE CHECK =====" >&2
+          printf '%s\n' "[AI_AUTO] state: update_available" >&2
+          printf '%s\n' "[AI_AUTO] project: ${repo_root}" >&2
           printf '%s\n' "$status_output" | awk '
             /^(installed_version|current_version|status): / {print "[AI_AUTO] " $0}
           ' >&2
@@ -126,7 +132,8 @@ codex() {
             printf '%s\n' "[AI_AUTO] latest patch note: ${latest_note#\#\# }" >&2
           printf '%s\n' "[AI_AUTO] review notes: ${patch_notes}" >&2
           printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status ${repo_root}" >&2
-          printf '%s\n' "[AI_AUTO] patch keyword: AI_AUTO 최신 패치 적용해줘" >&2
+          printf '%s\n' "[AI_AUTO] action: AI_AUTO 최신 패치 적용해줘" >&2
+          printf '%s\n' "[AI_AUTO] ================================" >&2
         fi
         ;;
     esac

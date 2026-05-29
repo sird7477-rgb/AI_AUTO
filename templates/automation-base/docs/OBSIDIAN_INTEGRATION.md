@@ -100,6 +100,23 @@ For automatic local draft capture, run
 captures review-gate drafts by default; set `OMX_AUTO_KNOWLEDGE_DRAFTS=0` to
 disable that run.
 
+If the optional Codex startup notice is installed from the AI_AUTO home checkout,
+AI_AUTO startup also performs a bounded read-only pending-draft check across the
+home checkout plus registered projects. When drafts are waiting, it prints an
+`OBSIDIAN OUTPUT CHECK` block with a compact pending list, an inspect command,
+and an approval-only push handoff:
+
+```bash
+knowledge-collect --project <repo> --push --vault-dir <vault-dir>
+```
+
+The startup notice never pushes automatically and never writes to the vault.
+Disable it for one shell command with:
+
+```bash
+AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE=0 codex
+```
+
 Validate and index notes:
 
 ```bash

@@ -279,8 +279,8 @@ if test -z "${template_version}" || test -z "${latest_patch_note}" || test "${la
 fi
 grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" AGENTS.md
 grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" templates/automation-base/AGENTS.md
-grep -qF "patch keyword: AI_AUTO 최신 패치 적용해줘" docs/GLOBAL_TOOLS.md
-grep -qF "patch keyword: AI_AUTO 최신 패치 적용해줘" docs/NEW_PROJECT_GUIDE.md
+grep -qF "action: AI_AUTO 최신 패치 적용해줘" docs/GLOBAL_TOOLS.md
+grep -qF "action: AI_AUTO 최신 패치 적용해줘" docs/NEW_PROJECT_GUIDE.md
 
 echo "[verify] testing guidance document budget accounting..."
 (
@@ -4697,11 +4697,12 @@ STUB
   grep -q "real codex <--alpha> <two words>" "${tmp_home}/codex.out"
   grep -q "stdin <>" "${tmp_home}/codex.out"
   grep -q "real codex stderr" "${tmp_home}/codex.err"
-  grep -q "automation template update recommended" "${tmp_home}/codex.err"
+  grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex.err"
+  grep -q "state: update_available" "${tmp_home}/codex.err"
   grep -q "status: customized_or_outdated" "${tmp_home}/codex.err"
   grep -q "latest patch note:" "${tmp_home}/codex.err"
   grep -q "review notes: .*templates/automation-base/docs/PATCH_NOTES.md" "${tmp_home}/codex.err"
-  grep -q "patch keyword: AI_AUTO 최신 패치 적용해줘" "${tmp_home}/codex.err"
+  grep -q "action: AI_AUTO 최신 패치 적용해줘" "${tmp_home}/codex.err"
 
   HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     CODEX_STUB_EXIT=0 \
@@ -4709,7 +4710,7 @@ STUB
     > "${tmp_home}/codex-once.out" 2> "${tmp_home}/codex-once.err"
   grep -q "real codex <first>" "${tmp_home}/codex-once.out"
   grep -q "real codex <second>" "${tmp_home}/codex-once.out"
-  test "$(grep -c "automation template update recommended" "${tmp_home}/codex-once.err")" -eq 1
+  test "$(grep -c "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-once.err")" -eq 1
 
   printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     CODEX_STUB_EXIT=0 \
@@ -4724,7 +4725,7 @@ STUB
     bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
     > "${tmp_home}/codex-disabled.out" 2> "${tmp_home}/codex-disabled.err"
   grep -q "real codex" "${tmp_home}/codex-disabled.out"
-  if grep -q "automation template update recommended" "${tmp_home}/codex-disabled.err"; then
+  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-disabled.err"; then
     echo "[verify] codex drift notice ignored AI_AUTO_CODEX_DRIFT_NOTICE=0"
     exit 1
   fi
@@ -4734,7 +4735,7 @@ STUB
     bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
     > "${tmp_home}/codex-current.out" 2> "${tmp_home}/codex-current.err"
   grep -q "real codex" "${tmp_home}/codex-current.out"
-  if grep -q "automation template update recommended" "${tmp_home}/codex-current.err"; then
+  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-current.err"; then
     echo "[verify] codex drift notice printed for current template"
     exit 1
   fi
@@ -4745,7 +4746,7 @@ STUB
     bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
     > "${tmp_home}/codex-no-version.out" 2> "${tmp_home}/codex-no-version.err"
   grep -q "real codex" "${tmp_home}/codex-no-version.out"
-  if grep -q "automation template update recommended" "${tmp_home}/codex-no-version.err"; then
+  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-no-version.err"; then
     echo "[verify] codex drift notice printed without AI_AUTO_TEMPLATE_VERSION"
     exit 1
   fi
@@ -4754,7 +4755,7 @@ STUB
     bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$HOME"; codex' \
     > "${tmp_home}/codex-outside-git.out" 2> "${tmp_home}/codex-outside-git.err"
   grep -q "real codex" "${tmp_home}/codex-outside-git.out"
-  if grep -q "automation template update recommended" "${tmp_home}/codex-outside-git.err"; then
+  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-outside-git.err"; then
     echo "[verify] codex drift notice printed outside git repository"
     exit 1
   fi

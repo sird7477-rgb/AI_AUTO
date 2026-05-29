@@ -98,6 +98,23 @@ check_command() {
   fi
 }
 
+check_tool_adoption() {
+  local name="$1"
+  local adoption_state="$2"
+  local severity="$3"
+  local next_gate="$4"
+
+  if command -v "$name" >/dev/null 2>&1; then
+    say_pass "tool adoption: ${name} state=${adoption_state} next=${next_gate}"
+  elif [ "$severity" = "fail" ]; then
+    say_fail "tool adoption missing: ${name} state=${adoption_state} next=${next_gate}"
+    suggest "install ${name} and ensure it is on PATH"
+  else
+    say_warn "tool adoption optional missing: ${name} state=${adoption_state} next=${next_gate}"
+    suggest "install ${name} if this workflow needs it"
+  fi
+}
+
 ensure_link() {
   local link_path="$1"
   local target_path="$2"
@@ -290,8 +307,8 @@ echo "[bootstrap] checking commands"
 
 check_command git fail
 check_command docker warn
-check_command shellcheck fail
-check_command hyperfine warn
+check_tool_adoption shellcheck required_gate fail verify
+check_tool_adoption hyperfine optional warn benchmark_capture
 check_command claude warn
 check_command "${GEMINI_REVIEW_COMMAND:-agy}" warn
 check_command omx warn

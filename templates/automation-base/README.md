@@ -133,6 +133,12 @@ candidates by default. The AI_AUTO home checkout uses
 local/private vaults additionally require `--allow-local-private`. Do not copy
 raw `.omx/` logs or prompts into an Obsidian vault.
 
+If the optional Codex startup notice is installed and Codex starts from the
+AI_AUTO home checkout, the wrapper can print an `OBSIDIAN OUTPUT CHECK` block
+when validated drafts are pending across AI_AUTO plus registered projects. This
+notice is read-only and only prints an approval handoff; it never pushes to a
+vault automatically.
+
 Then ask the AI:
 
     프로젝트 초기설정 해줘
