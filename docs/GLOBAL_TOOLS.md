@@ -99,6 +99,7 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Lists validated `.omx/knowledge/drafts/*.md` from the current repository and any explicit `--project` paths
   - Broad review is opt-in with `--include-registry` or `--include-workspace`
   - Vault writes require `--project <repo> --vault-dir <vault-path>/AI_AUTO --push`; local/private drafts additionally require `--allow-local-private`
+  - Successful pushes mark both the local draft and vault copy with `sync_state: pushed_to_obsidian` plus `obsidian_pushed_hash`; normal listing hides unchanged pushed notes, while `--include-pushed` shows them for audit
 
 Repo-local command installed by the automation template:
 
@@ -269,7 +270,10 @@ pending rows, an inspect command, and an approval-only push handoff:
     knowledge-collect --project <repo> --push --vault-dir <vault-dir>
 
 This startup check is read-only. It never writes to an Obsidian vault, never
-pushes automatically, and can be disabled with:
+pushes automatically, and already pushed notes are hidden from the pending rows.
+It does not scan mounted project folders; if a moved or individual project is
+missing, run `ai-register --prune` and `ai-register /path/to/repo` for the
+current path. It can be disabled with:
 
     AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE=0 codex
 

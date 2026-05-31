@@ -588,10 +588,11 @@ codex() {
       printf '%s\n' "[AI_AUTO] ===== OBSIDIAN OUTPUT CHECK =====" >&2
       printf '%s\n' "[AI_AUTO] state: pending_knowledge_drafts" >&2
       printf '%s\n' "[AI_AUTO] scope: AI_AUTO home plus registered projects" >&2
-      printf '%s\n' "\${knowledge_output}" | awk 'NR == 1 {next} NF {print "[AI_AUTO] pending: " \$0; count++} count >= 10 {exit}' >&2
-      printf '%s\n' "[AI_AUTO] inspect: knowledge-collect --include-registry --project \${repo_root}" >&2
-      printf '%s\n' "[AI_AUTO] push after approval: knowledge-collect --project <repo> --push --vault-dir <vault-dir>" >&2
-      printf '%s\n' "[AI_AUTO] ================================" >&2
+	      printf '%s\n' "\${knowledge_output}" | awk 'NR == 1 {next} NF {print "[AI_AUTO] pending: " \$0; count++} count >= 10 {exit}' >&2
+	      printf '%s\n' "[AI_AUTO] inspect: knowledge-collect --include-registry --project \${repo_root}" >&2
+	      printf '%s\n' "[AI_AUTO] register moved/missing project: ai-register --prune; ai-register /path/to/repo" >&2
+	      printf '%s\n' "[AI_AUTO] push after approval: knowledge-collect --project <repo> --push --vault-dir <vault-dir>" >&2
+	      printf '%s\n' "[AI_AUTO] ================================" >&2
     fi
   fi
 

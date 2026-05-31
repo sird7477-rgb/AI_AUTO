@@ -64,6 +64,25 @@ Sanitized references to `.omx/feedback/queue.jsonl` are allowed as
 Recommended body sections: Summary, When to care, Evidence pointer, Safe
 resolution or decision, Verification/review evidence, Next action, Do not do.
 
+Generated vault layout:
+
+```text
+AI_AUTO/
+  AI_AUTO_INDEX.md
+  Projects/<project--hash>/<note>.md
+  Projects/<project--hash>.md
+  Surfaces/<surface>.md
+  RepeatKeys/<repeat-key>.md
+  Promotion/candidates.md
+  Views/inbox.md
+  Views/open-incidents.md
+  Views/recently-updated.md
+```
+
+`Projects/<project--hash>` preserves the same collision guard as the old
+`Inbox/<project--hash>` layout. The hub pages and each note's `## Links`
+section are generated from note frontmatter and can be rebuilt.
+
 Recommended views: Project Home, Inbox, Open Incidents, Work Review Findings,
 Technical Specs, Repeat Keys, Promotion Candidates, Recently Updated.
 
@@ -85,7 +104,7 @@ Record a note:
   --source-extract "sanitized queue summary for docker daemon unreachable" \
   --sync-class external_private_vault \
   --confidence medium \
-  --output-dir <vault-path>/AI_AUTO/Inbox \
+  --output-dir <vault-path>/AI_AUTO/Projects/<project--hash> \
   --write
 ```
 
@@ -111,6 +130,13 @@ knowledge-collect --project <repo> --push --vault-dir <vault-dir>
 ```
 
 The startup notice never pushes automatically and never writes to the vault.
+After an approved push, `knowledge-collect` marks the local draft and vault copy
+with `sync_state: pushed_to_obsidian` and an `obsidian_pushed_hash`, so normal
+pending checks stop reporting that note until the local draft changes. Use
+`knowledge-collect --include-pushed ...` when auditing already mirrored drafts.
+The startup notice does not scan mounted project folders. If an individual
+project is missing from the pending list, run `ai-register --prune` and then
+`ai-register /path/to/repo` from the current project location.
 Disable it for one shell command with:
 
 ```bash
@@ -125,6 +151,19 @@ Validate and index notes:
   --notes-dir <vault-path>/AI_AUTO \
   --output <vault-path>/AI_AUTO/AI_AUTO_INDEX.md
 ```
+
+Promote an older flat inbox vault after review and backup:
+
+```bash
+./scripts/knowledge-notes.py migrate-vault <vault-path>/AI_AUTO --dry-run
+./scripts/knowledge-notes.py migrate-vault <vault-path>/AI_AUTO
+```
+
+The real migration creates `<vault-path>/AI_AUTO.backup-YYYYMMDDTHHMMSSZ`
+before changing files, moves validated source notes from `Inbox/<project--hash>`
+to `Projects/<project--hash>`, refreshes note links, rebuilds hub pages, and
+validates the result. It refuses existing backup paths, symlink escape targets,
+and target overwrites.
 
 ## External SSD Operation
 

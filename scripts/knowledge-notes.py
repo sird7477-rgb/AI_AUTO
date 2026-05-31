@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import shutil
 import re
 import sys
-from datetime import date
+from collections import defaultdict
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 
@@ -55,6 +58,7 @@ UNSAFE_SOURCE_PATTERNS = (
     "id_ed25519",
 )
 GENERATED_INDEX_NAMES = {"AI_AUTO_INDEX.md"}
+GENERATED_ROOT_DIRS = {"Surfaces", "RepeatKeys", "Promotion", "Views"}
 
 
 def fail(message: str) -> None:
@@ -123,6 +127,35 @@ def slugify(value: str) -> str:
     return slug[:80] or "note"
 
 
+def path_slug(value: str, preserve_case: bool = False) -> str:
+    text = value.strip() if preserve_case else value.strip().lower()
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    return slug[:80] or "item"
+
+
+def project_slug(value: str) -> str:
+    return path_slug(value, preserve_case=True)
+
+
+def repeat_key_slug(value: str) -> str:
+    return path_slug(value)
+
+
+def generated_page(path: Path, root: Path) -> bool:
+    if path.name in GENERATED_INDEX_NAMES:
+        return True
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    if not rel.parts:
+        return False
+    if rel.parts[0] in GENERATED_ROOT_DIRS:
+        return True
+    return rel.parts[0] == "Projects" and len(rel.parts) == 2 and path.suffix == ".md"
+
+
 def yaml_quote(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -165,6 +198,67 @@ def note_body(path: Path) -> str:
     if end < 0:
         return ""
     return text[end + len("\n---\n") :]
+
+
+def split_note_text(text: str, path: Path) -> tuple[str, str]:
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        fail(f"missing YAML frontmatter: {path}")
+    end = normalized.find("\n---\n", 4)
+    if end < 0:
+        fail(f"unterminated YAML frontmatter: {path}")
+    return normalized[: end + len("\n---\n")], normalized[end + len("\n---\n") :]
+
+
+def project_link_target(path: Path, data: dict[str, str]) -> str:
+    parts = path.parts
+    if "Projects" in parts:
+        index = parts.index("Projects")
+        if index + 1 < len(parts) and path.parent.name != "Projects":
+            return path.parts[index + 1]
+    if "Inbox" in parts:
+        index = parts.index("Inbox")
+        if index + 1 < len(parts) and path.parent.name != "Inbox":
+            return path.parts[index + 1]
+    return project_slug(data["project"])
+
+
+def links_section(data: dict[str, str], project_target: str) -> str:
+    surface = path_slug(data["surface"])
+    repeat_key = repeat_key_slug(data["repeat_key"])
+    lines = [
+        "## Links",
+        "",
+        f"- Project: [[Projects/{project_target}]]",
+        f"- Surface: [[Surfaces/{surface}]]",
+        f"- Repeat key: [[RepeatKeys/{repeat_key}]]",
+        "- Vault index: [[AI_AUTO_INDEX]]",
+    ]
+    if data.get("type") == "promotion-candidate" or data.get("promotion_state") in {
+        "repeated_pattern",
+        "guideline_candidate",
+        "accepted_change",
+    }:
+        lines.append("- Promotion candidates: [[Promotion/candidates]]")
+    return "\n".join(lines) + "\n"
+
+
+def with_links_section(path: Path, data: dict[str, str]) -> str:
+    frontmatter, body = split_note_text(path.read_text(encoding="utf-8"), path)
+    section = links_section(data, project_link_target(path, data))
+    pattern = re.compile(r"(?:^|\n)## Links\n.*?(?=\n## |\Z)", re.DOTALL)
+    stripped_body = body.rstrip() + "\n"
+    if pattern.search(stripped_body):
+        new_body = pattern.sub("\n" + section.rstrip(), stripped_body).rstrip() + "\n"
+    else:
+        new_body = stripped_body + "\n" + section
+    return frontmatter + new_body
+
+
+def enrich_note_links(path: Path, data: dict[str, str]) -> None:
+    updated = with_links_section(path, data)
+    if path.read_text(encoding="utf-8").replace("\r\n", "\n") != updated:
+        path.write_text(updated, encoding="utf-8")
 
 
 def validation_value(value: object) -> str:
@@ -372,7 +466,7 @@ def validate_directory(args: argparse.Namespace) -> None:
     validation_root = root.resolve(strict=False) if root.is_dir() else root.parent.resolve(strict=False)
     checked = 0
     for path in files:
-        if path.name in GENERATED_INDEX_NAMES:
+        if root.is_dir() and generated_page(path, root):
             continue
         resolved_path = path.resolve(strict=False)
         if not resolved_path.is_relative_to(validation_root):
@@ -394,13 +488,14 @@ def write_index(args: argparse.Namespace) -> None:
     rows: list[tuple[dict[str, str], Path]] = []
     for path in files:
         resolved_path = path.resolve(strict=False)
-        if resolved_path == output_resolved or path.name in GENERATED_INDEX_NAMES:
+        if resolved_path == output_resolved or generated_page(path, notes_dir):
             continue
         if not resolved_path.is_relative_to(output_parent):
             fail(f"{path}: indexed notes must be under the index output directory")
         data = parse_frontmatter(path)
         validate_note_data(data, str(path))
         validate_text(f"{path}:body", note_body(path))
+        enrich_note_links(path, data)
         rows.append((data, resolved_path))
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -434,7 +529,137 @@ def write_index(args: argparse.Namespace) -> None:
         ]
     )
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_hub_pages(output_parent, rows)
     print(f"[knowledge] indexed {len(rows)} note(s) in {output}")
+
+
+def note_link(from_dir: Path, path: Path, title: str) -> str:
+    rel = os.path.relpath(path, start=from_dir).replace(os.sep, "/")
+    return f"[{title}]({rel})"
+
+
+def write_hub_pages(root: Path, rows: list[tuple[dict[str, str], Path]]) -> None:
+    by_project: dict[str, list[tuple[dict[str, str], Path]]] = defaultdict(list)
+    by_surface: dict[str, list[tuple[dict[str, str], Path]]] = defaultdict(list)
+    by_repeat_key: dict[str, list[tuple[dict[str, str], Path]]] = defaultdict(list)
+    promotion_rows: list[tuple[dict[str, str], Path]] = []
+    inbox_rows: list[tuple[dict[str, str], Path]] = []
+    open_incidents: list[tuple[dict[str, str], Path]] = []
+    for data, path in rows:
+        by_project[project_link_target(path, data)].append((data, path))
+        by_surface[data["surface"]].append((data, path))
+        by_repeat_key[data["repeat_key"]].append((data, path))
+        if data.get("type") == "promotion-candidate" or data.get("promotion_state") in {
+            "repeated_pattern",
+            "guideline_candidate",
+            "accepted_change",
+        }:
+            promotion_rows.append((data, path))
+        if data.get("status") == "draft":
+            inbox_rows.append((data, path))
+        if data.get("type") == "incident" and data.get("status") != "resolved":
+            open_incidents.append((data, path))
+
+    def write_page(path: Path, title: str, page_rows: list[tuple[dict[str, str], Path]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            f"# {title}",
+            "",
+            "Generated from curated AI_AUTO knowledge notes.",
+            "",
+            "| Updated | Type | Status | Surface | Repeat Key | Note |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for data, note_path in sorted(page_rows, key=lambda row: (row[0]["updated"], row[0]["title"]), reverse=True):
+            lines.append(
+                f"| {data['updated']} | {data['type']} | {data['status']} | {data['surface']} | "
+                f"{data['repeat_key']} | {note_link(path.parent, note_path, data['title'])} |"
+            )
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    for project, page_rows in by_project.items():
+        display_project = page_rows[0][0]["project"] if page_rows else project
+        write_page(root / "Projects" / f"{project}.md", f"Project: {display_project}", page_rows)
+    for surface, page_rows in by_surface.items():
+        write_page(root / "Surfaces" / f"{path_slug(surface)}.md", f"Surface: {surface}", page_rows)
+    for repeat_key, page_rows in by_repeat_key.items():
+        write_page(root / "RepeatKeys" / f"{repeat_key_slug(repeat_key)}.md", f"Repeat Key: {repeat_key}", page_rows)
+    write_page(root / "Promotion" / "candidates.md", "Promotion Candidates", promotion_rows)
+    write_page(root / "Views" / "inbox.md", "Inbox", inbox_rows)
+    write_page(root / "Views" / "open-incidents.md", "Open Incidents", open_incidents)
+    write_page(root / "Views" / "recently-updated.md", "Recently Updated", rows)
+
+
+def migrate_vault(args: argparse.Namespace) -> None:
+    root = Path(args.path)
+    if not root.exists() or not root.is_dir():
+        fail(f"path does not exist or is not a directory: {root}")
+    if has_symlink_component(root):
+        fail(f"refusing migration path with symlink component: {root}")
+    files = sorted(root.rglob("*.md"))
+    moves: list[tuple[Path, Path, dict[str, str]]] = []
+    for path in files:
+        if generated_page(path, root):
+            continue
+        resolved_path = path.resolve(strict=False)
+        if not resolved_path.is_relative_to(root.resolve(strict=False)):
+            fail(f"{path}: migrated notes must stay under the vault root")
+        data = parse_frontmatter(path)
+        validate_note_data(data, str(path))
+        validate_text(f"{path}:body", note_body(path))
+        target = root / "Projects" / project_link_target(path, data) / path.name
+        resolved_target = target.resolve(strict=False)
+        if not resolved_target.is_relative_to(root.resolve(strict=False)):
+            fail(f"{target}: migration target must stay under the vault root")
+        if has_symlink_component(target.parent):
+            fail(f"refusing migration target with symlink component: {target.parent}")
+        if path.resolve(strict=False) != resolved_target and target.exists():
+            fail(f"refusing to overwrite target during migration: {target}")
+        if path.resolve(strict=False) != target.resolve(strict=False):
+            moves.append((path, target, data))
+        else:
+            moves.append((path, path, data))
+
+    move_count = sum(1 for source, target, _data in moves if source != target)
+    if args.dry_run:
+        for source, target, _data in moves:
+            if source != target:
+                print(f"[knowledge] would move {source} -> {target}")
+        print(f"[knowledge] dry-run planned {move_count} move(s) from {len(moves)} note(s)")
+        return
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = Path(args.backup_dir) if args.backup_dir else root.with_name(f"{root.name}.backup-{timestamp}")
+    if backup.exists():
+        fail(f"backup path already exists: {backup}")
+    shutil.copytree(root, backup, symlinks=True)
+    print(f"[knowledge] backed up {root} to {backup}")
+
+    for source, target, data in moves:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source != target:
+            shutil.move(str(source), str(target))
+            source = target
+        enrich_note_links(source, data)
+
+    inbox = root / "Inbox"
+    if inbox.exists():
+        for current in sorted(inbox.rglob("*"), reverse=True):
+            if current.is_dir():
+                try:
+                    current.rmdir()
+                except OSError:
+                    pass
+        try:
+            inbox.rmdir()
+        except OSError:
+            pass
+
+    index_args = argparse.Namespace(notes_dir=root, output=root / "AI_AUTO_INDEX.md", allow_local_draft=args.allow_local_draft)
+    write_index(index_args)
+    validate_args = argparse.Namespace(path=root)
+    validate_directory(validate_args)
+    print(f"[knowledge] migrated {move_count} note(s) under {root / 'Projects'}")
 
 
 def add_common_record_args(parser: argparse.ArgumentParser) -> None:
@@ -498,6 +723,13 @@ def build_parser() -> argparse.ArgumentParser:
     index.add_argument("--output", required=True)
     index.add_argument("--allow-local-draft", action="store_true")
     index.set_defaults(func=write_index)
+
+    migrate = sub.add_parser("migrate-vault", help="backup and promote vault notes into the generated project layout")
+    migrate.add_argument("path")
+    migrate.add_argument("--dry-run", action="store_true")
+    migrate.add_argument("--backup-dir")
+    migrate.add_argument("--allow-local-draft", action="store_true")
+    migrate.set_defaults(func=migrate_vault)
 
     return parser
 

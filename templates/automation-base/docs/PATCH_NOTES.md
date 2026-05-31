@@ -4,6 +4,26 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.31.5
+
+- Promoted Obsidian vault organization from flat inbox storage to generated
+  project namespace folders, project/surface/repeat-key hubs, promotion/views
+  pages, and generated note `## Links` sections.
+- Added `knowledge-notes.py migrate-vault` for reviewed vault backups and
+  migration from `Inbox/<project--hash>` to `Projects/<project--hash>`.
+- Updated `knowledge-collect --push` to preserve the project namespace collision
+  guard while writing new vault notes into the promoted `Projects/` layout.
+
+## 2026.05.31.4
+
+- Mark Obsidian knowledge drafts after approved vault pushes with
+  `sync_state: pushed_to_obsidian` plus `obsidian_pushed_hash`, and document
+  that normal pending checks hide unchanged mirrored notes unless
+  `--include-pushed` is used for audit.
+- Clarified that the startup pending-output check only covers registered
+  projects, with an `ai-register --prune` / `ai-register /path/to/repo` handoff
+  for moved or missing project paths.
+
 ## 2026.05.31.3
 
 - Updated the template README smoke-test guidance so Gemini large-prompt

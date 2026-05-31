@@ -3339,7 +3339,32 @@ PY
     --notes-dir "${notes_dir}" \
     --output "${notes_dir}/AI_AUTO_INDEX.md" >/dev/null
   grep -q "Docker daemon unreachable during verify" "${notes_dir}/AI_AUTO_INDEX.md"
+  grep -q "\[\[Projects/ai-lab\]\]" "${notes_dir}/"*.md
+  test -f "${notes_dir}/Projects/ai-lab.md"
+  test -f "${notes_dir}/Projects/example-project.md"
+  test -f "${notes_dir}/Surfaces/docker.md"
+  test -f "${notes_dir}/RepeatKeys/docker-daemon-unreachable.md"
+  test -f "${notes_dir}/Promotion/candidates.md"
+  test -f "${notes_dir}/Views/inbox.md"
+  test -f "${notes_dir}/Views/open-incidents.md"
+  test -f "${notes_dir}/Views/recently-updated.md"
   "${repo_root}/scripts/knowledge-notes.py" validate "${notes_dir}" >/dev/null
+
+  legacy_vault="${tmp_dir}/legacy-vault/AI_AUTO"
+  mkdir -p "${legacy_vault}/Inbox/ai-lab--fixture"
+  find "${notes_dir}" -maxdepth 1 -type f -name '*.md' ! -name '*INDEX.md' -exec cp {} "${legacy_vault}/Inbox/ai-lab--fixture/" \;
+  "${repo_root}/scripts/knowledge-notes.py" migrate-vault "${legacy_vault}" --dry-run > "${tmp_dir}/migrate-dry-run.out"
+  grep -q "dry-run planned" "${tmp_dir}/migrate-dry-run.out"
+  test ! -d "${tmp_dir}/legacy-vault/AI_AUTO.backup"
+	  "${repo_root}/scripts/knowledge-notes.py" migrate-vault "${legacy_vault}" > "${tmp_dir}/migrate.out"
+	  grep -q "backed up" "${tmp_dir}/migrate.out"
+	  test "$(find "${tmp_dir}/legacy-vault" -mindepth 1 -maxdepth 1 -type d -name 'AI_AUTO.backup-*' | wc -l | tr -d ' ')" = "1"
+	  test ! -d "${legacy_vault}/Inbox"
+  test "$(find "${legacy_vault}/Projects/ai-lab--fixture" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')" -gt 0
+  grep -q "\[\[Projects/ai-lab--fixture\]\]" "${legacy_vault}/Projects/ai-lab--fixture/"*.md
+  grep -q "\[\[Surfaces/docker\]\]" "${legacy_vault}/Projects/ai-lab--fixture/"*.md
+  grep -q "../Projects/ai-lab--fixture/" "${legacy_vault}/Surfaces/docker.md"
+  "${repo_root}/scripts/knowledge-notes.py" validate "${legacy_vault}" >/dev/null
 
   first_note="$(find "${notes_dir}" -maxdepth 1 -name '*.md' ! -name 'AI_AUTO_INDEX.md' | head -n 1)"
   cp "${first_note}" "${tmp_dir}/body-secret.md"
@@ -3839,8 +3864,56 @@ EOF
 	  test -f "${vault_dir}/AI_AUTO_INDEX.md"
 	  grep -q "Verify was blocked by a missing local service" "${vault_dir}/AI_AUTO_INDEX.md"
 	  "${repo_root}/scripts/knowledge-notes.py" validate "${vault_dir}" >/dev/null
-	  pushed_project_dir="$(find "${vault_dir}/Inbox" -mindepth 1 -maxdepth 1 -type d -name 'project-a--*' | head -n 1)"
+	  pushed_project_dir="$(find "${vault_dir}/Projects" -mindepth 1 -maxdepth 1 -type d -name 'project-a--*' | head -n 1)"
 	  test -n "${pushed_project_dir}"
+	  test -d "${pushed_project_dir}"
+	  test ! -d "${vault_dir}/Inbox"
+	  pushed_project_name="$(basename "${pushed_project_dir}")"
+	  grep -q "\[\[Projects/${pushed_project_name}\]\]" "${pushed_project_dir}/"*.md
+	  test -f "${vault_dir}/Projects/${pushed_project_name}.md"
+	  test -f "${vault_dir}/Surfaces/verify.md"
+	  test -f "${vault_dir}/RepeatKeys/verify-blocked-run.md"
+	  grep -q "sync_state: pushed_to_obsidian" "${project_dir}/.omx/knowledge/drafts/"*.md
+	  grep -q "obsidian_pushed_hash:" "${project_dir}/.omx/knowledge/drafts/"*.md
+	  grep -q "sync_state: pushed_to_obsidian" "${pushed_project_dir}/"*.md
+	  grep -q "obsidian_pushed_hash:" "${pushed_project_dir}/"*.md
+	  legacy_vault_note="$(find "${pushed_project_dir}" -maxdepth 1 -type f -name '*.md' | head -n 1)"
+	  perl -0pi -e 's/^obsidian_pushed_at:.*\n//mg; s/^obsidian_pushed_hash:.*\n//mg; s/^sync_state:.*\n//mg' "${legacy_vault_note}"
+	  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" --vault-dir "${vault_dir}" --allow-local-private --push > "${tmp_dir}/knowledge-legacy-link-repush.out"
+	  grep -q "pushed 0 note" "${tmp_dir}/knowledge-legacy-link-repush.out"
+	  grep -q "obsidian_pushed_hash:" "${legacy_vault_note}"
+	  drift_vault_dir="${tmp_dir}/drift-vault/AI_AUTO"
+	  mkdir -p "${tmp_dir}/drift-vault"
+	  cp -R "${vault_dir}" "${drift_vault_dir}"
+	  drift_note="$(find "${drift_vault_dir}/Projects" -mindepth 2 -maxdepth 2 -type f -name '*.md' | head -n 1)"
+	  perl -0pi -e 's/\n## Links\n/\nManual vault drift with stale pushed marker.\n\n## Links\n/' "${drift_note}"
+	  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" --vault-dir "${drift_vault_dir}" --allow-local-private --push > "${tmp_dir}/knowledge-vault-drift.out" 2>&1; then
+	    echo "[verify] knowledge-collect accepted vault body drift based only on pushed marker"
+	    exit 1
+	  fi
+	  grep -q "target exists with different content" "${tmp_dir}/knowledge-vault-drift.out"
+	  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" > "${tmp_dir}/knowledge-after-push-list.out"
+	  if grep -q "verify:blocked-run" "${tmp_dir}/knowledge-after-push-list.out"; then
+	    echo "[verify] knowledge-collect listed already pushed drafts by default"
+	    exit 1
+	  fi
+	  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" --include-pushed > "${tmp_dir}/knowledge-after-push-all.out"
+	  grep -q "verify:blocked-run" "${tmp_dir}/knowledge-after-push-all.out"
+	  find "${project_dir}/.omx/knowledge/drafts" "${pushed_project_dir}" -maxdepth 1 -type f -name '*.md' -exec sha256sum {} + | sort > "${tmp_dir}/knowledge-before-repush.sha"
+	  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" --vault-dir "${vault_dir}" --allow-local-private --push > "${tmp_dir}/knowledge-repush.out"
+	  grep -q "pushed 0 note" "${tmp_dir}/knowledge-repush.out"
+	  find "${project_dir}/.omx/knowledge/drafts" "${pushed_project_dir}" -maxdepth 1 -type f -name '*.md' -exec sha256sum {} + | sort > "${tmp_dir}/knowledge-after-repush.sha"
+	  cmp -s "${tmp_dir}/knowledge-before-repush.sha" "${tmp_dir}/knowledge-after-repush.sha"
+	  changed_note="$(find "${project_dir}/.omx/knowledge/drafts" -maxdepth 1 -type f -name '*verify:blocked-run*.md' | head -n 1)"
+	  printf '\nLocal follow-up edit after push.\n' >> "${changed_note}"
+	  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
+	    "${repo_root}/tools/knowledge-collect" --project "${project_dir}" > "${tmp_dir}/knowledge-after-local-edit.out"
+	  grep -q "verify:blocked-run" "${tmp_dir}/knowledge-after-local-edit.out"
 
 	  collision_project_dir="${tmp_dir}/other/project-a"
 	  collision_vault_dir="${tmp_dir}/collision-vault/AI_AUTO"
@@ -3854,7 +3927,8 @@ EOF
 	    --allow-local-private \
 	    --push > "${tmp_dir}/knowledge-collision-push.out"
 	  grep -q "pushed 6 note" "${tmp_dir}/knowledge-collision-push.out"
-	  test "$(find "${collision_vault_dir}/Inbox" -mindepth 1 -maxdepth 1 -type d -name 'project-a--*' | wc -l | tr -d ' ')" = "2"
+	  test "$(find "${collision_vault_dir}/Projects" -mindepth 1 -maxdepth 1 -type d -name 'project-a--*' | wc -l | tr -d ' ')" = "2"
+	  test ! -d "${collision_vault_dir}/Inbox"
 
   if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
     "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --project "${project_dir}" --vault-dir "${project_dir}/.omx/knowledge/vault" --allow-local-private --push > "${tmp_dir}/knowledge-omx-vault.out" 2>&1; then
@@ -3874,13 +3948,13 @@ EOF
   grep -q "\[vault-path-symlink\]" "${tmp_dir}/knowledge-symlink-vault.out"
   test ! -d "${tmp_dir}/real-vault/Inbox"
 
-  inbox_escape_vault="${tmp_dir}/inbox-escape-vault/AI_AUTO"
-  inbox_escape_target="${tmp_dir}/inbox-escape-target"
+  inbox_escape_vault="${tmp_dir}/project-escape-vault/AI_AUTO"
+  inbox_escape_target="${tmp_dir}/project-escape-target"
   mkdir -p "${inbox_escape_vault}" "${inbox_escape_target}"
-  ln -s "${inbox_escape_target}" "${inbox_escape_vault}/Inbox"
+  ln -s "${inbox_escape_target}" "${inbox_escape_vault}/Projects"
   if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
     "${repo_root}/tools/knowledge-collect" --include-workspace --workspace "${tmp_dir}/workspace" --project "${project_dir}" --vault-dir "${inbox_escape_vault}" --allow-local-private --push > "${tmp_dir}/knowledge-inbox-symlink.out" 2>&1; then
-    echo "[verify] knowledge-collect accepted symlink Inbox inside vault destination"
+    echo "[verify] knowledge-collect accepted symlink Projects inside vault destination"
     exit 1
   fi
   grep -q "\[vault-target-symlink\]" "${tmp_dir}/knowledge-inbox-symlink.out"

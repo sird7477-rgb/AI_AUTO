@@ -132,4 +132,5 @@ def test_codex_startup_notices_are_explicit_and_bounded() -> None:
     assert 'timeout "\\${knowledge_timeout}" knowledge-collect' in text
     assert 'knowledge-collect --include-registry --project "\\${repo_root}"' in text
     assert "state: pending_knowledge_drafts" in text
+    assert "register moved/missing project: ai-register --prune; ai-register /path/to/repo" in text
     assert "push after approval: knowledge-collect --project <repo> --push --vault-dir <vault-dir>" in text

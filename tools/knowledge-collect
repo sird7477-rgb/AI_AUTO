@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import codecs
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -19,6 +22,7 @@ DEFAULT_WORKSPACE = Path.home() / "workspace"
 DEFAULT_DEPTH_RAW = os.environ.get("AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH", "2")
 AI_LAB_ROOT = Path(__file__).resolve().parents[1]
 KNOWLEDGE_HELPER = AI_LAB_ROOT / "scripts/knowledge-notes.py"
+PUSH_MARKER_FIELDS = {"obsidian_pushed_at", "obsidian_pushed_hash", "sync_state"}
 
 
 def positive_int(value: str) -> int:
@@ -154,6 +158,79 @@ def parse_frontmatter(path: Path) -> dict[str, str]:
     return data
 
 
+def split_frontmatter(path: Path) -> tuple[list[str], str, str, bool]:
+    raw = path.read_bytes()
+    has_bom = raw.startswith(codecs.BOM_UTF8)
+    if has_bom:
+        raw = raw[len(codecs.BOM_UTF8) :]
+    text = raw.decode("utf-8")
+    newline = "\r\n" if text.startswith("---\r\n") else "\n"
+    start = f"---{newline}"
+    end_marker = f"{newline}---{newline}"
+    if not text.startswith(start):
+        raise ValueError("missing frontmatter")
+    end = text.find(end_marker, len(start))
+    if end < 0:
+        raise ValueError("unterminated frontmatter")
+    return text[len(start) : end].splitlines(), text[end + len(end_marker) :], newline, has_bom
+
+
+def frontmatter_value(value: str) -> str:
+    if value == "" or any(char in value for char in ':#"\\'):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return value
+
+
+def set_frontmatter_fields(path: Path, updates: dict[str, str]) -> None:
+    lines, body, newline, has_bom = split_frontmatter(path)
+    remaining = dict(updates)
+    output: list[str] = []
+    for line in lines:
+        if not line.strip() or ":" not in line:
+            output.append(line)
+            continue
+        key, _raw = line.split(":", 1)
+        stripped_key = key.strip()
+        if stripped_key in remaining:
+            output.append(f"{stripped_key}: {frontmatter_value(remaining.pop(stripped_key))}")
+        else:
+            output.append(line)
+    for key in sorted(remaining):
+        output.append(f"{key}: {frontmatter_value(remaining[key])}")
+    text = f"---{newline}" + newline.join(output) + f"{newline}---{newline}" + body
+    encoded = text.encode("utf-8")
+    if has_bom:
+        encoded = codecs.BOM_UTF8 + encoded
+    if path.read_bytes() != encoded:
+        path.write_bytes(encoded)
+
+
+def content_fingerprint(path: Path) -> str:
+    lines, body, _newline, _has_bom = split_frontmatter(path)
+    stable_lines = []
+    for line in lines:
+        if ":" in line:
+            key = line.split(":", 1)[0].strip()
+            if key in PUSH_MARKER_FIELDS:
+                continue
+        stable_lines.append(line)
+    stable_text = "---\n" + "\n".join(stable_lines) + "\n---\n" + stable_body(body)
+    return hashlib.sha256(stable_text.encode("utf-8")).hexdigest()
+
+
+def stable_body(body: str) -> str:
+    normalized = body.replace("\r\n", "\n")
+    pattern = re.compile(r"(?:^|\n)## Links\n.*?(?=\n## |\Z)", re.DOTALL)
+    return pattern.sub("\n", normalized).strip() + "\n"
+
+
+def is_currently_pushed(data: dict[str, str], note: Path) -> bool:
+    return (
+        data.get("sync_state") == "pushed_to_obsidian"
+        and data.get("obsidian_pushed_hash") == content_fingerprint(note)
+    )
+
+
 def validate_note(path: Path) -> bool:
     result = run([str(KNOWLEDGE_HELPER), "validate", str(path)])
     if result.returncode != 0:
@@ -171,8 +248,27 @@ def project_namespace(repo: Path) -> str:
     return f"{repo.name}--{digest}"
 
 
-def copy_note(note: Path, repo: Path, vault_dir: Path, force: bool) -> str:
-    target_dir = vault_dir / "Inbox" / project_namespace(repo)
+def path_slug(value: str, preserve_case: bool = False) -> str:
+    text = value.strip() if preserve_case else value.strip().lower()
+    slug = ""
+    previous_dash = False
+    for char in text:
+        if char.isalnum() or char in "._-":
+            slug += char
+            previous_dash = False
+        elif not previous_dash:
+            slug += "-"
+            previous_dash = True
+    return slug.strip("-")[:80] or "item"
+
+
+def project_slug(value: str) -> str:
+    return path_slug(value, preserve_case=True)
+
+
+def copy_note(note: Path, repo: Path, vault_dir: Path, force: bool) -> tuple[str, Path]:
+    data = parse_frontmatter(note)
+    target_dir = vault_dir / "Projects" / project_namespace(repo)
     if has_symlink_component(target_dir):
         raise RuntimeError(f"[vault-target-symlink] refusing target directory with symlink component: {target_dir}")
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -180,11 +276,39 @@ def copy_note(note: Path, repo: Path, vault_dir: Path, force: bool) -> str:
     existed = target.exists()
     if target.exists():
         if note_hash(target) == note_hash(note):
-            return "unchanged"
+            return "unchanged", target
+        try:
+            target_data = parse_frontmatter(target)
+        except ValueError:
+            target_data = {}
+        if content_fingerprint(target) == content_fingerprint(note):
+            return "unchanged", target
         if not force:
             raise RuntimeError(f"target exists with different content: {target}")
     shutil.copy2(note, target)
-    return "updated" if existed else "created"
+    return ("updated" if existed else "created"), target
+
+
+def mark_pushed(note: Path, target: Path) -> None:
+    data = parse_frontmatter(note)
+    fingerprint = content_fingerprint(note)
+    if (
+        data.get("sync_state") == "pushed_to_obsidian"
+        and data.get("obsidian_pushed_hash") == fingerprint
+        and parse_frontmatter(target).get("obsidian_pushed_hash") == fingerprint
+    ):
+        return
+    updates = {
+        "obsidian_pushed_at": date.today().isoformat(),
+        "obsidian_pushed_hash": fingerprint,
+        "sync_state": "pushed_to_obsidian",
+    }
+    set_frontmatter_fields(note, updates)
+    set_frontmatter_fields(target, updates)
+    if not validate_note(note):
+        raise RuntimeError(f"pushed marker made local note invalid: {note}")
+    if not validate_note(target):
+        raise RuntimeError(f"pushed marker made vault note invalid: {target}")
 
 
 def validate_push_sync_classes(rows: list[tuple[Path, Path, dict[str, str]]], allow_local_private: bool) -> None:
@@ -203,7 +327,7 @@ def validate_push_sync_classes(rows: list[tuple[Path, Path, dict[str, str]]], al
         )
 
 
-def collect_rows(repos: list[Path]) -> list[tuple[Path, Path, dict[str, str]]]:
+def collect_rows(repos: list[Path], include_pushed: bool = False) -> list[tuple[Path, Path, dict[str, str]]]:
     rows: list[tuple[Path, Path, dict[str, str]]] = []
     for repo in repos:
         drafts_dir = repo / ".omx/knowledge/drafts"
@@ -222,7 +346,10 @@ def collect_rows(repos: list[Path]) -> list[tuple[Path, Path, dict[str, str]]]:
                 continue
             if not validate_note(note):
                 continue
-            rows.append((repo, note, parse_frontmatter(note)))
+            data = parse_frontmatter(note)
+            if not include_pushed and is_currently_pushed(data, note):
+                continue
+            rows.append((repo, note, data))
     return rows
 
 
@@ -255,6 +382,11 @@ def main() -> None:
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
+        "--include-pushed",
+        action="store_true",
+        help="Include drafts already marked sync_state=pushed_to_obsidian.",
+    )
+    parser.add_argument(
         "--allow-local-private",
         action="store_true",
         help="Allow local_private drafts to be copied into an explicitly local/private vault.",
@@ -273,17 +405,18 @@ def main() -> None:
         explicit_repos = explicit_project_repos(args)
         if not explicit_repos:
             raise SystemExit("[knowledge-collect] [push-no-valid-project] --push requires at least one valid explicit --project git repository")
-        rows = collect_rows(explicit_repos)
+        rows = collect_rows(explicit_repos, include_pushed=True)
         validate_push_sync_classes(rows, args.allow_local_private)
     else:
-        rows = collect_rows(project_repos(args))
+        rows = collect_rows(project_repos(args), include_pushed=args.include_pushed)
 
     print_rows(rows)
     if not args.push:
         return
     copied = 0
     for repo, note, _data in rows:
-        result = copy_note(note, repo, args.vault_dir, args.force)
+        result, target = copy_note(note, repo, args.vault_dir, args.force)
+        mark_pushed(note, target)
         if result in {"created", "updated"}:
             copied += 1
     index = args.vault_dir / "AI_AUTO_INDEX.md"
