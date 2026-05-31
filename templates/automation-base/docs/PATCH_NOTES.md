@@ -4,6 +4,12 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.31.3
+
+- Updated the template README smoke-test guidance so Gemini large-prompt
+  behavior matches the fail-closed runtime adapter contract instead of the old
+  stdin fallback wording.
+
 ## 2026.05.31.2
 
 - Changed agy/Gemini prompt-only large prompt handling to fail closed when
