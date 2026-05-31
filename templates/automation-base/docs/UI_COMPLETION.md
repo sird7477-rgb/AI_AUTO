@@ -44,6 +44,29 @@ When UI is in scope, add these steps to the project workflow:
 9. include screenshots, browser check results, or exact smoke evidence in the
    completion report
 
+## Design Quality Gate
+
+Apply this gate to generated apps, frontend edits, dashboards, tools, games, and
+websites before claiming UI completion:
+
+- match the existing design system, component conventions, and product density
+  before introducing a new visual style
+- make the first screen the real usable workflow unless a landing page is
+  explicitly required
+- fit the domain: operational tools should be dense and scan-friendly; games may
+  be expressive; branded pages must show the brand, product, place, or object in
+  the first viewport
+- use familiar controls for the job: icons for tool buttons, segmented controls
+  for modes, toggles for binary settings, sliders or inputs for numeric values,
+  menus for option sets, and tabs for alternate views
+- avoid nested cards and decorative page-section cards; reserve cards for
+  repeated items, modals, and genuinely framed tools
+- confirm text fits its container at the required viewports without overlap,
+  hidden primary actions, layout shifts, or viewport-width font scaling
+- use relevant visual assets for websites and games when inspection matters
+- for 3D UI, use a proven 3D stack and verify screenshots or canvas pixels show a
+  nonblank, correctly framed, interactive scene
+
 ## Verification Patterns
 
 Adapt `scripts/verify.sh` to the project stack. Prefer real project commands

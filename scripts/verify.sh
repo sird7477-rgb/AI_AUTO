@@ -546,6 +546,32 @@ SH
   grep -q "Check this fixture" "${tmp_dir}/agy.prompt"
   grep -qx -- "--sandbox" "${tmp_dir}/agy.argv"
 
+  cat > "${tmp_dir}/bin/prompt-only-agy" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: agy --prompt --sandbox"
+  exit 0
+fi
+printf 'prompt-only agy should not run for oversized prompts\n' >&2
+exit 64
+SH
+  chmod +x "${tmp_dir}/bin/prompt-only-agy"
+
+  printf '# Large Review Prompt\n\nCheck this oversized fixture.\n' > "${tmp_dir}/large-prompt.md"
+  if PATH="${tmp_dir}/bin:${PATH}" \
+    RUNTIME_ADAPTER_AGY_COMMAND=prompt-only-agy \
+    RUNTIME_ADAPTER_PROMPT_ARG_MAX_BYTES=10 \
+      ./scripts/ai-runtime-adapter.sh run-readonly \
+        --runtime agy \
+        --capability review \
+        --prompt-file "${tmp_dir}/large-prompt.md" \
+        --output "${tmp_dir}/large-review.md" > "${tmp_dir}/large-prompt.out" 2>&1; then
+    echo "[verify] prompt-only agy unexpectedly accepted an oversized prompt"
+    exit 1
+  fi
+  grep -q "large_prompt_requires_prompt_file" "${tmp_dir}/large-prompt.out"
+  test ! -f "${tmp_dir}/large-review.md"
+
   if PATH="${tmp_dir}/bin:${PATH}" ./scripts/ai-runtime-adapter.sh run-readonly \
     --runtime claude \
     --capability edit_files \
@@ -2207,10 +2233,6 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
-
-if [ "${prompt}" = "Review the Markdown prompt provided on stdin." ]; then
-  prompt="$(cat)"
-fi
 
 # Real reviewer CLIs may still inspect stdin even when --prompt is used. The
 # split runner must not depend on a while-read stdin stream surviving that.
@@ -4058,6 +4080,8 @@ echo "[verify] testing automation template installer..."
   grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
   grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
   grep -q "Obsidian Knowledge Operations" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
+  grep -q "External SSD Migration Runbook" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
+  grep -q 'Do not copy `.omx` wholesale' "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
   grep -q "capture-knowledge-drafts.py" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
   grep -q "scripts/knowledge-notes.py" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
   grep -q "Project repositories and the Obsidian vault may live on an external SSD" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
@@ -4066,6 +4090,7 @@ echo "[verify] testing automation template installer..."
   grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
   grep -q "Session Quality Plan" "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
   grep -q "UI Completion Pack" "${target_dir}/docs/UI_COMPLETION.md"
+  grep -q "Design Quality Gate" "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "docs/CHROME_CDP_ACCESS.md" "${target_dir}/docs/UI_COMPLETION.md"
   grep -q "UI가 필요하면" "${target_dir}/docs/WORKFLOW.md"
   grep -q "Subagent Utilization" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -4280,8 +4305,12 @@ grep -q "Data Completion Pack" "templates/automation-base/docs/DATA_COMPLETION.m
 grep -q "Performance Completion Pack" "templates/automation-base/docs/PERFORMANCE_COMPLETION.md"
 grep -q "Observability Completion Pack" "templates/automation-base/docs/OBSERVABILITY_COMPLETION.md"
 grep -q "UI Completion Pack" "templates/automation-base/docs/UI_COMPLETION.md"
+grep -q "Design Quality Gate" "templates/automation-base/docs/UI_COMPLETION.md"
+grep -q "avoid nested cards" "templates/automation-base/docs/UI_COMPLETION.md"
 grep -q "Incident Ops For Dry-run And Field-test" "templates/automation-base/docs/INCIDENT_OPS.md"
 grep -q "Obsidian Knowledge Operations" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
+grep -q "External SSD Migration Runbook" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
+grep -q 'Do not copy `.omx` wholesale' "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
 grep -q "Periodic Status Reporting" "templates/automation-base/docs/INCIDENT_OPS.md"
 grep -q "Incident Ops During Dry-run And Field-test" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "doc-budget.sh" "templates/automation-base/README.md"

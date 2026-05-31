@@ -274,10 +274,10 @@ run_readonly_agy() {
     run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" > "${output_file}"
   elif help_supports_flag "${help_text}" "--prompt"; then
     if [ "${prompt_bytes}" -gt "${prompt_arg_max_bytes}" ]; then
-      prompt_text="Review the Markdown prompt provided on stdin."
-    else
-      prompt_text="$(sed -n '1,$p' "${prompt_file}")"
+      echo "runtime_unavailable: runtime=${command_name} reason=large_prompt_requires_prompt_file prompt_bytes=${prompt_bytes} prompt_arg_max_bytes=${prompt_arg_max_bytes}"
+      return 4
     fi
+    prompt_text="$(sed -n '1,$p' "${prompt_file}")"
     local agy_args=(--prompt "${prompt_text}")
     if help_supports_flag "${help_text}" "--sandbox"; then
       agy_args+=(--sandbox)
@@ -297,11 +297,7 @@ run_readonly_agy() {
     if [ -n "${model}" ] && help_supports_flag "${help_text}" "--model"; then
       agy_args+=(--model "${model}")
     fi
-    if [ "${prompt_bytes}" -gt "${prompt_arg_max_bytes}" ]; then
-      run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" < "${prompt_file}" > "${output_file}"
-    else
-      run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" > "${output_file}"
-    fi
+    run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" > "${output_file}"
   else
     echo "runtime_unavailable: runtime=${command_name} reason=missing_noninteractive_prompt_mode"
     return 4

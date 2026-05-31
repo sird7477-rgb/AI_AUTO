@@ -4,6 +4,19 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.31.2
+
+- Changed agy/Gemini prompt-only large prompt handling to fail closed when
+  `--prompt-file` is unavailable, so automation no longer depends on placeholder
+  prompts plus stdin append behavior.
+- Added verification for the unsafe agy placeholder path and wired
+  `GEMINI_PROMPT_ARG_MAX_BYTES` into the runtime adapter threshold.
+- Added an External SSD Migration Runbook to `docs/OBSIDIAN_INTEGRATION.md` for
+  moving AI_AUTO projects and Obsidian vaults while preserving internal
+  control-plane state and curated `.omx` export boundaries.
+- Added the UI Design Quality Gate to the UI completion pack for domain fit,
+  layout stability, text fit, assets, controls, and browser evidence.
+
 ## 2026.05.31.1
 
 - Added the principal runtime contract so `codex`, `claude`, or `gemini` can be

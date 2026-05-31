@@ -752,7 +752,8 @@ run_gemini_prompt_file() {
     adapter_args+=(--model "${GEMINI_REVIEW_MODEL}")
   fi
 
-  run_with_retries "gemini" "${output_file}" "${RUNTIME_ADAPTER_SCRIPT}" "${adapter_args[@]}"
+  RUNTIME_ADAPTER_PROMPT_ARG_MAX_BYTES="${GEMINI_PROMPT_ARG_MAX_BYTES}" \
+    run_with_retries "gemini" "${output_file}" "${RUNTIME_ADAPTER_SCRIPT}" "${adapter_args[@]}"
 }
 
 run_with_retries() {

@@ -255,7 +255,8 @@ Current handling:
 - Gemini is enabled by default
 - Gemini can be disabled with RUN_GEMINI_REVIEW=0
 - Gemini failures are captured instead of blocking the entire review gate
-- large Gemini prompts switch to stdin mode to avoid command-line argument length limits
+- large Gemini prompts use `--prompt-file` when supported; prompt-only large
+  prompts fail closed instead of relying on stdin append behavior
 - Gemini has its own timeout via GEMINI_REVIEW_TIMEOUT_SECONDS
 - reviewer timeouts use REVIEW_TIMEOUT_KILL_AFTER_SECONDS as a forced-kill grace period
 - session, weekly, quota, or rate-limit failures disable that reviewer immediately

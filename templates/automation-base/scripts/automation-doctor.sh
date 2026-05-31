@@ -351,7 +351,7 @@ check_gemini_cli_capabilities() {
 
   printf '[doctor] Gemini review timeout default: %s seconds\n' "${GEMINI_REVIEW_TIMEOUT_SECONDS:-${REVIEW_TIMEOUT_SECONDS:-300}}"
   printf '[doctor] Gemini review command: %s\n' "${gemini_command}"
-  printf '[doctor] Gemini large prompt stdin threshold: %s bytes\n' "${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
+  printf '[doctor] Gemini prompt argument threshold: %s bytes\n' "${GEMINI_PROMPT_ARG_MAX_BYTES:-100000}"
 }
 
 check_legacy_pointer_targets() {

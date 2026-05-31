@@ -154,6 +154,27 @@ discover projects or vaults.
 The AI_AUTO home checkout uses `knowledge-collect --include-registry` for broad review; vault writes require
 `--project <repo> --vault-dir <vault-path>/AI_AUTO --push`, plus `--allow-local-private` only for a local/private vault.
 
+## External SSD Migration Runbook
+
+1. Record source and target project/vault paths, active branch, and
+   `git status --short` for each project.
+2. Run one approved real write probe for the target project parent and vault
+   parent before diagnosing disk, remount, or drive-health issues.
+3. Copy projects and vaults with metadata-preserving tooling after a dry-run
+   when available. Keep `.git`, tracked files, and project-owned ignored
+   runtime directories together.
+4. Do not copy `.omx` wholesale between projects or into the vault. Export only
+   curated sanitized notes, feedback summaries, promotion candidates, or handoff
+   reports.
+5. From each moved project, run `ai-register`, then `ai-register --prune`.
+6. Validate the vault with `scripts/knowledge-notes.py validate <vault>/AI_AUTO`
+   and rebuild the index when the vault layout changed.
+7. Run the project doctor if present, then `./scripts/verify.sh` and
+   `./scripts/review-gate.sh` before normal AI_AUTO work resumes.
+8. Keep the original source tree untouched until the moved path passes
+   verification and review; otherwise re-register the original path and record a
+   sanitized incident or feedback item.
+
 ## Backup And Promotion
 
 Do not commit `.omx/` wholesale. `.omx/knowledge` is local draft storage only,

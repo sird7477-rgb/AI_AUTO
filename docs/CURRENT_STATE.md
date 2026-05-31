@@ -103,7 +103,9 @@ Current behavior:
 - Claude has a shorter default reviewer timeout in agent-run contexts.
 - Gemini review is invoked through `GEMINI_REVIEW_COMMAND` in non-interactive prompt mode when supported.
 - Gemini uses plan approval mode, skip-trust, and text output when supported.
-- Large Gemini prompts switch to stdin mode to avoid command-line argument length limits.
+- Large Gemini prompts use `--prompt-file` when supported; if only `--prompt` is
+  available and the prompt exceeds the argument threshold, the adapter fails
+  closed instead of assuming stdin is appended.
 - Review context, prompts, and results can use separate output directories.
 
 The output is written under:
@@ -547,7 +549,8 @@ Current handling:
 - Gemini review is enabled by default
 - disable only with RUN_GEMINI_REVIEW=0
 - run in non-interactive prompt mode with plan approval mode where supported
-- use stdin mode automatically for large prompts to avoid command-line argument length limits
+- use `--prompt-file` for large prompts when supported and fail closed when only
+  `--prompt` is available above the argument threshold
 - `GEMINI_REVIEW_TIMEOUT_SECONDS` can be set separately from the Claude timeout
 - `REVIEW_TIMEOUT_KILL_AFTER_SECONDS` applies to both Claude and Gemini timeout cleanup
 - Claude is the current stable external reviewer
@@ -555,13 +558,15 @@ Current handling:
 - automation doctor reports Gemini review command capability signals from
   `${GEMINI_REVIEW_COMMAND:-agy} --help`,
   including prompt mode, approval mode, skip-trust, output format, explicit
-  model flag support, timeout default, and stdin threshold
+  model flag support, timeout default, and prompt argument threshold
 
 Gemini can hit a similar class of context-dependent failures as Claude, but the observed failure mode differs:
 
 - Claude failed from API connection refusal and read-only writes under `/root/.claude`.
 - Gemini has previously failed from capacity/tool-mode issues and can prompt for browser authentication when credentials are unavailable.
-- Gemini's CLI documents that `--prompt` appends stdin, so large-prompt stdin fallback is valid when Gemini is authenticated.
+- Do not rely on `--prompt` plus stdin for large prompts in AI_AUTO automation;
+  the safe path is `--prompt-file`, otherwise degraded review coverage is
+  reported.
 
 ### External reviewer lane
 
