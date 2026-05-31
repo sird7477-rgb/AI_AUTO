@@ -229,8 +229,8 @@ assert_summary() {
     exit 1
   fi
 
-  if [ "${decision}" = "proceed" ] && { [ "${coverage}" != "multi_reviewer" ] || [ "${trust}" != "normal" ]; }; then
-    echo "[summary-test] ${name}: proceed must require multi_reviewer coverage and normal trust"
+  if [ "${decision}" = "proceed" ] && { { [ "${coverage}" != "multi_reviewer" ] && [ "${coverage}" != "principal_rotation" ] && [ "${coverage}" != "principal_subagent_substitute" ] && [ "${coverage}" != "principal_rotation_with_substitute" ]; } || [ "${trust}" != "normal" ]; }; then
+    echo "[summary-test] ${name}: proceed must require regular review coverage and normal trust"
     cat "${summary_file}"
     exit 1
   fi
@@ -303,6 +303,81 @@ case_codex_only_degraded() {
     "${dir}/codex-fallback-summary-current.md"
 
   assert_summary "codex_only_degraded" "proceed_degraded" "codex_only_degraded" 0
+}
+
+case_principal_subagent_substitute() {
+  local dir="${TMP_ROOT}/principal_subagent_substitute"
+  mkdir -p "${dir}"
+
+  write_skipped "${dir}/claude-review-current.md"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "principal_subagent_substitute"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "principal_subagent_substitute" "proceed" "principal_subagent_substitute" 0
+}
+
+case_principal_subagent_two_substitutes() {
+  local dir="${TMP_ROOT}/principal_subagent_two_substitutes"
+  mkdir -p "${dir}"
+
+  write_skipped "${dir}/claude-review-current.md"
+  write_skipped "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_verdict "${dir}/codex-test-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "principal_subagent_substitute"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "principal_subagent_two_substitutes" "proceed" "principal_subagent_substitute" 0
+}
+
+case_principal_rotation_with_substitute() {
+  local dir="${TMP_ROOT}/principal_rotation_with_substitute"
+  mkdir -p "${dir}"
+
+  write_skipped "${dir}/claude-review-current.md"
+  write_skipped "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-architect-current.md" "approve_with_notes"
+  write_verdict "${dir}/codex-test-current.md" "approve"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "principal_subagent_substitute"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  AI_AUTO_PRINCIPAL=claude assert_summary "principal_rotation_with_substitute" "proceed" "principal_rotation_with_substitute" 0
+}
+
+case_gemini_principal_rotation_with_substitute() {
+  local dir="${TMP_ROOT}/gemini_principal_rotation_with_substitute"
+  mkdir -p "${dir}"
+
+  write_skipped "${dir}/claude-review-current.md"
+  write_skipped "${dir}/gemini-review-current.md"
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_verdict "${dir}/codex-test-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "principal_subagent_substitute"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/codex-test-current.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  AI_AUTO_PRINCIPAL=gemini assert_summary "gemini_principal_rotation_with_substitute" "proceed" "principal_rotation_with_substitute" 0
 }
 
 case_failed_external_codex_only_degraded() {
@@ -1050,6 +1125,10 @@ case_review_revision_task_stops_at_cycle_limit() {
 case_multi_reviewer
 case_single_external_plus_codex
 case_codex_only_degraded
+case_principal_subagent_substitute
+case_principal_subagent_two_substitutes
+case_principal_rotation_with_substitute
+case_gemini_principal_rotation_with_substitute
 case_failed_external_codex_only_degraded
 case_missing_external_codex_only_degraded
 case_partial_codex_fallback_blocks

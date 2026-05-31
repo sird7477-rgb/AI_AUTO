@@ -35,13 +35,9 @@ If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` o
 
 ## Scope
 
-Allowed:
-
-- documentation cleanup
-- workflow clarification
-- narrow reliability fixes
-- verification script improvements
-- small changes within the project scope defined during onboarding
+Allowed: documentation cleanup, workflow clarification, narrow reliability
+fixes, verification script improvements, and small changes within the project
+scope defined during onboarding.
 
 Not allowed without a new explicit plan:
 
@@ -133,6 +129,15 @@ Use `docs/AI_MODEL_ROUTING.md` as the source of truth for leader-vs-subagent
 model routing. The active Codex/GPT leader is runtime-selected; optimize
 cost/latency by delegating bounded work to role-appropriate child agents or OMX
 lanes, not by claiming the leader changed models mid-session.
+
+## Ralph Completion Discipline
+
+When Ralph is active, do not stop with plan-only, unpromoted, or tool/document
+drift inside the user's requested scope. If a micro-review finds an unpromoted
+rule, missing regular tool wiring, stale plan-only item, or operational gap
+that is safe and in scope, promote it to the regular script/docs/template
+surface and verify it in the same loop. Report only hard external blockers such
+as unavailable credentials, provider quota, or explicit permission limits.
 
 ## Evidence And Uncertainty
 

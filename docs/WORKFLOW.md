@@ -85,6 +85,12 @@ ai-lab bootstrap 진단
 
 `./scripts/verify.sh`는 `./scripts/bootstrap-ai-lab.sh`를 실행하고, bootstrap은 작업 중인 변경사항 자체를 경고로 만들지 않도록 `DOCTOR_SKIP_DIRTY_CHECK=1`로 automation-doctor를 실행한다. 단독으로 `./scripts/automation-doctor.sh`를 실행하면 dirty working tree는 계속 경고로 보고된다.
 
+WSL/Docker Desktop 환경에서 `~/.docker/config.json`의 `credsStore:
+desktop.exe`가 public image pull 중 credential 오류를 만들 수 있다.
+`./scripts/verify.sh`는 `DOCKER_CONFIG`가 명시되지 않았고 이 패턴이 감지되면
+전역 Docker 설정을 수정하지 않고 `/tmp/ai-lab-docker-config`를 임시
+Docker config로 사용한다.
+
 ## 리뷰 게이트
 
 커밋 후보 전 반드시 실행한다.
@@ -101,20 +107,31 @@ ai-lab bootstrap 진단
 이 명령은 다음을 실행한다.
 
 ./scripts/verify.sh
-Claude 리뷰
-Gemini 리뷰
-필요 시 Codex fallback 리뷰
+활성 주관자를 제외한 reviewer rotation
+필요 시 principal-subagent substitute 또는 Codex principal-rotation 리뷰
 리뷰 verdict 요약
 
 Gemini 리뷰 lane은 reviewer 이름과 산출물 호환성은 유지하지만, 기본 실행
 명령은 Antigravity CLI `agy`다. 필요하면 `GEMINI_REVIEW_COMMAND`로 실행
 명령만 덮어쓴다.
 
+기본 활성 주관자는 Codex다. `AI_AUTO_PRINCIPAL=claude|gemini`로 실행하면
+해당 런타임은 self-review에서 제외되고, 나머지 런타임이 리뷰어로 회전한다.
+이때 Codex 리뷰는 degraded fallback이 아니라 정상 principal-rotation
+coverage로 기록된다. 세부 계약은 `docs/AI_PRINCIPAL_RUNTIMES.md`를 따른다.
+단, Claude/Gemini 주관자는 launcher-owned principal marker가 있어야 하며,
+수동 marker나 불일치 marker는 `principal_unavailable`로 중단한다.
+
 Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로 응답할 수 없으면 해당 리뷰어는 `.omx/reviewer-state/`에 disabled 상태로 기록된다. disabled 리뷰어는 사용자가 `RESET_DISABLED_AI_REVIEWERS=claude|gemini|all`로 복구하기 전까지 스킵된다.
 
-리뷰 컨텍스트가 제한을 넘으면 head/tail 압축본으로 정상 승인을 요청하지 않는다. 컨텍스트는 manifest가 있는 ordered split part로 나누고, 모든 part를 처리한 synthesis가 명시된 경우에만 최종 verdict를 신뢰한다. Codex/GPT fallback은 축약 프롬프트만 보지 말고 관련 파일을 workspace에서 직접 읽고, 직접 확인한 파일과 확인하지 못한 관련 파일을 결과에 적는다.
+리뷰 컨텍스트가 제한을 넘으면 head/tail 압축본으로 정상 승인을 요청하지 않는다. 컨텍스트는 manifest가 있는 ordered split part로 나누고, 모든 part를 처리한 synthesis가 명시된 경우에만 최종 verdict를 신뢰한다. principal-subagent substitute와 Codex principal-rotation 리뷰는 축약 프롬프트만 보지 말고 관련 파일을 workspace에서 직접 읽고, 직접 확인한 파일과 확인하지 못한 관련 파일을 결과에 적는다.
 
-한 리뷰어가 disabled 상태이면 남은 외부 리뷰어 프롬프트는 그대로 유지하고, disabled 역할은 별도 Codex/GPT fallback 리뷰가 담당한다. 두 외부 리뷰어가 모두 disabled 상태이면 `codex-architect-review`와 `codex-test-alternative-review` fallback 리뷰가 모두 필요하다. 이 결과는 `proceed_degraded`, `single_external_plus_codex_fallback`, 또는 `codex_only_degraded`로 표시되며 독립 Claude/Gemini 승인으로 세지 않는다. `proceed_degraded`는 진행 가능한 gate 결과지만 완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
+한 리뷰어가 disabled 상태이면 남은 리뷰어 프롬프트는 그대로 유지하고,
+disabled 역할은 활성 주관자의 subagent substitute가 담당한다. 이 대체
+리뷰는 usable verdict와 `Direct File Inspection` 증거가 있을 때 정규
+coverage로 인정된다. substitute가 실행되지 못하거나 직접 파일 확인이
+없으면 기존 degraded/blocked 경로로 보고하고, `proceed_degraded`인 경우
+완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
 
 루프 내 역할 경계:
 
@@ -124,9 +141,18 @@ Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로
   좁은 작업만 역할별 서브에이전트나 OMX lane에 위임한다.
 - 세부 위임 기준은 `docs/AUTOMATION_OPERATING_POLICY.md`의
   `Subagent Utilization`을 따른다.
-- Claude/Gemini는 독립 외부 리뷰어다.
-- Codex/GPT fallback 리뷰는 연속성을 위한 degraded 보강이며 독립
-  Claude/Gemini 승인으로 세지 않는다.
+- Claude/Gemini는 기본 Codex 주관자 모드에서 독립 외부 리뷰어다.
+- Claude/Gemini가 활성 주관자이면 해당 런타임은 self-review하지 않고,
+  나머지 외부 런타임과 Codex가 같은 산출물 경로에서 reviewer rotation을
+  구성한다.
+- principal-subagent substitute 리뷰는 expected reviewer가 빠졌을 때 활성
+  주관자의 subagent가 맡는 정규 대체 lane이다. usable verdict와 직접 파일
+  확인이 없으면 정규 승인이 아니라 degraded/blocked 상태로 남긴다.
+
+Ralph/완료 루프는 요청 범위 안에서 발견한 미승격 규칙, 문서/도구 괴리,
+누락 도구, 계획만 있고 정규화되지 않은 항목을 가능한 한 같은 루프에서
+정규 산출물로 승격한다. 외부 한도나 권한처럼 즉시 해결할 수 없는 하드
+블로커만 증거와 함께 보고한다.
 
 ## 실패 패턴과 승인 마찰
 
@@ -203,24 +229,10 @@ diff 요약
 앞세우지 말고 쉬운 한국어로 결과를 먼저 설명한다. 재현이나 사용자 조치에
 필요한 명령어, 파일 경로, 리뷰 verdict 같은 기술 식별자는 필요한 경우에만
 덧붙인다.
-허용 범위
-
-허용:
-
-문서 정리
-워크플로우 명확화
-좁은 범위의 안정성 수정
-검증 스크립트 개선
-테스트베드 유지보수
-
-새 계획 없이 금지:
-
-todo 앱 신규 기능
-UI 작업
-인증
-백그라운드 작업
-대규모 구조 변경
-배포용 하드닝
+허용 범위는 `AGENTS.md`를 따른다. 이 저장소에서는 문서/워크플로우 정리,
+좁은 안정성 수정, 검증 스크립트 개선, 테스트베드 유지보수만 새 계획 없이
+허용한다. todo 앱 기능, UI, 인증, 백그라운드 작업, 대규모 구조 변경,
+배포용 하드닝은 새 계획 없이는 금지한다.
 커밋 규칙
 
 커밋은 아래 조건을 만족한 뒤에만 진행한다.

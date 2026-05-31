@@ -5,6 +5,12 @@ API_PORT="${API_PORT:-5001}"
 BASE_URL="http://localhost:${API_PORT}"
 repo_root="$(pwd)"
 
+if [ -f "${repo_root}/scripts/docker-config-guard.sh" ]; then
+  # shellcheck source=scripts/docker-config-guard.sh
+  . "${repo_root}/scripts/docker-config-guard.sh"
+  ai_auto_configure_docker_config
+fi
+
 cleanup() {
   docker compose down >/dev/null 2>&1 || true
 }
@@ -18,9 +24,11 @@ echo "[verify] checking shell script syntax..."
 for script in \
   scripts/bootstrap-ai-lab.sh \
   scripts/archive-omx-artifacts.sh \
+  scripts/ai-principal-runtime.sh \
   scripts/ai-runtime-adapter.sh \
   scripts/automation-doctor.sh \
   scripts/collect-review-context.sh \
+  scripts/docker-config-guard.sh \
   scripts/doc-budget.sh \
   scripts/guidance-duplicate-report.sh \
   scripts/discover-ai-models.sh \
@@ -37,9 +45,11 @@ for script in \
   scripts/test-review-summary.sh \
   scripts/write-session-checkpoint.sh \
   templates/automation-base/scripts/archive-omx-artifacts.sh \
+  templates/automation-base/scripts/ai-principal-runtime.sh \
   templates/automation-base/scripts/ai-runtime-adapter.sh \
   templates/automation-base/scripts/automation-doctor.sh \
   templates/automation-base/scripts/collect-review-context.sh \
+  templates/automation-base/scripts/docker-config-guard.sh \
   templates/automation-base/scripts/doc-budget.sh \
   templates/automation-base/scripts/guidance-duplicate-report.sh \
   templates/automation-base/scripts/discover-ai-models.sh \
@@ -642,6 +652,7 @@ SH
   chmod +x "${tmp_dir}/bin/codex"
 
   PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_CODEX_COMMAND="${tmp_dir}/bin/codex" \
   CODEX_ARGV_CAPTURE="${tmp_dir}/codex.argv" \
   CODEX_STDIN_CAPTURE="${tmp_dir}/codex.stdin" \
   SKIP_CONTEXT_GENERATION=1 \
@@ -662,7 +673,7 @@ SH
   grep -qx -- "-o" "${tmp_dir}/codex.argv"
   ! grep -q "workspace-write" "${tmp_dir}/codex.argv"
   ! grep -q "danger-full-access" "${tmp_dir}/codex.argv"
-  grep -q "Codex/GPT fallback reviewer" "${tmp_dir}/codex.stdin"
+  grep -q "principal-subagent substitute reviewer" "${tmp_dir}/codex.stdin"
 )
 
 echo "[verify] testing review runner honors runtime adapter command overrides..."
@@ -719,6 +730,7 @@ SH
   SKIP_CONTEXT_GENERATION=1 \
   AI_MODEL_DISCOVERY=0 \
   RUN_CODEX_FALLBACK_REVIEW=0 \
+  RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
   OUT_DIR=.omx/review-results \
   CONTEXT_DIR=.omx/review-context \
   PROMPT_DIR=.omx/review-prompts \
@@ -740,6 +752,7 @@ SH
   AI_MODEL_DISCOVERY=0 \
   REVIEW_EXECUTION_MODE=external \
   RUN_CODEX_FALLBACK_REVIEW=0 \
+  RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
   OUT_DIR=.omx/review-results \
   CONTEXT_DIR=.omx/review-context \
   PROMPT_DIR=.omx/review-prompts \
@@ -796,6 +809,7 @@ SH
   AI_MODEL_DISCOVERY=0 \
   RUN_GEMINI_REVIEW=0 \
   RUN_CODEX_FALLBACK_REVIEW=0 \
+  RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
   REVIEW_RETRY_LIMIT=1 \
   OUT_DIR=.omx/review-results \
   CONTEXT_DIR=.omx/review-context \
@@ -1605,8 +1619,8 @@ STUB
   grep -q "^CODEX_ARCHITECT_REVIEW_ROLE='debug'$" "${provider_role_dir}/latest.env"
   grep -q "^CODEX_TEST_REVIEW_ROLE='test_review'$" "${provider_role_dir}/latest.env"
   grep -q "| Gemini review | docs |" "${provider_role_dir}/latest.md"
-  grep -q "| Codex architect fallback | debug |" "${provider_role_dir}/latest.md"
-  grep -q "| Codex test fallback | test_review |" "${provider_role_dir}/latest.md"
+  grep -q "| Principal-subagent architect substitute | debug |" "${provider_role_dir}/latest.md"
+  grep -q "| Principal-subagent test substitute | test_review |" "${provider_role_dir}/latest.md"
 
   supported_dir="${tmp_dir}/supported"
   PATH="${fake_bin}:${PATH}" \
@@ -1961,7 +1975,7 @@ done
 
 cat > "${out}.prompt-copy"
 cat > "${out}" <<'MSG'
-# Codex Fallback
+# Principal Subagent Substitute
 
 ## Verdict
 
@@ -1971,14 +1985,15 @@ approve_with_notes
 
 - src/review_target.py
 
-## Fallback Boundary
+## Principal Subagent Substitute Boundary
 
-Codex/GPT fallback coverage only; not independent external review.
+Codex principal-subagent substitute coverage with direct file inspection.
 MSG
 STUB
   chmod +x "${tmp_dir}/bin/codex"
 
   PATH="${tmp_dir}/bin:${PATH}" \
+    RUNTIME_ADAPTER_CODEX_COMMAND="${tmp_dir}/bin/codex" \
     SKIP_CONTEXT_GENERATION=1 \
     AI_MODEL_DISCOVERY=0 \
     RUN_CLAUDE_REVIEW=0 \
@@ -2073,6 +2088,7 @@ STUB
   chmod +x "${tmp_dir}/bin/codex"
 
   PATH="${tmp_dir}/bin:${PATH}" \
+    RUNTIME_ADAPTER_CODEX_COMMAND="${tmp_dir}/bin/codex" \
     AGY_STDIN_CAPTURE="${tmp_dir}/agy.stdin" \
     SKIP_CONTEXT_GENERATION=1 \
     AI_MODEL_DISCOVERY=0 \
@@ -2128,6 +2144,7 @@ STUB
     AI_MODEL_DISCOVERY=0 \
     RUN_CLAUDE_REVIEW=0 \
     RUN_CODEX_FALLBACK_REVIEW=0 \
+    RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
     SKIP_CONTEXT_GENERATION=1 \
     REVIEW_RETRY_LIMIT=1 \
     GEMINI_REVIEW_TIMEOUT_SECONDS=77 \
@@ -2286,6 +2303,7 @@ STUB
     AI_MODEL_DISCOVERY=0 \
     RUN_CLAUDE_REVIEW=0 \
     RUN_CODEX_FALLBACK_REVIEW=0 \
+    RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
     SKIP_CONTEXT_GENERATION=1 \
     REVIEW_RETRY_LIMIT=1 \
     GEMINI_REVIEW_TIMEOUT_SECONDS=77 \
@@ -2445,6 +2463,7 @@ STUB
     AI_MODEL_DISCOVERY=0 \
     RUN_GEMINI_REVIEW=0 \
     RUN_CODEX_FALLBACK_REVIEW=0 \
+    RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
     SKIP_CONTEXT_GENERATION=1 \
     REVIEW_RETRY_LIMIT=1 \
     CLAUDE_REVIEW_TIMEOUT_SECONDS=77 \
@@ -2511,6 +2530,7 @@ STUB
     AI_MODEL_DISCOVERY=0 \
     RUN_GEMINI_REVIEW=0 \
     RUN_CODEX_FALLBACK_REVIEW=0 \
+    RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
     SKIP_CONTEXT_GENERATION=1 \
     REVIEW_RETRY_LIMIT=1 \
     OUT_DIR=.omx/review-results \
@@ -3975,9 +3995,11 @@ echo "[verify] testing automation template installer..."
   git -c init.defaultBranch=main init -q "${target_dir}"
   AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
   test -x "${target_dir}/scripts/archive-omx-artifacts.sh"
+  test -x "${target_dir}/scripts/ai-principal-runtime.sh"
   test -x "${target_dir}/scripts/ai-runtime-adapter.sh"
   test -x "${target_dir}/scripts/benchmark-command.py"
   test -x "${target_dir}/scripts/todo-report.py"
+  test -x "${target_dir}/scripts/docker-config-guard.sh"
   test -x "${target_dir}/scripts/discover-ai-models.sh"
   test -x "${target_dir}/scripts/doc-budget.sh"
   test -x "${target_dir}/scripts/guidance-duplicate-report.sh"
@@ -3992,6 +4014,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
   test -f "${target_dir}/docs/research/AI_AUTOMATION_TRENDS.md"
   test -f "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
+  test -f "${target_dir}/docs/AI_PRINCIPAL_RUNTIMES.md"
   test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
   test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   test -f "${target_dir}/docs/DATA_COMPLETION.md"
@@ -4019,6 +4042,8 @@ echo "[verify] testing automation template installer..."
   grep -q "Recurring Trend Report" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
   grep -q "AI Automation Trend Research" "${target_dir}/docs/research/AI_AUTOMATION_TRENDS.md"
   grep -q "AI 런타임 어댑터" "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
+  grep -q "AI Principal Runtimes" "${target_dir}/docs/AI_PRINCIPAL_RUNTIMES.md"
+  grep -q "principal claude -> reviewers gemini, codex" "${target_dir}/docs/AI_PRINCIPAL_RUNTIMES.md"
   grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "Auxiliary Rebuild Tool Gates" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
@@ -4064,9 +4089,11 @@ echo "[verify] testing automation template installer..."
   grep -q "delete unused" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
   grep -q "docs/DOMAIN_PACKS.md" "templates/automation-base/README.md"
   grep -q "docs/AI_AUTOMATION_TREND_HARDENING.md" "templates/automation-base/README.md"
+  grep -q "docs/AI_PRINCIPAL_RUNTIMES.md" "templates/automation-base/README.md"
   grep -q "docs/research/AI_AUTOMATION_TRENDS.md" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/README.md"
   grep -q "docs/OBSIDIAN_INTEGRATION.md" "templates/automation-base/README.md"
+  grep -q "scripts/docker-config-guard.sh" "templates/automation-base/README.md"
   grep -q "scripts/capture-knowledge-drafts.py" "templates/automation-base/README.md"
   grep -q "scripts/knowledge-notes.py" "templates/automation-base/README.md"
   grep -q "Obsidian is only a sanitized knowledge store" "templates/automation-base/README.md"

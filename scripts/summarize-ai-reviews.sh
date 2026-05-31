@@ -6,6 +6,20 @@ OUT_DIR="${OUT_DIR:-.omx/review-results}"
 
 mkdir -p "${OUT_DIR}"
 
+normalize_principal_runtime() {
+  case "${AI_AUTO_PRINCIPAL:-codex}" in
+    ""|codex) echo "codex" ;;
+    claude) echo "claude" ;;
+    gemini|agy) echo "gemini" ;;
+    *)
+      echo "unsupported principal runtime: ${AI_AUTO_PRINCIPAL}" >&2
+      return 2
+      ;;
+  esac
+}
+
+ACTIVE_PRINCIPAL="$(normalize_principal_runtime)"
+
 latest_file() {
   local pattern="$1"
   find "${RESULT_DIR}" -maxdepth 1 -type f -name "${pattern}" -printf '%T@ %p\n' 2>/dev/null \
@@ -155,6 +169,53 @@ final_decision() {
     return 0
   fi
 
+  if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ]; then
+    case "${ACTIVE_PRINCIPAL}" in
+      codex)
+        if { is_approval "${claude}" || principal_substitute_covers_claude; } && \
+           { is_approval "${gemini}" || principal_substitute_covers_gemini; }; then
+          echo "proceed"
+          return 0
+        fi
+        ;;
+      claude)
+        if codex_principal_approval && { is_approval "${gemini}" || principal_substitute_covers_gemini; }; then
+          echo "proceed"
+          return 0
+        fi
+        ;;
+      gemini)
+        if codex_principal_approval && { is_approval "${claude}" || principal_substitute_covers_claude; }; then
+          echo "proceed"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+
+  case "${ACTIVE_PRINCIPAL}" in
+    claude)
+      if is_approval "${gemini}" && codex_principal_approval; then
+        echo "proceed"
+      elif is_usable_review "${gemini}" || codex_principal_usable; then
+        echo "proceed_degraded"
+      else
+        echo "blocked"
+      fi
+      return 0
+      ;;
+    gemini)
+      if is_approval "${claude}" && codex_principal_approval; then
+        echo "proceed"
+      elif is_usable_review "${claude}" || codex_principal_usable; then
+        echo "proceed_degraded"
+      else
+        echo "blocked"
+      fi
+      return 0
+      ;;
+  esac
+
   if [ "${claude}" = "failed" ] && [ "${gemini}" = "failed" ]; then
     if [ "${codex_usable_count}" -ge 2 ] && is_approval "${codex_architect}" && is_approval "${codex_test}"; then
       echo "proceed_degraded"
@@ -207,6 +268,63 @@ is_approval() {
   [ "$1" = "approve" ] || [ "$1" = "approve_with_notes" ]
 }
 
+principal_substitute_covers_claude() {
+  [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ] || return 1
+  case "${ACTIVE_PRINCIPAL}" in
+    codex)
+      is_approval "${CODEX_ARCHITECT_VERDICT:-missing}"
+      ;;
+    gemini)
+      is_approval "${CODEX_ARCHITECT_VERDICT:-missing}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+principal_substitute_covers_gemini() {
+  [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ] || return 1
+  case "${ACTIVE_PRINCIPAL}" in
+    codex|claude)
+      is_approval "${CODEX_TEST_VERDICT:-missing}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+codex_principal_approval() {
+  case "${ACTIVE_PRINCIPAL}" in
+    gemini)
+      if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ] && ! is_usable_review "${CLAUDE_VERDICT:-missing}"; then
+        is_approval "${CODEX_TEST_VERDICT:-missing}"
+      else
+        is_approval "${CODEX_ARCHITECT_VERDICT:-missing}"
+      fi
+      ;;
+    *)
+      is_approval "${CODEX_ARCHITECT_VERDICT:-missing}"
+      ;;
+  esac
+}
+
+codex_principal_usable() {
+  case "${ACTIVE_PRINCIPAL}" in
+    gemini)
+      if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ] && ! is_usable_review "${CLAUDE_VERDICT:-missing}"; then
+        is_usable_review "${CODEX_TEST_VERDICT:-missing}"
+      else
+        is_usable_review "${CODEX_ARCHITECT_VERDICT:-missing}"
+      fi
+      ;;
+    *)
+      is_usable_review "${CODEX_ARCHITECT_VERDICT:-missing}"
+      ;;
+  esac
+}
+
 review_coverage() {
   local claude="$1"
   local gemini="$2"
@@ -235,6 +353,45 @@ review_coverage() {
     echo "multi_reviewer"
     return 0
   fi
+
+  if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ]; then
+    case "${ACTIVE_PRINCIPAL}" in
+      codex)
+        if { is_usable_review "${claude}" || principal_substitute_covers_claude; } && \
+           { is_usable_review "${gemini}" || principal_substitute_covers_gemini; }; then
+          echo "principal_subagent_substitute"
+          return 0
+        fi
+        ;;
+      claude)
+        if codex_principal_usable && { is_usable_review "${gemini}" || principal_substitute_covers_gemini; }; then
+          echo "principal_rotation_with_substitute"
+          return 0
+        fi
+        ;;
+      gemini)
+        if codex_principal_usable && { is_usable_review "${claude}" || principal_substitute_covers_claude; }; then
+          echo "principal_rotation_with_substitute"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+
+  case "${ACTIVE_PRINCIPAL}" in
+    claude)
+      if is_usable_review "${gemini}" && codex_principal_usable; then
+        echo "principal_rotation"
+        return 0
+      fi
+      ;;
+    gemini)
+      if is_usable_review "${claude}" && codex_principal_usable; then
+        echo "principal_rotation"
+        return 0
+      fi
+      ;;
+  esac
 
   if [ "${external_usable_count}" -eq 1 ] && [ "${codex_usable_count}" -gt 0 ]; then
     echo "single_external_plus_codex_fallback"
@@ -434,13 +591,24 @@ policy_block_reason() {
     fi
   fi
 
-  if [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ]; then
+  if [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ] || [ "${CODEX_PRINCIPAL_REVIEW_REQUIRED}" -eq 1 ] || [ "${PRINCIPAL_SUBSTITUTE_REQUIRED}" -eq 1 ]; then
     if is_approval "${codex_architect}" && ! fallback_has_direct_file_inspection "${CODEX_ARCHITECT_FALLBACK_FILE}"; then
-      echo "codex_fallback_missing_direct_file_inspection"
+      if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ]; then
+        echo "principal_subagent_substitute_missing_direct_file_inspection"
+      else
+        echo "codex_fallback_missing_direct_file_inspection"
+      fi
       return 0
     fi
+  fi
+
+  if [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ] || [ "${PRINCIPAL_SUBSTITUTE_REQUIRED}" -eq 1 ]; then
     if is_approval "${codex_test}" && ! fallback_has_direct_file_inspection "${CODEX_TEST_FALLBACK_FILE}"; then
-      echo "codex_fallback_missing_direct_file_inspection"
+      if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ]; then
+        echo "principal_subagent_substitute_missing_direct_file_inspection"
+      else
+        echo "codex_fallback_missing_direct_file_inspection"
+      fi
       return 0
     fi
   fi
@@ -462,7 +630,11 @@ decision_reason() {
 
   if { is_approval "${claude}" || is_approval "${gemini}"; } && \
      { [ "${codex_architect}" = "request_changes" ] || [ "${codex_test}" = "request_changes" ]; }; then
-    echo "codex_fallback_requested_changes"
+    if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ]; then
+      echo "principal_subagent_substitute_requested_changes"
+    else
+      echo "codex_fallback_requested_changes"
+    fi
     return 0
   fi
 
@@ -472,9 +644,52 @@ decision_reason() {
   fi
 
   if [ "${codex_architect}" = "request_changes" ] || [ "${codex_test}" = "request_changes" ]; then
-    echo "codex_fallback_requested_changes"
+    if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ]; then
+      echo "principal_subagent_substitute_requested_changes"
+    else
+      echo "codex_fallback_requested_changes"
+    fi
     return 0
   fi
+
+  if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ]; then
+    case "${ACTIVE_PRINCIPAL}" in
+      codex)
+        if { is_approval "${claude}" || principal_substitute_covers_claude; } && \
+           { is_approval "${gemini}" || principal_substitute_covers_gemini; }; then
+          echo "principal_subagent_substitute_approval"
+          return 0
+        fi
+        ;;
+      claude)
+        if codex_principal_approval && { is_approval "${gemini}" || principal_substitute_covers_gemini; }; then
+          echo "principal_rotation_with_substitute_approval"
+          return 0
+        fi
+        ;;
+      gemini)
+        if codex_principal_approval && { is_approval "${claude}" || principal_substitute_covers_claude; }; then
+          echo "principal_rotation_with_substitute_approval"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+
+  case "${ACTIVE_PRINCIPAL}" in
+    claude)
+      if is_approval "${gemini}" && codex_principal_approval; then
+        echo "principal_rotation_approval"
+        return 0
+      fi
+      ;;
+    gemini)
+      if is_approval "${claude}" && codex_principal_approval; then
+        echo "principal_rotation_approval"
+        return 0
+      fi
+      ;;
+  esac
 
   if [ "${claude}" = "failed" ] && [ "${gemini}" = "failed" ]; then
     if is_approval "${codex_architect}" && is_approval "${codex_test}"; then
@@ -527,15 +742,38 @@ decision_reason() {
 missing_reviewers() {
   local claude="$1"
   local gemini="$2"
+  local codex_architect="${3:-missing}"
   local missing=()
 
-  case "${claude}" in
-    skipped|missing|failed|unknown) missing+=("claude:${claude}") ;;
-  esac
+  if [ "${ACTIVE_PRINCIPAL}" != "claude" ]; then
+    case "${claude}" in
+      skipped|missing|failed|unknown)
+        if ! principal_substitute_covers_claude; then
+          missing+=("claude:${claude}")
+        fi
+        ;;
+    esac
+  fi
 
-  case "${gemini}" in
-    skipped|missing|failed|unknown) missing+=("gemini:${gemini}") ;;
-  esac
+  if [ "${ACTIVE_PRINCIPAL}" != "gemini" ]; then
+    case "${gemini}" in
+      skipped|missing|failed|unknown)
+        if ! principal_substitute_covers_gemini; then
+          missing+=("gemini:${gemini}")
+        fi
+        ;;
+    esac
+  fi
+
+  if [ "${ACTIVE_PRINCIPAL}" != "codex" ]; then
+    local codex_reviewer_verdict="${codex_architect}"
+    if [ "${ACTIVE_PRINCIPAL}" = "gemini" ] && [ "${PRINCIPAL_SUBSTITUTE_REQUIRED:-0}" -eq 1 ] && ! is_usable_review "${claude}"; then
+      codex_reviewer_verdict="${CODEX_TEST_VERDICT:-${codex_test:-missing}}"
+    fi
+    case "${codex_reviewer_verdict}" in
+      skipped|missing|failed|unknown) missing+=("codex:${codex_reviewer_verdict}") ;;
+    esac
+  fi
 
   if [ "${#missing[@]}" -eq 0 ]; then
     echo "none"
@@ -683,18 +921,29 @@ CLAUDE_FILE="$(manifest_file 'Claude result' 'claude-review-*.md')"
 GEMINI_FILE="$(manifest_file 'Gemini result' 'gemini-review-*.md')"
 CODEX_ARCHITECT_FALLBACK_FILE="$(manifest_file 'Codex architect fallback' 'codex-architect-fallback-*.md')"
 CODEX_TEST_FALLBACK_FILE="$(manifest_file 'Codex test fallback' 'codex-test-fallback-*.md')"
-CODEX_FALLBACK_SUMMARY_FILE="$(manifest_file 'Codex fallback summary' 'codex-fallback-summary-*.md')"
+CODEX_FALLBACK_SUMMARY_FILE="$(manifest_file 'Principal review summary' 'codex-fallback-summary-*.md')"
+if [ -z "${CODEX_FALLBACK_SUMMARY_FILE}" ]; then
+  CODEX_FALLBACK_SUMMARY_FILE="$(manifest_file 'Codex fallback summary' 'codex-fallback-summary-*.md')"
+fi
 SPLIT_CONTEXT_MANIFEST_FILE="$(manifest_file 'Split context manifest' 'split-review-manifest.md')"
 CODEX_FALLBACK_REQUIRED=0
+CODEX_PRINCIPAL_REVIEW_REQUIRED=0
+PRINCIPAL_SUBSTITUTE_REQUIRED=0
 if [ -n "${CODEX_FALLBACK_SUMMARY_FILE}" ] && [ -f "${CODEX_FALLBACK_SUMMARY_FILE}" ] && grep -q '^informational_only$' "${CODEX_FALLBACK_SUMMARY_FILE}"; then
   CODEX_FALLBACK_REQUIRED=1
+fi
+if [ -n "${CODEX_FALLBACK_SUMMARY_FILE}" ] && [ -f "${CODEX_FALLBACK_SUMMARY_FILE}" ] && grep -q '^principal_subagent_substitute$' "${CODEX_FALLBACK_SUMMARY_FILE}"; then
+  PRINCIPAL_SUBSTITUTE_REQUIRED=1
+fi
+if [ "${ACTIVE_PRINCIPAL}" != "codex" ]; then
+  CODEX_PRINCIPAL_REVIEW_REQUIRED=1
 fi
 
 CLAUDE_VERDICT="$(extract_verdict "${CLAUDE_FILE}")"
 GEMINI_VERDICT="$(extract_verdict "${GEMINI_FILE}")"
 CODEX_ARCHITECT_VERDICT="missing"
 CODEX_TEST_VERDICT="missing"
-if [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ]; then
+if [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ] || [ "${CODEX_PRINCIPAL_REVIEW_REQUIRED}" -eq 1 ] || [ "${PRINCIPAL_SUBSTITUTE_REQUIRED}" -eq 1 ]; then
   CODEX_ARCHITECT_VERDICT="$(extract_verdict "${CODEX_ARCHITECT_FALLBACK_FILE}")"
   CODEX_TEST_VERDICT="$(extract_verdict "${CODEX_TEST_FALLBACK_FILE}")"
 fi
@@ -730,16 +979,20 @@ if [ "${POLICY_BLOCK_REASON}" != "none" ] && { [ "${FINAL_DECISION}" = "proceed"
   FINAL_DECISION="review_manually"
   DECISION_REASON="${POLICY_BLOCK_REASON}"
 fi
-MISSING_REVIEWERS="$(missing_reviewers "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}")"
+MISSING_REVIEWERS="$(missing_reviewers "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}")"
 CODEX_FALLBACK_COVERAGE="none"
-if is_usable_review "${CODEX_ARCHITECT_VERDICT}" || is_usable_review "${CODEX_TEST_VERDICT}"; then
+if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED}" -eq 1 ]; then
+  CODEX_FALLBACK_COVERAGE="principal_subagent_substitute_regular"
+elif [ "${CODEX_PRINCIPAL_REVIEW_REQUIRED}" -eq 1 ] && is_usable_review "${CODEX_ARCHITECT_VERDICT}"; then
+  CODEX_FALLBACK_COVERAGE="principal_rotation_not_fallback"
+elif is_usable_review "${CODEX_ARCHITECT_VERDICT}" || is_usable_review "${CODEX_TEST_VERDICT}"; then
   CODEX_FALLBACK_COVERAGE="available_degraded_informational_only"
 elif [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ]; then
   CODEX_FALLBACK_COVERAGE="required_but_unusable"
 fi
 
 TRUST_LEVEL="degraded"
-if [ "${REVIEW_COVERAGE}" = "multi_reviewer" ] && [ "${FINAL_DECISION}" = "proceed" ]; then
+if { [ "${REVIEW_COVERAGE}" = "multi_reviewer" ] || [ "${REVIEW_COVERAGE}" = "principal_rotation" ] || [ "${REVIEW_COVERAGE}" = "principal_subagent_substitute" ] || [ "${REVIEW_COVERAGE}" = "principal_rotation_with_substitute" ]; } && [ "${FINAL_DECISION}" = "proceed" ]; then
   TRUST_LEVEL="normal"
 elif [ "${FINAL_DECISION}" = "blocked" ] || [ "${FINAL_DECISION}" = "revise" ] || [ "${FINAL_DECISION}" = "review_manually" ]; then
   TRUST_LEVEL="blocked_or_needs_attention"
@@ -760,6 +1013,7 @@ Generated at: $(date -Iseconds)
 - reason: ${DECISION_REASON}
 - coverage: ${REVIEW_COVERAGE}
 - trust: ${TRUST_LEVEL}
+- active_principal: ${ACTIVE_PRINCIPAL}
 - missing_or_unusable_reviewers: ${MISSING_REVIEWERS}
 - authority: ${FINAL_DECISION} is not commit approval unless normal verification and user commit approval are also satisfied.
 
@@ -775,6 +1029,10 @@ ${DECISION_REASON}
 
 ${REVIEW_COVERAGE}
 
+## Active Principal
+
+${ACTIVE_PRINCIPAL}
+
 ## Trust Level
 
 ${TRUST_LEVEL}
@@ -783,11 +1041,15 @@ ${TRUST_LEVEL}
 
 ${MISSING_REVIEWERS}
 
-## Codex Fallback Coverage
+## Principal/Codex Review Coverage
 
 ${CODEX_FALLBACK_COVERAGE}
 
-Codex fallback coverage is degraded and informational-only. It is not independent Claude or Gemini reviewer approval.
+When the active principal is not Codex, Codex coverage may be a normal
+principal-rotation reviewer lane instead of degraded fallback coverage.
+When a reviewer is unavailable, an approval from the active principal's
+subagent substitute counts as regular substitute coverage only when the summary
+status is principal_subagent_substitute and direct file inspection is present.
 
 ## Split Context Manifest
 
@@ -815,10 +1077,12 @@ ${REVISION_TASK_FILE}
 
 ## Disabled Reviewer Reporting
 
-Skipped external reviewers always mean degraded coverage. A reviewer skipped by
-\`RUN_CLAUDE_REVIEW=0\` or \`RUN_GEMINI_REVIEW=0\` is an intentional user opt-out,
-not an external reviewer failure. A reviewer skipped because of a persisted
-.omx/reviewer-state marker remains disabled until the reset hint is run.
+Skipped external reviewers are either covered by regular principal-subagent
+substitute review or reported as degraded coverage when no valid substitute
+exists. A reviewer skipped by \`RUN_CLAUDE_REVIEW=0\` or \`RUN_GEMINI_REVIEW=0\`
+is an intentional user opt-out, not an external reviewer failure. A reviewer
+skipped because of a persisted .omx/reviewer-state marker remains disabled until
+the reset hint is run.
 
 ## Reviewer Verdicts
 
@@ -827,9 +1091,9 @@ not an external reviewer failure. A reviewer skipped because of a persisted
 | Claude | ${CLAUDE_VERDICT} | ${CLAUDE_FILE:-missing} |
 | Gemini | ${GEMINI_VERDICT} | ${GEMINI_FILE:-missing} |
 
-## Codex Fallback Reviews
+## Principal Substitute / Codex Reviews
 
-| Fallback Reviewer | Verdict | File |
+| Reviewer Lane | Verdict | File |
 |---|---|---|
 | codex-architect-review | ${CODEX_ARCHITECT_VERDICT} | ${CODEX_ARCHITECT_FALLBACK_FILE:-missing} |
 | codex-test-alternative-review | ${CODEX_TEST_VERDICT} | ${CODEX_TEST_FALLBACK_FILE:-missing} |
@@ -838,14 +1102,17 @@ not an external reviewer failure. A reviewer skipped because of a persisted
 ## Interpretation
 
 - proceed: review is sufficient to continue toward user approval or commit.
-- proceed_degraded: review may continue with explicit degraded trust; at least one external reviewer is missing or only Codex fallback coverage is available.
+- proceed_degraded: review may continue with explicit degraded trust; at least one external reviewer is missing or only degraded Codex substitute coverage is available.
 - revise: at least one reviewer requested changes.
 - blocked: no usable review result is available.
 - review_manually: review output exists, but the verdict could not be confidently parsed, reviewers disagreed, Codex fallback requested changes alongside external approval, or only one external reviewer approved without usable fallback coverage.
 - single_reviewer: only one external reviewer produced a usable verdict; inspect missing reviewer status before relying on multi-agent coverage.
-- single_external_plus_codex_fallback: one external reviewer approved and at least one Codex fallback reviewer ran; this is degraded coverage.
-- codex_only_degraded: no external reviewer produced a usable verdict; two Codex fallback reviewers ran, but this is not independent external review.
+- single_external_plus_codex_fallback: one external reviewer approved and at least one degraded Codex substitute reviewer ran; this is degraded coverage.
+- codex_only_degraded: no external reviewer produced a usable verdict; two degraded Codex substitute reviewers ran, but this is not independent external review.
 - multi_reviewer: both reviewers produced usable verdicts.
+- principal_rotation: the active principal was excluded from self-review and the remaining expected runtimes reviewed.
+- principal_subagent_substitute: unavailable reviewer lanes were covered by the active principal's subagent substitute with regular trust.
+- principal_rotation_with_substitute: a non-Codex principal used Codex as the normal reviewer lane and the principal subagent covered an unavailable external lane.
 
 ## Next Step
 

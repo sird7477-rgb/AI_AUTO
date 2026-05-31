@@ -84,6 +84,25 @@ def test_template_status_manifest_paths_exist_and_are_unique() -> None:
     assert unexpected_policies == []
 
 
+def test_template_status_reports_source_checkout_without_install_marker_noise() -> None:
+    import subprocess
+
+    result = subprocess.run(
+        ["tools/ai-auto-template-status", "."],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "status: source_checkout" in result.stdout
+    assert "installed_version: missing" not in result.stdout
+    assert "missing\tAI_AUTO_TEMPLATE_VERSION" not in result.stdout
+    assert "missing\tdocs/PATCH_NOTES.md" not in result.stdout
+    assert "source-only\tAI_AUTO_TEMPLATE_VERSION" in result.stdout
+    assert "source-only\tdocs/PATCH_NOTES.md" in result.stdout
+
+
 def test_tool_adoption_status_surfaces_are_explicit() -> None:
     for path in (
         "scripts/automation-doctor.sh",

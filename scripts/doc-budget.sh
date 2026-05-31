@@ -47,6 +47,11 @@ check_current_guidance_diff() {
       echo "[budget] if this is a reviewed AI_AUTO template patch with legitimate template-owned guide additions, rerun with DOC_BUDGET_TEMPLATE_PATCH=1 and report the warning"
     fi
   elif [ "$value" -gt "$warn_at" ]; then
+    if [ "$TEMPLATE_PATCH_MODE" = "1" ]; then
+      echo "[budget] template patch mode: current guidance diff exceeds warning budget ${warn_at} but stays within hard limit ${fail_at}"
+      echo "[budget] template patch mode is accepted for reviewed template-owned or review-merged guidance"
+      return
+    fi
     warn "current guidance diff net added lines exceeds warning budget ${warn_at}"
   fi
 }

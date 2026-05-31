@@ -65,6 +65,7 @@ for path in \
   "docs/AI_AUTOMATION_TREND_HARDENING.md" \
   "docs/research/AI_AUTOMATION_TRENDS.md" \
   "docs/AI_RUNTIME_ADAPTERS.md" \
+  "docs/AI_PRINCIPAL_RUNTIMES.md" \
   "docs/AI_MODEL_ROUTING.md" \
   "docs/AUTOMATION_OPERATING_POLICY.md" \
   "docs/DATA_COMPLETION.md" \
@@ -82,11 +83,13 @@ for path in \
   "docs/UI_COMPLETION.md" \
   "docs/WORKFLOW.md" \
   "scripts/archive-omx-artifacts.sh" \
+  "scripts/ai-principal-runtime.sh" \
   "scripts/ai-runtime-adapter.sh" \
   "scripts/automation-doctor.sh" \
   "scripts/benchmark-command.py" \
   "scripts/capture-knowledge-drafts.py" \
   "scripts/collect-review-context.sh" \
+  "scripts/docker-config-guard.sh" \
   "scripts/doc-budget.sh" \
   "scripts/guidance-duplicate-report.sh" \
   "scripts/discover-ai-models.sh" \
@@ -141,6 +144,7 @@ cp "${TEMPLATE_DIR}/docs/CHROME_CDP_ACCESS.md" "${TARGET_DIR}/docs/CHROME_CDP_AC
 cp "${TEMPLATE_DIR}/docs/AI_AUTOMATION_TREND_HARDENING.md" "${TARGET_DIR}/docs/AI_AUTOMATION_TREND_HARDENING.md"
 cp "${TEMPLATE_DIR}/docs/research/AI_AUTOMATION_TRENDS.md" "${TARGET_DIR}/docs/research/AI_AUTOMATION_TRENDS.md"
 cp "${TEMPLATE_DIR}/docs/AI_RUNTIME_ADAPTERS.md" "${TARGET_DIR}/docs/AI_RUNTIME_ADAPTERS.md"
+cp "${TEMPLATE_DIR}/docs/AI_PRINCIPAL_RUNTIMES.md" "${TARGET_DIR}/docs/AI_PRINCIPAL_RUNTIMES.md"
 cp "${TEMPLATE_DIR}/docs/AI_MODEL_ROUTING.md" "${TARGET_DIR}/docs/AI_MODEL_ROUTING.md"
 cp "${TEMPLATE_DIR}/docs/AUTOMATION_OPERATING_POLICY.md" "${TARGET_DIR}/docs/AUTOMATION_OPERATING_POLICY.md"
 cp "${TEMPLATE_DIR}/docs/DATA_COMPLETION.md" "${TARGET_DIR}/docs/DATA_COMPLETION.md"
@@ -159,11 +163,13 @@ cp "${TEMPLATE_DIR}/docs/UI_COMPLETION.md" "${TARGET_DIR}/docs/UI_COMPLETION.md"
 cp "${TEMPLATE_DIR}/docs/WORKFLOW.md" "${TARGET_DIR}/docs/WORKFLOW.md"
 
 cp "${TEMPLATE_DIR}/scripts/archive-omx-artifacts.sh" "${TARGET_DIR}/scripts/archive-omx-artifacts.sh"
+cp "${TEMPLATE_DIR}/scripts/ai-principal-runtime.sh" "${TARGET_DIR}/scripts/ai-principal-runtime.sh"
 cp "${TEMPLATE_DIR}/scripts/ai-runtime-adapter.sh" "${TARGET_DIR}/scripts/ai-runtime-adapter.sh"
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
 cp "${TEMPLATE_DIR}/scripts/benchmark-command.py" "${TARGET_DIR}/scripts/benchmark-command.py"
 cp "${TEMPLATE_DIR}/scripts/capture-knowledge-drafts.py" "${TARGET_DIR}/scripts/capture-knowledge-drafts.py"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
+cp "${TEMPLATE_DIR}/scripts/docker-config-guard.sh" "${TARGET_DIR}/scripts/docker-config-guard.sh"
 cp "${TEMPLATE_DIR}/scripts/doc-budget.sh" "${TARGET_DIR}/scripts/doc-budget.sh"
 cp "${TEMPLATE_DIR}/scripts/guidance-duplicate-report.sh" "${TARGET_DIR}/scripts/guidance-duplicate-report.sh"
 cp "${TEMPLATE_DIR}/scripts/discover-ai-models.sh" "${TARGET_DIR}/scripts/discover-ai-models.sh"

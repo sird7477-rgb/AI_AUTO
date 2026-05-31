@@ -3,7 +3,7 @@ set -euo pipefail
 
 RESULT_DIR="${OMX_REVIEW_RESULTS_DIR:-.omx/review-results}"
 ARCHIVE_DIR="${OMX_REVIEW_ARCHIVE_DIR:-${RESULT_DIR}/archive}"
-THRESHOLD="${OMX_REVIEW_ARCHIVE_THRESHOLD:-${OMX_ARTIFACT_WARN_COUNT:-200}}"
+THRESHOLD="${OMX_REVIEW_ARCHIVE_THRESHOLD:-${OMX_ARTIFACT_WARN_COUNT:-120}}"
 KEEP_FILES="${OMX_REVIEW_ARCHIVE_KEEP_FILES:-}"
 MODE="archive"
 DRY_RUN=0
@@ -65,7 +65,7 @@ for numeric in THRESHOLD KEEP_FILES; do
 done
 
 if [ -z "$KEEP_FILES" ]; then
-  KEEP_FILES=120
+  KEEP_FILES=80
   if [ "$THRESHOLD" -lt "$KEEP_FILES" ]; then
     KEEP_FILES="$THRESHOLD"
   fi
@@ -196,6 +196,9 @@ is_safe_artifact_name() {
   local base_name="$1"
 
   case "$base_name" in
+    .claude-adapter-*.log|.gemini-adapter-*.log|.codex-adapter-*.log)
+      return 0
+      ;;
     *[!A-Za-z0-9._+-]*|""|.*|*.tmp)
       return 1
       ;;

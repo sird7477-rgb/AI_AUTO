@@ -30,10 +30,101 @@ AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV:-${AI_MODEL_DISCOVERY_DIR}/latest.e
 AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT:-${AI_MODEL_DISCOVERY_DIR}/latest.md}"
 RUN_AI_REVIEWS_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_ADAPTER_SCRIPT="${RUNTIME_ADAPTER_SCRIPT:-${RUN_AI_REVIEWS_SCRIPT_DIR}/ai-runtime-adapter.sh}"
+PRINCIPAL_RUNTIME_SCRIPT="${PRINCIPAL_RUNTIME_SCRIPT:-${RUN_AI_REVIEWS_SCRIPT_DIR}/ai-principal-runtime.sh}"
 : "${RUNTIME_ADAPTER_AGY_COMMAND:=${GEMINI_REVIEW_COMMAND}}"
 export RUNTIME_ADAPTER_AGY_COMMAND
 
 mkdir -p "${OUT_DIR}" "${CONTEXT_DIR}" "${PROMPT_DIR}" "${EXTERNAL_REVIEW_DIR}" "${REVIEW_STATE_DIR}" "${AI_MODEL_DISCOVERY_DIR}"
+
+normalize_principal_runtime() {
+  if [ -x "${PRINCIPAL_RUNTIME_SCRIPT}" ]; then
+    "${PRINCIPAL_RUNTIME_SCRIPT}" normalize "${AI_AUTO_PRINCIPAL:-codex}"
+    return $?
+  fi
+
+  case "${AI_AUTO_PRINCIPAL:-codex}" in
+    ""|codex) echo "codex" ;;
+    claude) echo "claude" ;;
+    gemini|agy) echo "gemini" ;;
+    *)
+      echo "unsupported principal runtime: ${AI_AUTO_PRINCIPAL}" >&2
+      return 2
+      ;;
+  esac
+}
+
+if ! ACTIVE_PRINCIPAL="$(normalize_principal_runtime)"; then
+  echo "[review] failed to normalize active principal runtime" >&2
+  exit 2
+fi
+case "${ACTIVE_PRINCIPAL}" in
+  codex|claude|gemini) ;;
+  *)
+    echo "[review] unsupported active principal: ${ACTIVE_PRINCIPAL}" >&2
+    exit 2
+    ;;
+esac
+
+principal_reviewers() {
+  case "${ACTIVE_PRINCIPAL}" in
+    codex)
+      printf '%s\n' claude gemini
+      ;;
+    claude)
+      printf '%s\n' gemini codex
+      ;;
+    gemini)
+      printf '%s\n' claude codex
+      ;;
+  esac
+}
+
+principal_evidence_valid() {
+  local evidence_file="${AI_AUTO_PRINCIPAL_EVIDENCE:-.omx/state/principal-runtime/current.env}"
+  local workspace
+  workspace="$(pwd -P)"
+
+  if [ "${ACTIVE_PRINCIPAL}" = "codex" ]; then
+    return 0
+  fi
+
+  if [ ! -f "${evidence_file}" ]; then
+    echo "[review] principal_unavailable: ${ACTIVE_PRINCIPAL} principal evidence file is missing: ${evidence_file}" >&2
+    return 1
+  fi
+
+  if [ -L "${evidence_file}" ]; then
+    echo "[review] principal_unavailable: ${ACTIVE_PRINCIPAL} principal evidence file must not be a symlink: ${evidence_file}" >&2
+    return 1
+  fi
+
+  if ! grep -qx "principal_runtime=${ACTIVE_PRINCIPAL}" "${evidence_file}"; then
+    echo "[review] principal_unavailable: evidence file does not match active principal ${ACTIVE_PRINCIPAL}: ${evidence_file}" >&2
+    return 1
+  fi
+
+  if ! grep -qx "execution_mode=principal" "${evidence_file}"; then
+    echo "[review] principal_unavailable: evidence file does not declare execution_mode=principal: ${evidence_file}" >&2
+    return 1
+  fi
+
+  if ! grep -qx "source=ai-auto-principal-launcher" "${evidence_file}"; then
+    echo "[review] principal_unavailable: evidence file is not launcher-owned: ${evidence_file}" >&2
+    return 1
+  fi
+
+  if ! grep -qx "workspace=${workspace}" "${evidence_file}"; then
+    echo "[review] principal_unavailable: evidence file does not match workspace ${workspace}: ${evidence_file}" >&2
+    return 1
+  fi
+}
+
+PRINCIPAL_REVIEWERS="$(principal_reviewers | paste -sd, -)"
+export AI_AUTO_PRINCIPAL="${ACTIVE_PRINCIPAL}"
+
+if ! principal_evidence_valid; then
+  exit 2
+fi
 
 if [ "${SKIP_CONTEXT_GENERATION}" = "1" ]; then
   echo "[review] using existing review context and prompts..."
@@ -144,6 +235,8 @@ Generated at: $(date -Iseconds)
 
 - Review run id: ${REVIEW_RUN_ID}
 - Execution mode: ${REVIEW_EXECUTION_MODE}
+- Active principal: ${ACTIVE_PRINCIPAL}
+- Reviewer runtimes: ${PRINCIPAL_REVIEWERS}
 - Context: ${CONTEXT_FILE}
 - Claude prompt: ${CLAUDE_PROMPT}
 - Gemini prompt: ${GEMINI_PROMPT}
@@ -159,7 +252,7 @@ Generated at: $(date -Iseconds)
 - Gemini result: ${GEMINI_OUT}
 - Codex architect fallback: ${CODEX_ARCHITECT_FALLBACK_OUT}
 - Codex test fallback: ${CODEX_TEST_FALLBACK_OUT}
-- Codex fallback summary: ${CODEX_FALLBACK_SUMMARY_OUT}
+- Principal review summary: ${CODEX_FALLBACK_SUMMARY_OUT}
 - Review summary: ${SUMMARY_OUT}
 - External runner: ${EXTERNAL_RUNNER}
 - Latest external runner: ${EXTERNAL_LATEST}
@@ -214,6 +307,8 @@ cd "\${repo_root}"
 : "\${AI_MODEL_DISCOVERY_REFRESH:=${AI_MODEL_DISCOVERY_REFRESH:-0}}"
 : "\${AI_MODEL_ROUTING_TTL_SECONDS:=${AI_MODEL_ROUTING_TTL_SECONDS:-43200}}"
 : "\${CLAUDE_REVIEW_MODEL_AUTO:=${CLAUDE_REVIEW_MODEL_AUTO:-0}}"
+: "\${AI_AUTO_PRINCIPAL:=${ACTIVE_PRINCIPAL}}"
+: "\${AI_AUTO_PRINCIPAL_EVIDENCE:=${AI_AUTO_PRINCIPAL_EVIDENCE:-}}"
 : "\${REVIEW_RUN_ID:=${REVIEW_RUN_ID}}"
 : "\${RUNTIME_ADAPTER_SCRIPT:=${RUNTIME_ADAPTER_SCRIPT}}"
 : "\${RUNTIME_ADAPTER_CLAUDE_COMMAND:=${RUNTIME_ADAPTER_CLAUDE_COMMAND:-claude}}"
@@ -250,6 +345,8 @@ AI_MODEL_ROUTING_OBSERVATIONS="\${AI_MODEL_ROUTING_OBSERVATIONS}" \\
 AI_MODEL_DISCOVERY_REFRESH="\${AI_MODEL_DISCOVERY_REFRESH}" \\
 AI_MODEL_ROUTING_TTL_SECONDS="\${AI_MODEL_ROUTING_TTL_SECONDS}" \\
 CLAUDE_REVIEW_MODEL_AUTO="\${CLAUDE_REVIEW_MODEL_AUTO}" \\
+AI_AUTO_PRINCIPAL="\${AI_AUTO_PRINCIPAL}" \\
+AI_AUTO_PRINCIPAL_EVIDENCE="\${AI_AUTO_PRINCIPAL_EVIDENCE}" \\
 REVIEW_RUN_ID="\${REVIEW_RUN_ID}" \\
 RUNTIME_ADAPTER_SCRIPT="\${RUNTIME_ADAPTER_SCRIPT}" \\
 RUNTIME_ADAPTER_CLAUDE_COMMAND="\${RUNTIME_ADAPTER_CLAUDE_COMMAND}" \\
@@ -257,7 +354,7 @@ RUNTIME_ADAPTER_AGY_COMMAND="\${RUNTIME_ADAPTER_AGY_COMMAND}" \\
 RUNTIME_ADAPTER_CODEX_COMMAND="\${RUNTIME_ADAPTER_CODEX_COMMAND}" \\
 ./scripts/run-ai-reviews.sh
 
-RESULT_DIR="\${OUT_DIR}" OUT_DIR="\${OUT_DIR}" ./scripts/summarize-ai-reviews.sh
+AI_AUTO_PRINCIPAL="\${AI_AUTO_PRINCIPAL}" RESULT_DIR="\${OUT_DIR}" OUT_DIR="\${OUT_DIR}" ./scripts/summarize-ai-reviews.sh
 SCRIPT
 
   chmod +x "${EXTERNAL_RUNNER}"
@@ -1153,6 +1250,16 @@ MSG
 }
 
 run_claude() {
+  if [ "${ACTIVE_PRINCIPAL}" = "claude" ]; then
+    echo "[review] Claude review skipped: active principal cannot self-review"
+    cat > "${CLAUDE_OUT}" <<MSG
+# Claude Review
+
+Skipped: Claude is the active principal runtime and cannot self-review this run.
+MSG
+    return 0
+  fi
+
   if [ "${RUN_CLAUDE_REVIEW:-1}" = "0" ]; then
     echo "[review] Claude review disabled by RUN_CLAUDE_REVIEW=0"
     cat > "${CLAUDE_OUT}" <<MSG
@@ -1217,6 +1324,16 @@ MSG
 }
 
 run_gemini() {
+  if [ "${ACTIVE_PRINCIPAL}" = "gemini" ]; then
+    echo "[review] Gemini review skipped: active principal cannot self-review"
+    cat > "${GEMINI_OUT}" <<MSG
+# Gemini Review
+
+Skipped: Gemini is the active principal runtime and cannot self-review this run.
+MSG
+    return 0
+  fi
+
   if [ "${RUN_GEMINI_REVIEW:-1}" = "0" ]; then
     echo "[review] Gemini review disabled; unset RUN_GEMINI_REVIEW or set RUN_GEMINI_REVIEW=1 to enable"
     cat > "${GEMINI_OUT}" <<MSG
@@ -1329,8 +1446,22 @@ reviewer_fallback_reason() {
   esac
 }
 
+principal_substitute_needed() {
+  case "${ACTIVE_PRINCIPAL}" in
+    codex)
+      reviewer_fallback_needed claude || reviewer_fallback_needed gemini
+      ;;
+    claude)
+      reviewer_fallback_needed gemini
+      ;;
+    gemini)
+      reviewer_fallback_needed claude
+      ;;
+  esac
+}
+
 codex_persona_needed() {
-  reviewer_fallback_needed claude || reviewer_fallback_needed gemini
+  [ "${ACTIVE_PRINCIPAL}" != "codex" ] || principal_substitute_needed
 }
 
 generate_codex_fallback_summary() {
@@ -1350,58 +1481,104 @@ none
 
 ## Gate Policy
 
-No Codex fallback review was needed for this run.
+No principal substitute or Codex reviewer coverage was needed for this run.
 MSG
     return 0
   fi
 
-  echo "[review] generating Codex fallback review summary: ${CODEX_FALLBACK_SUMMARY_OUT}"
+  echo "[review] generating principal review summary: ${CODEX_FALLBACK_SUMMARY_OUT}"
 
-  cat > "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
-# Codex Fallback Review
+  if [ "${ACTIVE_PRINCIPAL}" != "codex" ] && ! principal_substitute_needed; then
+    cat > "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+# Codex Principal-Rotation Review
 
 Generated at: $(date -Iseconds)
 
 ## Status
 
-informational_only
+principal_rotation
 
 ## Independence Boundary
 
-This is Codex/GPT fallback coverage for disabled external reviewers. It is degraded, informational-only, and not an independent Claude or Gemini approval.
+Codex is reviewing because the active principal runtime is ${ACTIVE_PRINCIPAL}.
+This is an expected reviewer rotation lane, not degraded fallback coverage for a
+disabled external reviewer.
 
-## Assigned Fallback Reviewers
-MSG
+## Assigned Reviewers
 
-  if reviewer_fallback_needed claude; then
-    cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
-
-- codex-architect-review
-  - covers the disabled Claude lane
+- codex-principal-review
+  - covers the Codex reviewer lane for active principal ${ACTIVE_PRINCIPAL}
   - focus: correctness, maintainability, scope control, hidden risk, AGENTS.md and workflow compliance
-  - disabled reason: $(reviewer_fallback_reason claude)
   - artifact: ${CODEX_ARCHITECT_FALLBACK_OUT}
 MSG
+    return 0
   fi
 
-  if reviewer_fallback_needed gemini; then
-    cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+  if principal_substitute_needed; then
+    cat > "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+# Principal Subagent Substitute Review
 
-- codex-test-alternative-review
+Generated at: $(date -Iseconds)
+
+## Status
+
+principal_subagent_substitute
+
+## Independence Boundary
+
+When a reviewer is unavailable, the active principal's subagent covers that lane
+as a regular substitute reviewer. This is not degraded fallback coverage when
+the substitute review has a usable verdict and direct file inspection evidence.
+
+## Assigned Substitute Reviewers
+MSG
+
+    if reviewer_fallback_needed claude; then
+      local claude_substitute_artifact="${CODEX_ARCHITECT_FALLBACK_OUT}"
+      cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+
+- principal-subagent-architect-review
+  - covers the disabled Claude lane
+  - principal runtime: ${ACTIVE_PRINCIPAL}
+  - focus: correctness, maintainability, scope control, hidden risk, AGENTS.md and workflow compliance
+  - disabled reason: $(reviewer_fallback_reason claude)
+  - artifact: ${claude_substitute_artifact}
+MSG
+    fi
+
+    if reviewer_fallback_needed gemini; then
+      cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+
+- principal-subagent-test-review
   - covers the disabled Gemini lane
+  - principal runtime: ${ACTIVE_PRINCIPAL}
   - focus: missed edge cases, simpler alternatives, test coverage gaps, documentation clarity, future automation friction
   - disabled reason: $(reviewer_fallback_reason gemini)
   - artifact: ${CODEX_TEST_FALLBACK_OUT}
 MSG
-  fi
+    fi
 
-  if reviewer_fallback_needed claude && reviewer_fallback_needed gemini; then
+    if [ "${ACTIVE_PRINCIPAL}" != "codex" ]; then
+      local codex_principal_artifact="${CODEX_ARCHITECT_FALLBACK_OUT}"
+      if [ "${ACTIVE_PRINCIPAL}" = "gemini" ] && reviewer_fallback_needed claude; then
+        codex_principal_artifact="${CODEX_TEST_FALLBACK_OUT}"
+      fi
+      cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
+
+- codex-principal-review
+  - covers the Codex reviewer lane for active principal ${ACTIVE_PRINCIPAL}
+  - artifact: ${codex_principal_artifact}
+MSG
+    fi
+
     cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
 
-## Complete External Reviewer Outage
+## Gate Policy
 
-Both Claude and Gemini are disabled. Two Codex/GPT fallback reviews are required, but this remains codex_only_degraded coverage.
+Principal subagent substitute reviews are regular review coverage when they
+produce an approval verdict and direct file inspection evidence.
 MSG
+    return 0
   fi
 
   cat >> "${CODEX_FALLBACK_SUMMARY_OUT}" <<MSG
@@ -1410,13 +1587,13 @@ MSG
 
 - Verify disabled reviewer reasons are visible in every run.
 - Verify external reviewer prompts stay role-pure and do not simulate another model's perspective.
-- Verify summary reports degraded fallback coverage instead of multi_reviewer when external reviewers are missing.
-- Verify Codex fallback is not counted as independent Claude or Gemini reviewer approval.
+- Verify summary reports degraded coverage instead of multi_reviewer when external reviewers are missing.
+- Verify degraded Codex coverage is not counted as independent Claude or Gemini reviewer approval.
 - Verify re-enable instructions are present for disabled reviewers.
 
 ## Gate Policy
 
-Codex fallback can reduce blind spots during reviewer outages, but it does not upgrade review coverage to multi_reviewer.
+No substitute review was assigned.
 MSG
 }
 
@@ -1449,15 +1626,165 @@ write_codex_fallback_prompt() {
   local persona="$2"
   local disabled_reviewer="$3"
   local focus="$4"
+
+  case "${persona}" in
+    principal-subagent-*)
+      local reason
+      reason="$(reviewer_fallback_reason "${disabled_reviewer}")"
+
+      cat > "${prompt_file}" <<MSG
+# ${persona}
+
+You are running as the active principal runtime's subagent substitute reviewer.
+Active principal: ${ACTIVE_PRINCIPAL}
+Unavailable reviewer lane: ${disabled_reviewer}
+
+This is regular principal-subagent substitute coverage for this review gate, not
+degraded fallback coverage, when you provide a usable verdict and direct file
+inspection evidence.
+
+Focus:
+${focus}
+
+Return exactly this Markdown structure:
+
+## Verdict
+
+Choose one:
+
+- approve
+- approve_with_notes
+- request_changes
+
+## Findings
+
+List concrete issues only. If no blocking issues exist, say "No blocking findings."
+
+## Direct File Inspection
+
+List the repository files you inspected directly before giving the verdict. If a relevant changed file could not be inspected, list it here with the reason.
+
+## Principal Subagent Substitute Boundary
+
+State that this is ${ACTIVE_PRINCIPAL} principal-subagent substitute coverage for the unavailable ${disabled_reviewer} lane.
+
+## Final Recommendation
+
+Give a short recommendation for the review gate.
+
+Unavailable reviewer reason:
+${reason}
+
+## Direct File Review
+
+You are a principal-subagent substitute reviewer running in this repository. The
+embedded review context may be partial, split, or optimized for external
+reviewers. Treat it as orientation only.
+
+Before issuing a verdict, read the referenced files directly from the workspace whenever they are relevant to the change. Include tracked, staged, and untracked text files that are part of the review scope. Do not rely only on compressed review prompts.
+
+Changed files visible to git:
+
+\`\`\`text
+$(git diff --name-only 2>/dev/null || true)
+$(git diff --cached --name-only 2>/dev/null || true)
+$(git ls-files --others --exclude-standard 2>/dev/null || true)
+\`\`\`
+
+You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.
+
+---
+
+MSG
+      if [ -f "${CONTEXT_FILE}" ]; then
+        cat "${CONTEXT_FILE}" >> "${prompt_file}"
+      else
+        cat >> "${prompt_file}" <<MSG
+Review context file is unavailable: ${CONTEXT_FILE}
+MSG
+      fi
+      return 0
+      ;;
+  esac
+
+  if [ "${ACTIVE_PRINCIPAL}" != "codex" ] && [ "${disabled_reviewer}" = "principal-rotation" ]; then
+    cat > "${prompt_file}" <<MSG
+# ${persona}
+
+You are running as the Codex reviewer because the active AI_AUTO principal is ${ACTIVE_PRINCIPAL}.
+
+This is normal principal-runtime reviewer rotation. Do not describe this as a
+degraded fallback review.
+
+Focus:
+${focus}
+
+Return exactly this Markdown structure:
+
+## Verdict
+
+Choose one:
+
+- approve
+- approve_with_notes
+- request_changes
+
+## Findings
+
+List concrete issues only. If no blocking issues exist, say "No blocking findings."
+
+## Direct File Inspection
+
+List the repository files you inspected directly before giving the verdict. If a relevant changed file could not be inspected, list it here with the reason.
+
+## Reviewer Boundary
+
+State that this is Codex reviewer coverage for active principal ${ACTIVE_PRINCIPAL}.
+
+## Final Recommendation
+
+Give a short recommendation for the review gate.
+
+## Direct File Review
+
+You are a Codex/GPT reviewer running in this repository. The embedded review
+context may be partial, split, or optimized for external reviewers. Treat it as
+orientation only.
+
+Before issuing a verdict, read the referenced files directly from the workspace whenever they are relevant to the change. Include tracked, staged, and untracked text files that are part of the review scope. Do not rely only on compressed review prompts.
+
+Changed files visible to git:
+
+\`\`\`text
+$(git diff --name-only 2>/dev/null || true)
+$(git diff --cached --name-only 2>/dev/null || true)
+$(git ls-files --others --exclude-standard 2>/dev/null || true)
+\`\`\`
+
+You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.
+
+---
+
+MSG
+    if [ -f "${CONTEXT_FILE}" ]; then
+      cat "${CONTEXT_FILE}" >> "${prompt_file}"
+    else
+      cat >> "${prompt_file}" <<MSG
+Review context file is unavailable: ${CONTEXT_FILE}
+MSG
+    fi
+    return 0
+  fi
+
   local reason
   reason="$(reviewer_fallback_reason "${disabled_reviewer}")"
 
   cat > "${prompt_file}" <<MSG
 # ${persona}
 
-You are running as a Codex/GPT fallback reviewer because ${disabled_reviewer} is disabled.
+You are running as a degraded Codex/GPT substitute reviewer because ${disabled_reviewer} is disabled.
 
-This is a degraded fallback review. Do not claim to be an independent external Claude or Gemini reviewer.
+This is degraded substitute review. Do not claim to be an independent external Claude or Gemini reviewer.
 
 Focus:
 ${focus}
@@ -1482,7 +1809,7 @@ List the repository files you inspected directly before giving the verdict. If a
 
 ## Fallback Boundary
 
-State that this is Codex/GPT fallback coverage and not independent external review.
+State that this is degraded Codex/GPT substitute coverage and not independent external review.
 
 ## Final Recommendation
 
@@ -1493,7 +1820,7 @@ ${reason}
 
 ## Direct File Review
 
-You are a Codex/GPT fallback reviewer running in this repository. The embedded review context may be partial, split, or optimized for external reviewers. Treat it as orientation only.
+You are a degraded Codex/GPT substitute reviewer running in this repository. The embedded review context may be partial, split, or optimized for external reviewers. Treat it as orientation only.
 
 Before issuing a verdict, read the referenced files directly from the workspace whenever they are relevant to the change. Include tracked, staged, and untracked text files that are part of the review scope. Do not rely only on compressed review prompts.
 
@@ -1550,7 +1877,7 @@ run_codex_fallback_review() {
   fi
 
   write_codex_fallback_prompt "${prompt_file}" "${persona}" "${disabled_reviewer}" "${focus}"
-  echo "[review] running ${persona} Codex fallback review..."
+  echo "[review] running ${persona} degraded Codex substitute review..."
 
   adapter_args=(
     run-readonly
@@ -1578,7 +1905,7 @@ run_codex_fallback_review() {
       echo
       echo "failed"
       echo
-      echo "Codex fallback review failed or timed out."
+      echo "Degraded Codex substitute review failed or timed out."
       echo
       echo "Exit status: ${status}"
       echo "Timeout seconds: ${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}"
@@ -1601,7 +1928,7 @@ run_codex_fallback_review() {
       echo
       echo "---"
       echo
-      echo "Codex fallback review produced no usable ## Verdict section."
+      echo "Degraded Codex substitute review produced no usable ## Verdict section."
       echo "Log file: ${log_file}"
     } >> "${output_file}"
   fi
@@ -1609,14 +1936,129 @@ run_codex_fallback_review() {
   echo "[review] ${persona} Codex fallback result: ${output_file}"
 }
 
+run_principal_subagent_substitute_review() {
+  local persona="$1"
+  local output_file="$2"
+  local disabled_reviewer="$3"
+  local focus="$4"
+  local prompt_file="${OUT_DIR}/${persona}-${TIMESTAMP}-prompt.md"
+  local log_file="${output_file}.log"
+  local runtime="${ACTIVE_PRINCIPAL}"
+  local adapter_args=()
+  local model=""
+
+  case "${runtime}:${persona}" in
+    codex:principal-subagent-architect-review)
+      model="${CODEX_ARCHITECT_REVIEW_MODEL:-}"
+      ;;
+    codex:principal-subagent-test-review)
+      model="${CODEX_TEST_REVIEW_MODEL:-}"
+      ;;
+    claude:*)
+      model="${CLAUDE_REVIEW_MODEL:-}"
+      ;;
+    gemini:*|agy:*)
+      model="${GEMINI_REVIEW_MODEL:-}"
+      ;;
+  esac
+
+  if [ "${RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW:-1}" = "0" ]; then
+    write_codex_fallback_skipped "${output_file}" "${persona}" "RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0"
+    return 0
+  fi
+
+  if [ ! -x "${RUNTIME_ADAPTER_SCRIPT}" ]; then
+    write_codex_fallback_skipped "${output_file}" "${persona}" "${RUNTIME_ADAPTER_SCRIPT} not found"
+    return 0
+  fi
+
+  write_codex_fallback_prompt "${prompt_file}" "${persona}" "${disabled_reviewer}" "${focus}"
+  echo "[review] running ${persona} via ${runtime} principal subagent substitute..."
+
+  adapter_args=(
+    run-readonly
+    --runtime "${runtime}"
+    --capability review
+    --prompt-file "${prompt_file}"
+    --output "${output_file}"
+    --timeout "${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}"
+    --cd "$(pwd)"
+  )
+  if [ -n "${model}" ]; then
+    adapter_args+=(--model "${model}")
+  fi
+
+  set +e
+  "${RUNTIME_ADAPTER_SCRIPT}" "${adapter_args[@]}" > "${log_file}" 2>&1
+  status=$?
+  set -e
+
+  if [ "${status}" -ne 0 ]; then
+    {
+      echo "# ${persona}"
+      echo
+      echo "## Status"
+      echo
+      echo "failed"
+      echo
+      echo "Principal subagent substitute review failed or timed out."
+      echo
+      echo "Active principal: ${runtime}"
+      echo "Unavailable reviewer lane: ${disabled_reviewer}"
+      echo "Exit status: ${status}"
+      echo "Timeout seconds: ${CODEX_FALLBACK_REVIEW_TIMEOUT_SECONDS}"
+      echo "Log file: ${log_file}"
+      echo
+      echo "Adapter execution diagnostics:"
+      echo
+      tail -80 "${log_file}" 2>/dev/null || true
+      echo
+      echo "## Verdict"
+      echo
+      echo "failed"
+    } > "${output_file}"
+    echo "[review] ${persona} principal subagent substitute failed; result captured: ${output_file}"
+    return 0
+  fi
+
+  if ! has_usable_verdict "${output_file}"; then
+    {
+      echo
+      echo "---"
+      echo
+      echo "Principal subagent substitute review produced no usable ## Verdict section."
+      echo "Log file: ${log_file}"
+    } >> "${output_file}"
+  fi
+
+  echo "[review] ${persona} principal subagent substitute result: ${output_file}"
+}
+
 run_codex_fallback_reviews() {
   if ! codex_persona_needed; then
     return 0
   fi
 
-  if reviewer_fallback_needed claude; then
+  if [ "${ACTIVE_PRINCIPAL}" != "codex" ]; then
+    local codex_principal_output="${CODEX_ARCHITECT_FALLBACK_OUT}"
+    if [ "${ACTIVE_PRINCIPAL}" = "gemini" ] && reviewer_fallback_needed claude; then
+      codex_principal_output="${CODEX_TEST_FALLBACK_OUT}"
+    fi
     run_codex_fallback_review \
-      "codex-architect-review" \
+      "codex-principal-review" \
+      "${codex_principal_output}" \
+      "principal-rotation" \
+      "- correctness
+- maintainability
+- scope control
+- hidden risk
+- AGENTS.md and docs/WORKFLOW.md compliance
+- active principal runtime parity"
+  fi
+
+  if [ "${ACTIVE_PRINCIPAL}" = "codex" ] && reviewer_fallback_needed claude; then
+    run_principal_subagent_substitute_review \
+      "principal-subagent-architect-review" \
       "${CODEX_ARCHITECT_FALLBACK_OUT}" \
       "claude" \
       "- correctness
@@ -1626,9 +2068,9 @@ run_codex_fallback_reviews() {
 - AGENTS.md and docs/WORKFLOW.md compliance"
   fi
 
-  if reviewer_fallback_needed gemini; then
-    run_codex_fallback_review \
-      "codex-test-alternative-review" \
+  if [ "${ACTIVE_PRINCIPAL}" = "codex" ] && reviewer_fallback_needed gemini; then
+    run_principal_subagent_substitute_review \
+      "principal-subagent-test-review" \
       "${CODEX_TEST_FALLBACK_OUT}" \
       "gemini" \
       "- missed edge cases
@@ -1636,6 +2078,30 @@ run_codex_fallback_reviews() {
 - test coverage gaps
 - documentation clarity
 - future automation friction"
+  fi
+
+  if [ "${ACTIVE_PRINCIPAL}" = "claude" ] && reviewer_fallback_needed gemini; then
+    run_principal_subagent_substitute_review \
+      "principal-subagent-test-review" \
+      "${CODEX_TEST_FALLBACK_OUT}" \
+      "gemini" \
+      "- missed edge cases
+- simpler alternatives
+- test coverage gaps
+- documentation clarity
+- future automation friction"
+  fi
+
+  if [ "${ACTIVE_PRINCIPAL}" = "gemini" ] && reviewer_fallback_needed claude; then
+    run_principal_subagent_substitute_review \
+      "principal-subagent-architect-review" \
+      "${CODEX_ARCHITECT_FALLBACK_OUT}" \
+      "claude" \
+      "- correctness
+- maintainability
+- scope control
+- hidden risk
+- AGENTS.md and docs/WORKFLOW.md compliance"
   fi
 }
 
@@ -1652,6 +2118,8 @@ Generated at: $(date -Iseconds)
 
 ## Inputs
 
+- Active principal: ${ACTIVE_PRINCIPAL}
+- Reviewer runtimes: ${PRINCIPAL_REVIEWERS}
 - Context: ${CONTEXT_FILE}
 - Claude prompt: ${CLAUDE_PROMPT}
 - Gemini prompt: ${GEMINI_PROMPT}
@@ -1664,7 +2132,7 @@ Generated at: $(date -Iseconds)
 - Gemini result: ${GEMINI_OUT}
 - Codex architect fallback: ${CODEX_ARCHITECT_FALLBACK_OUT}
 - Codex test fallback: ${CODEX_TEST_FALLBACK_OUT}
-- Codex fallback summary: ${CODEX_FALLBACK_SUMMARY_OUT}
+- Principal review summary: ${CODEX_FALLBACK_SUMMARY_OUT}
 
 ## Notes
 

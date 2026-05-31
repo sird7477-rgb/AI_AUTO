@@ -106,6 +106,11 @@ fi
 target_abs="$(cd "$TARGET_DIR" && pwd -P)"
 current_version="$(sed -n '1p' "${TEMPLATE_DIR}/${VERSION_FILE}" 2>/dev/null || true)"
 installed_version="$(sed -n '1p' "${target_abs}/${VERSION_FILE}" 2>/dev/null || true)"
+SOURCE_CHECKOUT=0
+if [ "$target_abs" = "$(cd "${AI_LAB_ROOT}" && pwd -P)" ]; then
+  SOURCE_CHECKOUT=1
+  installed_version="${current_version}"
+fi
 
 if [ -z "$current_version" ]; then
   echo "Current template version is missing: ${TEMPLATE_DIR}/${VERSION_FILE}"
@@ -149,6 +154,7 @@ docs/CHROME_CDP_ACCESS.md|docs/CHROME_CDP_ACCESS.md|template-owned|update
 docs/AI_AUTOMATION_TREND_HARDENING.md|docs/AI_AUTOMATION_TREND_HARDENING.md|template-owned|update
 docs/research/AI_AUTOMATION_TRENDS.md|docs/research/AI_AUTOMATION_TRENDS.md|template-owned|update
 docs/AI_RUNTIME_ADAPTERS.md|docs/AI_RUNTIME_ADAPTERS.md|template-owned|update
+docs/AI_PRINCIPAL_RUNTIMES.md|docs/AI_PRINCIPAL_RUNTIMES.md|template-owned|update
 docs/AI_MODEL_ROUTING.md|docs/AI_MODEL_ROUTING.md|template-owned|update
 docs/AUTOMATION_OPERATING_POLICY.md|docs/AUTOMATION_OPERATING_POLICY.md|template-owned|update
 docs/DATA_COMPLETION.md|docs/DATA_COMPLETION.md|template-owned|update
@@ -166,11 +172,13 @@ docs/SESSION_QUALITY_PLAN.md|docs/SESSION_QUALITY_PLAN.md|template-owned|update
 docs/UI_COMPLETION.md|docs/UI_COMPLETION.md|template-owned|update
 docs/WORKFLOW.md|docs/WORKFLOW.md|hybrid|review-merge
 scripts/archive-omx-artifacts.sh|scripts/archive-omx-artifacts.sh|template-owned|update
+scripts/ai-principal-runtime.sh|scripts/ai-principal-runtime.sh|template-owned|update
 scripts/ai-runtime-adapter.sh|scripts/ai-runtime-adapter.sh|template-owned|update
 scripts/automation-doctor.sh|scripts/automation-doctor.sh|template-owned|update
 scripts/benchmark-command.py|scripts/benchmark-command.py|template-owned|update
 scripts/capture-knowledge-drafts.py|scripts/capture-knowledge-drafts.py|template-owned|update
 scripts/collect-review-context.sh|scripts/collect-review-context.sh|template-owned|update
+scripts/docker-config-guard.sh|scripts/docker-config-guard.sh|template-owned|update
 scripts/discover-ai-models.sh|scripts/discover-ai-models.sh|template-owned|update
 scripts/knowledge-notes.py|scripts/knowledge-notes.py|template-owned|update
 scripts/make-review-prompts.sh|scripts/make-review-prompts.sh|template-owned|update
@@ -191,6 +199,18 @@ hash_file() {
   sha256sum "$1" | awk '{print $1}'
 }
 
+source_checkout_target_only() {
+  [ "$SOURCE_CHECKOUT" -eq 1 ] || return 1
+  case "$1" in
+    AI_AUTO_TEMPLATE_VERSION|docs/PATCH_NOTES.md)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 while IFS='|' read -r target_path template_path ownership patch_policy; do
   [ -n "$target_path" ] || continue
   ownership="${ownership:-template-owned}"
@@ -205,7 +225,10 @@ while IFS='|' read -r target_path template_path ownership patch_policy; do
     exit 1
   fi
 
-  if [ ! -f "$project_path" ]; then
+  if source_checkout_target_only "$target_path"; then
+    state="source-only"
+    same_count=$((same_count + 1))
+  elif [ ! -f "$project_path" ]; then
     state="missing"
     missing_count=$((missing_count + 1))
   elif [ "$(hash_file "$source_path")" = "$(hash_file "$project_path")" ]; then
@@ -222,7 +245,9 @@ done <<EOF
 $(managed_files)
 EOF
 
-if [ -z "$installed_version" ]; then
+if [ "$SOURCE_CHECKOUT" -eq 1 ]; then
+  overall_status="source_checkout"
+elif [ -z "$installed_version" ]; then
   overall_status="missing_version"
 elif [ "$installed_version" != "$current_version" ] || [ "$different_count" -gt 0 ] || [ "$missing_count" -gt 0 ]; then
   overall_status="customized_or_outdated"

@@ -4,6 +4,42 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.05.31.1
+
+- Added the principal runtime contract so `codex`, `claude`, or `gemini` can be
+  recorded as the active AI_AUTO/OMX principal while preserving the same
+  repo-local permission matrix and `.omx/*` artifact paths.
+- Added principal-aware review rotation: the active principal is excluded from
+  self-review, and the remaining runtimes are assigned as reviewers.
+- Added `scripts/ai-principal-runtime.sh` as the shared contract helper for
+  principal normalization, reviewer rotation, permission-profile reporting, and
+  launcher-owned external-principal evidence markers.
+- Updated the workflow guide so Codex principal-rotation coverage is documented
+  separately from degraded fallback coverage.
+- Promoted principal-subagent substitute review: when an expected reviewer is
+  unavailable, the active principal's subagent can cover that lane as regular
+  review coverage when it provides a usable verdict and direct file inspection
+  evidence.
+- Added Ralph completion discipline to the regular agent contract: plan-only
+  gaps, unpromoted rules, missing tool wiring, and doc/tool drift inside the
+  requested scope must be promoted and verified in the same loop unless blocked
+  by an external hard limit.
+- Added fail-closed external-principal validation: `AI_AUTO_PRINCIPAL=claude` or
+  `AI_AUTO_PRINCIPAL=gemini` requires matching launcher-owned evidence before
+  self-review is skipped.
+- Added `scripts/docker-config-guard.sh` so WSL Docker Desktop credential-helper
+  failures can be avoided with a temporary Docker config during verification.
+- Normalized reviewed template-patch guidance budget handling so duplicated
+  root/template guide additions below the hard limit do not leave warning-only
+  residue after review.
+- Updated `ai-auto-template-status` so the AI_AUTO source checkout reports
+  `source_checkout` instead of confusing install-target missing marker rows.
+- Tightened review artifact retention defaults to archive old `.omx/review-results`
+  files after 120 active files while preserving recent evidence by default.
+- Renamed gate-facing principal review summaries away from legacy Codex fallback
+  wording while keeping old artifact names and manifest labels readable for
+  compatibility.
+
 ## 2026.05.29.8
 
 - Enforced persona review-gate classifier integrity in the review summary:
@@ -245,7 +281,7 @@ template versioning guard added after review.
 - Added the AI runtime adapter contract and `scripts/ai-runtime-adapter.sh` so
   Codex, Claude, Gemini, and agy review paths use explicit read-only capability
   checks before execution.
-- Routed Claude/Gemini split reviews and Codex fallback review through the
+- Routed Claude/Gemini split reviews and degraded Codex substitute review through the
   adapter while preserving command overrides, external runner propagation,
   sandbox/no-edit flags, and failure diagnostics in review artifacts.
 - Added `docs/AI_RUNTIME_ADAPTERS.md` and verification coverage for capability

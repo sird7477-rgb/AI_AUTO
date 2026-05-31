@@ -8,6 +8,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - AI_AUTO_TEMPLATE_VERSION: installed template version marker for status comparison
 - docs/WORKFLOW.md: project workflow documentation
 - docs/AI_AUTOMATION_TREND_HARDENING.md: compact agent identity, permission, revocation, observability, and trend hardening contract
+- docs/AI_PRINCIPAL_RUNTIMES.md: principal runtime permission parity, reviewer rotation, and shared `.omx/*` artifact paths
 - docs/research/AI_AUTOMATION_TRENDS.md: recurring AI automation trend research report structure
 - docs/AUTOMATION_OPERATING_POLICY.md: review-intensity and feedback policy
 - docs/DEPLOYMENT_COMPLETION.md: optional deployment/release completion pack
@@ -24,11 +25,13 @@ This template contains the base files for a CLI-based AI development workflow.
 - docs/UI_COMPLETION.md: optional UI completion and verification pack
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
 - scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
+- scripts/ai-principal-runtime.sh: active principal runtime contract helper for `codex`, `claude`, and `gemini`
 - scripts/benchmark-command.py: optional benchmark evidence capture using
   `hyperfine` when available
 - scripts/todo-report.py: canonical backlog TODO report and active-work guard
 - scripts/verify.example.sh: onboarding placeholder; replace with project-specific verification
 - scripts/collect-review-context.sh: collects git diff and workflow context
+- scripts/docker-config-guard.sh: uses a temporary Docker config for WSL Docker Desktop credential-helper failures
 - scripts/doc-budget.sh: reports guidance document volume and bloat warnings
 - scripts/guidance-duplicate-report.sh: creates read-only Stage 2 guidance duplicate reports
 - scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
@@ -89,6 +92,11 @@ AI reviewer context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked
 diffs use a lightweight context focused on the patch, git state, and
 verification tail. Set `REVIEW_CONTEXT_DETAIL=full` when planning artifacts or
 full workflow reference excerpts are needed for the review.
+
+Codex is the default active principal runtime. Claude/Gemini principal runs
+require launcher-owned evidence before that runtime is skipped as a
+self-reviewer. Without matching evidence, review-gate fails closed with
+`principal_unavailable`.
 
 Guidance context budget is a staged workflow. The installed `scripts/doc-budget.sh`
 is Stage 1: it reports document-volume warnings during verification and
@@ -288,7 +296,13 @@ Long-running session operation is described in `docs/SESSION_QUALITY_PLAN.md`.
 Use it for model-routing cache policy, working memory capture, checkpoints, and
 token/context hygiene.
 
-When a reviewer is disabled, the remaining external reviewer prompt stays focused on its own role. The disabled lane is covered by a separate Codex/GPT fallback review artifact, such as `codex-architect-fallback-*.md` or `codex-test-fallback-*.md`. If both external reviewers are disabled, both fallback reviewers are required and the verdict is reported as degraded coverage such as `codex_only_degraded`; it does not count as independent Claude/Gemini approval. Codex fallback uses `codex exec` when available; set `RUN_CODEX_FALLBACK_REVIEW=0` only for diagnostics.
+When a reviewer is disabled, the remaining reviewer prompt stays focused on its
+own role. The disabled lane is covered by the active principal's subagent
+substitute in a separate review artifact, such as
+`codex-architect-fallback-*.md` or `codex-test-fallback-*.md`. The substitute
+counts as regular coverage only with a usable verdict and direct file inspection
+evidence; otherwise the verdict remains degraded or blocked. Set
+`RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0` only for diagnostics.
 
 If the current agent context blocks reviewer network access or runtime writes, use:
 

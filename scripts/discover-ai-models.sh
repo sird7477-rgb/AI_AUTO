@@ -354,8 +354,8 @@ write_observations() {
   {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "claude_review" "${claude_review_role}" "${claude_review_model:-provider-default}" "${claude_review_model_source}"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "gemini_review" "${gemini_review_role}" "${gemini_review_model:-provider-default}" "${gemini_review_model_source}"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "codex_architect_fallback" "${codex_architect_role}" "${codex_architect_model:-provider-default}" "${codex_architect_model_source}"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "codex_test_fallback" "${codex_test_role}" "${codex_test_model:-provider-default}" "${codex_test_model_source}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "principal_subagent_architect_substitute" "${codex_architect_role}" "${codex_architect_model:-provider-default}" "${codex_architect_model_source}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${discovered_at}" "refreshed" "principal_subagent_test_substitute" "${codex_test_role}" "${codex_test_model:-provider-default}" "${codex_test_model_source}"
   } >> "${OBSERVATIONS_OUT}" || return 1
 
   line_count="$(wc -l < "${OBSERVATIONS_OUT}" 2>/dev/null || echo 0)"
@@ -419,8 +419,8 @@ Generated at: ${discovered_at}
 
 | Role | Capability Target | Preferred Runtime Mapping |
 |---|---|---|
-| architect_review | deep reasoning, long-context risk review, maintainability judgment | Claude provider default with suggested alias recorded; Codex architect fallback |
-| alternative_review | independent second opinion, missed cases, simpler alternatives | Gemini provider default/pro-class when explicitly configured; Codex test fallback |
+| architect_review | deep reasoning, long-context risk review, maintainability judgment | Claude provider default with suggested alias recorded; principal-subagent architect substitute when needed |
+| alternative_review | independent second opinion, missed cases, simpler alternatives | Gemini provider default/pro-class when explicitly configured; principal-subagent test substitute when needed |
 | implementation | repo-local code edits and test fixes | Codex executor/current runtime default |
 | debug | logs, reproduction, root cause, regression isolation | Codex debugger/current runtime default |
 | fast_scan | file/symbol lookup and lightweight synthesis | Codex explore/spark lane |
@@ -440,8 +440,8 @@ Generated at: ${discovered_at}
 |---|---|---|---|
 | Claude review | ${claude_review_role} | ${claude_review_model:-provider-default} | ${claude_review_model_source} |
 | Gemini review | ${gemini_review_role} | ${gemini_review_model:-provider-default} | ${gemini_review_model_source} |
-| Codex architect fallback | ${codex_architect_role} | ${codex_architect_model:-provider-default} | ${codex_architect_model_source} |
-| Codex test fallback | ${codex_test_role} | ${codex_test_model:-provider-default} | ${codex_test_model_source} |
+| Principal-subagent architect substitute | ${codex_architect_role} | ${codex_architect_model:-provider-default} | ${codex_architect_model_source} |
+| Principal-subagent test substitute | ${codex_test_role} | ${codex_test_model:-provider-default} | ${codex_test_model_source} |
 
 ## Tuning Evidence
 

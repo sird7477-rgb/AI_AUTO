@@ -35,6 +35,9 @@ This is not an end-user app, a deployment template, or a framework showcase.
   template without patching it.
 - `./scripts/verify.sh` and `./scripts/review-gate.sh` for the local
   verify-review completion loop.
+- Active principal runtime contracts so `codex`, `claude`, or `gemini` can be
+  recorded as the current AI_AUTO/OMX principal while preserving the same
+  workflow, permissions, and `.omx/*` artifact paths.
 - Domain-pack authoring and application rules for optional project-specific
   guidance.
 - Feedback and knowledge collection helpers for promoting useful project
@@ -49,6 +52,9 @@ Before marking any work complete, run the repository verification script:
 ```bash
 ./scripts/verify.sh
 ```
+
+In WSL/Docker Desktop environments, `verify.sh` automatically uses a temporary
+Docker config when `~/.docker/config.json` points at `credsStore: desktop.exe`.
 
 `verify.sh` now includes:
 
@@ -66,6 +72,18 @@ Before a commit candidate, run the review gate after verification:
 ```bash
 ./scripts/review-gate.sh
 ```
+
+Codex is the default principal. Claude/Gemini principal runs require a
+launcher-owned evidence marker, then `AI_AUTO_PRINCIPAL` rotates the remaining
+runtimes into review coverage:
+
+```bash
+AI_AUTO_PRINCIPAL=claude ./scripts/review-gate.sh
+AI_AUTO_PRINCIPAL=gemini ./scripts/review-gate.sh
+```
+
+Manual marker creation is not sufficient proof. Without launcher-owned evidence,
+review-gate fails closed with `principal_unavailable`.
 
 When a candidate includes untracked text artifacts that should be reviewed, run
 the gate with untracked content included after confirming generated output and
@@ -166,7 +184,8 @@ Out of scope:
 - `docs/NEW_PROJECT_GUIDE.md` explains how to apply the generic automation template to another repository.
 - `docs/DOMAIN_PACKS.md` explains reusable domain packs and their application lifecycle.
 - `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` defines quality rules for creating or changing domain packs.
-- `docs/MULTI_AI_COLLABORATION.md` documents the Claude/Gemini review gate, degraded-review behavior, and command keywords.
+- `docs/MULTI_AI_COLLABORATION.md` documents principal-runtime review rotation, substitute reviewer coverage, degraded-review behavior, and command keywords.
+- `docs/AI_PRINCIPAL_RUNTIMES.md` documents active principal selection, permission parity, reviewer rotation, and shared artifact paths.
 - `plans/AI_AUTO_STRUCTURAL_WEAKNESS_BACKLOG.md` tracks structural workflow improvements that should stay outside immediate patch churn.
 - `.omx/plans/ralplan-ai-dev-testbed-cleanup.md` contains the approved cleanup plan for this pass.
 
@@ -391,8 +410,9 @@ workflow:
 - `scripts/todo-report.py`: reads the canonical backlog and fails with
   `--fail-on-active` if active TODO or policy-attention items remain.
 - `docker`: required for the final API/Postgres smoke check in `verify.sh`.
-- `claude` and `agy`: used by `review-gate`; if Claude is unavailable because
-  of a usage limit, report the degraded reviewer state explicitly.
+- `claude` and `agy`: used by `review-gate`; if a reviewer is unavailable, the
+  active principal's subagent substitute covers that lane when it can produce a
+  usable verdict with direct file inspection evidence.
 
 Benchmark evidence is observational. It does not replace `verify.sh` or
 `review-gate`.

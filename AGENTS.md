@@ -31,13 +31,8 @@ If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` o
 
 ## Scope
 
-Allowed:
-
-- documentation cleanup
-- workflow clarification
-- narrow reliability fixes
-- verification script improvements
-- small testbed maintenance
+Allowed: documentation cleanup, workflow clarification, narrow reliability
+fixes, verification script improvements, and small testbed maintenance.
 
 Not allowed without a new explicit plan:
 
@@ -77,6 +72,15 @@ Use `docs/AI_MODEL_ROUTING.md` as the source of truth for leader-vs-subagent
 model routing. The active Codex/GPT leader is runtime-selected; optimize
 cost/latency by delegating bounded work to role-appropriate child agents or OMX
 lanes, not by claiming the leader changed models mid-session.
+
+## Ralph Completion Discipline
+
+When Ralph is active, do not stop with plan-only, unpromoted, or tool/document
+drift inside the user's requested scope. If a micro-review finds an unpromoted
+rule, missing regular tool wiring, stale plan-only item, or operational gap
+that is safe and in scope, promote it to the regular script/docs/template
+surface and verify it in the same loop. Report only hard external blockers such
+as unavailable credentials, provider quota, or explicit permission limits.
 
 ## Evidence And Uncertainty
 
@@ -131,13 +135,6 @@ structural verification/review failures. Missing optional tools must not block
 small reversible work. `codemod apply`, autofix, or any write-capable tool
 requires an explicit execution command tied to an approved scoped plan, reviewed
 dry-run diff or summary, rollback path, and post-apply verification.
-
-## Local Environment Boundaries
-
-- Treat `/mnt/z/JSJEON` as the intended SSD project/vault root; use one approved
-  real write probe before disk/remount troubleshooting; see `docs/OBSIDIAN_INTEGRATION.md`.
-- After Ralph, analyze guidance bloat first and propose a two-stage cleanup plan
-  before editing guidance documents.
 
 ## Completion Report Format
 

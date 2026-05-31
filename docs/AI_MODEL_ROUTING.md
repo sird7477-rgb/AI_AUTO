@@ -19,11 +19,19 @@ Recurring trend reports may recommend routing changes, but they must remain
 dated, sourced proposals until local runtime evidence confirms availability and
 the normal verification/review gates accept the change.
 
-## Leader vs Delegated Routing
+## Principal vs Delegated Routing
 
-The active Codex/GPT leader is selected by the runtime or user. Do not claim
-that the leader changed its own model mid-session unless the runtime provides
-explicit evidence of a supported change path.
+The active principal runtime is selected by the runtime or user and may be
+Codex, Claude, or Gemini. Treat the active principal as the single owner of the
+repo-local workflow for that run: it may read files, edit files, run local
+verification, and write the normal `.omx/*` artifacts under the same project
+rules as the default Codex principal.
+
+Do not claim that a runtime changed its own model or principal mid-session
+unless the runtime provides explicit evidence of a supported change path.
+Principal selection changes the owner of the lane, not the workflow contract or
+artifact layout. Use `docs/AI_PRINCIPAL_RUNTIMES.md` for the principal runtime
+contract.
 
 Cost and latency optimization should happen through bounded delegated lanes:
 route lookup, scanning, lightweight synthesis, and narrow implementation slices
@@ -62,8 +70,8 @@ are throughput and focus lanes, not independent external reviewer coverage.
 
 | Role | Target Capability | Default Runtime Mapping |
 |---|---|---|
-| `architect_review` | deep reasoning, long-context risk review, maintainability judgment | Claude provider default with suggested alias recorded; Codex architect fallback |
-| `alternative_review` | independent second opinion, missed cases, simpler alternatives | Gemini provider default unless explicitly configured; Codex test fallback |
+| `architect_review` | deep reasoning, long-context risk review, maintainability judgment | Claude provider default with suggested alias recorded; principal-subagent architect substitute when needed |
+| `alternative_review` | independent second opinion, missed cases, simpler alternatives | Gemini provider default unless explicitly configured; principal-subagent test substitute when needed |
 | `implementation` | bounded repo-local code edits and test fixes | Current low-cost Codex coding lane when guardrails pass; otherwise Codex executor/current runtime default |
 | `debug` | logs, reproduction, root cause, regression isolation | Codex debugger/current runtime default |
 | `test_review` | verification shape, missing tests, failure modes | Codex test-engineer plus Gemini when available |
@@ -77,16 +85,22 @@ are throughput and focus lanes, not independent external reviewer coverage.
 cached for a session-scale TTL so repeated review runs do not churn model
 selection without an explicit reason.
 
-The current review lanes are:
+The default Codex-principal review lanes are:
 
 - Claude: `architect_review`
 - Gemini: `alternative_review`
-- Codex architect fallback: `architect_fallback`
-- Codex test fallback: `test_alternative`
+- principal-subagent architect substitute: `architect_fallback`
+- principal-subagent test/alternative substitute: `test_alternative`
 
-Codex/GPT fallback lanes are delegated review artifacts for continuity when an
-external reviewer is disabled. They are not independent Claude/Gemini coverage
-and must be reported as degraded or informational when used.
+When the active principal is Claude, Claude self-review is skipped and the
+expected reviewers are Gemini plus Codex. When the active principal is Gemini,
+Gemini self-review is skipped and the expected reviewers are Claude plus Codex.
+Those Codex reviews are principal-rotation coverage, not degraded fallback.
+
+When an expected reviewer is unavailable, the active principal's subagent is the
+regular substitute reviewer for that lane. The substitute is accepted as normal
+coverage only with a usable verdict and direct file inspection evidence. Missing
+or unusable substitute output remains degraded or blocked coverage.
 
 Claude stays on provider default by default. Discovery records the suggested
 alias for the role when the installed CLI advertises one, but it does not pass a
@@ -99,8 +113,8 @@ Gemini stays on provider default unless a project/run override supplies a model,
 because the local CLI may not expose a reliable model inventory through help
 text.
 
-Codex fallback prefers the current OMX/Codex runtime contract or explicit
-override variables instead of public API model names.
+Principal-subagent substitute reviews prefer the active principal runtime
+contract or explicit override variables instead of public API model names.
 
 ## Overrides
 
@@ -117,6 +131,7 @@ Use these only when the current project has a concrete reason to force routing:
 - `CODEX_TEST_REVIEW_MODEL`
 - `CODEX_FALLBACK_MODEL`
 - `OMX_DEFAULT_FRONTIER_MODEL`
+- `AI_AUTO_PRINCIPAL=codex|claude|gemini`
 
 Set `AI_MODEL_DISCOVERY=0` to skip model discovery and use provider defaults.
 

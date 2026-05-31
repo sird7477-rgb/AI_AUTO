@@ -142,6 +142,26 @@ function/class 이동 후보만 제안하고, `ai-split-dry-run` 검토와
 가시 workflow를 건드리면 한 단계 더 강하게 운영한다. 리뷰를 생략한 경우
 완료 보고에 선택한 리뷰 강도와 생략 이유를 명시한다.
 
+## 주관자 리뷰 회전
+
+기본 활성 주관자는 Codex다. `AI_AUTO_PRINCIPAL=claude|gemini`로 실행하면
+해당 런타임은 self-review에서 제외되고, 나머지 런타임이 같은 `.omx/*`
+산출물 경로에서 리뷰어로 회전한다. Claude/Gemini 주관자는 launcher-owned
+principal marker가 있어야 하며, 수동 marker나 불일치 marker는
+`principal_unavailable`로 중단한다.
+
+Codex 리뷰가 Claude/Gemini 주관자 실행에서 배치되면 degraded fallback이
+아니라 정상 principal-rotation coverage다. expected reviewer가 disabled
+상태이면 활성 주관자의 subagent substitute가 그 lane을 정규 대체 리뷰로
+담당한다. 이 대체 리뷰는 usable verdict와 `Direct File Inspection` 증거가
+있을 때만 정상 coverage이며, 없으면 degraded/blocked 상태로 보고한다.
+세부 계약은 `docs/AI_PRINCIPAL_RUNTIMES.md`를 따른다.
+
+Ralph 실행 중 요청 범위 안에서 plan-only, 미승격 규칙, 문서/도구 괴리,
+누락 tool wiring을 발견하면 같은 루프에서 정규 산출물로 승격하고 검증한다.
+외부 quota, credential, 명시 권한처럼 즉시 해결 불가능한 hard blocker만
+증거와 함께 보고한다.
+
 ## 실패 패턴 피드백
 
 반복 가능한 실패나 공통 개선 아이디어는 raw log 대신 짧은 요약으로만
@@ -224,16 +244,11 @@ function/class 이동 후보만 제안하고, `ai-split-dry-run` 검토와
 
 ## 서브에이전트 사용 기준
 
-서브에이전트는 leader의 판단을 대체하지 않는다. 병렬로 좁고 독립적인 일을
-맡길 때만 사용한다.
-
-- 사용 가능: repo 탐색, 파일/심볼 매핑, 분리 가능한 구현 slice, 테스트 전략,
-  UX/UI 검토, 의존성/공식문서 조사, 위험한 diff에 대한 독립 critique
-- 사용 금지: destructive 작업, credential/production 작업, commit/push,
-  사용자 판단이 필요한 범위 결정, 최종 통합 판단, 완료 주장
-- Claude/Gemini가 비활성화되어 Codex fallback 리뷰를 쓰는 경우, 이는
-  외부 리뷰어를 대체한 독립 승인으로 보지 않고 degraded/informational
-  coverage로 보고한다.
+서브에이전트는 leader 판단을 대체하지 않는다. repo 탐색, 파일/심볼 매핑,
+분리 가능한 구현 slice, 테스트 전략, UX/UI 검토, 의존성/공식문서 조사,
+위험한 diff critique처럼 좁고 독립적인 일에만 사용한다. destructive,
+credential/production, commit/push, 범위 결정, 최종 통합 판단, 완료 주장은
+위임하지 않는다.
 
 ## 필수 검증
 
@@ -275,13 +290,9 @@ function/class 이동 후보만 제안하고, `ai-split-dry-run` 검토와
 ./scripts/review-gate.sh
 ```
 
-이 명령은 다음을 실행한다.
-
-- `./scripts/verify.sh`
-- Claude 리뷰
-- Gemini 리뷰
-- 필요 시 Codex fallback 리뷰
-- 리뷰 verdict 요약
+이 명령은 `./scripts/verify.sh`, reviewer rotation, 필요 시
+principal-subagent substitute 또는 Codex principal-rotation 리뷰, 리뷰 verdict
+요약을 실행한다.
 
 Gemini 리뷰 lane은 reviewer 이름과 산출물 호환성은 유지하지만, 기본 실행
 명령은 Antigravity CLI `agy`다. 필요하면 `GEMINI_REVIEW_COMMAND`로 실행
@@ -292,30 +303,19 @@ Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로
 disabled 리뷰어는 사용자가 `RESET_DISABLED_AI_REVIEWERS=claude|gemini|all`로
 복구하기 전까지 스킵된다.
 
-리뷰 컨텍스트가 제한을 넘으면 head/tail 압축본으로 정상 승인을 요청하지
-않는다. 컨텍스트는 manifest가 있는 ordered split part로 나누고, 모든 part를
-처리한 synthesis가 명시된 경우에만 최종 verdict를 신뢰한다. Codex/GPT
-fallback은 축약 프롬프트만 보지 말고 관련 파일을 workspace에서 직접 읽고,
-직접 확인한 파일과 확인하지 못한 관련 파일을 결과에 적는다.
+리뷰 컨텍스트가 제한을 넘으면 manifest가 있는 ordered split part로 나누고,
+모든 part를 처리한 synthesis가 명시된 경우에만 최종 verdict를 신뢰한다.
+principal-subagent substitute와 Codex principal-rotation 리뷰는 관련 파일을
+workspace에서 직접 읽고 확인한 파일을 결과에 적어야 한다.
 
-한 리뷰어가 disabled 상태이면 남은 외부 리뷰어 프롬프트는 그대로 유지하고,
-disabled 역할은 별도 Codex/GPT fallback 리뷰가 담당한다. 두 외부 리뷰어가
-모두 disabled 상태이면 `codex-architect-review`와
-`codex-test-alternative-review` fallback 리뷰가 모두 필요하다. 이 결과는
-`proceed_degraded`, `single_external_plus_codex_fallback`, 또는
-`codex_only_degraded`로 표시되며 독립 Claude/Gemini 승인으로 세지 않는다.
-`proceed_degraded`는 진행 가능한 gate 결과지만 완료 보고에 degraded trust
-level과 누락 리뷰어 상태를 반드시 포함한다.
+한 리뷰어가 disabled 상태이면 활성 주관자의 subagent substitute가 그 lane을
+정규 대체 리뷰로 담당한다. usable verdict와 직접 파일 확인이 없으면
+degraded/blocked로 보고한다.
 
-루프 내 역할 경계:
-
-- Codex/GPT 리더는 구현, 조율, 검증, 완료 보고를 책임진다.
-- 리더가 작업 중 스스로 모델을 바꿨다고 표현하지 않는다.
-- 비용/속도 최적화가 필요하면 탐색, 파일 매핑, 가벼운 합성처럼 범위가
-  좁은 작업만 역할별 서브에이전트나 OMX lane에 위임한다.
-- Claude/Gemini는 독립 외부 리뷰어다.
-- Codex/GPT fallback 리뷰는 연속성을 위한 degraded 보강이며 독립
-  Claude/Gemini 승인으로 세지 않는다.
+루프 내 역할 경계: Codex/GPT 리더는 구현, 조율, 검증, 완료 보고를 책임진다.
+리더가 스스로 모델을 바꿨다고 표현하지 않는다. Claude/Gemini가 기본
+Codex 주관자 모드에서 독립 외부 리뷰어이고, 외부 런타임이 활성 주관자이면
+Codex는 정상 reviewer rotation lane으로 배치된다.
 
 ## 완료 보고
 
@@ -365,16 +365,6 @@ level과 누락 리뷰어 상태를 반드시 포함한다.
 
 ## 운영 명령
 
-자동화 진단:
-
-```bash
-./scripts/automation-doctor.sh
-```
-
-새 프로젝트 초기화:
-
-```bash
-aiinit
-```
-
-프레임워크별 세부 검증 패턴은 프로젝트 온보딩 단계에서 추가한다.
+자동화 진단은 `./scripts/automation-doctor.sh`, 새 프로젝트 초기화는
+`aiinit`을 사용한다. 프레임워크별 세부 검증 패턴은 프로젝트 온보딩 단계에서
+추가한다.

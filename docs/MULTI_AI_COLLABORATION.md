@@ -35,6 +35,26 @@ Current working pieces include:
 - ./scripts/automation-doctor.sh as the repo-local automation readiness doctor
 - workspace-scan as the workspace status scanner
 
+## Active principal runtime
+
+AI_AUTO may run with an active principal runtime selected from `codex`,
+`claude`, or `gemini`. The principal owns the normal repo-local workflow and
+writes the same `.omx/*` artifacts regardless of provider. See
+`docs/AI_PRINCIPAL_RUNTIMES.md` for the full contract.
+
+Reviewer rotation excludes the active principal:
+
+- principal `codex`: Claude and Gemini review.
+- principal `claude`: Gemini and Codex review.
+- principal `gemini`: Claude and Codex review.
+
+Codex reviewer coverage in a Claude/Gemini principal run is normal principal
+rotation, not degraded fallback coverage. If an expected reviewer is
+unavailable, the active principal's subagent covers that lane as the regular
+substitute reviewer. That substitute counts as normal coverage only with a
+usable verdict and direct file inspection evidence; otherwise the gate reports
+degraded or blocked coverage.
+
 ## Current limitation
 
 The current system is not yet a true multi-AI collaboration loop.
@@ -243,8 +263,8 @@ Current handling:
 - disabled reviewer state is stored under .omx/reviewer-state and announced on every run until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
 - disabled reviewer markers include the source review run id, next action, and reset hint so recovery instructions remain explicit across later runs
 - disabled reviewer perspectives are not injected into the remaining external reviewer prompt
-- Codex/GPT fallback reviews run as separate degraded artifacts when reviewers are disabled, and the summary reports that coverage separately without counting it as independent external review coverage
-- Codex fallback execution uses `codex exec` when available and can be disabled for diagnostics with RUN_CODEX_FALLBACK_REVIEW=0
+- principal-subagent substitute reviews run as separate artifacts when expected reviewers are disabled, and the summary reports regular substitute coverage only when a usable verdict and direct file inspection evidence are present
+- principal-subagent substitute execution can be disabled for diagnostics with RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0
 - AI model routing is discovered at review-run start by `scripts/discover-ai-models.sh`; it writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`, then the runner applies provider-specific `--model` flags only for explicit overrides or opt-in auto routing when supported
 - model routing is role-first: choose the role/capability first, then resolve it against the current local CLI/runtime/account surface
 - model routing avoids dated hardcoded model names; use env overrides such as CLAUDE_REVIEW_ROLE, GEMINI_REVIEW_ROLE, CLAUDE_REVIEW_MODEL, GEMINI_REVIEW_MODEL, CODEX_ARCHITECT_REVIEW_MODEL, CODEX_TEST_REVIEW_MODEL, or CODEX_FALLBACK_MODEL when a specific current route should be forced
@@ -299,19 +319,27 @@ non-interactive reviewer calls and writes reproducible artifacts under `.omx/`.
 Warm sessions optimize development feedback; they do not define the project
 trust boundary.
 
-### Codex fallback review
+### Principal-subagent substitute review
 
-When an independent reviewer is disabled, Codex records separate fallback review artifacts:
+When an expected reviewer is disabled, the active principal records separate
+substitute review artifacts:
 
-- Claude disabled -> `codex-architect-review`
-- Gemini disabled -> `codex-test-alternative-review`
-- both disabled -> both fallback reviews are required
+- Claude disabled -> `principal-subagent-architect-review`
+- Gemini disabled -> `principal-subagent-test-review`
+- both disabled -> both substitute reviews are required
 
-This fallback is explicitly marked degraded and informational-only. It reduces blind spots but does not upgrade coverage to `multi_reviewer`; summaries use `single_external_plus_codex_fallback` or `codex_only_degraded` to keep trust boundaries visible.
+This substitute is regular coverage only when it produces a usable verdict and
+lists direct file inspection evidence. Summaries use
+`principal_subagent_substitute` or `principal_rotation_with_substitute` for that
+normal-trust path.
 
-If Codex fallback cannot run, its artifact is marked skipped or failed and the summary stays blocked when no external reviewer produced a usable result.
+If the substitute cannot run, its artifact is marked skipped or failed and the
+summary falls back to degraded or blocked coverage according to the remaining
+usable review evidence.
 
-`proceed_degraded` is an allowed review-gate success state only when the degraded trust level, missing reviewer state, and Codex fallback files are reported to the user.
+`proceed_degraded` is an allowed review-gate success state only when the
+degraded trust level, missing reviewer state, and substitute/fallback files are
+reported to the user.
 
 ### Session artifact management
 
@@ -395,7 +423,7 @@ Completed:
 - reviewer failures are classified and stored.
 - reviewer disagreement does not silently proceed.
 - disabled reviewer perspectives are no longer injected into the remaining reviewer prompt.
-- Codex/GPT fallback reviews are separate degraded artifacts and do not count as independent approval.
+- principal-subagent substitute reviews are regular coverage only with a usable verdict and direct file inspection evidence; otherwise they remain degraded or blocked evidence.
 
 ### Phase 3: Revision loop
 

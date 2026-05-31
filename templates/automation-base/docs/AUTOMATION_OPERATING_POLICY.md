@@ -152,9 +152,9 @@ stronger role. Report the estimated rewrite fraction when the lane was used.
 External reviewers such as Claude and Gemini do not directly control Codex
 native subagents. They may recommend subagent follow-ups, but the leader decides
 whether to spawn them, assigns a narrow task, and reports the result. When an
-external reviewer is disabled, Codex fallback review lanes may cover the missing
-perspective, but this remains degraded informational coverage and must be
-reported as such.
+expected reviewer is disabled, the active principal's subagent substitute may
+cover that lane as regular review coverage only with a usable verdict and direct
+file inspection evidence. Otherwise the gate reports degraded or blocked coverage.
 
 ### Resource-Aware Parallelism
 
