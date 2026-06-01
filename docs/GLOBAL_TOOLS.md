@@ -311,7 +311,10 @@ This installs managed shell functions for `codex`, `claude`, and `agy`. The
 normal Gemini reviewer path uses `agy`, so no separate `gemini` wrapper is
 installed by default. These wrappers affect only interactive terminal starts.
 They do not change `scripts/ai-runtime-adapter.sh`, review-gate capability
-rules, model routing, credentials, or tool permissions.
+rules, model routing, credentials, or tool permissions. Session names include
+the runtime name, so parallel VS Code terminals in the same project keep
+`codex`, `claude`, and `agy` in separate tmux sessions instead of attaching to
+the first AI runtime opened for that project.
 
 Disable all AI_AUTO tmux auto-entry wrappers for a shell command with:
 
@@ -321,3 +324,9 @@ Disable only one runtime with:
 
     AI_AUTO_CLAUDE_TMUX_AUTO=0 claude
     AI_AUTO_AGY_TMUX_AUTO=0 agy
+
+The generated wrapper also raises the soft `nofile` limit before launching an AI
+runtime, including inside the tmux command string. This avoids Claude/agy
+startup failures from shells or existing tmux servers that inherited a low file
+descriptor limit. Override the default target with `AI_AUTO_NOFILE_LIMIT`; set
+it to a numeric value supported by the current shell hard limit.

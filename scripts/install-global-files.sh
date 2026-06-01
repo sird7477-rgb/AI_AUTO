@@ -576,17 +576,26 @@ ${function_marker}
 _ai_auto_tmux_session_name() {
   local base="\$1"
   local hash=""
+  local runtime_name=""
   local slug=""
+
+  if [ "\$#" -ge 2 ]; then
+    runtime_name="\$1"
+    base="\$2"
+  fi
 
   slug="\$(basename "\$base" | tr -cs '[:alnum:]_.-' '-' | sed 's/^-//; s/-\$//')"
   if [ -z "\$slug" ]; then
     slug="workspace"
   fi
+  if [ -n "\${runtime_name}" ]; then
+    slug="\${runtime_name}-\${slug}"
+  fi
 
   if command -v sha256sum >/dev/null 2>&1; then
-    hash="\$(printf '%s' "\$base" | sha256sum | awk '{print substr(\$1,1,8)}')"
+    hash="\$(printf '%s' "\${runtime_name}|\${base}" | sha256sum | awk '{print substr(\$1,1,8)}')"
   elif command -v cksum >/dev/null 2>&1; then
-    hash="\$(printf '%s' "\$base" | cksum | awk '{print \$1}')"
+    hash="\$(printf '%s' "\${runtime_name}|\${base}" | cksum | awk '{print \$1}')"
   else
     hash="nohash"
   fi
@@ -605,6 +614,51 @@ _ai_auto_shell_quote() {
   done
 
   printf '%s\n' "\${quoted# }"
+}
+
+_ai_auto_nofile_limit() {
+  local target="\${AI_AUTO_NOFILE_LIMIT:-1048576}"
+
+  case "\${target}" in
+    ''|*[!0-9]*)
+      return 1
+      ;;
+  esac
+
+  printf '%s\n' "\${target}"
+}
+
+_ai_auto_raise_nofile_limit() {
+  local current=""
+  local target=""
+
+  target="\$(_ai_auto_nofile_limit)" || return 0
+  current="\$(ulimit -n 2>/dev/null || true)"
+  case "\${current}" in
+    ''|*[!0-9]*)
+      ulimit -n "\${target}" >/dev/null 2>&1 || true
+      return 0
+      ;;
+  esac
+
+  if [ "\${current}" -lt "\${target}" ]; then
+    ulimit -n "\${target}" >/dev/null 2>&1 || true
+  fi
+}
+
+_ai_auto_runtime_command() {
+  local runtime_binary="\$1"
+  local limit=""
+  local quoted=""
+  shift
+
+  quoted="\$(_ai_auto_shell_quote "\${runtime_binary}" "\$@")"
+  limit="\$(_ai_auto_nofile_limit 2>/dev/null || true)"
+  if [ -n "\${limit}" ]; then
+    printf 'ulimit -n %s >/dev/null 2>&1 || true; %s\n' "\${limit}" "\${quoted}"
+  else
+    printf '%s\n' "\${quoted}"
+  fi
 }
 
 _ai_auto_enter_tmux_if_needed() {
@@ -635,8 +689,8 @@ _ai_auto_enter_tmux_if_needed() {
   fi
 
   tmux_base="\${AI_AUTO_TMUX_BASE:-\$(pwd)}"
-  tmux_session="\$(_ai_auto_tmux_session_name "\${tmux_base}")"
-  tmux_command="\$(_ai_auto_shell_quote "\${runtime_binary}" "\$@")"
+  tmux_session="\$(_ai_auto_tmux_session_name "\${runtime_name}" "\${tmux_base}")"
+  tmux_command="\$(_ai_auto_runtime_command "\${runtime_binary}" "\$@")"
   command "\${tmux_binary}" new-session -A -s "\${tmux_session}" -c "\$(pwd)" "\${tmux_command}" && return 0
   return 1
 }
@@ -728,6 +782,7 @@ codex() {
     return
   fi
 
+  _ai_auto_raise_nofile_limit
   "\$real_codex" "\$@"
 }
 EOF
@@ -749,6 +804,7 @@ claude() {
     return
   fi
 
+  _ai_auto_raise_nofile_limit
   "\$real_claude" "\$@"
 }
 EOF
@@ -771,6 +827,7 @@ agy() {
     return
   fi
 
+  _ai_auto_raise_nofile_limit
   "\$real_agy" "\$@"
 }
 EOF

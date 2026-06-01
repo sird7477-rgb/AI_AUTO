@@ -4,6 +4,18 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.01.2
+
+- Raised the generated AI tmux wrapper's runtime `nofile` soft limit before
+  launching `codex`, `claude`, or `agy`, including inside tmux command strings,
+  so existing low-limit shells or tmux servers do not trigger Claude/agy startup
+  failures.
+- Scoped generated tmux session names by runtime as well as project, so
+  parallel terminals can open `codex`, `claude`, and `agy` for the same project
+  without later runtimes attaching to the first runtime's session.
+- Added `AI_AUTO_NOFILE_LIMIT` as a numeric override for the wrapper's default
+  file descriptor target.
+
 ## 2026.06.01.1
 
 - Added `--install-ai-tmux-auto-entry` to install managed interactive tmux

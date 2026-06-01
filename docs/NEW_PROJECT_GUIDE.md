@@ -208,9 +208,13 @@ pipes, redirects, and calls already inside tmux. Use
 `AI_AUTO_CODEX_TMUX_AUTO=0 codex` when direct execution is needed. For the
 multi-runtime wrapper installed with `--install-ai-tmux-auto-entry`, use
 `AI_AUTO_TMUX_AUTO=0` to bypass all managed AI wrappers or
-`AI_AUTO_CLAUDE_TMUX_AUTO=0` / `AI_AUTO_AGY_TMUX_AUTO=0` for one runtime. Re-running the
-command for a project with an existing tmux session attaches to that session
-instead of starting a second Codex command.
+`AI_AUTO_CLAUDE_TMUX_AUTO=0` / `AI_AUTO_AGY_TMUX_AUTO=0` for one runtime. The
+wrapper also best-effort raises the runtime `nofile` soft limit; override the
+target with `AI_AUTO_NOFILE_LIMIT` if a local shell needs a different value.
+Re-running the same runtime command for a project with an existing tmux session
+attaches to that runtime's session instead of starting a duplicate. Different
+runtimes in the same project use separate sessions, so `claude` does not attach
+to a `codex` session.
 
 ## Project Registry
 
