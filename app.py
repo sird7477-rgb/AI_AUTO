@@ -26,10 +26,6 @@ def create_app(db_path=None):
     def health():
         return jsonify({"status": "ok"})
 
-    @app.get("/")
-    def root_health():
-        return jsonify({"status": "ok"})
-
     @app.get("/todos")
     def list_todos():
         return jsonify([serialize_todo(todo) for todo in repository.list()])
@@ -88,4 +84,5 @@ def create_app(db_path=None):
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+    app.run(debug=debug)

@@ -67,25 +67,31 @@ do
   bash -n "${script}"
 done
 shellcheck -S warning scripts/*.sh templates/automation-base/scripts/*.sh
-bash -n tools/ai-auto-init
-bash -n tools/ai-home
-bash -n tools/ai-register
-bash -n tools/ai-auto-template-status
-bash -n tools/ai-gstack-contract
-bash -n tools/ai-refactor-scan
-bash -n tools/ai-rebuild-plan
-bash -n tools/ai-split-plan
-bash -n tools/ai-split-dry-run
-bash -n tools/ai-split-apply
-bash -n tools/ai-plan-status
-bash -n tools/ai-interview-record
-bash -n tools/ai-plan-review
-bash -n tools/ai-plan-export
-bash -n tools/feedback-collect
-bash -n tools/workspace-scan
-python3 -m py_compile tools/ai-python-split
-python3 -m py_compile tools/ai-plan-workflow
-python3 -m py_compile tools/knowledge-collect
+# Global helper commands in tools/ are extensionless scripts that the
+# scripts/*.sh glob above cannot reach, yet they are the code installed onto
+# other machines. Discover them by shebang so adding, removing, or renaming a
+# tool never silently bypasses linting and never breaks a hardcoded list.
+tools_bash=()
+tools_python=()
+while IFS= read -r tool; do
+  # Read the shebang with head: a bare `read` returns non-zero on a file whose
+  # only line has no trailing newline and would then discard the line, silently
+  # skipping linting. head classifies such files correctly.
+  shebang="$(head -n1 "${tool}")"
+  case "${shebang}" in
+    *bash*) tools_bash+=("${tool}") ;;
+    *python*) tools_python+=("${tool}") ;;
+  esac
+done < <(git ls-files tools | sort)
+if [ "${#tools_bash[@]}" -gt 0 ]; then
+  shellcheck -S warning "${tools_bash[@]}"
+  for tool in "${tools_bash[@]}"; do
+    bash -n "${tool}"
+  done
+fi
+for tool in "${tools_python[@]}"; do
+  python3 -m py_compile "${tool}"
+done
 python3 -m py_compile scripts/benchmark-command.py
 python3 -m py_compile scripts/todo-report.py
 python3 -m py_compile scripts/capture-knowledge-drafts.py
@@ -94,6 +100,45 @@ python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
 python3 -m py_compile templates/automation-base/scripts/todo-report.py
 python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
 python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
+
+echo "[verify] checking secret hygiene..."
+# Secret-bearing files must stay untracked. .gitignore already excludes them,
+# but a single broken ignore rule would otherwise commit credentials with no
+# guard. This check has no external dependency: it asks git what is tracked.
+tracked_secrets="$(
+  git ls-files -- \
+    '.env' '.env.*' '*.pem' '*.key' '*.p12' '*.pfx' 'id_rsa' 'id_rsa.*' \
+    'instance/*.sqlite3' \
+    | grep -vE '(^|/)\.env\.example$' || true
+)"
+if [ -n "${tracked_secrets}" ]; then
+  echo "[verify] ERROR: secret-like files are tracked by git:" >&2
+  printf '  %s\n' ${tracked_secrets} >&2
+  echo "[verify] remove them from the index and confirm .gitignore covers them" >&2
+  exit 1
+fi
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "[verify] running gitleaks deep secret scan..."
+  gitleaks detect --no-banner --redact --exit-code 1
+else
+  echo "[verify] gitleaks not installed; tracked-file guard only (install gitleaks for deep scan)"
+fi
+
+echo "[verify] checking python security tooling..."
+python_security_targets="app.py repository.py incident_ops.py"
+if command -v bandit >/dev/null 2>&1; then
+  echo "[verify] running bandit static security scan..."
+  # shellcheck disable=SC2086
+  bandit -q -ll -r ${python_security_targets}
+else
+  echo "[verify] bandit not installed; skipping python static security scan (optional)"
+fi
+if command -v pip-audit >/dev/null 2>&1; then
+  echo "[verify] running pip-audit dependency audit..."
+  pip-audit -r requirements.txt || echo "[verify] WARNING: pip-audit reported advisories (review above)"
+else
+  echo "[verify] pip-audit not installed; skipping dependency vulnerability audit (optional)"
+fi
 
 echo "[verify] checking canonical TODO report..."
 python3 scripts/todo-report.py --fail-on-active >/dev/null
