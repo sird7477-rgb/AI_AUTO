@@ -71,7 +71,7 @@ shellcheck -S warning scripts/*.sh templates/automation-base/scripts/*.sh
 # scripts/*.sh glob above cannot reach, yet they are the code installed onto
 # other machines. Discover them by shebang so adding, removing, or renaming a
 # tool never silently bypasses linting and never breaks a hardcoded list.
-tools_bash=()
+tools_shell=()
 tools_python=()
 while IFS= read -r tool; do
   # Read the shebang with head: a bare `read` returns non-zero on a file whose
@@ -79,13 +79,13 @@ while IFS= read -r tool; do
   # skipping linting. head classifies such files correctly.
   shebang="$(head -n1 "${tool}")"
   case "${shebang}" in
-    *bash*) tools_bash+=("${tool}") ;;
     *python*) tools_python+=("${tool}") ;;
+    *sh*) tools_shell+=("${tool}") ;;
   esac
 done < <(git ls-files tools | sort)
-if [ "${#tools_bash[@]}" -gt 0 ]; then
-  shellcheck -S warning "${tools_bash[@]}"
-  for tool in "${tools_bash[@]}"; do
+if [ "${#tools_shell[@]}" -gt 0 ]; then
+  shellcheck -S warning "${tools_shell[@]}"
+  for tool in "${tools_shell[@]}"; do
     bash -n "${tool}"
   done
 fi
@@ -105,10 +105,14 @@ echo "[verify] checking secret hygiene..."
 # Secret-bearing files must stay untracked. .gitignore already excludes them,
 # but a single broken ignore rule would otherwise commit credentials with no
 # guard. This check has no external dependency: it asks git what is tracked.
+# The :(glob)**/ prefix matches at any depth so a secret committed in a
+# subdirectory (e.g. config/.env) cannot slip past a root-anchored pattern.
 tracked_secrets="$(
   git ls-files -- \
-    '.env' '.env.*' '*.pem' '*.key' '*.p12' '*.pfx' 'id_rsa' 'id_rsa.*' \
-    'instance/*.sqlite3' \
+    ':(glob)**/.env' ':(glob)**/.env.*' \
+    ':(glob)**/*.pem' ':(glob)**/*.key' ':(glob)**/*.p12' ':(glob)**/*.pfx' \
+    ':(glob)**/id_rsa' ':(glob)**/id_rsa.*' \
+    ':(glob)**/*.sqlite3' \
     | grep -vE '(^|/)\.env\.example$' || true
 )"
 if [ -n "${tracked_secrets}" ]; then
@@ -125,11 +129,15 @@ else
 fi
 
 echo "[verify] checking python security tooling..."
-python_security_targets="app.py repository.py incident_ops.py"
+# Scan the tracked repo-root application modules rather than a hardcoded list,
+# so renaming or adding a top-level module keeps the scan in sync with the code
+# and a removed module never breaks the gate with a missing path.
+mapfile -t python_security_targets < <(git ls-files -- '*.py' | grep -vE '/')
 if command -v bandit >/dev/null 2>&1; then
-  echo "[verify] running bandit static security scan..."
-  # shellcheck disable=SC2086
-  bandit -q -ll -r ${python_security_targets}
+  if [ "${#python_security_targets[@]}" -gt 0 ]; then
+    echo "[verify] running bandit static security scan..."
+    bandit -q -ll "${python_security_targets[@]}"
+  fi
 else
   echo "[verify] bandit not installed; skipping python static security scan (optional)"
 fi
