@@ -9,10 +9,11 @@ WARN_COUNT=0
 FAIL_COUNT=0
 INSTALL_CODEX_DRIFT_NOTICE=0
 INSTALL_CODEX_TMUX_AUTO_ENTRY=0
+INSTALL_AI_TMUX_AUTO_ENTRY=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/install-global-files.sh [--install-codex-drift-notice] [--install-codex-tmux-auto-entry]
+Usage: ./scripts/install-global-files.sh [--install-codex-drift-notice] [--install-codex-tmux-auto-entry] [--install-ai-tmux-auto-entry]
 
 Install or repair ai-lab global helper files for this checkout.
 
@@ -51,6 +52,11 @@ Options:
       Install the same managed codex shell function with default-on tmux
       auto-entry. Interactive codex calls outside tmux attach to a
       project-scoped tmux session; use AI_AUTO_CODEX_TMUX_AUTO=0 to opt out.
+  --install-ai-tmux-auto-entry
+      Install managed shell functions with default-on tmux auto-entry for
+      interactive codex, claude, and agy calls outside tmux. Use
+      AI_AUTO_TMUX_AUTO=0 to opt out globally, or AI_AUTO_<RUNTIME>_TMUX_AUTO=0
+      for one runtime.
   -h, --help
       Show this help.
 
@@ -65,6 +71,10 @@ while [ "$#" -gt 0 ]; do
       INSTALL_CODEX_DRIFT_NOTICE=1
       ;;
     --install-codex-tmux-auto-entry)
+      INSTALL_CODEX_TMUX_AUTO_ENTRY=1
+      ;;
+    --install-ai-tmux-auto-entry)
+      INSTALL_AI_TMUX_AUTO_ENTRY=1
       INSTALL_CODEX_TMUX_AUTO_ENTRY=1
       ;;
     -h|--help)
@@ -372,10 +382,13 @@ install_codex_wrapper() {
   local end_marker="# <<< AI_AUTO codex drift notice integration <<<"
   local tmp_path
   local begin_count end_count
-  local real_codex real_codex_dir real_codex_base real_codex_quoted patch_notes_quoted ai_lab_root_quoted
-  local drift_default tmux_auto_default
+  local real_codex real_claude="" real_agy="" patch_notes_quoted ai_lab_root_quoted
+  local real_codex_quoted real_claude_quoted="" real_agy_quoted=""
+  local drift_default tmux_auto_default claude_tmux_auto_default agy_tmux_auto_default
+  local include_claude_wrapper=0 include_agy_wrapper=0
+  local existing_value resolve_status
 
-  if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ] && [ "$INSTALL_CODEX_TMUX_AUTO_ENTRY" -ne 1 ]; then
+  if [ "$INSTALL_CODEX_DRIFT_NOTICE" -ne 1 ] && [ "$INSTALL_CODEX_TMUX_AUTO_ENTRY" -ne 1 ] && [ "$INSTALL_AI_TMUX_AUTO_ENTRY" -ne 1 ]; then
     return
   fi
 
@@ -384,43 +397,97 @@ install_codex_wrapper() {
     return
   fi
 
-  if ! real_codex="$(command -v codex 2>/dev/null)"; then
-    say_fail "codex is not on PATH; cannot install codex shell function"
+  extract_generated_function_local() {
+    local function_name="$1"
+    local local_name="$2"
+    local path="$3"
+
+    awk -v fn="${function_name}" -v local_name="${local_name}" '
+      $0 == fn "() {" { in_fn=1; next }
+      in_fn && $0 == "}" { exit }
+      in_fn {
+        prefix = "  local " local_name "="
+        if (index($0, prefix) == 1) {
+          print substr($0, length(prefix) + 1)
+          exit
+        }
+      }
+    ' "$path"
+  }
+
+  resolve_runtime_command() {
+    local runtime_name="$1"
+    local resolved resolved_dir resolved_base
+
+    if ! resolved="$(command -v "${runtime_name}" 2>/dev/null)"; then
+      return 1
+    fi
+
+    case "$resolved" in
+      /*)
+        ;;
+      */*)
+        resolved_dir="$(cd -P "$(dirname "$resolved")" 2>/dev/null && pwd)" || return 1
+        resolved="${resolved_dir}/$(basename "$resolved")"
+        ;;
+      *)
+        resolved_dir="$(dirname "$(command -v -- "$resolved")")"
+        resolved_base="$(basename "$resolved")"
+        resolved_dir="$(cd -P "$resolved_dir" 2>/dev/null && pwd)" || return 1
+        resolved="${resolved_dir}/${resolved_base}"
+        ;;
+    esac
+
+    [ -x "$resolved" ] || return 1
+
+    case "$resolved" in
+      "${HOME_DIR}/bin/${runtime_name}"|*"${ROOT}/"*)
+        return 2
+        ;;
+    esac
+
+    printf '%s\n' "$resolved"
+  }
+
+  real_codex="$(resolve_runtime_command codex)"
+  resolve_status=$?
+  if [ "$resolve_status" -ne 0 ]; then
+    if [ "$resolve_status" -eq 2 ]; then
+      say_fail "codex resolves to an AI_AUTO-managed path; refusing shadow install"
+    else
+      say_fail "codex is not on PATH; cannot install codex shell function"
+    fi
     return
   fi
 
-  case "$real_codex" in
-    /*)
-      ;;
-    */*)
-      real_codex_dir="$(cd -P "$(dirname "$real_codex")" 2>/dev/null && pwd)" || {
-        say_fail "could not resolve codex directory: ${real_codex}"
-        return
-      }
-      real_codex="${real_codex_dir}/$(basename "$real_codex")"
-      ;;
-    *)
-      real_codex_dir="$(dirname "$(command -v -- "$real_codex")")"
-      real_codex_base="$(basename "$real_codex")"
-      real_codex_dir="$(cd -P "$real_codex_dir" 2>/dev/null && pwd)" || {
-        say_fail "could not resolve codex directory: ${real_codex}"
-        return
-      }
-      real_codex="${real_codex_dir}/${real_codex_base}"
-      ;;
-  esac
+  if [ "$INSTALL_AI_TMUX_AUTO_ENTRY" -eq 1 ]; then
+    if real_claude="$(resolve_runtime_command claude)"; then
+      include_claude_wrapper=1
+    else
+      say_warn "claude is not available or resolves to an AI_AUTO-managed path; skipping claude tmux wrapper"
+    fi
 
-  if [ ! -x "$real_codex" ]; then
-    say_fail "resolved codex is not executable: ${real_codex}"
-    return
+    if real_agy="$(resolve_runtime_command agy)"; then
+      include_agy_wrapper=1
+    else
+      say_warn "agy is not available or resolves to an AI_AUTO-managed path; skipping agy tmux wrapper"
+    fi
+  elif [ -f "$function_path" ]; then
+    if grep -q '^claude() {' "$function_path"; then
+      existing_value="$(extract_generated_function_local claude real_claude "$function_path")"
+      if [ -n "$existing_value" ]; then
+        real_claude_quoted="$existing_value"
+        include_claude_wrapper=1
+      fi
+    fi
+    if grep -q '^agy() {' "$function_path"; then
+      existing_value="$(extract_generated_function_local agy real_agy "$function_path")"
+      if [ -n "$existing_value" ]; then
+        real_agy_quoted="$existing_value"
+        include_agy_wrapper=1
+      fi
+    fi
   fi
-
-  case "$real_codex" in
-    "${HOME_DIR}/bin/codex"|*"${ROOT}/"*)
-      say_fail "resolved codex path looks AI_AUTO-managed; refusing shadow install: ${real_codex}"
-      return
-      ;;
-  esac
 
   if [ -e "$bashrc_path" ] && [ ! -f "$bashrc_path" ]; then
     say_fail "shell profile path exists but is not a file: ${bashrc_path}"
@@ -464,27 +531,49 @@ install_codex_wrapper() {
   mkdir -p "$config_dir"
   function_tmp_path="${function_path}.tmp.$$"
   real_codex_quoted="$(printf '%q' "$real_codex")"
+  if [ -n "$real_claude" ] && [ -z "$real_claude_quoted" ]; then
+    real_claude_quoted="$(printf '%q' "$real_claude")"
+  fi
+  if [ -n "$real_agy" ] && [ -z "$real_agy_quoted" ]; then
+    real_agy_quoted="$(printf '%q' "$real_agy")"
+  fi
   patch_notes_quoted="$(printf '%q' "${ROOT}/templates/automation-base/docs/PATCH_NOTES.md")"
   ai_lab_root_quoted="$(printf '%q' "$ROOT")"
   drift_default="$INSTALL_CODEX_DRIFT_NOTICE"
   if [ "$drift_default" -ne 1 ] &&
     [ -f "$function_path" ] &&
-    grep -q '^  local drift_notice_default=1$' "$function_path"; then
+    [ "$(extract_generated_function_local codex drift_notice_default "$function_path")" = "1" ]; then
     drift_default=1
   fi
   tmux_auto_default="${INSTALL_CODEX_TMUX_AUTO_ENTRY:-0}"
   if [ "$tmux_auto_default" -ne 1 ] &&
     [ -f "$function_path" ] &&
-    grep -q '^  local tmux_auto_default=1$' "$function_path"; then
+    [ "$(extract_generated_function_local codex tmux_auto_default "$function_path")" = "1" ]; then
     tmux_auto_default=1
     say_warn "preserving existing codex tmux auto-entry default; use AI_AUTO_CODEX_TMUX_AUTO=0 or remove the managed shell function to opt out"
   elif [ "$tmux_auto_default" -eq 1 ]; then
     printf '[info] installing codex tmux auto-entry as the default; use AI_AUTO_CODEX_TMUX_AUTO=0 to opt out for a shell\n'
   fi
+  claude_tmux_auto_default=0
+  agy_tmux_auto_default=0
+  if [ "$INSTALL_AI_TMUX_AUTO_ENTRY" -eq 1 ]; then
+    claude_tmux_auto_default="$include_claude_wrapper"
+    agy_tmux_auto_default="$include_agy_wrapper"
+    printf '[info] installing AI tmux auto-entry; use AI_AUTO_TMUX_AUTO=0 to opt out for a shell\n'
+  elif [ -f "$function_path" ]; then
+    if [ "$include_claude_wrapper" -eq 1 ] &&
+      [ "$(extract_generated_function_local claude tmux_auto_default "$function_path")" = "1" ]; then
+      claude_tmux_auto_default=1
+    fi
+    if [ "$include_agy_wrapper" -eq 1 ] &&
+      [ "$(extract_generated_function_local agy tmux_auto_default "$function_path")" = "1" ]; then
+      agy_tmux_auto_default=1
+    fi
+  fi
 
   cat > "$function_tmp_path" <<EOF
 ${function_marker}
-_ai_auto_codex_tmux_session_name() {
+_ai_auto_tmux_session_name() {
   local base="\$1"
   local hash=""
   local slug=""
@@ -505,7 +594,7 @@ _ai_auto_codex_tmux_session_name() {
   printf 'ai-%s-%s\n' "\$slug" "\$hash"
 }
 
-_ai_auto_codex_shell_quote() {
+_ai_auto_shell_quote() {
   local arg=""
   local escaped=""
   local quoted=""
@@ -516,6 +605,48 @@ _ai_auto_codex_shell_quote() {
   done
 
   printf '%s\n' "\${quoted# }"
+}
+
+_ai_auto_enter_tmux_if_needed() {
+  local runtime_name="\$1"
+  local runtime_binary="\$2"
+  local runtime_toggle="\$3"
+  local tmux_auto_default="\$4"
+  shift 4
+  local tmux_binary=""
+  local tmux_base=""
+  local tmux_command=""
+  local tmux_session=""
+
+  if [ "\${AI_AUTO_TMUX_AUTO:-1}" = "0" ]; then
+    return 1
+  fi
+
+  if [ "\${runtime_toggle:-\${tmux_auto_default}}" != "1" ] ||
+    [ -n "\${TMUX:-}" ] ||
+    ! [ -t 0 ] ||
+    ! [ -t 1 ]; then
+    return 1
+  fi
+
+  tmux_binary="\$(type -P tmux 2>/dev/null || true)"
+  if [ -z "\${tmux_binary}" ]; then
+    return 1
+  fi
+
+  tmux_base="\${AI_AUTO_TMUX_BASE:-\$(pwd)}"
+  tmux_session="\$(_ai_auto_tmux_session_name "\${tmux_base}")"
+  tmux_command="\$(_ai_auto_shell_quote "\${runtime_binary}" "\$@")"
+  command "\${tmux_binary}" new-session -A -s "\${tmux_session}" -c "\$(pwd)" "\${tmux_command}" && return 0
+  return 1
+}
+
+_ai_auto_codex_tmux_session_name() {
+  _ai_auto_tmux_session_name "\$@"
+}
+
+_ai_auto_codex_shell_quote() {
+  _ai_auto_shell_quote "\$@"
 }
 
 codex() {
@@ -531,10 +662,6 @@ codex() {
   local knowledge_output=""
   local knowledge_timeout=""
   local template_status_timeout=""
-  local tmux_binary=""
-  local tmux_base=""
-  local tmux_command=""
-  local tmux_session=""
 
   if command -v git >/dev/null 2>&1; then
     repo_root="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -596,23 +723,58 @@ codex() {
     fi
   fi
 
-  if [ "\${AI_AUTO_CODEX_TMUX_AUTO:-\${tmux_auto_default}}" = "1" ] &&
-    [ -z "\${TMUX:-}" ] &&
-    [ -t 0 ] &&
-    [ -t 1 ]; then
-    tmux_binary="\$(type -P tmux 2>/dev/null || true)"
-    if [ -n "\${tmux_binary}" ]; then
-      tmux_base="\${repo_root:-\$(pwd)}"
-      tmux_session="\$(_ai_auto_codex_tmux_session_name "\${tmux_base}")"
-      tmux_command="\$(_ai_auto_codex_shell_quote "\${real_codex}" "\$@")"
-      command "\${tmux_binary}" new-session -A -s "\${tmux_session}" -c "\$(pwd)" "\${tmux_command}"
-      return
-    fi
+  if AI_AUTO_TMUX_BASE="\${repo_root:-\$(pwd)}" _ai_auto_enter_tmux_if_needed \
+    codex "\${real_codex}" "\${AI_AUTO_CODEX_TMUX_AUTO:-}" "\${tmux_auto_default}" "\$@"; then
+    return
   fi
 
   "\$real_codex" "\$@"
 }
 EOF
+
+  if [ "$include_claude_wrapper" -eq 1 ]; then
+    cat >> "$function_tmp_path" <<EOF
+
+claude() {
+  local real_claude=${real_claude_quoted}
+  local tmux_auto_default=${claude_tmux_auto_default}
+  local repo_root=""
+
+  if command -v git >/dev/null 2>&1; then
+    repo_root="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+
+  if AI_AUTO_TMUX_BASE="\${repo_root:-\$(pwd)}" _ai_auto_enter_tmux_if_needed \
+    claude "\${real_claude}" "\${AI_AUTO_CLAUDE_TMUX_AUTO:-}" "\${tmux_auto_default}" "\$@"; then
+    return
+  fi
+
+  "\$real_claude" "\$@"
+}
+EOF
+  fi
+
+  if [ "$include_agy_wrapper" -eq 1 ]; then
+    cat >> "$function_tmp_path" <<EOF
+
+agy() {
+  local real_agy=${real_agy_quoted}
+  local tmux_auto_default=${agy_tmux_auto_default}
+  local repo_root=""
+
+  if command -v git >/dev/null 2>&1; then
+    repo_root="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+
+  if AI_AUTO_TMUX_BASE="\${repo_root:-\$(pwd)}" _ai_auto_enter_tmux_if_needed \
+    agy "\${real_agy}" "\${AI_AUTO_AGY_TMUX_AUTO:-}" "\${tmux_auto_default}" "\$@"; then
+    return
+  fi
+
+  "\$real_agy" "\$@"
+}
+EOF
+  fi
 
   if [ -f "$bashrc_path" ]; then
     awk -v begin="$begin_marker" -v end="$end_marker" '

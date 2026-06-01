@@ -205,7 +205,10 @@ auto-entry wrapper:
 After that, normal interactive `codex` calls outside tmux attach to a stable
 project-scoped tmux session. The wrapper stays out of the way for scripts,
 pipes, redirects, and calls already inside tmux. Use
-`AI_AUTO_CODEX_TMUX_AUTO=0 codex` when direct execution is needed. Re-running the
+`AI_AUTO_CODEX_TMUX_AUTO=0 codex` when direct execution is needed. For the
+multi-runtime wrapper installed with `--install-ai-tmux-auto-entry`, use
+`AI_AUTO_TMUX_AUTO=0` to bypass all managed AI wrappers or
+`AI_AUTO_CLAUDE_TMUX_AUTO=0` / `AI_AUTO_AGY_TMUX_AUTO=0` for one runtime. Re-running the
 command for a project with an existing tmux session attaches to that session
 instead of starting a second Codex command.
 

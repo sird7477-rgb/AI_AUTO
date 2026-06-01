@@ -130,6 +130,10 @@ ai-lab-only bootstrap command:
   - With `--install-codex-tmux-auto-entry`, adds support for
     default-on project-scoped tmux auto-entry for interactive terminal `codex`
     calls outside tmux; use `AI_AUTO_CODEX_TMUX_AUTO=0 codex` to opt out
+  - With `--install-ai-tmux-auto-entry`, adds the same interactive tmux
+    auto-entry behavior for `codex`, `claude`, and `agy`; use
+    `AI_AUTO_TMUX_AUTO=0` to opt out for all wrappers, or
+    `AI_AUTO_CLAUDE_TMUX_AUTO=0` / `AI_AUTO_AGY_TMUX_AUTO=0` for one runtime
   - When drift is detected, the notice prints the patch-request keyword
     `AI_AUTO 최신 패치 적용해줘`; project `AGENTS.md` expands that keyword into
     the full template patch workflow
@@ -297,3 +301,23 @@ Calls already inside tmux, calls with non-terminal stdin/stdout such as pipes or
 redirects, calls without `tmux` on `PATH`, and calls with
 `AI_AUTO_CODEX_TMUX_AUTO=0` continue to run the real Codex binary directly. This
 keeps scripts and short non-interactive checks from being captured by tmux.
+
+To opt into the same interactive tmux auto-entry for the other AI CLI entry
+points used by AI_AUTO, run:
+
+    ./scripts/install-global-files.sh --install-ai-tmux-auto-entry
+
+This installs managed shell functions for `codex`, `claude`, and `agy`. The
+normal Gemini reviewer path uses `agy`, so no separate `gemini` wrapper is
+installed by default. These wrappers affect only interactive terminal starts.
+They do not change `scripts/ai-runtime-adapter.sh`, review-gate capability
+rules, model routing, credentials, or tool permissions.
+
+Disable all AI_AUTO tmux auto-entry wrappers for a shell command with:
+
+    AI_AUTO_TMUX_AUTO=0 claude
+
+Disable only one runtime with:
+
+    AI_AUTO_CLAUDE_TMUX_AUTO=0 claude
+    AI_AUTO_AGY_TMUX_AUTO=0 agy

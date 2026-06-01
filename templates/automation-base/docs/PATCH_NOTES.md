@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.01.1
+
+- Added `--install-ai-tmux-auto-entry` to install managed interactive tmux
+  wrappers for `codex`, `claude`, and `agy`, with `AI_AUTO_TMUX_AUTO=0` as the
+  shared opt-out and runtime-specific opt-outs for Claude and agy.
+- Preserved the existing Codex-only `--install-codex-tmux-auto-entry` behavior
+  and kept non-interactive review/adapter calls outside tmux auto-entry.
+- Documented that shell wrappers do not change runtime adapter permission
+  contracts: Codex remains the read-only sandboxed adapter, while Claude and
+  agy/Gemini remain logical-read-only adapters.
+
 ## 2026.05.31.5
 
 - Promoted Obsidian vault organization from flat inbox storage to generated

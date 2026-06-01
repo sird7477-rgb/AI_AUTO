@@ -5065,6 +5065,167 @@ STUB
   grep -q "real codex <no-tmux>" "${tmp_home}/codex-no-tmux.out"
 )
 
+echo "[verify] testing opt-in multi-runtime tmux auto-entry shell functions..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_ai_tmux_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_ai_tmux_tmp EXIT
+
+  fake_bin="${tmp_home}/fake-bin"
+  repo_dir="${tmp_home}/project"
+  mkdir -p "${fake_bin}" "${repo_dir}/subdir"
+
+  for runtime in codex claude agy; do
+    cat > "${fake_bin}/${runtime}" <<'STUB'
+#!/bin/bash
+runtime_name="$(basename "$0")"
+stdin_content="$(/bin/cat)"
+printf 'real %s' "$runtime_name"
+for arg in "$@"; do
+  printf ' <%s>' "$arg"
+done
+printf '\n'
+printf 'stdin <%s>\n' "$stdin_content"
+STUB
+    chmod +x "${fake_bin}/${runtime}"
+  done
+
+  cat > "${fake_bin}/tmux" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "${TMUX_FAKE_LOG}"
+exit "${TMUX_STUB_EXIT:-0}"
+STUB
+  chmod +x "${fake_bin}/tmux"
+  git -C "${repo_dir}" init -q
+
+  tmux_tty_cmd="${tmp_home}/run-ai-tmux.sh"
+  cat > "${tmux_tty_cmd}" <<'STUB'
+#!/bin/bash
+. "$HOME/.config/ai-lab/codex-drift-notice.sh"
+cd "$REPO_DIR/subdir" || exit
+codex --alpha "two words" "quote's"
+claude --beta "two words" "quote's"
+agy --prompt "two words" "quote's"
+STUB
+  chmod +x "${tmux_tty_cmd}"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-ai-tmux-auto-entry >/dev/null
+  grep -q '^claude() {' "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q '^agy() {' "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q "AI_AUTO_TMUX_AUTO" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q "AI_AUTO_CLAUDE_TMUX_AUTO" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q "AI_AUTO_AGY_TMUX_AUTO" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX="" TMUX_FAKE_LOG="${tmp_home}/tmux-ai.log" \
+    /usr/bin/script -q -c "${tmux_tty_cmd}" /dev/null >/dev/null
+  test "$(wc -l < "${tmp_home}/tmux-ai.log")" -eq 3
+  test "$(grep -Ec '^new-session -A -s ai-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-ai.log")" -eq 3
+  grep -q "/codex' '--alpha' 'two words'" "${tmp_home}/tmux-ai.log"
+  grep -q "/claude' '--beta' 'two words'" "${tmp_home}/tmux-ai.log"
+  grep -q "/agy' '--prompt' 'two words'" "${tmp_home}/tmux-ai.log"
+  test "$(grep -Fc "'quote'\\''s'" "${tmp_home}/tmux-ai.log")" -eq 3
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX_FAKE_LOG="${tmp_home}/tmux-global-off.log" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_TMUX_AUTO=0 codex c; AI_AUTO_TMUX_AUTO=0 claude d; AI_AUTO_TMUX_AUTO=0 agy e' \
+    > "${tmp_home}/global-off.out"
+  grep -q "real codex <c>" "${tmp_home}/global-off.out"
+  grep -q "real claude <d>" "${tmp_home}/global-off.out"
+  grep -q "real agy <e>" "${tmp_home}/global-off.out"
+  test ! -e "${tmp_home}/tmux-global-off.log"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX_FAKE_LOG="${tmp_home}/tmux-runtime-off.log" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CLAUDE_TMUX_AUTO=0 claude direct; AI_AUTO_AGY_TMUX_AUTO=0 agy direct' \
+    > "${tmp_home}/runtime-off.out"
+  grep -q "real claude <direct>" "${tmp_home}/runtime-off.out"
+  grep -q "real agy <direct>" "${tmp_home}/runtime-off.out"
+  test ! -e "${tmp_home}/tmux-runtime-off.log"
+
+  printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX_FAKE_LOG="${tmp_home}/tmux-ai-nontty.log" \
+    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; claude --stdin-check; agy --stdin-check' \
+    > "${tmp_home}/ai-nontty.out"
+  grep -q "real claude <--stdin-check>" "${tmp_home}/ai-nontty.out"
+  grep -q "real agy <--stdin-check>" "${tmp_home}/ai-nontty.out"
+  grep -q "stdin <input stream>" "${tmp_home}/ai-nontty.out"
+  test ! -e "${tmp_home}/tmux-ai-nontty.log"
+)
+
+echo "[verify] testing multi-runtime tmux wrapper preservation..."
+(
+  tmp_home="$(mktemp -d)"
+
+  cleanup_ai_tmux_preserve_tmp() {
+    rm -rf "${tmp_home}"
+  }
+
+  trap cleanup_ai_tmux_preserve_tmp EXIT
+
+  fake_bin="${tmp_home}/fake bin"
+  wrapper_path="${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  mkdir -p "${fake_bin}"
+
+  for runtime in codex claude agy; do
+    cat > "${fake_bin}/${runtime}" <<'STUB'
+#!/bin/bash
+printf 'real %s\n' "$(basename "$0")"
+STUB
+    chmod +x "${fake_bin}/${runtime}"
+  done
+
+  get_wrapper_local() {
+    local function_name="$1"
+    local local_name="$2"
+    awk -v fn="${function_name}" -v local_name="${local_name}" '
+      $0 == fn "() {" { in_fn=1; next }
+      in_fn && $0 == "}" { exit }
+      in_fn {
+        prefix = "  local " local_name "="
+        if (index($0, prefix) == 1) {
+          print substr($0, length(prefix) + 1)
+          exit
+        }
+      }
+    ' "${wrapper_path}"
+  }
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-ai-tmux-auto-entry >/dev/null
+  claude_real_before="$(get_wrapper_local claude real_claude)"
+  agy_real_before="$(get_wrapper_local agy real_agy)"
+  case "${claude_real_before}" in
+    *fake\\\ bin/claude)
+      ;;
+    *)
+      echo "[verify] claude wrapper did not preserve a shell-quoted spaced path"
+      exit 1
+      ;;
+  esac
+
+  awk '
+    $0 == "claude() {" { in_claude=1 }
+    in_claude && $0 == "  local tmux_auto_default=1" {
+      print "  local tmux_auto_default=0"
+      next
+    }
+    in_claude && $0 == "}" { in_claude=0 }
+    { print }
+  ' "${wrapper_path}" > "${wrapper_path}.tmp"
+  mv "${wrapper_path}.tmp" "${wrapper_path}"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
+  test "$(get_wrapper_local claude real_claude)" = "${claude_real_before}"
+  test "$(get_wrapper_local agy real_agy)" = "${agy_real_before}"
+  test "$(get_wrapper_local codex tmux_auto_default)" = "1"
+  test "$(get_wrapper_local claude tmux_auto_default)" = "0"
+  test "$(get_wrapper_local agy tmux_auto_default)" = "1"
+)
+
 echo "[verify] testing global helper non-symlink conflict handling..."
 (
   tmp_home="$(mktemp -d)"
