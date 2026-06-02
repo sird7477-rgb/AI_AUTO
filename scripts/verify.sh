@@ -684,6 +684,47 @@ SH
   grep -q "large_prompt_requires_prompt_file" "${tmp_dir}/large-prompt.out"
   test ! -f "${tmp_dir}/large-review.md"
 
+  # A runtime that advertises only --prompt (no --prompt-file) must receive the
+  # real prompt text on that fallback path, never a placeholder, when the prompt
+  # is within the arg-size budget.
+  cat > "${tmp_dir}/bin/prompt-only-real-agy" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: agy --prompt TEXT --sandbox --output-format text --skip-trust --approval-mode plan"
+  exit 0
+fi
+prompt_value=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prompt)
+      prompt_value="${2:-}"
+      shift 2
+      ;;
+    --output-format|--approval-mode|--print-timeout|--model)
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+printf '%s' "${prompt_value}" > "${AGY_PROMPT_ARG_CAPTURE}"
+printf '# Gemini Review\n\n## Verdict\n\napprove\n'
+SH
+  chmod +x "${tmp_dir}/bin/prompt-only-real-agy"
+
+  rm -f "${output_file}"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_AGY_COMMAND=prompt-only-real-agy \
+  AGY_PROMPT_ARG_CAPTURE="${tmp_dir}/agy-prompt-arg.txt" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime agy \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  grep -q "## Verdict" "${output_file}"
+  grep -q "Check this fixture" "${tmp_dir}/agy-prompt-arg.txt"
+
   if PATH="${tmp_dir}/bin:${PATH}" ./scripts/ai-runtime-adapter.sh run-readonly \
     --runtime claude \
     --capability edit_files \
