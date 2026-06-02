@@ -108,6 +108,24 @@ report-only "Model Routing Lane Audit" (active principal, recommended lane,
 missed fast-lane opportunity). Both are evidence only: no lane is auto-rerouted
 and routing records carry no completion authority.
 
+### `low_cost_impl` lane contract
+
+The `low_cost_impl` lane is a **separate** bounded fast-class lane, not a
+downgrade of the standard implementation lane. This doc is its source of truth;
+the runtime applies it as a per-principal agent (for Codex,
+`~/.codex/agents/executor-low.toml`, which is global oh-my-codex config outside
+this repo's review-gate). A unit may use `low_cost_impl` only when all hold:
+
+- tightly bounded, reversible, single-concern edit aligned to existing patterns;
+- the delegation guardrails in `docs/AUTOMATION_OPERATING_POLICY.md` (§ Low-Cost
+  Coding Lane) pass — escalation, security/contract carve-outs, rewrite-rate
+  stop rule;
+- the leader reviews the diff; ambiguity, scope growth, or repeated failure
+  escalates to the standard lane.
+
+It never plans, decides architecture/security, owns verification, or carries
+completion authority. Gemini has no `low_cost_impl` (class-fixed via `agy`).
+
 ## Current Review Lanes
 
 `scripts/discover-ai-models.sh` writes `.omx/model-routing/latest.env` and

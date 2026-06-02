@@ -4,6 +4,16 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.2
+
+- Added the `low_cost_impl` lane contract to `docs/AI_MODEL_ROUTING.md`: a
+  separate, guardrail-gated, non-authoritative bounded fast-class lane (applied
+  at runtime as a per-principal agent outside this repo's review-gate).
+- Added `scripts/record-lane-decision.py`, a validated per-unit recorder that
+  appends model-routing lane decisions to a dedicated
+  `.omx/model-routing/lane-decisions.tsv`; records are evidence only and carry
+  no completion authority.
+
 ## 2026.06.02.1
 
 - Added an observe-only "Principal Class Lanes" block to the model-routing

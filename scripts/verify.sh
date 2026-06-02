@@ -96,10 +96,12 @@ python3 -m py_compile scripts/benchmark-command.py
 python3 -m py_compile scripts/todo-report.py
 python3 -m py_compile scripts/capture-knowledge-drafts.py
 python3 -m py_compile scripts/knowledge-notes.py
+python3 -m py_compile scripts/record-lane-decision.py
 python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
 python3 -m py_compile templates/automation-base/scripts/todo-report.py
 python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
 python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
+python3 -m py_compile templates/automation-base/scripts/record-lane-decision.py
 
 echo "[verify] checking secret hygiene..."
 # Secret-bearing files must stay untracked. .gitignore already excludes them,
@@ -5417,6 +5419,7 @@ for script in \
   knowledge-notes.py \
   make-review-prompts.sh \
   record-feedback.sh \
+  record-lane-decision.py \
   record-project-memory.sh \
   resolve-feedback.sh \
   review-gate.sh \

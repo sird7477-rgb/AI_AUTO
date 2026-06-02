@@ -106,7 +106,10 @@ principal's variable-operation availability. There is nothing per-unit to log
 yet, so the existing reviewer-lane TSV stays unchanged.
 
 **Phase 1 (real routing decisions exist):** once lanes actually route work,
-each delegated/routed unit appends one record to `observations.tsv`:
+each delegated/routed unit appends one record to a **dedicated**
+`.omx/model-routing/lane-decisions.tsv` (kept separate from the 6-column
+reviewer-lane `observations.tsv` to avoid a schema collision), via the
+validated `scripts/record-lane-decision.py` helper:
 
 ```
 timestamp  principal  lane  role  requested_class  resolved_model  model_source  model_class_applied  reason  fallback  confidence
