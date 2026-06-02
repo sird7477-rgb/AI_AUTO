@@ -130,6 +130,14 @@ knowledge-collect --project <repo> --push --vault-dir <vault-dir>
 ```
 
 The startup notice never pushes automatically and never writes to the vault.
+
+To publish on demand, run `./scripts/obsidian-autopush.sh` from the home
+checkout. It pushes only shareable drafts (`sync_class: shareable_summary` /
+`external_private_vault`) that pass a secret/redaction preflight, reads the vault
+path from `obsidian.ai_auto_vault_dir` in `.omx/local-config.json`, fails closed
+if a shareable note contains secret-like content, and never pushes
+`local_private` drafts (they stay local until promoted).
+
 After an approved push, `knowledge-collect` marks the local draft and vault copy
 with `sync_state: pushed_to_obsidian` and an `obsidian_pushed_hash`, so normal
 pending checks stop reporting that note until the local draft changes. Use

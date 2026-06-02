@@ -134,3 +134,6 @@ def test_codex_startup_notices_are_explicit_and_bounded() -> None:
     assert "state: pending_knowledge_drafts" in text
     assert "register moved/missing project: ai-register --prune; ai-register /path/to/repo" in text
     assert "push after approval: knowledge-collect --project <repo> --push --vault-dir <vault-dir>" in text
+    # The notice surfaces the on-demand publish command but never auto-executes it.
+    assert "publish shareable drafts: scripts/obsidian-autopush.sh" in text
+    assert "AI_AUTO_OBSIDIAN_AUTOPUSH_TIMEOUT" not in text

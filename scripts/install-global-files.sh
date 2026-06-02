@@ -773,10 +773,7 @@ codex() {
 	      printf '%s\n' "[AI_AUTO] inspect: knowledge-collect --include-registry --project \${repo_root}" >&2
 	      printf '%s\n' "[AI_AUTO] register moved/missing project: ai-register --prune; ai-register /path/to/repo" >&2
 	      printf '%s\n' "[AI_AUTO] push after approval: knowledge-collect --project <repo> --push --vault-dir <vault-dir>" >&2
-	      if [ "\${AI_AUTO_KNOWLEDGE_AUTOPUSH:-1}" != "0" ] && [ -x "\${repo_root}/scripts/obsidian-autopush.sh" ]; then
-	        autopush_timeout="\${AI_AUTO_OBSIDIAN_AUTOPUSH_TIMEOUT:-20}"
-	        timeout "\${autopush_timeout}" "\${repo_root}/scripts/obsidian-autopush.sh" 2>&1 | awk 'NF {print "[AI_AUTO] autopush: " \$0}' >&2 || true
-	      fi
+	      printf '%s\n' "[AI_AUTO] publish shareable drafts: scripts/obsidian-autopush.sh" >&2
 	      printf '%s\n' "[AI_AUTO] ================================" >&2
     fi
   fi

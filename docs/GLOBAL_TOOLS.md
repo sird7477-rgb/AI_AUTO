@@ -268,22 +268,21 @@ Disable the notice for a shell command with:
 
 When the same wrapper is invoked from the AI_AUTO home checkout, it also checks
 for validated knowledge drafts across AI_AUTO plus registered projects. If
-drafts are pending, it prints an `OBSIDIAN OUTPUT CHECK` block with up to ten
-pending rows and an inspect command, then runs `scripts/obsidian-autopush.sh`.
+drafts are pending, it prints a read-only `OBSIDIAN OUTPUT CHECK` block with up
+to ten pending rows, an inspect command, and the publish command. It never
+writes to a vault and never pushes automatically.
 
-That auto-push publishes only shareable drafts (`sync_class: shareable_summary`
-/ `external_private_vault`) that pass a secret/redaction preflight; it never
-pushes `local_private` drafts, which stay local until promoted and pushed
-explicitly via `knowledge-collect --project <repo> --push --vault-dir <vault-dir>`.
-The vault path comes from `obsidian.ai_auto_vault_dir` in
-`.omx/local-config.json`, and a mislabeled shareable note with secret-like
-content fails closed (nothing is pushed). Already pushed notes are hidden from
-the pending rows. It does not scan mounted project folders; if a moved or
-individual project is missing, run `ai-register --prune` and
-`ai-register /path/to/repo` for the current path.
-
-Disable the auto-push (keep the manual handoff) with `AI_AUTO_KNOWLEDGE_AUTOPUSH=0`,
-or suppress the whole notice with:
+To publish, run `scripts/obsidian-autopush.sh` from the home checkout. It pushes
+only shareable drafts (`sync_class: shareable_summary` / `external_private_vault`)
+that pass a secret/redaction preflight; it never pushes `local_private` drafts,
+which stay local until promoted and pushed explicitly via
+`knowledge-collect --project <repo> --push --vault-dir <vault-dir>`. The vault
+path comes from `obsidian.ai_auto_vault_dir` in `.omx/local-config.json`, a
+mislabeled shareable note with secret-like content fails closed (nothing is
+pushed), and when nothing is shareable the vault is left untouched. The startup
+notice does not scan mounted project folders; if a moved or individual project
+is missing, run `ai-register --prune` and `ai-register /path/to/repo` for the
+current path. Suppress the notice with:
 
     AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE=0 codex
 

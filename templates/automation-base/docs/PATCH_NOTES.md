@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.03.1
+
+- `OBSIDIAN_INTEGRATION.md` documents the on-demand `scripts/obsidian-autopush.sh`
+  publish path: it pushes only shareable drafts (`shareable_summary` /
+  `external_private_vault`) that pass a secret/redaction preflight, reads the
+  vault from `obsidian.ai_auto_vault_dir` in `.omx/local-config.json`, fails
+  closed on secret-like content, and never pushes `local_private`. The home
+  startup notice stays read-only and does not push automatically.
+
 ## 2026.06.02.9
 
 - `collect-review-context.sh` adds `REVIEW_UNTRACKED_ALLOWLIST` (comma/newline
