@@ -53,10 +53,56 @@ normalize_principal_runtime() {
   esac
 }
 
-if ! ACTIVE_PRINCIPAL="$(normalize_principal_runtime)"; then
-  echo "[review] failed to normalize active principal runtime" >&2
-  exit 2
+principal_repo_root() {
+  # Anchor evidence lookup and workspace comparison to the repo root so the
+  # script behaves the same whether invoked from the root or a subdirectory.
+  git rev-parse --show-toplevel 2>/dev/null || pwd -P
+}
+
+read_valid_launcher_principal() {
+  # Echo the launcher-declared principal_runtime only when the evidence file is a
+  # valid, launcher-owned, workspace-matched, non-symlink principal record;
+  # otherwise echo nothing. This lets a recorded principal drive selection so a
+  # non-codex session is not silently coerced to codex.
+  local workspace declared evidence_file
+  workspace="$(principal_repo_root)"
+  evidence_file="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
+  [ -f "${evidence_file}" ] || return 0
+  [ ! -L "${evidence_file}" ] || return 0
+  grep -Fqx "execution_mode=principal" "${evidence_file}" || return 0
+  grep -Fqx "source=ai-auto-principal-launcher" "${evidence_file}" || return 0
+  grep -Fqx "workspace=${workspace}" "${evidence_file}" || return 0
+  declared="$(sed -n 's/^principal_runtime=//p' "${evidence_file}" | head -n 1)"
+  case "${declared}" in
+    codex|claude|gemini) printf '%s\n' "${declared}" ;;
+    *) return 0 ;;
+  esac
+}
+
+EXPLICIT_PRINCIPAL="${AI_AUTO_PRINCIPAL:-}"
+EVIDENCE_PRINCIPAL="$(read_valid_launcher_principal)"
+
+if [ -n "${EXPLICIT_PRINCIPAL}" ]; then
+  if ! ACTIVE_PRINCIPAL="$(normalize_principal_runtime)"; then
+    echo "[review] failed to normalize active principal runtime" >&2
+    exit 2
+  fi
+  # An explicit selection must not contradict a valid launcher declaration.
+  if [ -n "${EVIDENCE_PRINCIPAL}" ] && [ "${EVIDENCE_PRINCIPAL}" != "${ACTIVE_PRINCIPAL}" ]; then
+    echo "[review] principal_unavailable: AI_AUTO_PRINCIPAL=${ACTIVE_PRINCIPAL} contradicts launcher evidence principal_runtime=${EVIDENCE_PRINCIPAL}" >&2
+    exit 2
+  fi
+elif [ -n "${EVIDENCE_PRINCIPAL}" ]; then
+  # No explicit selection: a valid launcher declaration drives selection so the
+  # executing runtime is not misrouted into its own reviewer slot.
+  ACTIVE_PRINCIPAL="${EVIDENCE_PRINCIPAL}"
+  echo "[review] active principal ${ACTIVE_PRINCIPAL} selected from launcher evidence"
+else
+  # Nothing declared: default to codex, but say so out loud instead of silently.
+  ACTIVE_PRINCIPAL="codex"
+  echo "[review] active principal defaulted to codex; set AI_AUTO_PRINCIPAL=claude|gemini or record launcher evidence if this session is not codex"
 fi
+
 case "${ACTIVE_PRINCIPAL}" in
   codex|claude|gemini) ;;
   *)
@@ -80,9 +126,9 @@ principal_reviewers() {
 }
 
 principal_evidence_valid() {
-  local evidence_file="${AI_AUTO_PRINCIPAL_EVIDENCE:-.omx/state/principal-runtime/current.env}"
-  local workspace
-  workspace="$(pwd -P)"
+  local evidence_file workspace
+  workspace="$(principal_repo_root)"
+  evidence_file="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
 
   if [ "${ACTIVE_PRINCIPAL}" = "codex" ]; then
     return 0
@@ -98,22 +144,22 @@ principal_evidence_valid() {
     return 1
   fi
 
-  if ! grep -qx "principal_runtime=${ACTIVE_PRINCIPAL}" "${evidence_file}"; then
+  if ! grep -Fqx "principal_runtime=${ACTIVE_PRINCIPAL}" "${evidence_file}"; then
     echo "[review] principal_unavailable: evidence file does not match active principal ${ACTIVE_PRINCIPAL}: ${evidence_file}" >&2
     return 1
   fi
 
-  if ! grep -qx "execution_mode=principal" "${evidence_file}"; then
+  if ! grep -Fqx "execution_mode=principal" "${evidence_file}"; then
     echo "[review] principal_unavailable: evidence file does not declare execution_mode=principal: ${evidence_file}" >&2
     return 1
   fi
 
-  if ! grep -qx "source=ai-auto-principal-launcher" "${evidence_file}"; then
+  if ! grep -Fqx "source=ai-auto-principal-launcher" "${evidence_file}"; then
     echo "[review] principal_unavailable: evidence file is not launcher-owned: ${evidence_file}" >&2
     return 1
   fi
 
-  if ! grep -qx "workspace=${workspace}" "${evidence_file}"; then
+  if ! grep -Fqx "workspace=${workspace}" "${evidence_file}"; then
     echo "[review] principal_unavailable: evidence file does not match workspace ${workspace}: ${evidence_file}" >&2
     return 1
   fi

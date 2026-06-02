@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.4
+
+- Fixed principal misdetection in `run-ai-reviews.sh`: valid launcher evidence
+  now selects the principal when `AI_AUTO_PRINCIPAL` is unset, an explicit
+  selection that contradicts valid evidence fails closed, and defaulting to
+  codex with no declaration emits a visible notice instead of silently
+  misrouting a non-codex session into its own reviewer slot.
+- Anchored principal evidence lookup and workspace comparison to the repo root
+  (`git rev-parse --show-toplevel`, with a `pwd -P` fallback) in both the
+  `run-ai-reviews.sh` reader and the `ai-principal-runtime.sh` launcher writer,
+  so a launch recorded from a subdirectory still matches the runner, and
+  switched the evidence-line checks to fixed-string matching (`grep -Fqx`) so
+  paths with regex metacharacters compare correctly.
+
 ## 2026.06.02.3
 
 - Added the evidence-driven tuning guard to `docs/AI_MODEL_ROUTING.md`: a lane's

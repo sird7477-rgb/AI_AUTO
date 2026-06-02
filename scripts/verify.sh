@@ -1898,6 +1898,7 @@ MARKER
     REVIEW_STATE_DIR="${tmp_dir}/state" \
     RESET_DISABLED_AI_REVIEWERS='' \
     REVIEW_RUN_ID='fixture/run id' \
+    AI_AUTO_PRINCIPAL_EVIDENCE="${tmp_dir}/no-principal.env" \
     ./scripts/run-ai-reviews.sh > "${tmp_dir}/external.out"
   status=$?
   set -e
@@ -1999,6 +2000,7 @@ STUB
     CONTEXT_DIR="${tmp_dir}/context" \
     PROMPT_DIR="${tmp_dir}/prompts" \
     REVIEW_STATE_DIR="${tmp_dir}/state" \
+    AI_AUTO_PRINCIPAL_EVIDENCE="${tmp_dir}/no-principal.env" \
     CLAUDE_PROMPT_ARG_MAX_BYTES=10 \
     GEMINI_PROMPT_ARG_MAX_BYTES=10 \
     GEMINI_PROMPT_MAX_BYTES=120 \
@@ -2765,6 +2767,7 @@ STUB
     CONTEXT_DIR="${tmp_dir}/context" \
     PROMPT_DIR="${tmp_dir}/prompts" \
     REVIEW_STATE_DIR="${tmp_dir}/state" \
+    AI_AUTO_PRINCIPAL_EVIDENCE="${tmp_dir}/no-principal.env" \
     RUN_GEMINI_REVIEW=0 \
     REVIEW_RETRY_LIMIT=1 \
     ./scripts/run-ai-reviews.sh > "${tmp_dir}/reviews.out"

@@ -73,7 +73,10 @@ record_launcher_evidence() {
   principal="$(normalize_principal "${1:-codex}")"
   evidence_file="$(evidence_path)"
   evidence_dir="$(dirname -- "${evidence_file}")"
-  workspace="$(pwd -P)"
+  # Anchor to the repo root so a launch recorded from a subdirectory still
+  # matches the workspace the runner derives (git rev-parse), with a pwd-P
+  # fallback outside a git work tree.
+  workspace="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
 
   if [ "${AI_AUTO_PRINCIPAL_LAUNCHER:-0}" != "1" ]; then
     echo "principal evidence can only be recorded by an AI_AUTO principal launcher" >&2

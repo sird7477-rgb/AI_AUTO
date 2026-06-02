@@ -124,6 +124,33 @@ def test_principal_runtime_records_launcher_execution_evidence(tmp_path: Path) -
     assert f"workspace={ROOT}" in text
 
 
+def test_launcher_records_repo_root_workspace_from_subdirectory(tmp_path: Path) -> None:
+    # Recording from a subdirectory must anchor workspace to the repo root so the
+    # runner (which derives the root via git) accepts the evidence as matched.
+    evidence_file = tmp_path / "principal.env"
+    subdir = ROOT / "scripts"
+    merged_env = os.environ.copy()
+    merged_env.update(
+        {
+            "AI_AUTO_PRINCIPAL_EVIDENCE": str(evidence_file),
+            "AI_AUTO_PRINCIPAL_LAUNCHER": "1",
+        }
+    )
+    result = subprocess.run(
+        [str(ROOT / "scripts" / "ai-principal-runtime.sh"), "record-launch", "claude"],
+        cwd=subdir,
+        env=merged_env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    text = evidence_file.read_text(encoding="utf-8")
+    assert f"workspace={ROOT}" in text
+    assert f"workspace={subdir}" not in text
+
+
 def test_principal_runtime_rejects_manual_execution_evidence(tmp_path: Path) -> None:
     result = _run(
         ["./scripts/ai-principal-runtime.sh", "record-launch", "claude"],
@@ -499,6 +526,107 @@ REVIEW
     assert codex_reviews, result.stdout
     text = codex_reviews[-1].read_text(encoding="utf-8")
     assert "Codex reviewer coverage for active principal claude" in text
+
+
+def _write_fake_adapter(tmp_path: Path) -> Path:
+    fake_adapter = tmp_path / "fake-adapter.sh"
+    fake_adapter.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "${output}" ] || exit 2
+cat > "${output}" <<'REVIEW'
+# Codex Principal Review
+
+## Verdict
+
+approve_with_notes
+
+## Findings
+
+No blocking findings.
+
+## Direct File Inspection
+
+- scripts/run-ai-reviews.sh
+REVIEW
+""",
+        encoding="utf-8",
+    )
+    fake_adapter.chmod(0o755)
+    return fake_adapter
+
+
+def _principal_run_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
+    env = {
+        "AI_MODEL_DISCOVERY": "0",
+        "CONTEXT_DIR": str(tmp_path / "review-context"),
+        "OUT_DIR": str(tmp_path / "review-results"),
+        "PROMPT_DIR": str(tmp_path / "review-prompts"),
+        "REVIEW_STATE_DIR": str(tmp_path / "reviewer-state"),
+        "EXTERNAL_REVIEW_DIR": str(tmp_path / "external-review"),
+        "RUNTIME_ADAPTER_SCRIPT": str(_write_fake_adapter(tmp_path)),
+        "RUN_GEMINI_REVIEW": "0",
+    }
+    env.update(overrides)
+    return env
+
+
+def test_valid_launcher_evidence_selects_principal_when_env_unset(tmp_path: Path) -> None:
+    evidence_file = tmp_path / "principal.env"
+    evidence_file.write_text(
+        f"principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace={ROOT}\n",
+        encoding="utf-8",
+    )
+    result = _run(
+        ["./scripts/run-ai-reviews.sh"],
+        env=_principal_run_env(
+            tmp_path,
+            AI_AUTO_PRINCIPAL="",  # unset/empty: evidence must drive selection
+            AI_AUTO_PRINCIPAL_EVIDENCE=str(evidence_file),
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "selected from launcher evidence" in result.stdout
+    # Claude principal => Claude self-review skipped, codex covers the lane.
+    assert "active principal cannot self-review" in result.stdout
+
+
+def test_explicit_principal_contradicting_evidence_fails_closed(tmp_path: Path) -> None:
+    evidence_file = tmp_path / "principal.env"
+    evidence_file.write_text(
+        f"principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace={ROOT}\n",
+        encoding="utf-8",
+    )
+    result = _run(
+        ["./scripts/run-ai-reviews.sh"],
+        env=_principal_run_env(
+            tmp_path,
+            AI_AUTO_PRINCIPAL="codex",
+            AI_AUTO_PRINCIPAL_EVIDENCE=str(evidence_file),
+        ),
+    )
+    assert result.returncode == 2
+    assert "contradicts launcher evidence" in result.stderr
+
+
+def test_default_to_codex_without_declaration_emits_visible_notice(tmp_path: Path) -> None:
+    result = _run(
+        ["./scripts/run-ai-reviews.sh"],
+        env=_principal_run_env(
+            tmp_path,
+            AI_AUTO_PRINCIPAL="",
+            AI_AUTO_PRINCIPAL_EVIDENCE=str(tmp_path / "missing-principal.env"),
+            RUN_CLAUDE_REVIEW="0",
+        ),
+    )
+    assert "defaulted to codex" in result.stdout
 
 
 def test_review_runner_requires_external_principal_evidence(tmp_path: Path) -> None:
