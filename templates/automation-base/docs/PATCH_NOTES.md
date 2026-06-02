@@ -4,6 +4,16 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.7
+
+- Restored the double-confirm deletion guard in `archive-omx-artifacts.sh`:
+  `--delete` alone now refuses and exits non-zero before touching any files;
+  destructive cleanup requires `--delete --confirm-delete`, while
+  `--dry-run --delete` still previews the deletions. This is the recommended
+  template safety default; weaken it only as a documented opt-in.
+- README and `SESSION_QUALITY_PLAN.md` updated to describe the double-confirm,
+  and `verify.sh` covers refusal, dry-run preview, and confirmed deletion.
+
 ## 2026.06.02.6
 
 - Hardened `summarize-ai-reviews.sh` verdict parsing so an echoed prompt can no

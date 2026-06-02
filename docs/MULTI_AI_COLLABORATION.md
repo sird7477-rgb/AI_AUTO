@@ -346,7 +346,7 @@ reported to the user.
 
 Review context, prompts, model routing inventories, external runners, manifests, and results are ignored runtime artifacts under `.omx/`.
 
-Review-gate and `automation-doctor.sh --fix` automatically archive old `.omx/review-results` files when retention thresholds are exceeded. Latest run evidence and referenced reviewer files remain active; older files move under `.omx/review-results/archive/`. Deletion requires the explicit `archive-omx-artifacts.sh --delete` option because review artifacts may be needed for handoff, audit, or debugging.
+Review-gate and `automation-doctor.sh --fix` automatically archive old `.omx/review-results` files when retention thresholds are exceeded. Latest run evidence and referenced reviewer files remain active; older files move under `.omx/review-results/archive/`. Deletion requires the explicit double-confirm `archive-omx-artifacts.sh --delete --confirm-delete` (`--delete` alone refuses) because review artifacts may be needed for handoff, audit, or debugging.
 
 ### Command group
 

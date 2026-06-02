@@ -516,7 +516,8 @@ Current interpretation:
 - external review mode reports current disabled reviewers before stopping, because the generated external runner shares `.omx/reviewer-state/` and will skip disabled reviewers until reset
 - review-gate and automation doctor `--fix` archive old `.omx/review-results`
   files when retention thresholds are exceeded; latest run evidence remains
-  active, and deletion still requires explicit `archive-omx-artifacts.sh --delete`
+  active, and deletion still requires the explicit double-confirm
+  `archive-omx-artifacts.sh --delete --confirm-delete` (`--delete` alone refuses)
 - `scripts/record-project-memory.sh` appends sanitized durable entries to
   `.omx/project-memory.json`
 - `scripts/write-session-checkpoint.sh` writes `.omx/state/session-checkpoint.md`;

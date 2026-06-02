@@ -322,4 +322,5 @@ Phase 5, cleanup and retention:
 - keep latest manifests, verdicts, summaries, and referenced reviewer files
   active in `.omx/review-results` (implemented)
 - never auto-delete evidence during normal review or doctor runs; deletion
-  requires explicit `archive-omx-artifacts.sh --delete` (implemented)
+  requires an explicit `archive-omx-artifacts.sh --delete --confirm-delete`
+  double-confirm (implemented)

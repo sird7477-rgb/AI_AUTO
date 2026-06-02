@@ -7,10 +7,11 @@ THRESHOLD="${OMX_REVIEW_ARCHIVE_THRESHOLD:-${OMX_ARTIFACT_WARN_COUNT:-120}}"
 KEEP_FILES="${OMX_REVIEW_ARCHIVE_KEEP_FILES:-}"
 MODE="archive"
 DRY_RUN=0
+CONFIRM_DELETE=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/archive-omx-artifacts.sh [--dry-run] [--delete]
+Usage: ./scripts/archive-omx-artifacts.sh [--dry-run] [--delete [--confirm-delete]]
 
 Archive old .omx review artifacts while preserving recent session evidence.
 
@@ -18,7 +19,12 @@ Default behavior:
   - only acts when .omx/review-results exceeds OMX_REVIEW_ARCHIVE_THRESHOLD
   - preserves the newest OMX_REVIEW_ARCHIVE_KEEP_FILES files
   - moves older files to .omx/review-results/archive/YYYYMMDD/
-  - never deletes unless --delete is explicitly supplied
+  - never deletes unless BOTH --delete and --confirm-delete are supplied
+
+Destructive cleanup is double-confirmed by design: --delete alone refuses and
+exits non-zero. Add --confirm-delete to actually remove old artifacts, or use
+--dry-run --delete to preview the deletions first. This double-confirm is the
+recommended template safety default; weaken it only as a documented opt-in.
 
 Environment:
   OMX_REVIEW_RESULTS_DIR=PATH        review result directory
@@ -36,6 +42,9 @@ while [ "$#" -gt 0 ]; do
     --delete)
       MODE="delete"
       ;;
+    --confirm-delete)
+      CONFIRM_DELETE=1
+      ;;
     -h|--help)
       usage
       exit 0
@@ -49,6 +58,14 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+# Destructive deletion requires an explicit second confirmation. A real --delete
+# run without --confirm-delete refuses before touching any files; --dry-run may
+# still preview the deletions without the confirmation.
+if [ "$MODE" = "delete" ] && [ "$DRY_RUN" -eq 0 ] && [ "$CONFIRM_DELETE" -ne 1 ]; then
+  echo "[archive] refusing to delete without confirmation: re-run with --delete --confirm-delete (or preview with --dry-run --delete)" >&2
+  exit 2
+fi
 
 for numeric in THRESHOLD KEEP_FILES; do
   if [ "$numeric" = "KEEP_FILES" ] && [ -z "$KEEP_FILES" ]; then

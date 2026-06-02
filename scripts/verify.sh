@@ -2990,6 +2990,48 @@ echo "[verify] testing .omx archive custom result directory preservation..."
   grep -q "leaving unsafe artifact filename active" "${tmp_dir}/archive.err"
 )
 
+echo "[verify] testing .omx archive delete requires double confirmation..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_archive_confirm_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_archive_confirm_tmp EXIT
+
+  cd "${tmp_dir}"
+  mkdir -p .omx/review-results
+  for index in 1 2 3 4 5 6 7 8; do
+    printf 'old %s\n' "${index}" > ".omx/review-results/old-${index}.md"
+  done
+
+  # --delete without --confirm-delete must refuse before removing anything.
+  if OMX_REVIEW_ARCHIVE_THRESHOLD=5 OMX_REVIEW_ARCHIVE_KEEP_FILES=3 \
+    "${repo_root}/scripts/archive-omx-artifacts.sh" --delete \
+      > "${tmp_dir}/no-confirm.out" 2>&1; then
+    echo "[verify] archive --delete unexpectedly succeeded without --confirm-delete"
+    exit 1
+  fi
+  grep -q "refusing to delete without confirmation" "${tmp_dir}/no-confirm.out"
+  test "$(find .omx/review-results -maxdepth 1 -type f | wc -l | tr -d ' ')" = "8"
+
+  # --dry-run --delete may preview deletions without the confirmation, and must
+  # not remove anything.
+  OMX_REVIEW_ARCHIVE_THRESHOLD=5 OMX_REVIEW_ARCHIVE_KEEP_FILES=3 \
+    "${repo_root}/scripts/archive-omx-artifacts.sh" --dry-run --delete \
+      > "${tmp_dir}/dry-delete.out" 2>&1
+  grep -q "would delete" "${tmp_dir}/dry-delete.out"
+  test "$(find .omx/review-results -maxdepth 1 -type f | wc -l | tr -d ' ')" = "8"
+
+  # --delete --confirm-delete actually removes old artifacts, keeping the newest.
+  OMX_REVIEW_ARCHIVE_THRESHOLD=5 OMX_REVIEW_ARCHIVE_KEEP_FILES=3 \
+    "${repo_root}/scripts/archive-omx-artifacts.sh" --delete --confirm-delete \
+      > "${tmp_dir}/confirm-delete.out" 2>&1
+  grep -q "deleted 5 old review artifact files" "${tmp_dir}/confirm-delete.out"
+  test "$(find .omx/review-results -maxdepth 1 -type f | wc -l | tr -d ' ')" = "3"
+)
+
 echo "[verify] testing automation-doctor --fix archives old review artifacts..."
 (
   tmp_dir="$(mktemp -d)"
