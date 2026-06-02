@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.6
+
+- Hardened `summarize-ai-reviews.sh` verdict parsing so an echoed prompt can no
+  longer be read as a reviewer's approval: `extract_verdict` now skips
+  code-fenced blocks, analyzes only the first real Verdict heading, and treats
+  more than one distinct verdict token in that section (a prompt-echoed choice
+  list) as ambiguous, yielding no verdict (fail safe).
+- Added `test-review-summary.sh` coverage for both paths: a prompt-echo choice
+  list and a fenced-only verdict each fall back to single-reviewer
+  `review_manually` instead of being counted as an approving reviewer.
+
 ## 2026.06.02.5
 
 - Reworked `doc-budget.sh` to separate lean AI guidance from legitimately large

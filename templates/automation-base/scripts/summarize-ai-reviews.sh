@@ -90,17 +90,29 @@ extract_verdict() {
   local verdict
   verdict="$(
     awk '
-      BEGIN { in_verdict = 0 }
-      tolower($0) ~ /^#+[[:space:]]+verdict[[:space:]:.-]*$/ { in_verdict = 1; next }
-      in_verdict && /^#+[[:space:]]+/ { exit }
+      # Skip code-fenced blocks so a reviewer that echoes the prompt or a fenced
+      # verdict sample is not read as its real verdict.
+      /^```/ { in_code = !in_code; next }
+      in_code { next }
+      # Only the first real (non-fenced) verdict heading is analyzed.
+      !seen_section && tolower($0) ~ /^#+[[:space:]]+verdict[[:space:]:.-]*$/ {
+        in_verdict = 1; seen_section = 1; next
+      }
+      in_verdict && /^#+[[:space:]]+/ { in_verdict = 0 }
       in_verdict && /^[[:space:]]*$/ { next }
       in_verdict {
-        verdict = tolower($0)
-        gsub(/[^a-z_]/, "", verdict)
-        if (verdict == "approve" || verdict == "approve_with_notes" || verdict == "request_changes") {
-          print verdict
-          exit
+        tok = tolower($0)
+        gsub(/[^a-z_]/, "", tok)
+        if (tok == "approve" || tok == "approve_with_notes" || tok == "request_changes") {
+          if (found != "" && found != tok) { ambiguous = 1 }
+          found = tok
         }
+      }
+      END {
+        # An echoed prompt choice list lists several distinct verdicts; that is
+        # not a real verdict, so refuse to read it as one (fail safe).
+        if (ambiguous) { exit }
+        if (found != "") { print found }
       }
     ' "${file}"
   )"

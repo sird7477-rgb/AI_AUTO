@@ -98,6 +98,47 @@ Timeout seconds: 180
 MSG
 }
 
+write_prompt_echo_choice_list() {
+  local file="$1"
+
+  # A reviewer that echoes the prompt's verdict choice list rather than choosing
+  # one. The Verdict section lists every distinct token, which must be treated
+  # as ambiguous (no verdict) instead of read as approval.
+  cat > "${file}" <<'MSG'
+# Reviewer Prompt Echo
+
+## Verdict
+
+approve
+approve_with_notes
+request_changes
+
+## Direct File Inspection
+
+- fixture.md
+MSG
+}
+
+write_fenced_only_verdict() {
+  local file="$1"
+
+  # The only verdict token appears inside a code fence (e.g. an echoed sample),
+  # so it must not be read as the reviewer's real verdict.
+  cat > "${file}" <<'MSG'
+# Review
+
+## Verdict
+
+```text
+approve
+```
+
+## Direct File Inspection
+
+- fixture.md
+MSG
+}
+
 write_valid_request_changes_with_skipped_word() {
   local file="$1"
 
@@ -555,6 +596,45 @@ case_valid_review_with_fenced_failure_footer() {
     "${dir}/codex-fallback-summary-current.md"
 
   assert_summary "valid_review_with_fenced_failure_footer" "proceed" "multi_reviewer" 0
+}
+
+case_prompt_echo_choice_list_not_read_as_verdict() {
+  local dir="${TMP_ROOT}/prompt_echo_choice_list_not_read_as_verdict"
+  mkdir -p "${dir}"
+
+  # Before the parser fix this echoed choice list was read as claude=approve,
+  # so the run wrongly became multi_reviewer/proceed/0. With the fix it is
+  # ambiguous (no verdict), leaving gemini as the only usable reviewer.
+  write_prompt_echo_choice_list "${dir}/claude-review-current.md"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "prompt_echo_choice_list_not_read_as_verdict" "review_manually" "single_reviewer" 1
+}
+
+case_fenced_only_verdict_not_read() {
+  local dir="${TMP_ROOT}/fenced_only_verdict_not_read"
+  mkdir -p "${dir}"
+
+  # The claude verdict token only exists inside a code fence; it must not be
+  # read, leaving gemini as the only usable reviewer.
+  write_fenced_only_verdict "${dir}/claude-review-current.md"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  assert_summary "fenced_only_verdict_not_read" "review_manually" "single_reviewer" 1
 }
 
 case_valid_request_changes_with_skipped_word() {
@@ -1139,6 +1219,8 @@ case_failed_reviewer_prompt_text_ignored
 case_failed_reviewer_skipped_text_ignored
 case_valid_review_with_failure_words
 case_valid_review_with_fenced_failure_footer
+case_prompt_echo_choice_list_not_read_as_verdict
+case_fenced_only_verdict_not_read
 case_valid_request_changes_with_skipped_word
 case_split_manifest_approval_blocks_without_synthesis
 case_split_manifest_prompt_echo_blocks_without_synthesis_section
