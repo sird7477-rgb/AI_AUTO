@@ -341,6 +341,40 @@ def validate_push_sync_classes(
     return allowed_rows
 
 
+def autopromote_rows(
+    rows: list[tuple[Path, Path, dict[str, str]]],
+    surfaces: set[str],
+) -> list[tuple[Path, Path, dict[str, str]]]:
+    """Auto-promote eligible local_private drafts to shareable_summary by rule.
+
+    A draft is promoted only when its surface is on the allowlist and it is
+    sanitized. Rows come from collect_rows, which already ran the secret/redaction
+    validation, so promotion only rewrites the sync_class enum (it cannot
+    introduce secret content). Anything not eligible stays local_private.
+    """
+    promoted: list[tuple[Path, Path, dict[str, str]]] = []
+    out: list[tuple[Path, Path, dict[str, str]]] = []
+    for repo, note, data in rows:
+        if (
+            data.get("sync_class") == "local_private"
+            and data.get("surface") in surfaces
+            and data.get("redaction_status") == "sanitized"
+        ):
+            set_frontmatter_fields(note, {"sync_class": "shareable_summary"})
+            data = dict(data)
+            data["sync_class"] = "shareable_summary"
+            promoted.append((repo, note, data))
+        out.append((repo, note, data))
+    if promoted:
+        labels = [f"{repo.name}:{data.get('repeat_key', note.name)}" for repo, note, data in promoted]
+        print(
+            f"[knowledge-collect] [auto-promote] promoted {len(promoted)} draft(s) local_private->shareable_summary: "
+            + ", ".join(labels[:5]),
+            file=sys.stderr,
+        )
+    return out
+
+
 def collect_rows(repos: list[Path], include_pushed: bool = False) -> list[tuple[Path, Path, dict[str, str]]]:
     rows: list[tuple[Path, Path, dict[str, str]]] = []
     for repo in repos:
@@ -410,6 +444,16 @@ def main() -> None:
         action="store_true",
         help="On --push, skip notes whose sync_class is not allowed for the vault (report and continue) instead of aborting the whole batch.",
     )
+    parser.add_argument(
+        "--auto-promote-shareable",
+        action="store_true",
+        help="On --push, auto-promote eligible local_private drafts to shareable_summary by rule (surface in --promote-surfaces and redaction_status sanitized).",
+    )
+    parser.add_argument(
+        "--promote-surfaces",
+        default="",
+        help="Comma-separated surfaces eligible for local_private->shareable_summary auto-promotion.",
+    )
     args = parser.parse_args()
     if args.depth is None:
         args.depth = default_depth() if args.include_workspace else 2
@@ -425,6 +469,11 @@ def main() -> None:
         if not explicit_repos:
             raise SystemExit("[knowledge-collect] [push-no-valid-project] --push requires at least one valid explicit --project git repository")
         rows = collect_rows(explicit_repos, include_pushed=True)
+        if args.auto_promote_shareable:
+            promote_surfaces = {
+                surface.strip() for surface in args.promote_surfaces.split(",") if surface.strip()
+            }
+            rows = autopromote_rows(rows, promote_surfaces)
         rows = validate_push_sync_classes(rows, args.allow_local_private, args.skip_disallowed_sync_class)
     else:
         rows = collect_rows(project_repos(args), include_pushed=args.include_pushed)

@@ -4340,6 +4340,43 @@ echo "[verify] testing obsidian-autopush shareable-only safe push..."
     echo "[verify] obsidian-autopush wrote the vault index for a private-only draft set"
     exit 1
   fi
+
+  # (f) Auto-promotion: an allowlisted-surface (review-gate) local_private draft
+  # is promoted to shareable_summary and published; an off-allowlist (ssh) one
+  # stays local_private and is not published.
+  promo_home="${tmp_dir}/promo-home"
+  promo_vault="${tmp_dir}/promo-vault/AI_AUTO"
+  mkdir -p "${promo_home}/tools" "${promo_home}/scripts" "${promo_home}/templates/automation-base" "${promo_vault}"
+  git -c init.defaultBranch=main init -q "${promo_home}"
+  echo "2026.06.02.0" > "${promo_home}/templates/automation-base/AI_AUTO_TEMPLATE_VERSION"
+  cp "${repo_root}/tools/knowledge-collect" "${promo_home}/tools/knowledge-collect"
+  cp "${repo_root}/scripts/knowledge-notes.py" "${promo_home}/scripts/knowledge-notes.py"
+  cp "${repo_root}/scripts/obsidian-autopush.sh" "${promo_home}/scripts/obsidian-autopush.sh"
+  chmod +x "${promo_home}/tools/knowledge-collect" "${promo_home}/scripts/knowledge-notes.py" "${promo_home}/scripts/obsidian-autopush.sh"
+  "${promo_home}/scripts/knowledge-notes.py" record --write --allow-local-draft \
+    --type finding --status draft --confidence medium \
+    --title "Gate lesson" --summary "Generic review-gate lesson." \
+    --project promo-home --surface review-gate --repeat-key "rg:promote" \
+    --source-artifact docs/x.md --source-extract "generic gate lesson text" \
+    --sync-class local_private \
+    --output-dir "${promo_home}/.omx/knowledge/drafts" >/dev/null
+  "${promo_home}/scripts/knowledge-notes.py" record --write --allow-local-draft \
+    --type finding --status draft --confidence medium \
+    --title "SSH note" --summary "Local ssh key location note." \
+    --project promo-home --surface ssh --repeat-key "ssh:hold" \
+    --source-artifact docs/y.md --source-extract "ssh key location text" \
+    --sync-class local_private \
+    --output-dir "${promo_home}/.omx/knowledge/drafts" >/dev/null
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry}" "${promo_home}/scripts/obsidian-autopush.sh" \
+    --vault-dir "${promo_vault}" > "${tmp_dir}/promo.out" 2>&1
+  grep -q "auto-promote" "${tmp_dir}/promo.out"
+  grep -q "^sync_class: shareable_summary" "$(find "${promo_home}/.omx/knowledge/drafts" -maxdepth 1 -name '*rg:promote*')"
+  grep -q "^sync_class: local_private" "$(find "${promo_home}/.omx/knowledge/drafts" -maxdepth 1 -name '*ssh:hold*')"
+  test -f "${promo_vault}/RepeatKeys/rg-promote.md"
+  if [ -f "${promo_vault}/RepeatKeys/ssh-hold.md" ]; then
+    echo "[verify] obsidian-autopush published an off-allowlist (ssh) draft"
+    exit 1
+  fi
 )
 
 echo "[verify] testing feedback helper..."

@@ -113,6 +113,13 @@ installing or overwriting project automation files.
 When the user asks to clean stale project registry entries, run
 `ai-register --prune`.
 
+When the user asks `옵시디언 푸시해줘`, `옵시디언 푸시`, or `obsidian push`, run
+`./scripts/obsidian-autopush.sh` from the home checkout. It auto-promotes
+allowlisted-surface, sanitized `local_private` drafts to `shareable_summary` and
+publishes shareable drafts to the configured vault; off-allowlist or secret-like
+drafts stay local (fail-closed). Add `--dry-run` to preview or `--no-auto-promote`
+to publish only already-shareable notes.
+
 When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as the AI_AUTO template patch workflow:
 check path/git status, run `ai-auto-template-status`, read current AI_AUTO patch notes,
 inspect managed-file differences, preserve hybrid project rules, apply only template-owned

@@ -272,17 +272,21 @@ drafts are pending, it prints a read-only `OBSIDIAN OUTPUT CHECK` block with up
 to ten pending rows, an inspect command, and the publish command. It never
 writes to a vault and never pushes automatically.
 
-To publish, run `scripts/obsidian-autopush.sh` from the home checkout. It pushes
-only shareable drafts (`sync_class: shareable_summary` / `external_private_vault`)
-that pass a secret/redaction preflight; it never pushes `local_private` drafts,
-which stay local until promoted and pushed explicitly via
-`knowledge-collect --project <repo> --push --vault-dir <vault-dir>`. The vault
-path comes from `obsidian.ai_auto_vault_dir` in `.omx/local-config.json`, a
-mislabeled shareable note with secret-like content fails closed (nothing is
-pushed), and when nothing is shareable the vault is left untouched. The startup
-notice does not scan mounted project folders; if a moved or individual project
-is missing, run `ai-register --prune` and `ai-register /path/to/repo` for the
-current path. Suppress the notice with:
+To publish, run `scripts/obsidian-autopush.sh` from the home checkout (or say
+`옵시디언 푸시해줘`). By rule it auto-promotes `local_private` drafts to
+`shareable_summary` when the draft's `surface` is on the allowlist (AI_AUTO
+tooling surfaces: review-gate, workflow, ai-review, model-routing,
+ai-auto-template, domain-pack, obsidian, shell-integration, verification,
+browser-verification) and the note is sanitized and passes a secret/redaction
+preflight, then publishes the shareable set. Off-allowlist surfaces (e.g. `ssh`
+or project-specific surfaces), unsanitized, or secret-like drafts stay
+`local_private` and are never published (default-deny, fail-closed). The vault
+path comes from `obsidian.ai_auto_vault_dir` in `.omx/local-config.json`, and
+when nothing is shareable the vault is left untouched. Override the allowlist
+with `AI_AUTO_AUTOPROMOTE_SURFACES`, disable promotion with `--no-auto-promote`,
+or preview with `--dry-run`. The startup notice does not scan mounted project
+folders; if a moved or individual project is missing, run `ai-register --prune`
+and `ai-register /path/to/repo` for the current path. Suppress the notice with:
 
     AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE=0 codex
 

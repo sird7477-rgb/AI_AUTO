@@ -18,6 +18,7 @@ from scripts.self_demo_contracts import (
     registry_scan_boundary,
     review_revision_loop_policy,
     reviewer_eligibility,
+    shareable_autopromotion_policy,
     review_context_boundary,
     review_gate_short_summary,
     self_demo_record,
@@ -989,6 +990,35 @@ def test_obsidian_autopush_shareable_only_lane_skips_per_run_approval() -> None:
     assert obsidian_autopush_policy({**base, "claims_obsidian_authority": True}).reason == (
         "obsidian_autopush_boundary_violation"
     )
+
+
+def test_shareable_autopromotion_policy_is_default_deny_and_safe() -> None:
+    allowlist = ["review-gate", "workflow", "obsidian"]
+    base = {
+        "source_sync_class": "local_private",
+        "surface": "review-gate",
+        "surface_allowlist": allowlist,
+        "redaction_status": "sanitized",
+        "secret_scan_passed": True,
+    }
+
+    ok = shareable_autopromotion_policy(base)
+    assert ok.accepted
+    assert ok.data["target_sync_class"] == "shareable_summary"
+
+    # Off-allowlist surface (e.g. ssh, or any project-specific surface) is held.
+    assert shareable_autopromotion_policy({**base, "surface": "ssh"}).reason == "surface_not_allowlisted"
+    # Unsanitized or secret-bearing notes are held.
+    assert shareable_autopromotion_policy({**base, "redaction_status": "redacted"}).reason == "not_sanitized"
+    assert shareable_autopromotion_policy({**base, "secret_scan_passed": False}).reason == "secret_scan_failed"
+    # Only local_private is promotable; already-shareable or other classes are not.
+    assert shareable_autopromotion_policy({**base, "source_sync_class": "shareable_summary"}).reason == (
+        "not_local_private"
+    )
+    # Required fields are enforced.
+    assert shareable_autopromotion_policy(
+        {k: v for k, v in base.items() if k != "surface"}
+    ).reason == "missing_autopromotion_fields"
 
 
 def test_update_visibility_policy_is_display_only_fast_and_low_noise() -> None:

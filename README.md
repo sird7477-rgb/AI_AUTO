@@ -433,12 +433,18 @@ note, inspection command, and `action: AI_AUTO 최신 패치 적용해줘`. In t
 home checkout, the same startup hook can also print an `OBSIDIAN OUTPUT CHECK`
 block when validated knowledge drafts are waiting across AI_AUTO and registered
 projects. That notice is read-only. To publish, run `scripts/obsidian-autopush.sh`
-from the home checkout: it pushes only shareable drafts (`sync_class:
-shareable_summary` / `external_private_vault`) that pass a secret/redaction
-preflight, reading the vault path from `obsidian.ai_auto_vault_dir` in
-`.omx/local-config.json`. `local_private` drafts always stay local and need an
-explicit `knowledge-collect --project <repo> --push --vault-dir <vault-dir>`
-handoff after promotion. Auto-push on startup is intentionally not wired in.
+from the home checkout (or say `옵시디언 푸시해줘`). By rule it auto-promotes
+`local_private` drafts to `shareable_summary` when the draft's `surface` is on
+the allowlist (AI_AUTO tooling surfaces: review-gate, workflow, ai-review,
+model-routing, ai-auto-template, domain-pack, obsidian, shell-integration,
+verification, browser-verification) and the note is sanitized and passes a
+secret/redaction preflight, then publishes the shareable set to the vault at
+`obsidian.ai_auto_vault_dir` in `.omx/local-config.json`. Off-allowlist surfaces
+(e.g. `ssh`, project-specific surfaces), unsanitized, or secret-like drafts stay
+`local_private` and are never published (default-deny, fail-closed). Override the
+allowlist with `AI_AUTO_AUTOPROMOTE_SURFACES`, disable promotion with
+`--no-auto-promote`, or preview with `--dry-run`. Auto-push on startup is
+intentionally not wired in — publishing only happens when you run the command.
 
 정리하면, 클론 직후의 권장 흐름은 다음과 같습니다.
 

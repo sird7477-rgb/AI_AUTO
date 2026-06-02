@@ -4,14 +4,16 @@ set -euo pipefail
 # Safe, home-only Obsidian auto-push for shareable knowledge drafts.
 #
 # Collects validated knowledge drafts across the AI_AUTO home checkout plus the
-# registered projects and pushes ONLY notes whose sync_class is shareable
-# (shareable_summary / external_private_vault). local_private drafts are never
-# pushed: they stay local by design. A secret/redaction preflight fails closed,
-# so a mislabeled shareable note with secret-like content blocks the whole push
-# instead of being silently skipped.
+# registered projects and pushes ONLY shareable notes. By default it also
+# auto-promotes local_private drafts to shareable_summary by rule: the draft's
+# surface must be on the allowlist and the note must be sanitized and pass the
+# secret/redaction preflight. Anything off the allowlist (or unsanitized, or
+# secret-like) stays local_private and is never pushed. A secret preflight fails
+# closed, so a mislabeled candidate with secret-like content blocks the whole
+# push instead of being silently skipped.
 #
 # Usage:
-#   scripts/obsidian-autopush.sh [--dry-run] [--vault-dir PATH]
+#   scripts/obsidian-autopush.sh [--dry-run] [--no-auto-promote] [--vault-dir PATH]
 #
 # Exit codes:
 #   0  pushed (or nothing to do, or safely skipped: not home / no vault)
@@ -20,18 +22,30 @@ set -euo pipefail
 
 DRY_RUN=0
 VAULT_OVERRIDE=""
+AUTO_PROMOTE=1
+# Surfaces whose local_private drafts may be auto-promoted to shareable_summary.
+# AI_AUTO tooling surfaces only; project-specific surfaces are intentionally off
+# the list (default-deny). Override with AI_AUTO_AUTOPROMOTE_SURFACES.
+AUTOPROMOTE_SURFACES="${AI_AUTO_AUTOPROMOTE_SURFACES:-review-gate,workflow,ai-review,model-routing,ai-auto-template,domain-pack,obsidian,shell-integration,verification,browser-verification}"
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/obsidian-autopush.sh [--dry-run] [--vault-dir PATH]
 
-Push only shareable knowledge drafts (shareable_summary / external_private_vault)
-from the AI_AUTO home checkout and registered projects to the configured vault.
-local_private drafts are never pushed. A secret preflight fails closed.
+Publish shareable knowledge drafts from the AI_AUTO home checkout and registered
+projects to the configured vault. By default it auto-promotes local_private
+drafts to shareable_summary when their surface is on the allowlist and they are
+sanitized; off-allowlist, unsanitized, or secret-like drafts stay local. A secret
+preflight fails closed.
 
-  --dry-run         list shareable candidates and skipped private counts; no push
-  --vault-dir PATH  override the vault dir (default: obsidian.ai_auto_vault_dir
-                    from .omx/local-config.json)
+  --dry-run          list publish candidates and skipped counts; no push
+  --no-auto-promote  do not auto-promote local_private drafts; publish only notes
+                     already classified shareable
+  --vault-dir PATH   override the vault dir (default: obsidian.ai_auto_vault_dir
+                     from .omx/local-config.json)
+
+Allowlist: AI_AUTO_AUTOPROMOTE_SURFACES (comma-separated) overrides the default
+AI_AUTO tooling-surface set.
 USAGE
 }
 
@@ -39,6 +53,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run)
       DRY_RUN=1
+      ;;
+    --no-auto-promote)
+      AUTO_PROMOTE=0
       ;;
     --vault-dir)
       VAULT_OVERRIDE="${2:-}"
@@ -103,7 +120,30 @@ if [ -f "${REGISTRY_FILE}" ]; then
   done < "${REGISTRY_FILE}"
 fi
 
-# Secret/redaction preflight over shareable candidates (fail closed).
+# Read one frontmatter value, tolerating surrounding quotes (knowledge-collect's
+# Python YAML parser ignores them, so the shell preflight must match).
+fm_value() {
+  local key="$1" file="$2" value
+  value="$(sed -n "s/^${key}:[[:space:]]*//p" "${file}" | head -1)"
+  value="${value%\"}"; value="${value#\"}"
+  value="${value%\'}"; value="${value#\'}"
+  printf '%s' "${value}"
+}
+
+# Allowlist match, ignoring spaces so "review-gate, workflow" works like the
+# Python side which strips each entry.
+AUTOPROMOTE_SURFACES_NORM="${AUTOPROMOTE_SURFACES// /}"
+surface_allowed() {
+  local needle="$1"
+  case ",${AUTOPROMOTE_SURFACES_NORM}," in
+    *",${needle},"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Secret/redaction preflight over publish candidates (fail closed). A candidate
+# is a note that will be pushed: already shareable, or a local_private draft that
+# auto-promotion will reclassify (allowlisted surface + sanitized).
 shareable_count=0
 failed_notes=()
 for project in "${PROJECTS[@]}"; do
@@ -111,15 +151,28 @@ for project in "${PROJECTS[@]}"; do
   [ -d "${drafts_dir}" ] || continue
   while IFS= read -r note; do
     [ -n "${note}" ] || continue
-    sync_class="$(sed -n 's/^sync_class:[[:space:]]*//p' "${note}" | head -1)"
+    sync_class="$(fm_value sync_class "${note}")"
+    is_candidate=0
     case "${sync_class}" in
       shareable_summary|external_private_vault)
-        shareable_count=$((shareable_count + 1))
-        if ! python3 "${KNOWLEDGE_NOTES}" validate "${note}" >/dev/null 2>&1; then
-          failed_notes+=("${note}")
+        is_candidate=1
+        ;;
+      local_private)
+        if [ "${AUTO_PROMOTE}" -eq 1 ]; then
+          surface="$(fm_value surface "${note}")"
+          redaction="$(fm_value redaction_status "${note}")"
+          if [ "${redaction}" = "sanitized" ] && surface_allowed "${surface}"; then
+            is_candidate=1
+          fi
         fi
         ;;
     esac
+    if [ "${is_candidate}" -eq 1 ]; then
+      shareable_count=$((shareable_count + 1))
+      if ! python3 "${KNOWLEDGE_NOTES}" validate "${note}" >/dev/null 2>&1; then
+        failed_notes+=("${note}")
+      fi
+    fi
   done < <(find "${drafts_dir}" -maxdepth 1 -type f -name '*.md' ! -name 'AI_AUTO_INDEX.md' 2>/dev/null | sort)
 done
 
@@ -146,11 +199,14 @@ if [ "${DRY_RUN}" -eq 1 ]; then
   exit 0
 fi
 
-project_args=()
+push_args=(--push --skip-disallowed-sync-class --vault-dir "${VAULT_DIR}")
+if [ "${AUTO_PROMOTE}" -eq 1 ]; then
+  push_args+=(--auto-promote-shareable --promote-surfaces "${AUTOPROMOTE_SURFACES}")
+fi
 for project in "${PROJECTS[@]}"; do
-  project_args+=(--project "${project}")
+  push_args+=(--project "${project}")
 done
 
-# Push shareable only; local_private is skipped (reported), never pushed.
-"${KNOWLEDGE_COLLECT}" --push --skip-disallowed-sync-class \
-  --vault-dir "${VAULT_DIR}" "${project_args[@]}"
+# Push shareable (and rule-promoted) drafts; local_private off the allowlist is
+# skipped (reported), never pushed.
+"${KNOWLEDGE_COLLECT}" "${push_args[@]}"

@@ -880,6 +880,33 @@ def obsidian_autopush_policy(record: dict[str, Any]) -> ContractResult:
     return ContractResult(True, "obsidian_autopush_ready", {"mode": mode})
 
 
+def shareable_autopromotion_policy(record: dict[str, Any]) -> ContractResult:
+    """Rule for auto-promoting a local_private draft to shareable_summary.
+
+    Promotion is allowed only for a local_private draft whose surface is on the
+    allowlist, that is sanitized, and that passes the secret/redaction scan. This
+    is default-deny: a surface off the allowlist (for example project-specific
+    surfaces, or local-path-prone surfaces like ssh) is held local and never
+    auto-published.
+    """
+    required = {"source_sync_class", "surface", "surface_allowlist", "redaction_status", "secret_scan_passed"}
+    missing = sorted(field for field in required if field not in record)
+    if missing:
+        return ContractResult(False, "missing_autopromotion_fields", {"missing": missing})
+    allowlist = record.get("surface_allowlist")
+    if not isinstance(allowlist, (list, tuple)):
+        return ContractResult(False, "invalid_surface_allowlist", {})
+    if record.get("source_sync_class") != "local_private":
+        return ContractResult(False, "not_local_private", {"source_sync_class": record.get("source_sync_class")})
+    if record.get("surface") not in allowlist:
+        return ContractResult(False, "surface_not_allowlisted", {"surface": record.get("surface")})
+    if record.get("redaction_status") != "sanitized":
+        return ContractResult(False, "not_sanitized", {})
+    if not record.get("secret_scan_passed"):
+        return ContractResult(False, "secret_scan_failed", {})
+    return ContractResult(True, "autopromote_to_shareable_summary", {"target_sync_class": "shareable_summary"})
+
+
 def update_visibility_policy(record: dict[str, Any]) -> ContractResult:
     required = {
         "status",
