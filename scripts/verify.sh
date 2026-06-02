@@ -388,6 +388,20 @@ echo "[verify] testing guidance document budget accounting..."
   grep -q "current guidance diff added lines: 4" "${tmp_dir}/budget-space.out"
   grep -q "current guidance diff net added lines: 4" "${tmp_dir}/budget-space.out"
 
+  # Content/spec docs in a subdirectory are exempt: a 50-line spec table must not
+  # change the net (stays 4, not 54).
+  mkdir -p docs/specs
+  : > docs/specs/big.md
+  for i in $(seq 1 50); do
+    printf 'spec table row %s\n' "$i" >> docs/specs/big.md
+  done
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-exempt.out"
+  grep -q "current guidance diff net added lines: 4" "${tmp_dir}/budget-exempt.out"
+  # DOC_BUDGET_EXEMPT_GLOBS can exempt a top-level doc too (drops NEW_GUIDE: 4 -> 3).
+  DOC_BUDGET_EXEMPT_GLOBS='docs/NEW_GUIDE.md' ./scripts/doc-budget.sh > "${tmp_dir}/budget-exempt-glob.out"
+  grep -q "current guidance diff net added lines: 3" "${tmp_dir}/budget-exempt-glob.out"
+  rm -rf docs/specs
+
   git restore --staged docs/WORKFLOW.md
   git restore AGENTS.md docs/WORKFLOW.md
   rm -f docs/NEW_GUIDE.md "docs/SPACE GUIDE.md"
@@ -421,9 +435,52 @@ echo "[verify] testing guidance document budget accounting..."
     exit 1
   fi
   grep -q "DOC_BUDGET_TEMPLATE_PATCH=1" "${tmp_dir}/budget-template-patch-fail.out"
-  DOC_BUDGET_TEMPLATE_PATCH=1 ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-mode.out"
+  DOC_BUDGET_TEMPLATE_PATCH=1 DOC_BUDGET_TEMPLATE_PATCH_REASON='verify fixture: reviewed template-owned guide additions' ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-mode.out"
   grep -q "template patch mode" "${tmp_dir}/budget-template-patch-mode.out"
+  grep -q "template patch mode reason: verify fixture" "${tmp_dir}/budget-template-patch-mode.out"
   grep -q "warnings=" "${tmp_dir}/budget-template-patch-mode.out"
+  # The escape hatch requires a reason: omitting it must fail closed.
+  if DOC_BUDGET_TEMPLATE_PATCH=1 ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-noreason.out" 2>&1; then
+    echo "[verify] doc-budget accepted template patch mode without a reason"
+    exit 1
+  fi
+  grep -q "requires DOC_BUDGET_TEMPLATE_PATCH_REASON" "${tmp_dir}/budget-template-patch-noreason.out"
+)
+
+echo "[verify] testing guidance document budget cumulative-vs-base accounting..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_doc_budget_cumulative_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_doc_budget_cumulative_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}"
+  cd "${tmp_dir}"
+  mkdir -p docs scripts
+  printf '# Agents\n' > AGENTS.md
+  printf '# Workflow\n' > docs/WORKFLOW.md
+  cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
+  chmod +x scripts/doc-budget.sh
+  git add .
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed cumulative fixture"
+
+  # A COMMITTED guidance change on a feature branch must be counted against the
+  # main merge-base even though the working tree is clean (no commit-split evasion).
+  git checkout -q -b feature
+  printf 'committed line 1\ncommitted line 2\ncommitted line 3\n' >> docs/WORKFLOW.md
+  git add docs/WORKFLOW.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "feature guidance change"
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-cumulative.out"
+  grep -q "current guidance diff net added lines: 3" "${tmp_dir}/budget-cumulative.out"
+
+  # On the base branch the same change is part of the base, so net is 0.
+  git checkout -q main
+  git merge -q --ff-only feature
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-cumulative-main.out"
+  grep -q "current guidance diff net added lines: 0" "${tmp_dir}/budget-cumulative-main.out"
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."

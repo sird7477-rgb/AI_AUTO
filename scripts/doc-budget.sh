@@ -3,9 +3,41 @@ set -euo pipefail
 
 STRICT="${DOC_BUDGET_STRICT:-0}"
 TEMPLATE_PATCH_MODE="${DOC_BUDGET_TEMPLATE_PATCH:-0}"
+TEMPLATE_PATCH_REASON="${DOC_BUDGET_TEMPLATE_PATCH_REASON:-}"
+# Integration branch the cumulative diff is measured against. On that branch (or
+# with no merge-base) the measurement degrades to the uncommitted diff.
+BASE_REF="${DOC_BUDGET_BASE_REF:-main}"
+# Extra content/spec paths to exempt from the guidance budget, space separated.
+EXEMPT_GLOBS="${DOC_BUDGET_EXEMPT_GLOBS:-}"
 
 WARN_COUNT=0
 FAIL_COUNT=0
+
+doc_budget_is_exempt() {
+  # Content/spec docs are not budgeted guidance: only the designated content
+  # areas (docs/specs/, docs/reference/ and their template copies) and paths
+  # matching DOC_BUDGET_EXEMPT_GLOBS. Other docs -- including nested guidance
+  # like docs/plans/ or docs/research/ -- stay budgeted.
+  local path="$1" glob
+  case "${path}" in
+    docs/specs/*|docs/reference/*|templates/automation-base/docs/specs/*|templates/automation-base/docs/reference/*)
+      return 0
+      ;;
+  esac
+  if [ -n "${EXEMPT_GLOBS}" ]; then
+    # noglob: word-split EXEMPT_GLOBS into patterns without expanding them
+    # against the working directory.
+    set -f
+    for glob in ${EXEMPT_GLOBS}; do
+      # shellcheck disable=SC2254
+      case "${path}" in
+        ${glob}) set +f; return 0 ;;
+      esac
+    done
+    set +f
+  fi
+  return 1
+}
 
 warn() {
   WARN_COUNT=$((WARN_COUNT + 1))
@@ -40,14 +72,16 @@ check_current_guidance_diff() {
   if [ "$value" -gt "$fail_at" ]; then
     if [ "$TEMPLATE_PATCH_MODE" = "1" ]; then
       warn "current guidance diff net added lines exceeds hard limit ${fail_at}; DOC_BUDGET_TEMPLATE_PATCH=1 treats template patch adoption as a reported warning"
+      echo "[budget] template patch mode reason: ${TEMPLATE_PATCH_REASON}"
       echo "[budget] template patch mode: verify that additions are template-owned or explicitly review-merged"
       echo "[budget] template patch mode is attestation-only; report this warning and the reviewed scope"
     else
       fail "current guidance diff net added lines exceeds hard limit ${fail_at}"
-      echo "[budget] if this is a reviewed AI_AUTO template patch with legitimate template-owned guide additions, rerun with DOC_BUDGET_TEMPLATE_PATCH=1 and report the warning"
+      echo "[budget] if this is a reviewed AI_AUTO template patch with legitimate template-owned guide additions, rerun with DOC_BUDGET_TEMPLATE_PATCH=1 DOC_BUDGET_TEMPLATE_PATCH_REASON='...' and report the warning"
     fi
   elif [ "$value" -gt "$warn_at" ]; then
     if [ "$TEMPLATE_PATCH_MODE" = "1" ]; then
+      echo "[budget] template patch mode reason: ${TEMPLATE_PATCH_REASON}"
       echo "[budget] template patch mode: current guidance diff exceeds warning budget ${warn_at} but stays within hard limit ${fail_at}"
       echo "[budget] template patch mode is accepted for reviewed template-owned or review-merged guidance"
       return
@@ -64,6 +98,12 @@ line_count() {
   fi
   wc -l < "$path" | tr -d ' '
 }
+
+# The escape hatch must record why the budget is bypassed; it is not a silent
+# self-attestation.
+if [ "${TEMPLATE_PATCH_MODE}" = "1" ] && [ -z "${TEMPLATE_PATCH_REASON}" ]; then
+  fail "DOC_BUDGET_TEMPLATE_PATCH=1 requires DOC_BUDGET_TEMPLATE_PATCH_REASON to record why the budget is bypassed"
+fi
 
 echo "[budget] checking guidance document volume..."
 
@@ -87,10 +127,10 @@ primary_guidance_total="$(
   {
     printf '%s\n' AGENTS.md
     if [ -d docs ]; then
-      find docs -maxdepth 1 -name '*.md' -print
+      find docs -name '*.md' -print
     fi
   } | while IFS= read -r path; do
-    if [ -f "$path" ]; then
+    if [ -f "$path" ] && ! doc_budget_is_exempt "$path"; then
       line_count "$path"
     fi
   done | awk '{ total += $1 } END { print total + 0 }'
@@ -102,11 +142,11 @@ template_guidance_total="$(
     if [ -d templates/automation-base ]; then
       printf '%s\n' templates/automation-base/AGENTS.md templates/automation-base/README.md
       if [ -d templates/automation-base/docs ]; then
-        find templates/automation-base/docs -maxdepth 1 -name '*.md' -print
+        find templates/automation-base/docs -name '*.md' -print
       fi
     fi
   } | while IFS= read -r path; do
-    if [ -f "$path" ]; then
+    if [ -f "$path" ] && ! doc_budget_is_exempt "$path"; then
       line_count "$path"
     fi
   done | awk '{ total += $1 } END { print total + 0 }'
@@ -117,21 +157,36 @@ guidance_total=$((primary_guidance_total + template_guidance_total))
 printf '[budget] guidance markdown total lines: %s\n' "$guidance_total"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  diff_added="$(
-    {
-      git diff --numstat -- AGENTS.md 'docs/*.md' 'templates/automation-base/*.md' 'templates/automation-base/docs/*.md' 2>/dev/null
-      git diff --cached --numstat -- AGENTS.md 'docs/*.md' 'templates/automation-base/*.md' 'templates/automation-base/docs/*.md' 2>/dev/null
-    } | awk '{ added += $1 } END { print added + 0 }'
-  )"
-  diff_removed="$(
-    {
-      git diff --numstat -- AGENTS.md 'docs/*.md' 'templates/automation-base/*.md' 'templates/automation-base/docs/*.md' 2>/dev/null
-      git diff --cached --numstat -- AGENTS.md 'docs/*.md' 'templates/automation-base/*.md' 'templates/automation-base/docs/*.md' 2>/dev/null
-    } | awk '{ removed += $2 } END { print removed + 0 }'
-  )"
+  # Branch-cumulative: measure against the merge-base with the integration
+  # branch so splitting a guide across commits cannot evade the budget. On that
+  # branch itself (or with no merge-base) this degrades to the uncommitted diff.
+  base_ref="$(git merge-base "${BASE_REF}" HEAD 2>/dev/null || git rev-parse HEAD 2>/dev/null || echo HEAD)"
+
+  # Guidance is the markdown set minus the designated content areas. The diff and
+  # the totals use this same scope. Plain 'docs/*.md' pathspecs match nested
+  # paths too, so the exclude pathspecs carve out content/spec areas.
+  guidance_pathspecs=(
+    AGENTS.md 'docs/*.md' 'templates/automation-base/*.md' 'templates/automation-base/docs/*.md'
+    ':(exclude,glob)docs/specs/**' ':(exclude,glob)docs/reference/**'
+    ':(exclude,glob)templates/automation-base/docs/specs/**' ':(exclude,glob)templates/automation-base/docs/reference/**'
+  )
+  if [ -n "${EXEMPT_GLOBS}" ]; then
+    set -f
+    for glob in ${EXEMPT_GLOBS}; do
+      guidance_pathspecs+=(":(exclude,glob)${glob}")
+    done
+    set +f
+  fi
+
+  diff_numstat="$(git diff --numstat "${base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
+  diff_added="$(printf '%s\n' "${diff_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
+  diff_removed="$(printf '%s\n' "${diff_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   untracked_added="$(
     git ls-files -z --others --exclude-standard -- AGENTS.md docs templates/automation-base 2>/dev/null |
       while IFS= read -r -d '' path; do
+        if doc_budget_is_exempt "$path"; then
+          continue
+        fi
         case "$path" in
           AGENTS.md|docs/*.md|templates/automation-base/docs/*.md|templates/automation-base/*.md)
             if [ -f "$path" ]; then
@@ -158,6 +213,12 @@ duplicate_report="$(
     if [ -d docs ]; then
       find docs -maxdepth 1 -name '*.md' -print0
     fi
+    if [ -f templates/automation-base/AGENTS.md ]; then
+      printf '%s\0' templates/automation-base/AGENTS.md
+    fi
+    if [ -d templates/automation-base/docs ]; then
+      find templates/automation-base/docs -maxdepth 1 -name '*.md' -print0
+    fi
   } | xargs -0 -r awk '
     length($0) >= 90 && $0 !~ /^[[:space:]]*#/ {
       count[$0] += 1
@@ -173,7 +234,7 @@ duplicate_report="$(
 )"
 
 if [ -n "$duplicate_report" ]; then
-  warn "long guidance lines repeated 3+ times in root docs"
+  warn "long guidance lines repeated 3+ times in root or template docs"
   printf '%s\n' "$duplicate_report" | sed 's/^/[budget] duplicate: /'
 fi
 

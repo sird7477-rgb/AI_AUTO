@@ -4,6 +4,19 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.5
+
+- Reworked `doc-budget.sh` to separate lean AI guidance from legitimately large
+  project/spec docs: the net-added budget now measures cumulatively against the
+  integration branch merge-base (`DOC_BUDGET_BASE_REF`, default `main`) so
+  splitting a guide across commits cannot evade it; guidance scope is top-level
+  only so content/spec docs in subdirectories (e.g. `docs/specs/`) are exempt,
+  with `DOC_BUDGET_EXEMPT_GLOBS` for extra exemptions, applied consistently to
+  both the net-added diff and the totals (fixing the prior scope mismatch).
+- Duplicate-line detection now also covers template docs, and the
+  `DOC_BUDGET_TEMPLATE_PATCH` escape hatch requires
+  `DOC_BUDGET_TEMPLATE_PATCH_REASON` so the bypass is recorded, not silent.
+
 ## 2026.06.02.4
 
 - Fixed principal misdetection in `run-ai-reviews.sh`: valid launcher evidence
