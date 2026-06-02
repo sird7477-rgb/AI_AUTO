@@ -78,6 +78,36 @@ are throughput and focus lanes, not independent external reviewer coverage.
 | `fast_scan` | file/symbol lookup and lightweight synthesis | Codex explore/spark lane |
 | `docs` | documentation and handoff clarity | Codex writer or provider default |
 
+## Model-Class Lanes
+
+Delegated work routes through four provider-neutral lanes that resolve onto the
+active principal's model class (`fast` / `standard` / `frontier`) via the
+precedence above. The lane is the contract; the model name is resolved, never
+hardcoded.
+
+| Lane | Work shape | Class |
+|---|---|---|
+| `fast_scan` | lookup, lightweight synthesis, triage | fast |
+| `low_cost_impl` | tightly bounded, reversible single-concern edits (guardrails in `docs/AUTOMATION_OPERATING_POLICY.md`) | fast/low |
+| `standard_impl` | normal implementation, refactors | standard |
+| `frontier_review` | architecture/security risk, long-context review | frontier |
+
+Per-principal class surface (verified locally, observe-only):
+
+- Codex: `explore` (`gpt-5.3-codex-spark`) / `executor` (`gpt-5.5`) / `gpt-5.5`
+  high reasoning — full variable operation.
+- Claude: `haiku` / `sonnet` / `opus` via `--model` — variable when the CLI
+  supports `--model`.
+- Gemini: invoked **only via `agy`** (the sole path to gemini 3.5); `gemini -m`
+  is forbidden. `agy` has no model selector, so a Gemini principal is
+  class-fixed and reports `class_unavailable` for variable operation.
+
+`scripts/discover-ai-models.sh` records this as an observe-only
+"Principal Class Lanes" block, and `scripts/collect-review-context.sh` emits a
+report-only "Model Routing Lane Audit" (active principal, recommended lane,
+missed fast-lane opportunity). Both are evidence only: no lane is auto-rerouted
+and routing records carry no completion authority.
+
 ## Current Review Lanes
 
 `scripts/discover-ai-models.sh` writes `.omx/model-routing/latest.env` and
@@ -132,6 +162,13 @@ Use these only when the current project has a concrete reason to force routing:
 - `CODEX_FALLBACK_MODEL`
 - `OMX_DEFAULT_FRONTIER_MODEL`
 - `AI_AUTO_PRINCIPAL=codex|claude|gemini`
+
+`GEMINI_REVIEW_MODEL` is honored only when the configured Gemini command exposes
+`--model`. Under the mandated `agy` command (the sole path to gemini 3.5, with no
+model selector) discovery records the Gemini model source as `unsupported` and
+clears the override, so it is inert and Gemini stays class-fixed. This matches
+the observe-only `class_unavailable` reporting in the Model-Class Lanes section;
+making the override actually variable is Phase 1 parity work, not Phase 0.
 
 Set `AI_MODEL_DISCOVERY=0` to skip model discovery and use provider defaults.
 

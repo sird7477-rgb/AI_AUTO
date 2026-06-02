@@ -443,6 +443,25 @@ Generated at: ${discovered_at}
 | Principal-subagent architect substitute | ${codex_architect_role} | ${codex_architect_model:-provider-default} | ${codex_architect_model_source} |
 | Principal-subagent test substitute | ${codex_test_role} | ${codex_test_model:-provider-default} | ${codex_test_model_source} |
 
+## Principal Class Lanes (observe-only)
+
+This block records the lane-to-model-class contract per principal without
+changing routing behavior. Lanes (\`fast_scan\`, \`low_cost_impl\`,
+\`standard_impl\`, \`frontier_review\`) resolve onto the active principal's
+class through the precedence above. No lane is auto-rerouted here and these
+records carry no completion authority.
+
+| Principal | Model-flag surface | fast class | standard class | frontier class | Variable operation |
+|---|---|---|---|---|---|
+| codex | codex exec --model (supports=${codex_supports_model}) | gpt-5.3-codex-spark (explore) | gpt-5.5 (executor) | gpt-5.5 high reasoning | available |
+| claude | claude --model (supports=${claude_supports_model}) | haiku | sonnet | opus | available when --model supported |
+| gemini | ${GEMINI_REVIEW_COMMAND} (supports=${gemini_supports_model}); gemini -m forbidden | class-fixed | ${GEMINI_REVIEW_COMMAND} default | class-fixed | class_unavailable (agy-only path, single fixed model) |
+
+Gemini note: it is invoked only via \`${GEMINI_REVIEW_COMMAND}\`, which exposes
+no model selector, so a Gemini principal is class-fixed and reports
+\`class_unavailable\` for variable model operation rather than claiming a class
+it did not apply.
+
 ## Tuning Evidence
 
 Repeated selections are appended to ${OBSERVATIONS_OUT} as TSV. Use that file

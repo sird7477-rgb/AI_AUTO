@@ -22,3 +22,8 @@ instance/
 .omx/review-context/
 .omx/review-prompts/
 .omx/review-results/
+
+# Local runtime / session artifacts
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+cache/

@@ -4,6 +4,18 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.1
+
+- Added an observe-only "Principal Class Lanes" block to the model-routing
+  report (`discover-ai-models.sh`) and a report-only "Model Routing Lane Audit"
+  to review context (`collect-review-context.sh`), recording the per-principal
+  fast/standard/frontier lane contract without changing routing behavior or
+  granting routing records any completion authority.
+- Documented the four provider-neutral model-class lanes (`fast_scan`,
+  `low_cost_impl`, `standard_impl`, `frontier_review`) in
+  `docs/AI_MODEL_ROUTING.md`, including the Gemini agy-only / class-fixed
+  constraint.
+
 ## 2026.06.01.2
 
 - Raised the generated AI tmux wrapper's runtime `nofile` soft limit before

@@ -506,6 +506,10 @@ def test_review_runner_requires_external_principal_evidence(tmp_path: Path) -> N
         ["./scripts/run-ai-reviews.sh"],
         env={
             "AI_AUTO_PRINCIPAL": "claude",
+            # Isolate to a tmp path that is never created so the "missing
+            # evidence" case is hermetic and does not depend on a developer's
+            # local .omx/state/principal-runtime/current.env.
+            "AI_AUTO_PRINCIPAL_EVIDENCE": str(tmp_path / "missing-principal.env"),
             "AI_MODEL_DISCOVERY": "0",
             "CONTEXT_DIR": str(tmp_path / "review-context"),
             "OUT_DIR": str(tmp_path / "review-results"),

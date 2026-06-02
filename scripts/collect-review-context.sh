@@ -796,6 +796,65 @@ write_browser_qa_evidence_audit() {
   fi
 }
 
+model_routing_lane_for_shape() {
+  local shape
+  # Normalize: lowercase and strip whitespace so "FAST_SCAN" or " lookup "
+  # classify the same as "fast_scan"/"lookup" instead of falling to unclassified.
+  shape="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "${shape}" in
+    lookup|fast_scan|file_lookup|symbol_lookup|scan) echo "fast_scan" ;;
+    bounded_impl|low_cost_impl|small_fix|narrow_impl) echo "low_cost_impl" ;;
+    standard_impl|implementation|refactor|feature) echo "standard_impl" ;;
+    review|architecture|security_review|risk_review|frontier) echo "frontier_review" ;;
+    "") echo "none" ;;
+    *) echo "unclassified" ;;
+  esac
+}
+
+write_model_routing_lane_audit() {
+  local shape principal gemini_cmd recommended
+
+  shape="${MODEL_ROUTING_INPUT_SHAPE:-}"
+  principal="${AI_AUTO_PRINCIPAL:-codex}"
+  gemini_cmd="${GEMINI_REVIEW_COMMAND:-agy}"
+  recommended="$(model_routing_lane_for_shape "${shape}")"
+
+  echo "audit_status: report_only"
+  echo "active_principal: ${principal}"
+  if [ -n "${shape}" ]; then
+    echo "input_shape: ${shape}"
+  else
+    echo "input_shape: none"
+  fi
+  echo "recommended_lane: ${recommended}"
+
+  # Per-principal fast-class availability (observe-only; mirrors the
+  # discover-ai-models.sh Principal Class Lanes contract). Gemini stays
+  # honestly class-fixed because it is invoked only via its review command.
+  echo "fast_lane_codex: available"
+  echo "fast_lane_claude: available_when_model_flag_supported"
+  echo "fast_lane_gemini: class_unavailable (invoked only via ${gemini_cmd}; gemini -m forbidden)"
+
+  case "${recommended}" in
+    fast_scan|low_cost_impl)
+      case "${principal}" in
+        gemini)
+          echo "missed_fast_lane_opportunity: fast_lane_unavailable (gemini class-fixed)"
+          ;;
+        *)
+          echo "missed_fast_lane_opportunity: candidate (${recommended} can use the fast class)"
+          ;;
+      esac
+      ;;
+    *)
+      echo "missed_fast_lane_opportunity: none"
+      ;;
+  esac
+
+  echo "runtime_lane_added: false"
+  echo "routing_authority: none"
+}
+
 LIGHTWEIGHT_CONTEXT=0
 if use_lightweight_context; then
   LIGHTWEIGHT_CONTEXT=1
@@ -870,6 +929,10 @@ fi
   echo "## Browser QA Evidence Audit"
   echo
   write_browser_qa_evidence_audit
+  echo
+  echo "## Model Routing Lane Audit"
+  echo
+  write_model_routing_lane_audit
   echo
   echo "## Diff"
   echo
