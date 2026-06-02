@@ -4,6 +4,16 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.9
+
+- `collect-review-context.sh` adds `REVIEW_UNTRACKED_ALLOWLIST` (comma/newline
+  list of paths, directory prefixes, or globs). When set, only matching
+  untracked artifacts count as blocking review material; out-of-scope untracked
+  files are still reported but do not stall the gate, so a docs/spec-draft
+  targeted review is not blocked by an unrelated working tree. Empty (default)
+  keeps every material untracked file in scope. README documents the targeted
+  review usage.
+
 ## 2026.06.02.8
 
 - Ralph Completion Discipline now states that user-defined completion criteria

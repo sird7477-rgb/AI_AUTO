@@ -93,6 +93,13 @@ diffs use a lightweight context focused on the patch, git state, and
 verification tail. Set `REVIEW_CONTEXT_DETAIL=full` when planning artifacts or
 full workflow reference excerpts are needed for the review.
 
+For a targeted docs/spec-draft review, set `REVIEW_UNTRACKED_ALLOWLIST` to a
+comma/newline-separated list of paths, directory prefixes, or globs. Only
+matching untracked artifacts then count as blocking review material; other
+untracked files are still reported but treated as out of the declared review
+scope, so an unrelated working tree does not stall the gate. Empty (default)
+keeps every material untracked file in scope.
+
 Codex is the default active principal runtime. Claude/Gemini principal runs
 require launcher-owned evidence before that runtime is skipped as a
 self-reviewer. Without matching evidence, review-gate fails closed with

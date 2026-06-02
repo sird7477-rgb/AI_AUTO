@@ -1920,6 +1920,26 @@ echo "[verify] testing review context edge cases..."
   grep -q "plans/candidate.md" .omx/review-context/latest-review-context.md
   grep -q "tests/test_candidate.py" .omx/review-context/latest-review-context.md
 
+  # Untracked scope allowlist: a docs/spec-draft targeted review can scope the
+  # untracked guard to declared paths so unrelated untracked files are reported
+  # but do not block, while in-scope material still requires review.
+  REVIEW_UNTRACKED_ALLOWLIST="plans/candidate.md" "${context_script}" >/dev/null
+  grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md
+  grep -q "scope_allowlist: plans/candidate.md" .omx/review-context/latest-review-context.md
+  grep -q "Untracked files outside the declared review scope" .omx/review-context/latest-review-context.md
+  grep -q "tests/test_candidate.py" .omx/review-context/latest-review-context.md
+
+  # An allowlist that matches no material untracked file clears the guard while
+  # still reporting the out-of-scope files.
+  REVIEW_UNTRACKED_ALLOWLIST="docs/specs/" "${context_script}" >/dev/null
+  grep -q "guard_status: clear" .omx/review-context/latest-review-context.md
+  grep -q "No in-scope untracked review artifacts" .omx/review-context/latest-review-context.md
+  grep -q "plans/candidate.md" .omx/review-context/latest-review-context.md
+  if grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md; then
+    echo "[verify] untracked allowlist failed to clear guard for out-of-scope-only material"
+    exit 1
+  fi
+
   printf 'small tracked edit\n' >> staged.txt
   mkdir -p .omx/review-context
   for line in $(seq 1 100); do

@@ -4,6 +4,12 @@ set -euo pipefail
 OUT_DIR="${OUT_DIR:-.omx/review-context}"
 INCLUDE_UNTRACKED_CONTENT="${INCLUDE_UNTRACKED_CONTENT:-0}"
 MAX_UNTRACKED_BYTES="${MAX_UNTRACKED_BYTES:-102400}"
+# Optional comma/newline-separated path allowlist (exact paths, directory
+# prefixes, or globs). When set, only matching untracked artifacts count as
+# blocking review material; others are reported but treated as out of the
+# declared review scope. Lets a docs/spec-draft targeted review avoid blocking
+# on unrelated untracked files. Empty (default) keeps every material file in scope.
+REVIEW_UNTRACKED_ALLOWLIST="${REVIEW_UNTRACKED_ALLOWLIST:-}"
 REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
@@ -392,8 +398,28 @@ write_diff_scope_summary() {
   done
 }
 
+untracked_path_allowed() {
+  local needle="$1"
+  local allowlist="$2"
+  local item
+  while IFS= read -r item; do
+    [ -n "${item}" ] || continue
+    item="${item%/}"
+    # Allowlist entries are intentionally treated as glob/prefix patterns: an
+    # exact path or glob matches directly, and a directory entry covers its
+    # whole subtree.
+    # shellcheck disable=SC2254
+    case "${needle}" in
+      ${item}|${item}/*) return 0 ;;
+    esac
+  done <<EOF
+${allowlist}
+EOF
+  return 1
+}
+
 write_untracked_review_guard() {
-  local material
+  local material allowlist in_scope filtered file
   material="$(
     git ls-files --others --exclude-standard 2>/dev/null |
       grep -E '^(plans|docs|scripts|tools|tests|templates/automation-base)/|^AGENTS\.md$' || true
@@ -405,9 +431,49 @@ write_untracked_review_guard() {
     return 0
   fi
 
+  # Scope the blocking material to a declared path allowlist when one is set, so
+  # a docs/spec-draft targeted review is not blocked by unrelated untracked
+  # files. Out-of-scope files are still reported for transparency.
+  filtered=""
+  allowlist="$(split_csv_lines "${REVIEW_UNTRACKED_ALLOWLIST}")"
+  if [ -n "${allowlist}" ]; then
+    in_scope=""
+    while IFS= read -r file; do
+      [ -n "${file}" ] || continue
+      if untracked_path_allowed "${file}" "${allowlist}"; then
+        in_scope="${in_scope}${in_scope:+
+}${file}"
+      else
+        filtered="${filtered}${filtered:+
+}${file}"
+      fi
+    done <<EOF
+${material}
+EOF
+    material="${in_scope}"
+  fi
+
+  if [ -z "${material}" ]; then
+    echo "guard_status: clear"
+    if [ -n "${filtered}" ]; then
+      echo "scope_allowlist: ${REVIEW_UNTRACKED_ALLOWLIST}"
+      echo "No in-scope untracked review artifacts. The following untracked files are outside the declared review scope and were not treated as blocking material:"
+      echo
+      echo '```text'
+      printf '%s\n' "${filtered}"
+      echo '```'
+    else
+      echo "No material untracked review artifacts detected."
+    fi
+    return 0
+  fi
+
   echo "guard_status: material_untracked_artifacts_present"
   echo "manual_review_required: true"
   echo "manual_review_override: ${REVIEW_UNTRACKED_MANUAL_REVIEWED:-0}"
+  if [ -n "${REVIEW_UNTRACKED_ALLOWLIST}" ]; then
+    echo "scope_allowlist: ${REVIEW_UNTRACKED_ALLOWLIST}"
+  fi
   if [ "${INCLUDE_UNTRACKED_CONTENT}" = "1" ]; then
     echo "content_included: true"
     echo "Material untracked review artifacts are present and content inclusion is enabled."
@@ -420,6 +486,14 @@ write_untracked_review_guard() {
   echo '```text'
   printf '%s\n' "${material}"
   echo '```'
+  if [ -n "${filtered}" ]; then
+    echo
+    echo "Untracked files outside the declared review scope (reported, not blocking):"
+    echo
+    echo '```text'
+    printf '%s\n' "${filtered}"
+    echo '```'
+  fi
 }
 
 split_csv_lines() {
