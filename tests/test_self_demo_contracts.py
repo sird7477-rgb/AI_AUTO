@@ -950,6 +950,47 @@ def test_obsidian_autopush_policy_is_dry_run_and_approval_bounded() -> None:
     )
 
 
+def test_obsidian_autopush_shareable_only_lane_skips_per_run_approval() -> None:
+    base = {
+        "invoked_from_home_checkout": True,
+        "opt_in": True,
+        "pending_drafts": ["ai-lab.md", "project-a.md"],
+        "explicit_vault_config": True,
+        "dry_run_summary": True,
+        "uses_knowledge_collect": True,
+        "push_requested": True,
+        "user_push_approval": False,
+        "shareable_only_autopush": True,
+        "all_pushed_shareable_only": True,
+        "secret_scan_passed": True,
+    }
+
+    # Shareable-only push is approved-by-classification: no per-run approval needed.
+    ready = obsidian_autopush_policy(base)
+    assert ready.accepted
+    assert ready.data["mode"] == "shareable_only_autopush"
+
+    # Secret preflight failure blocks the shareable-only push.
+    assert obsidian_autopush_policy({**base, "secret_scan_passed": False}).reason == (
+        "obsidian_autopush_secret_scan_failed"
+    )
+
+    # If the batch is not provably shareable-only, the per-run approval is required again.
+    assert obsidian_autopush_policy({**base, "all_pushed_shareable_only": False}).reason == (
+        "obsidian_push_requires_user_approval"
+    )
+
+    # An explicitly approved shareable-only push still passes and is labeled.
+    approved = obsidian_autopush_policy({**base, "user_push_approval": True})
+    assert approved.accepted
+    assert approved.data["mode"] == "shareable_only_autopush"
+
+    # Boundary guards still apply in the shareable-only lane.
+    assert obsidian_autopush_policy({**base, "claims_obsidian_authority": True}).reason == (
+        "obsidian_autopush_boundary_violation"
+    )
+
+
 def test_update_visibility_policy_is_display_only_fast_and_low_noise() -> None:
     valid = {
         "status": "stale",

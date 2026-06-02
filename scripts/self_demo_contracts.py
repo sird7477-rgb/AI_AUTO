@@ -853,15 +853,31 @@ def obsidian_autopush_policy(record: dict[str, Any]) -> ContractResult:
         return ContractResult(True, "obsidian_autopush_skipped_not_opted_in", {})
     if not record.get("pending_drafts"):
         return ContractResult(True, "obsidian_autopush_skipped_no_pending_drafts", {})
-    if record.get("push_requested") and not record.get("user_push_approval"):
-        return ContractResult(False, "obsidian_push_requires_user_approval", {})
+    # Shareable-only auto-push: every pushed note is shareable_summary/
+    # external_private_vault, which is the deliberate per-note consent to publish,
+    # so a separate per-run user approval is satisfied by that classification. A
+    # secret/redaction preflight must still have passed. Any non-shareable push
+    # keeps the explicit user approval requirement.
+    shareable_only = bool(record.get("shareable_only_autopush") and record.get("all_pushed_shareable_only"))
+    if record.get("push_requested"):
+        if shareable_only:
+            if not record.get("secret_scan_passed"):
+                return ContractResult(False, "obsidian_autopush_secret_scan_failed", {})
+        elif not record.get("user_push_approval"):
+            return ContractResult(False, "obsidian_push_requires_user_approval", {})
     if not record.get("dry_run_summary"):
         return ContractResult(False, "obsidian_autopush_requires_dry_run_summary", {})
     if not record.get("explicit_vault_config") or not record.get("uses_knowledge_collect"):
         return ContractResult(False, "obsidian_autopush_missing_safe_path", {})
     if record.get("mount_scan") or record.get("claims_obsidian_authority"):
         return ContractResult(False, "obsidian_autopush_boundary_violation", {})
-    return ContractResult(True, "obsidian_autopush_ready", {"mode": "dry_run" if not record.get("push_requested") else "approved_push"})
+    if not record.get("push_requested"):
+        mode = "dry_run"
+    elif shareable_only:
+        mode = "shareable_only_autopush"
+    else:
+        mode = "approved_push"
+    return ContractResult(True, "obsidian_autopush_ready", {"mode": mode})
 
 
 def update_visibility_policy(record: dict[str, Any]) -> ContractResult:

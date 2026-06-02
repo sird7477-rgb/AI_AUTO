@@ -432,8 +432,14 @@ When an AI_AUTO-managed project is outdated, Codex startup prints an
 note, inspection command, and `action: AI_AUTO 최신 패치 적용해줘`. In the AI_AUTO
 home checkout, the same startup hook can also print an `OBSIDIAN OUTPUT CHECK`
 block when validated knowledge drafts are waiting across AI_AUTO and registered
-projects. That notice is read-only and stops at an explicit
-`knowledge-collect --project <repo> --push --vault-dir <vault-dir>` handoff.
+projects. From the home checkout it then runs `scripts/obsidian-autopush.sh`,
+which auto-publishes only shareable drafts (`sync_class: shareable_summary` /
+`external_private_vault`) that pass a secret/redaction preflight; `local_private`
+drafts always stay local and still need an explicit
+`knowledge-collect --project <repo> --push --vault-dir <vault-dir>` handoff after
+promotion. Set `AI_AUTO_KNOWLEDGE_AUTOPUSH=0` to disable the auto-push and keep
+the manual handoff only. The vault path comes from
+`obsidian.ai_auto_vault_dir` in `.omx/local-config.json`.
 
 정리하면, 클론 직후의 권장 흐름은 다음과 같습니다.
 

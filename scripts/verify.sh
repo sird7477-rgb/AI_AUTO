@@ -4192,6 +4192,156 @@ EOF
   fi
 )
 
+echo "[verify] testing knowledge-collect shareable-only (skip-disallowed) push..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_kc_skip_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_kc_skip_tmp EXIT
+
+  proj="${tmp_dir}/proj"
+  vault="${tmp_dir}/vault/AI_AUTO"
+  mkdir -p "${proj}" "${tmp_dir}/vault"
+  git -c init.defaultBranch=main init -q "${proj}"
+
+  "${repo_root}/scripts/knowledge-notes.py" record --write --allow-local-draft \
+    --type finding --status draft --confidence medium \
+    --title "Shareable lesson" --summary "Generic shareable workflow lesson." \
+    --project proj --surface workflow --repeat-key "wf:shareable-skip" \
+    --source-artifact docs/WORKFLOW.md --source-extract "generic shareable lesson text" \
+    --sync-class shareable_summary \
+    --output-dir "${proj}/.omx/knowledge/drafts" >/dev/null
+  "${repo_root}/scripts/knowledge-notes.py" record --write --allow-local-draft \
+    --type finding --status draft --confidence medium \
+    --title "Private finding" --summary "A project private finding." \
+    --project proj --surface review --repeat-key "rv:private-skip" \
+    --source-artifact docs/x.md --source-extract "private finding text" \
+    --sync-class local_private \
+    --output-dir "${proj}/.omx/knowledge/drafts" >/dev/null
+
+  # Default push still aborts when any draft is non-shareable.
+  if "${repo_root}/tools/knowledge-collect" --project "${proj}" --vault-dir "${vault}" --push \
+    > "${tmp_dir}/default.out" 2>&1; then
+    echo "[verify] knowledge-collect default push did not abort on local_private"
+    exit 1
+  fi
+  grep -q "\[push-sync-class\]" "${tmp_dir}/default.out"
+  test ! -f "${vault}/AI_AUTO_INDEX.md"
+
+  # Shareable-only mode pushes shareable, skips (reports) local_private.
+  "${repo_root}/tools/knowledge-collect" --project "${proj}" --vault-dir "${vault}" \
+    --skip-disallowed-sync-class --push > "${tmp_dir}/skip.out" 2>"${tmp_dir}/skip.err"
+  grep -q "\[push-skip-local\]" "${tmp_dir}/skip.err"
+  grep -q "pushed 1 note" "${tmp_dir}/skip.out"
+  test -f "${vault}/RepeatKeys/wf-shareable-skip.md"
+  if [ -f "${vault}/RepeatKeys/rv-private-skip.md" ]; then
+    echo "[verify] skip-disallowed push leaked a local_private note"
+    exit 1
+  fi
+
+  # Idempotent re-run pushes nothing new.
+  "${repo_root}/tools/knowledge-collect" --project "${proj}" --vault-dir "${vault}" \
+    --skip-disallowed-sync-class --push > "${tmp_dir}/skip2.out" 2>/dev/null
+  grep -q "pushed 0 note" "${tmp_dir}/skip2.out"
+)
+
+echo "[verify] testing obsidian-autopush shareable-only safe push..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_autopush_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_autopush_tmp EXIT
+
+  home="${tmp_dir}/home"
+  vault="${tmp_dir}/vault/AI_AUTO"
+  registry="${tmp_dir}/no-registry.tsv"
+  mkdir -p "${home}/tools" "${home}/scripts" "${home}/templates/automation-base" "${vault}"
+  git -c init.defaultBranch=main init -q "${home}"
+  echo "2026.06.02.0" > "${home}/templates/automation-base/AI_AUTO_TEMPLATE_VERSION"
+  cp "${repo_root}/tools/knowledge-collect" "${home}/tools/knowledge-collect"
+  cp "${repo_root}/scripts/knowledge-notes.py" "${home}/scripts/knowledge-notes.py"
+  cp "${repo_root}/scripts/obsidian-autopush.sh" "${home}/scripts/obsidian-autopush.sh"
+  chmod +x "${home}/tools/knowledge-collect" "${home}/scripts/knowledge-notes.py" "${home}/scripts/obsidian-autopush.sh"
+
+  "${home}/scripts/knowledge-notes.py" record --write --allow-local-draft \
+    --type finding --status draft --confidence medium \
+    --title "Shareable lesson" --summary "Generic shareable workflow lesson." \
+    --project home --surface workflow --repeat-key "wf:autopush-share" \
+    --source-artifact docs/WORKFLOW.md --source-extract "generic shareable lesson text" \
+    --sync-class shareable_summary \
+    --output-dir "${home}/.omx/knowledge/drafts" >/dev/null
+  "${home}/scripts/knowledge-notes.py" record --write --allow-local-draft \
+    --type finding --status draft --confidence medium \
+    --title "Private finding" --summary "A project private finding." \
+    --project home --surface review --repeat-key "rv:autopush-private" \
+    --source-artifact docs/x.md --source-extract "private finding text" \
+    --sync-class local_private \
+    --output-dir "${home}/.omx/knowledge/drafts" >/dev/null
+
+  # (a) Non-home checkout is skipped.
+  git -c init.defaultBranch=main init -q "${tmp_dir}/plain"
+  cp "${repo_root}/scripts/obsidian-autopush.sh" "${tmp_dir}/plain/obsidian-autopush.sh"
+  ( cd "${tmp_dir}/plain" && AI_AUTO_PROJECT_REGISTRY_FILE="${registry}" \
+    ./obsidian-autopush.sh --vault-dir "${vault}" > "${tmp_dir}/not-home.out" 2>&1 ) || true
+  grep -q "skip: not the AI_AUTO home checkout" "${tmp_dir}/not-home.out"
+
+  # (b) No configured vault is skipped (non-fatal).
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry}" "${home}/scripts/obsidian-autopush.sh" \
+    > "${tmp_dir}/no-vault.out" 2>&1
+  grep -q "skip: vault not configured" "${tmp_dir}/no-vault.out"
+
+  # (c) Normal shareable-only push: shareable published, local_private not.
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry}" "${home}/scripts/obsidian-autopush.sh" \
+    --vault-dir "${vault}" > "${tmp_dir}/push.out" 2>&1
+  grep -q "pushed 1 note" "${tmp_dir}/push.out"
+  test -f "${vault}/RepeatKeys/wf-autopush-share.md"
+  if [ -f "${vault}/RepeatKeys/rv-autopush-private.md" ]; then
+    echo "[verify] obsidian-autopush leaked a local_private note"
+    exit 1
+  fi
+
+  # (d) Secret-like content in a shareable candidate fails closed (no push).
+  share_note="$(find "${home}/.omx/knowledge/drafts" -maxdepth 1 -type f -name '*autopush-share*.md' | head -1)"
+  printf '\napi_key=abc123\n' >> "${share_note}"
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry}" "${home}/scripts/obsidian-autopush.sh" \
+    --vault-dir "${vault}" > "${tmp_dir}/secret.out" 2>&1; then
+    echo "[verify] obsidian-autopush pushed despite a secret-like shareable note"
+    exit 1
+  fi
+  grep -q "FAIL-CLOSED" "${tmp_dir}/secret.out"
+
+  # (e) A private-only draft set leaves the vault (and its index) untouched.
+  empty_home="${tmp_dir}/empty-home"
+  empty_vault="${tmp_dir}/empty-vault/AI_AUTO"
+  mkdir -p "${empty_home}/tools" "${empty_home}/scripts" "${empty_home}/templates/automation-base" "${empty_vault}"
+  git -c init.defaultBranch=main init -q "${empty_home}"
+  echo "2026.06.02.0" > "${empty_home}/templates/automation-base/AI_AUTO_TEMPLATE_VERSION"
+  cp "${repo_root}/tools/knowledge-collect" "${empty_home}/tools/knowledge-collect"
+  cp "${repo_root}/scripts/knowledge-notes.py" "${empty_home}/scripts/knowledge-notes.py"
+  cp "${repo_root}/scripts/obsidian-autopush.sh" "${empty_home}/scripts/obsidian-autopush.sh"
+  chmod +x "${empty_home}/tools/knowledge-collect" "${empty_home}/scripts/knowledge-notes.py" "${empty_home}/scripts/obsidian-autopush.sh"
+  "${empty_home}/scripts/knowledge-notes.py" record --write --allow-local-draft \
+    --type finding --status draft --confidence medium \
+    --title "Private only" --summary "A project private finding." \
+    --project empty-home --surface review --repeat-key "rv:only-private" \
+    --source-artifact docs/x.md --source-extract "private finding text" \
+    --sync-class local_private \
+    --output-dir "${empty_home}/.omx/knowledge/drafts" >/dev/null
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry}" "${empty_home}/scripts/obsidian-autopush.sh" \
+    --vault-dir "${empty_vault}" > "${tmp_dir}/empty.out" 2>&1
+  grep -q "nothing to push: no shareable drafts" "${tmp_dir}/empty.out"
+  if [ -f "${empty_vault}/AI_AUTO_INDEX.md" ]; then
+    echo "[verify] obsidian-autopush wrote the vault index for a private-only draft set"
+    exit 1
+  fi
+)
+
 echo "[verify] testing feedback helper..."
 (
   tmp_dir="$(mktemp -d)"

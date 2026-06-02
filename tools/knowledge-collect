@@ -311,20 +311,34 @@ def mark_pushed(note: Path, target: Path) -> None:
         raise RuntimeError(f"pushed marker made vault note invalid: {target}")
 
 
-def validate_push_sync_classes(rows: list[tuple[Path, Path, dict[str, str]]], allow_local_private: bool) -> None:
+def validate_push_sync_classes(
+    rows: list[tuple[Path, Path, dict[str, str]]],
+    allow_local_private: bool,
+    skip_disallowed: bool = False,
+) -> list[tuple[Path, Path, dict[str, str]]]:
     allowed = {"external_private_vault", "shareable_summary"}
     if allow_local_private:
         allowed.add("local_private")
-    blocked = [
-        f"{repo.name}:{data.get('repeat_key', note.name)}:{data.get('sync_class', '')}"
-        for repo, note, data in rows
-        if data.get("sync_class") not in allowed
-    ]
-    if blocked:
-        raise SystemExit(
-            "[knowledge-collect] [push-sync-class] refusing to push notes whose sync_class is not allowed for this vault: "
-            + ", ".join(blocked[:5])
+    allowed_rows = [row for row in rows if row[2].get("sync_class") in allowed]
+    blocked_rows = [row for row in rows if row[2].get("sync_class") not in allowed]
+    if blocked_rows:
+        labels = [
+            f"{repo.name}:{data.get('repeat_key', note.name)}:{data.get('sync_class', '')}"
+            for repo, note, data in blocked_rows
+        ]
+        if not skip_disallowed:
+            raise SystemExit(
+                "[knowledge-collect] [push-sync-class] refusing to push notes whose sync_class is not allowed for this vault: "
+                + ", ".join(labels[:5])
+            )
+        # Shareable-only mode: skip the disallowed notes (report) instead of
+        # aborting the whole batch, so local_private drafts stay local.
+        print(
+            f"[knowledge-collect] [push-skip-local] skipped {len(blocked_rows)} non-shareable note(s): "
+            + ", ".join(labels[:5]),
+            file=sys.stderr,
         )
+    return allowed_rows
 
 
 def collect_rows(repos: list[Path], include_pushed: bool = False) -> list[tuple[Path, Path, dict[str, str]]]:
@@ -391,6 +405,11 @@ def main() -> None:
         action="store_true",
         help="Allow local_private drafts to be copied into an explicitly local/private vault.",
     )
+    parser.add_argument(
+        "--skip-disallowed-sync-class",
+        action="store_true",
+        help="On --push, skip notes whose sync_class is not allowed for the vault (report and continue) instead of aborting the whole batch.",
+    )
     args = parser.parse_args()
     if args.depth is None:
         args.depth = default_depth() if args.include_workspace else 2
@@ -406,7 +425,7 @@ def main() -> None:
         if not explicit_repos:
             raise SystemExit("[knowledge-collect] [push-no-valid-project] --push requires at least one valid explicit --project git repository")
         rows = collect_rows(explicit_repos, include_pushed=True)
-        validate_push_sync_classes(rows, args.allow_local_private)
+        rows = validate_push_sync_classes(rows, args.allow_local_private, args.skip_disallowed_sync_class)
     else:
         rows = collect_rows(project_repos(args), include_pushed=args.include_pushed)
 
