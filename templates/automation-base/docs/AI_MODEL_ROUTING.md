@@ -126,6 +126,16 @@ this repo's review-gate). A unit may use `low_cost_impl` only when all hold:
 It never plans, decides architecture/security, owns verification, or carries
 completion authority. Gemini has no `low_cost_impl` (class-fixed via `agy`).
 
+### Evidence-driven tuning
+
+A lane's default model-class selector is changed only after repeated
+`lane-decisions.tsv` evidence across several local runs shows a class is
+consistently better for that lane. Never change a default from a single
+provider announcement or a one-off failure, and never globally downgrade the
+standard implementation, planner, verifier, or reviewer lanes. With no
+accumulated evidence yet, no default change is warranted: the lanes stay at
+their current classes.
+
 ## Current Review Lanes
 
 `scripts/discover-ai-models.sh` writes `.omx/model-routing/latest.env` and

@@ -4,6 +4,14 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.3
+
+- Added the evidence-driven tuning guard to `docs/AI_MODEL_ROUTING.md`: a lane's
+  default model-class selector changes only after repeated `lane-decisions.tsv`
+  evidence across several runs, never from a single announcement or one-off, and
+  the standard/planner/verifier/reviewer lanes are never globally downgraded.
+  With no accumulated evidence yet, no default change is warranted.
+
 ## 2026.06.02.2
 
 - Added the `low_cost_impl` lane contract to `docs/AI_MODEL_ROUTING.md`: a

@@ -94,6 +94,17 @@ def test_low_cost_impl_contract_present_and_synced() -> None:
         assert needle in template_text, f"missing in template doc: {needle}"
 
 
+# Phase 2 (ST-P1-22): evidence-driven tuning guard. Defaults change only on
+# repeated evidence; no global downgrade of the standard/reviewer lanes.
+def test_evidence_driven_tuning_guard_present_and_synced() -> None:
+    main_text = DOC.read_text(encoding="utf-8")
+    template_text = TEMPLATE_DOC.read_text(encoding="utf-8")
+    for needle in ("### Evidence-driven tuning", "lane-decisions.tsv",
+                   "never globally downgrade", "no default change is warranted"):
+        assert needle in main_text, f"missing in docs/AI_MODEL_ROUTING.md: {needle}"
+        assert needle in template_text, f"missing in template doc: {needle}"
+
+
 RECORDER = ROOT / "scripts" / "record-lane-decision.py"
 TEMPLATE_RECORDER = ROOT / "templates" / "automation-base" / "scripts" / "record-lane-decision.py"
 
