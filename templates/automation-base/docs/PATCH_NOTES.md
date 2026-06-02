@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.02.8
+
+- Ralph Completion Discipline now states that user-defined completion criteria
+  are immutable acceptance scope and that an intermediate fail-closed safety
+  gate (e.g. a no-order or no-candidate guard) is not completion: completion
+  requires either the proven deliverable with its required evidence or an
+  explicit no-result final report that still carries every required evidence
+  item. (Home repo adds the matching `completion_acceptance_scope` contract.)
+
 ## 2026.06.02.7
 
 - Restored the double-confirm deletion guard in `archive-omx-artifacts.sh`:

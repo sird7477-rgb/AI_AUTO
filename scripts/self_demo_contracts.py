@@ -557,6 +557,62 @@ def completion_authority(evidence: dict[str, Any]) -> ContractResult:
     return ContractResult(True, "completion_authority_ready", {})
 
 
+def completion_acceptance_scope(record: dict[str, Any]) -> ContractResult:
+    """User-defined completion criteria are immutable acceptance scope.
+
+    A fail-closed intermediate safety gate (for example a no-order or
+    no-candidate guard) must not satisfy completion on its own. When such a gate
+    is the reason no deliverable was produced, completion is valid only when the
+    user-defined deliverable is proven with the required evidence, or when an
+    explicit no-result final report is produced that still carries every required
+    evidence item (e.g. strategy candidates attempted, backtests, fallback loops,
+    AI unanimity). The user's acceptance criteria cannot be narrowed away.
+    """
+    criteria = record.get("user_acceptance_criteria")
+    if not isinstance(criteria, (list, tuple)) or not [c for c in criteria if _non_empty(c)]:
+        return ContractResult(False, "missing_acceptance_criteria", {})
+
+    if record.get("acceptance_criteria_mutated"):
+        return ContractResult(False, "acceptance_scope_mutated", {})
+
+    # No completion claim yet: the acceptance scope is simply preserved.
+    if not record.get("claimed_complete"):
+        return ContractResult(True, "completion_not_claimed", {})
+
+    required_evidence = [item for item in (record.get("required_evidence") or []) if _non_empty(item)]
+    # A completion claim must define the evidence the user requires; otherwise a
+    # proven deliverable or no-result report would satisfy an empty requirement.
+    if not required_evidence:
+        return ContractResult(False, "missing_required_evidence_definition", {})
+    provided_evidence = {item for item in (record.get("evidence_provided") or []) if _non_empty(item)}
+    missing_evidence = [item for item in required_evidence if item not in provided_evidence]
+
+    deliverable_proven = bool(record.get("deliverable_proven"))
+    safety_gate_triggered = bool(record.get("safety_gate_triggered"))
+    no_result_report = bool(record.get("no_result_final_report"))
+
+    # An intermediate fail-closed safety gate alone cannot satisfy completion.
+    if safety_gate_triggered and not deliverable_proven and not no_result_report:
+        return ContractResult(False, "safety_gate_not_completion", {})
+
+    # Either valid completion path must still carry every required evidence item.
+    if missing_evidence:
+        reason = (
+            "no_result_report_missing_required_evidence"
+            if no_result_report and not deliverable_proven
+            else "deliverable_missing_required_evidence"
+        )
+        return ContractResult(False, reason, {"missing": missing_evidence})
+
+    if deliverable_proven:
+        return ContractResult(True, "deliverable_complete", {})
+    if no_result_report:
+        return ContractResult(True, "no_result_report_complete", {})
+
+    # Completion claimed with neither a proven deliverable nor a no-result report.
+    return ContractResult(False, "completion_requires_deliverable_or_no_result_report", {})
+
+
 def startup_preflight_boundary(record: dict[str, Any]) -> ContractResult:
     required = {
         "preflight_name",

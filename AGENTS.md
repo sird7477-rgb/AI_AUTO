@@ -82,6 +82,12 @@ that is safe and in scope, promote it to the regular script/docs/template
 surface and verify it in the same loop. Report only hard external blockers such
 as unavailable credentials, provider quota, or explicit permission limits.
 
+User-defined completion criteria are immutable acceptance scope; never narrow them. An
+intermediate fail-closed safety gate (e.g. a no-order/no-candidate guard) is not completion:
+complete only by proving the user's deliverable with its required evidence, or by an explicit
+no-result final report carrying every required item (candidates, backtests, fallback loops, AI
+unanimity), per the `completion_acceptance_scope` contract.
+
 ## Evidence And Uncertainty
 
 - Do not present guesses, inferred model availability, undocumented behavior, or unverified project assumptions as facts.

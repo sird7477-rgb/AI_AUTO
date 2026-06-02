@@ -5,6 +5,7 @@ from scripts.self_demo_contracts import (
     benchmark_wrapper_plan,
     benchmark_evidence,
     browser_qa_evidence_policy,
+    completion_acceptance_scope,
     completion_authority,
     completion_pack_routing_policy,
     diff_scope_classification,
@@ -298,6 +299,108 @@ def test_completion_authority_remains_leader_owned() -> None:
             "missing_reviewers_reported": True,
         }
     ).accepted
+
+
+def test_completion_acceptance_scope_blocks_safety_gate_as_completion() -> None:
+    base = {
+        "user_acceptance_criteria": [
+            "create strategy candidates",
+            "produce backtest results",
+            "run fallback loops",
+            "obtain AI unanimity",
+        ],
+        "required_evidence": [
+            "strategy_candidates",
+            "backtest_results",
+            "fallback_loops",
+            "ai_unanimity",
+        ],
+        "claimed_complete": True,
+    }
+
+    # Acceptance criteria are mandatory and immutable.
+    assert completion_acceptance_scope({**base, "user_acceptance_criteria": []}).reason == "missing_acceptance_criteria"
+    assert completion_acceptance_scope({**base, "acceptance_criteria_mutated": True}).reason == "acceptance_scope_mutated"
+
+    # Preserving the scope without claiming completion is allowed.
+    not_claimed = completion_acceptance_scope({**base, "claimed_complete": False})
+    assert not_claimed.accepted
+    assert not_claimed.reason == "completion_not_claimed"
+
+    # A completion claim must define required evidence; an empty requirement set
+    # cannot be vacuously satisfied by a deliverable or no-result report.
+    for vacuous in (
+        {**base, "required_evidence": [], "deliverable_proven": True},
+        {**base, "required_evidence": [], "no_result_final_report": True, "safety_gate_triggered": True},
+    ):
+        result = completion_acceptance_scope(vacuous)
+        assert not result.accepted
+        assert result.reason == "missing_required_evidence_definition"
+
+    # An intermediate fail-closed safety gate alone cannot satisfy completion.
+    gate_only = completion_acceptance_scope({**base, "safety_gate_triggered": True})
+    assert not gate_only.accepted
+    assert gate_only.reason == "safety_gate_not_completion"
+
+    full_evidence = {
+        "strategy_candidates",
+        "backtest_results",
+        "fallback_loops",
+        "ai_unanimity",
+    }
+
+    # Even with every required evidence item, completion needs an explicit
+    # deliverable or no-result report; evidence alone is not a completion claim.
+    bare_claim = completion_acceptance_scope({**base, "evidence_provided": sorted(full_evidence)})
+    assert not bare_claim.accepted
+    assert bare_claim.reason == "completion_requires_deliverable_or_no_result_report"
+
+    # A no-result final report still has to carry every required evidence item.
+    partial_report = completion_acceptance_scope(
+        {
+            **base,
+            "safety_gate_triggered": True,
+            "no_result_final_report": True,
+            "evidence_provided": ["strategy_candidates", "backtest_results"],
+        }
+    )
+    assert not partial_report.accepted
+    assert partial_report.reason == "no_result_report_missing_required_evidence"
+    assert partial_report.data["missing"] == ["fallback_loops", "ai_unanimity"]
+
+    # A complete no-result final report is a valid completion after a safety gate.
+    full_report = completion_acceptance_scope(
+        {
+            **base,
+            "safety_gate_triggered": True,
+            "no_result_final_report": True,
+            "evidence_provided": sorted(full_evidence),
+        }
+    )
+    assert full_report.accepted
+    assert full_report.reason == "no_result_report_complete"
+
+    # A proven deliverable also has to carry the required evidence.
+    deliverable_missing = completion_acceptance_scope(
+        {
+            **base,
+            "deliverable_proven": True,
+            "evidence_provided": ["strategy_candidates"],
+        }
+    )
+    assert not deliverable_missing.accepted
+    assert deliverable_missing.reason == "deliverable_missing_required_evidence"
+
+    deliverable_complete = completion_acceptance_scope(
+        {
+            **base,
+            "deliverable_proven": True,
+            "safety_gate_triggered": True,
+            "evidence_provided": sorted(full_evidence),
+        }
+    )
+    assert deliverable_complete.accepted
+    assert deliverable_complete.reason == "deliverable_complete"
 
 
 def test_startup_preflight_boundary_requires_non_blocking_pass_through() -> None:
