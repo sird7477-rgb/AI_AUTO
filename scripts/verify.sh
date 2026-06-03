@@ -97,6 +97,8 @@ python3 -m py_compile scripts/todo-report.py
 python3 -m py_compile scripts/capture-knowledge-drafts.py
 python3 -m py_compile scripts/knowledge-notes.py
 python3 -m py_compile scripts/record-lane-decision.py
+python3 -m py_compile scripts/micro_work_contracts.py
+python3 -m py_compile tools/micro-work
 python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
 python3 -m py_compile templates/automation-base/scripts/todo-report.py
 python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
@@ -4377,6 +4379,46 @@ echo "[verify] testing obsidian-autopush shareable-only safe push..."
     echo "[verify] obsidian-autopush published an off-allowlist (ssh) draft"
     exit 1
   fi
+)
+
+echo "[verify] testing MicroWork validator..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_microwork_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_microwork_tmp EXIT
+
+  cat > "${tmp_dir}/ok.json" <<'JSON'
+{"id":"mw-verify","goal":"smoke","scope_paths":["tools/micro-work"],"smallest_useful_wedge":"validator only","non_goals":["scripts/review-gate.sh"],"required_evidence":["verify"],"completion_criteria":["validate passes"]}
+JSON
+  # Valid unit + report-only audit (drift/leak surfaced, never blocking).
+  out="$("${repo_root}/tools/micro-work" validate "${tmp_dir}/ok.json" --changed tools/micro-work --changed scripts/review-gate.sh 2>&1)"
+  printf '%s\n' "${out}" | grep -q "ok: micro_unit_ready"
+  printf '%s\n' "${out}" | grep -q "report scope_drift: scripts/review-gate.sh"
+  printf '%s\n' "${out}" | grep -q "report non_goal_leak: scripts/review-gate.sh"
+
+  # Incomplete unit fails closed with a reason.
+  printf '{"id":"x","goal":"y"}' > "${tmp_dir}/bad.json"
+  if "${repo_root}/tools/micro-work" validate "${tmp_dir}/bad.json" > "${tmp_dir}/bad.out" 2>&1; then
+    echo "[verify] micro-work accepted an incomplete micro-unit"
+    exit 1
+  fi
+  grep -q "missing_micro_unit_fields" "${tmp_dir}/bad.out"
+
+  # A path that is both in scope and a non-goal is rejected.
+  printf '{"id":"x","goal":"g","scope_paths":["a/b"],"smallest_useful_wedge":"w","non_goals":["a/b"],"required_evidence":["verify"],"completion_criteria":["d"]}' > "${tmp_dir}/conf.json"
+  if "${repo_root}/tools/micro-work" validate "${tmp_dir}/conf.json" > "${tmp_dir}/conf.out" 2>&1; then
+    echo "[verify] micro-work accepted a scope/non-goal conflict"
+    exit 1
+  fi
+  grep -q "non_goal_scope_conflict" "${tmp_dir}/conf.out"
+
+  # The thin wrapper skips gracefully when no micro-unit file is present.
+  MICRO_WORK_FILE="${tmp_dir}/missing.json" "${repo_root}/scripts/micro-check.sh" > "${tmp_dir}/wrap.out" 2>&1
+  grep -q "nothing to check" "${tmp_dir}/wrap.out"
 )
 
 echo "[verify] testing feedback helper..."

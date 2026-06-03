@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Validate an AI_AUTO MicroWork unit definition (read-only).
+
+A micro-unit is a JSON file describing one bounded slice of work. This tool only
+validates the shape and prints a report-only scope audit when changed paths are
+provided. It does not execute work, mutate files, schedule, queue, or hold any
+completion authority above scripts/verify.sh and scripts/review-gate.sh.
+
+Usage:
+  micro-work validate <file.json> [--changed PATH ...] [--json]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+AI_LAB_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(AI_LAB_ROOT))
+
+from scripts.micro_work_contracts import (  # noqa: E402
+    micro_work_scope_audit,
+    validate_micro_unit,
+)
+
+
+def _load(path: Path) -> dict:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        raise SystemExit(f"[micro-work] file not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"[micro-work] invalid JSON in {path}: {exc}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Validate a MicroWork unit (read-only).")
+    sub = parser.add_subparsers(dest="command", required=True)
+    validate = sub.add_parser("validate", help="validate a micro-unit JSON file")
+    validate.add_argument("file", type=Path)
+    validate.add_argument("--changed", action="append", default=[], help="changed path for the report-only scope audit")
+    validate.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    args = parser.parse_args()
+
+    record = _load(args.file)
+    result = validate_micro_unit(record)
+    audit = micro_work_scope_audit(record, args.changed) if args.changed else None
+
+    if args.json:
+        print(json.dumps({"accepted": result.accepted, "reason": result.reason, "data": result.data, "audit": audit}, ensure_ascii=False))
+    else:
+        status = "ok" if result.accepted else "fail"
+        print(f"[micro-work] {status}: {result.reason}")
+        if result.data:
+            print(f"[micro-work] detail: {json.dumps(result.data, ensure_ascii=False)}")
+        if audit is not None:
+            # Report-only: surfaced for visibility, never a gate.
+            if audit["scope_drift"]:
+                print(f"[micro-work] report scope_drift: {', '.join(audit['scope_drift'])}")
+            if audit["non_goal_leak"]:
+                print(f"[micro-work] report non_goal_leak: {', '.join(audit['non_goal_leak'])}")
+
+    sys.exit(0 if result.accepted else 1)
+
+
+if __name__ == "__main__":
+    main()

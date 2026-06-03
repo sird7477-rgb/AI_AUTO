@@ -302,6 +302,13 @@ else
   suggest "chmod +x ${ROOT}/tools/workspace-scan"
 fi
 
+if [ -x "${ROOT}/tools/micro-work" ]; then
+  say_pass "micro-work source helper is executable"
+else
+  say_fail "micro-work source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/micro-work"
+fi
+
 echo
 echo "[bootstrap] checking commands"
 
@@ -336,6 +343,7 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   ensure_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   ensure_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
+  ensure_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
 
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)

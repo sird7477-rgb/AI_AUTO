@@ -101,6 +101,11 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Vault writes require `--project <repo> --vault-dir <vault-path>/AI_AUTO --push`; local/private drafts additionally require `--allow-local-private`
   - Successful pushes mark both the local draft and vault copy with `sync_state: pushed_to_obsidian` plus `obsidian_pushed_hash`; normal listing hides unchanged pushed notes, while `--include-pushed` shows them for audit
 
+- `micro-work`
+  - `micro-work validate <file.json>` checks a MicroWork unit definition (goal, scope_paths, smallest_useful_wedge, non_goals, required_evidence, completion_criteria)
+  - Read-only: validates shape, reports `scope_drift`/`non_goal_leak` against `--changed` paths, and never executes work or holds completion authority
+  - `scripts/micro-check.sh` is a thin repo wrapper that validates `.omx/micro/current.json` (or `MICRO_WORK_FILE`) against the current git changes
+
 Repo-local command installed by the automation template:
 
 - `./scripts/automation-doctor.sh`
@@ -162,6 +167,7 @@ Expected links:
     ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
     ~/bin/knowledge-collect -> ~/workspace/ai-lab/tools/knowledge-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
+    ~/bin/micro-work -> ~/workspace/ai-lab/tools/micro-work
 
 To recreate the links:
 
@@ -191,6 +197,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
     ln -sf ~/workspace/ai-lab/tools/knowledge-collect ~/bin/knowledge-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
+    ln -sf ~/workspace/ai-lab/tools/micro-work ~/bin/micro-work
 
 Make sure `~/bin` is in PATH:
 

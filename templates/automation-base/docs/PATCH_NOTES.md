@@ -4,6 +4,14 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.03.2
+
+- MicroWork (ST-P1-21), part 1: registered the side-effect-free `micro-work`
+  global helper in the managed helper-link set checked by `automation-doctor.sh`
+  (and the home-only `install-global-files.sh` / `bootstrap-ai-lab.sh`). The
+  validator/CLI/wrapper add no runtime, scheduler, queue, UI, or completion
+  authority.
+
 ## 2026.06.03.1
 
 - `OBSIDIAN_INTEGRATION.md` documents the on-demand `scripts/obsidian-autopush.sh`

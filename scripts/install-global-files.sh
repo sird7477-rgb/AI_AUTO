@@ -38,6 +38,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/feedback-collect
   ~/bin/knowledge-collect
   ~/bin/workspace-scan
+  ~/bin/micro-work
 
 It may also add a managed AI_AUTO shell function under ~/.config/ai-lab and a
 small source block in ~/.bashrc so typing AI_AUTO with no arguments changes the
@@ -889,6 +890,7 @@ check_source_helper "${ROOT}/tools/ai-plan-export"
 check_source_helper "${ROOT}/tools/feedback-collect"
 check_source_helper "${ROOT}/tools/knowledge-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
+check_source_helper "${ROOT}/tools/micro-work"
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   print_summary
@@ -921,6 +923,7 @@ else
   install_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
   install_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
+  install_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
   install_shell_function
   install_codex_wrapper
 
