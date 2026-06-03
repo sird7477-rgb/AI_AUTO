@@ -44,6 +44,10 @@ This is not an end-user app, a deployment template, or a framework showcase.
   lessons back into the source workflow.
 - Read-only rebuild, split-planning, and plan-quality helper commands for
   larger maintenance work.
+- A side-effect-free MicroWork validator (`micro-work` / `scripts/micro-check.sh`)
+  that checks a "micro unit" definition (goal, scope, smallest-useful-wedge,
+  non-goals, required evidence, completion criteria) and reports scope drift
+  against the current changes; review context surfaces it as a report-only audit.
 
 ## Verified Commands
 
