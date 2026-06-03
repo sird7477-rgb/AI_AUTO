@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.03.3
+
+- MicroWork (ST-P1-21), part 2: `collect-review-context.sh` adds a self-contained,
+  report-only `MicroWork Audit` section. When a micro-unit file (`MICRO_WORK_FILE`
+  or `.omx/micro/current.json`) is present, it reports `scope_drift` /
+  `non_goal_leak` against the current changes (porcelain parsing handles renames
+  and spaces; non-object JSON is reported, not fatal). It never blocks the review
+  gate and adds no runtime or authority.
+
 ## 2026.06.03.2
 
 - MicroWork (ST-P1-21), part 1: registered the side-effect-free `micro-work`

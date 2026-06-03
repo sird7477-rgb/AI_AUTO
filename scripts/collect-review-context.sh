@@ -929,6 +929,69 @@ write_model_routing_lane_audit() {
   echo "routing_authority: none"
 }
 
+write_micro_work_audit() {
+  # Report-only MicroWork scope audit. Self-contained (no dependency on the
+  # home-only contract module) so it stays portable in downstream template
+  # copies. Active only when a micro-unit file is present; never blocks.
+  local file="${MICRO_WORK_FILE:-.omx/micro/current.json}"
+  echo "audit_status: report_only"
+  if [ ! -f "${file}" ]; then
+    echo "micro_work_status: no_micro_unit"
+    echo "No MicroWork unit file at ${file}; set MICRO_WORK_FILE to enable the scope audit."
+    return 0
+  fi
+  local changed
+  changed="$(git -c core.quotepath=false status --porcelain 2>/dev/null || true)"
+  MICRO_WORK_CHANGED="${changed}" python3 - "${file}" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as handle:
+        rec = json.load(handle)
+except Exception as exc:  # noqa: BLE001
+    print("micro_work_status: invalid_micro_unit")
+    print(f"could not parse {path}: {exc}")
+    sys.exit(0)
+if not isinstance(rec, dict):
+    # Report-only contract: never crash review-context generation on non-object JSON.
+    print("micro_work_status: invalid_micro_unit")
+    print("micro-unit file is not a JSON object")
+    sys.exit(0)
+required = ["id", "goal", "scope_paths", "smallest_useful_wedge", "non_goals", "required_evidence", "completion_criteria"]
+list_fields = {"scope_paths", "non_goals", "required_evidence", "completion_criteria"}
+ne_str = lambda v: isinstance(v, str) and v.strip() != ""
+ne_list = lambda v: isinstance(v, (list, tuple)) and any(ne_str(x) for x in v)
+missing = [f for f in required if not (ne_list(rec.get(f)) if f in list_fields else ne_str(rec.get(f)))]
+if missing:
+    print("micro_work_status: incomplete_micro_unit")
+    print("missing_fields: " + ", ".join(sorted(missing)))
+    sys.exit(0)
+def under(p, e):
+    e = e.rstrip("/")
+    return p == e or p.startswith(e + "/")
+scope = [s.strip() for s in rec["scope_paths"] if ne_str(s)]
+non_goals = [s.strip() for s in rec["non_goals"] if ne_str(s)]
+changed = []
+for line in os.environ.get("MICRO_WORK_CHANGED", "").split("\n"):
+    if len(line) < 4:
+        continue
+    status = line[:2]
+    p = line[3:]  # strip the 2-char XY status + space
+    if ("R" in status or "C" in status) and " -> " in p:  # rename/copy: keep destination
+        p = p.split(" -> ")[-1]
+    p = p.strip().strip('"')
+    if p:
+        changed.append(p)
+drift = [p for p in changed if not any(under(p, s) for s in scope)]
+leak = [p for p in changed if any(under(p, g) for g in non_goals)]
+print("micro_work_status: ready")
+print("smallest_useful_wedge: present")
+print("required_evidence: present")
+print("scope_drift: " + (", ".join(drift) if drift else "none"))
+print("non_goal_leak: " + (", ".join(leak) if leak else "none"))
+PY
+}
+
 LIGHTWEIGHT_CONTEXT=0
 if use_lightweight_context; then
   LIGHTWEIGHT_CONTEXT=1
@@ -1007,6 +1070,10 @@ fi
   echo "## Model Routing Lane Audit"
   echo
   write_model_routing_lane_audit
+  echo
+  echo "## MicroWork Audit"
+  echo
+  write_micro_work_audit
   echo
   echo "## Diff"
   echo
