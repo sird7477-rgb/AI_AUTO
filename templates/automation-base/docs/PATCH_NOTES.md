@@ -4,6 +4,16 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.04.4
+
+- `doc-budget.sh` adds a plan/spec filename-label convention: files named
+  `*.plan.md` or `*.spec.md` are exempt from the guidance-bloat budget by
+  default (no `DOC_BUDGET_EXEMPT_GLOBS` config needed), in both the
+  `doc_budget_is_exempt` check and the cumulative-diff pathspecs. Their
+  net-added line volume is printed on a separate
+  `plan/spec labeled artifacts net added lines` line so it stays visible rather
+  than silently dropped. Builds on the ST-P1-24 guidance/content scoping.
+
 ## 2026.06.04.3
 
 - `collect-review-context.sh` adds a report-only `Spec Code Alignment Audit`.

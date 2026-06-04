@@ -402,6 +402,19 @@ echo "[verify] testing guidance document budget accounting..."
   # DOC_BUDGET_EXEMPT_GLOBS can exempt a top-level doc too (drops NEW_GUIDE: 4 -> 3).
   DOC_BUDGET_EXEMPT_GLOBS='docs/NEW_GUIDE.md' ./scripts/doc-budget.sh > "${tmp_dir}/budget-exempt-glob.out"
   grep -q "current guidance diff net added lines: 3" "${tmp_dir}/budget-exempt-glob.out"
+
+  # Plan/spec filename-labeled artifacts (*.plan.md / *.spec.md) are exempt by
+  # default without any DOC_BUDGET_EXEMPT_GLOBS config (net stays 4), and their
+  # volume is reported separately rather than dropped silently.
+  : > docs/feature.plan.md
+  for i in $(seq 1 30); do
+    printf 'plan row %s\n' "$i" >> docs/feature.plan.md
+  done
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-label.out"
+  grep -q "current guidance diff net added lines: 4" "${tmp_dir}/budget-label.out"
+  grep -q "plan/spec labeled artifacts net added lines (exempt, reported separately): 30" "${tmp_dir}/budget-label.out"
+  rm -f docs/feature.plan.md
+
   rm -rf docs/specs
 
   git restore --staged docs/WORKFLOW.md

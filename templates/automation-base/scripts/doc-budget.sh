@@ -15,12 +15,16 @@ FAIL_COUNT=0
 
 doc_budget_is_exempt() {
   # Content/spec docs are not budgeted guidance: only the designated content
-  # areas (docs/specs/, docs/reference/ and their template copies) and paths
+  # areas (docs/specs/, docs/reference/ and their template copies), files using
+  # the plan/spec filename-label convention (*.plan.md / *.spec.md), and paths
   # matching DOC_BUDGET_EXEMPT_GLOBS. Other docs -- including nested guidance
   # like docs/plans/ or docs/research/ -- stay budgeted.
   local path="$1" glob
   case "${path}" in
     docs/specs/*|docs/reference/*|templates/automation-base/docs/specs/*|templates/automation-base/docs/reference/*)
+      return 0
+      ;;
+    *.plan.md|*.spec.md)
       return 0
       ;;
   esac
@@ -169,6 +173,8 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     AGENTS.md 'docs/*.md' 'templates/automation-base/*.md' 'templates/automation-base/docs/*.md'
     ':(exclude,glob)docs/specs/**' ':(exclude,glob)docs/reference/**'
     ':(exclude,glob)templates/automation-base/docs/specs/**' ':(exclude,glob)templates/automation-base/docs/reference/**'
+    ':(exclude,glob)**/*.plan.md' ':(exclude,glob)**/*.spec.md'
+    ':(exclude,glob)*.plan.md' ':(exclude,glob)*.spec.md'
   )
   if [ -n "${EXEMPT_GLOBS}" ]; then
     set -f
@@ -203,6 +209,34 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fi
   printf '[budget] current guidance diff added lines: %s\n' "$diff_added"
   check_current_guidance_diff "$diff_net"
+
+  # Plan/spec labeled artifacts are exempt from the guidance budget above, but
+  # their net-added lines are still reported separately so the volume stays
+  # visible rather than silently dropped.
+  label_pathspecs=(
+    ':(glob)**/*.plan.md' ':(glob)**/*.spec.md' ':(glob)*.plan.md' ':(glob)*.spec.md'
+  )
+  label_numstat="$(git diff --numstat "${base_ref}" -- "${label_pathspecs[@]}" 2>/dev/null || true)"
+  label_added="$(printf '%s\n' "${label_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
+  label_removed="$(printf '%s\n' "${label_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
+  label_untracked_added="$(
+    git ls-files -z --others --exclude-standard 2>/dev/null |
+      while IFS= read -r -d '' path; do
+        case "$path" in
+          *.plan.md|*.spec.md)
+            if [ -f "$path" ]; then
+              line_count "$path"
+            fi
+            ;;
+        esac
+      done | awk '{ total += $1 } END { print total + 0 }'
+  )"
+  label_added=$((label_added + label_untracked_added))
+  label_net=$((label_added - label_removed))
+  if [ "$label_net" -lt 0 ]; then
+    label_net=0
+  fi
+  printf '[budget] plan/spec labeled artifacts net added lines (exempt, reported separately): %s\n' "$label_net"
 fi
 
 duplicate_report="$(

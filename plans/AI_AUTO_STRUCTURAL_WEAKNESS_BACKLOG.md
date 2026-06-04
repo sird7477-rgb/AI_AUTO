@@ -183,7 +183,7 @@ implement or install tools.
 | ST-P1-39 | Framework-native wireframe structure kernel (Odoo specifics stay project-owned) | high | Downstream JW odoo feedback `odoo:wireframe-must-follow-native-ui-structure` (2026-06-03), `plans/AI_AUTO_PROJECT_FEEDBACK_VISUAL_SPEC_PLAN_2026-06-04.md`, `docs/PLANNING_VISUALIZATION_GUIDE.md` | later_gated | Registered for design only, not approved for implementation. Absorb only the framework-neutral kernel — wireframes should mirror the real view skeleton and name their reference screen — into home guidance. Odoo view specifics (control panel/statusbar/sheet/oe_title/smart buttons/notebook, dialog modal structure, list/kanban) stay in the project runbook or a future Odoo domain pack, per the odoo #6 precedent. |
 | ST-P1-40 | Wireframe-authoring conventions kernel (Excalidraw runbook stays project-owned) | high | Downstream JW odoo feedback `planning:excalidraw-wireframe-guide-promote-to-ai-auto` (2026-06-03), `plans/AI_AUTO_PROJECT_FEEDBACK_VISUAL_SPEC_PLAN_2026-06-04.md`, project runbook `docs/runbooks/EXCALIDRAW_WIREFRAME_GUIDE.md`, `docs/PLANNING_VISUALIZATION_GUIDE.md` | later_gated | Registered for design only, not approved for implementation. Absorb only the generic wireframe-authoring conventions (comment/arrow notation, source-of-truth labeling, save-time checklist) into home guidance; the Odoo-specific runbook stays project-owned. Pairs with `ST-P1-39`. |
 | ST-P1-41 | Preserve standard framework business flow before custom UI (kernel) | high | Downstream JW odoo feedback `odoo:preserve-standard-business-flow-before-custom-ui` (2026-06-04), `plans/AI_AUTO_PROJECT_FEEDBACK_VISUAL_SPEC_PLAN_2026-06-04.md` | later_gated | Registered for design only, not approved for implementation. Absorb only the framework-neutral kernel — do not hide or replace a framework's standard business flow behind custom UI without an impact map plus regression evidence — into home guidance. The Odoo field/flow specifics (order_line, payment terms, invoice status, purchase→bill mapping) and any review-gate block stay in the Odoo domain pack. |
-| ST-P1-42 | doc-budget plan/spec filename-label convention | medium | Downstream JW odoo feedback `doc-budget:plan-spec-label-exemption` (2026-06-04), `plans/AI_AUTO_PROJECT_FEEDBACK_VISUAL_SPEC_PLAN_2026-06-04.md`, `scripts/doc-budget.sh` | later_gated | Registered for design only, not approved for implementation. `ST-P1-24` already provides glob-based (`DOC_BUDGET_EXEMPT_GLOBS`) and top-level-only guidance scoping, so nested plan/spec docs are already exempt; the only remaining increment is a standardized plan/spec filename-label convention plus a documented default glob and a separate totals line. Thin convention/doc increment, not new accounting logic. |
+| ST-P1-42 | doc-budget plan/spec filename-label convention | medium | Downstream JW odoo feedback `doc-budget:plan-spec-label-exemption` (2026-06-04), `plans/AI_AUTO_PROJECT_FEEDBACK_VISUAL_SPEC_PLAN_2026-06-04.md`, `scripts/doc-budget.sh`, `scripts/verify.sh` | complete_contract | Implemented and unanimously reviewed (Gemini + Codex with principal=claude, verify green): `doc-budget.sh` exempts the `*.plan.md` / `*.spec.md` filename-label convention from the guidance-bloat budget by default (in both `doc_budget_is_exempt` and the cumulative-diff pathspecs) without any `DOC_BUDGET_EXEMPT_GLOBS` config, and prints their net-added volume on a separate `plan/spec labeled artifacts net added lines` line so it stays visible. Builds on `ST-P1-24`; a `verify.sh` self-test locks the exemption and the separate-total. Template-synced. |
 | ST-P2-01 | External tool install evaluation | medium | `plans/AI_AUTO_SMALL_TOOL_ADOPTION_REVIEW_2026-05-28.md`, `plans/AI_AUTO_EXTERNAL_TOOL_INSTALL_EVALUATION_2026-05-29.md` | installed_required | `shellcheck` is installed and required at warning severity; `hyperfine` is installed and remains observational benchmark capture. |
 | ST-P2-02 | ShellCheck warning triage | medium | `plans/AI_AUTO_EXTERNAL_TOOL_INSTALL_EVALUATION_2026-05-29.md` | complete | Warning-severity findings are clean and enforced by `verify.sh`; info/style findings remain optional cleanup candidates only. |
 
@@ -224,14 +224,14 @@ sprint execution, and uses these buckets:
    audit tooling), and `ST-P1-36`/`ST-P1-37` (planning visual-artifact gate:
    complexity-triggered structure/flow/optimizer proposal and
    UI-wireframe-required-for-layout), and `ST-P1-38` (spec↔code alignment gate
-   inside the implement/review loop) are complete_contract. `ST-P1-20`,
+   inside the implement/review loop), and `ST-P1-42` (doc-budget plan/spec
+   filename-label convention) are complete_contract. `ST-P1-20`,
    `ST-P1-33` (Guidance Stage 2 Slice C, deferred per pilot measurement),
    `ST-P1-35` (reviewer sandbox-permission first-pass provisioning, registered
    for design only with a read-only-boundary-preservation gate), and `ST-P1-39`
-   through `ST-P1-42` (2026-06-04 JW odoo project-feedback intake:
-   framework-native wireframe/authoring kernels, preserve-standard-flow kernel,
-   and the doc-budget label convention —
-   registered for design only under
+   through `ST-P1-41` (2026-06-04 JW odoo project-feedback intake:
+   framework-native wireframe/authoring kernels and the preserve-standard-flow
+   kernel — registered for design only under
    `plans/AI_AUTO_PROJECT_FEEDBACK_VISUAL_SPEC_PLAN_2026-06-04.md`) remain
    later-gated design candidates, not active implementation approval.
 4. Policy-attention items are also blocking: complete-status notes that still
