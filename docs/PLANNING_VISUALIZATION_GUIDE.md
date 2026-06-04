@@ -101,6 +101,35 @@ Add Excalidraw when the plan needs a stakeholder-friendly view:
 Excalidraw should not replace risk gates, decision logs, acceptance criteria, or
 architecture ownership.
 
+## Planning Visual-Artifact Gate
+
+When a spec crosses a complexity or layout threshold, propose the visual and
+optimizer artifacts as work candidates before writing the final implementation
+instruction doc, instead of waiting for the user to ask. This is advisory:
+proposing the missing artifacts satisfies the gate, and the source spec stays
+authoritative with every visualization subordinate to it.
+
+Complexity signals (any one triggers the structure → flow → optimizer step):
+
+- two or more entangled state transitions
+- 1:N or bidirectional links between documents
+- many permission, button, or alert conditions
+- scope that includes PDF, dashboard, or migration work
+- the user explicitly mentions a structure, visualization, or optimizer tool
+
+Layout signals (any one additionally requires a UI wireframe distinct from the
+flow diagram): form-structure change, section layout, list columns, popup view,
+or button placement. A business/data flow Excalidraw is not a substitute for a
+UI wireframe when layout is the core requirement.
+
+Recommended order when triggered: keep the source spec authoritative, build a
+structure model (Structurizr or a structure table), visualize state and
+exception flows, add the required UI wireframe, then run an optimizer/reviewer
+pass for missing, conflicting, or over-built items. Work in micro units with a
+verify loop, and treat the pre-implementation-doc step as the checkpoint where
+the proposal must already be recorded. The report-only `Planning Visual Gate
+Audit` in the review context mirrors this and never blocks the gate.
+
 ## Recommended Folder Shape
 
 For project-level planning:

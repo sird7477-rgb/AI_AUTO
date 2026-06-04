@@ -967,6 +967,90 @@ def visual_artifact_policy(record: dict[str, Any]) -> ContractResult:
     return ContractResult(True, "visual_artifact_ready", {})
 
 
+PLANNING_VISUAL_COMPLEXITY_SIGNALS = {
+    "entangled_state_transitions",
+    "one_to_n_or_bidirectional_links",
+    "many_permission_button_alert_conditions",
+    "pdf_dashboard_migration_scope",
+    "explicit_visual_tool_mention",
+}
+PLANNING_VISUAL_LAYOUT_SIGNALS = {
+    "form_structure_change",
+    "section_layout",
+    "list_columns",
+    "popup_view",
+    "button_placement",
+}
+PLANNING_VISUAL_STAGES = {"interview", "planning", "pre_implementation_doc"}
+
+
+def planning_visual_gate_policy(record: dict[str, Any]) -> ContractResult:
+    """Advisory planning gate for visualization and UI-wireframe artifacts.
+
+    When a spec crosses complexity or layout thresholds, the structure model /
+    flow visual / optimizer pass (and, for layout-heavy specs, a UI wireframe)
+    should be proposed as work candidates before the final implementation
+    instruction doc. The gate is advisory: proposing the missing artifacts
+    satisfies it; the source spec stays authoritative and visualization is
+    subordinate to it. It never installs tools or owns completion.
+    """
+    required = {
+        "stage",
+        "spec_complexity_signals",
+        "layout_signals",
+        "structure_artifact_present",
+        "flow_visual_present",
+        "ui_wireframe_present",
+        "optimizer_pass_done",
+        "proposal_recorded",
+        "visualization_overrides_spec",
+    }
+    missing = sorted(field for field in required if field not in record)
+    if missing:
+        return ContractResult(False, "missing_planning_visual_gate_fields", {"missing": missing})
+    stage = record["stage"]
+    if stage not in PLANNING_VISUAL_STAGES:
+        return ContractResult(False, "invalid_planning_visual_gate_stage", {"stage": stage})
+    complexity = record.get("spec_complexity_signals") or []
+    layout = record.get("layout_signals") or []
+    if not isinstance(complexity, list) or not isinstance(layout, list):
+        return ContractResult(False, "invalid_planning_visual_gate_signals", {})
+    unknown = sorted(
+        [s for s in complexity if s not in PLANNING_VISUAL_COMPLEXITY_SIGNALS]
+        + [s for s in layout if s not in PLANNING_VISUAL_LAYOUT_SIGNALS]
+    )
+    if unknown:
+        return ContractResult(False, "unknown_planning_visual_gate_signal", {"signals": unknown})
+    # Source spec stays authoritative; visualization is a subordinate artifact.
+    if record.get("visualization_overrides_spec"):
+        return ContractResult(False, "planning_visual_gate_spec_must_stay_authoritative", {})
+    complexity_triggered = len(complexity) > 0
+    layout_triggered = len(layout) > 0
+    if not complexity_triggered and not layout_triggered:
+        return ContractResult(True, "planning_visual_gate_not_required", {})
+    proposed: list[str] = []
+    if complexity_triggered:
+        if not record.get("structure_artifact_present"):
+            proposed.append("structure_model")
+        if not record.get("flow_visual_present"):
+            proposed.append("flow_visual")
+        if not record.get("optimizer_pass_done"):
+            proposed.append("optimizer_pass")
+    if layout_triggered and not record.get("ui_wireframe_present"):
+        proposed.append("ui_wireframe")
+    if not proposed:
+        return ContractResult(True, "planning_visual_gate_satisfied", {})
+    # Missing artifacts must be proposed as candidates before the final
+    # implementation-instruction doc; proposing them satisfies the advisory gate.
+    if not record.get("proposal_recorded"):
+        return ContractResult(
+            False,
+            "planning_visual_gate_proposal_required",
+            {"proposed": proposed, "stage": stage},
+        )
+    return ContractResult(True, "planning_visual_gate_proposed", {"proposed": proposed})
+
+
 def product_challenge_policy(record: dict[str, Any]) -> ContractResult:
     required = {"request_shape", "task_size", "approved_plan_exists", "challenge_reason"}
     missing = sorted(field for field in required if field not in record)

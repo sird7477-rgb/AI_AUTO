@@ -12,6 +12,7 @@ from scripts.self_demo_contracts import (
     guidance_minimality_boundary,
     obsidian_autopush_policy,
     persona_lens_policy,
+    planning_visual_gate_policy,
     phase_scope_guard_policy,
     product_challenge_policy,
     process_cleanup_evidence,
@@ -1083,6 +1084,73 @@ def test_product_challenge_policy_triggers_only_for_broad_work() -> None:
     assert product_challenge_policy(small).reason == "product_challenge_skipped_routine_small"
     assert product_challenge_policy({**broad, "approved_plan_exists": True}).reason == (
         "product_challenge_skipped_approved_plan"
+    )
+
+
+def test_planning_visual_gate_policy_proposes_and_stays_advisory() -> None:
+    base = {
+        "stage": "planning",
+        "spec_complexity_signals": [],
+        "layout_signals": [],
+        "structure_artifact_present": False,
+        "flow_visual_present": False,
+        "ui_wireframe_present": False,
+        "optimizer_pass_done": False,
+        "proposal_recorded": False,
+        "visualization_overrides_spec": False,
+    }
+    # No complexity or layout signal: gate is not required.
+    assert planning_visual_gate_policy(base).reason == "planning_visual_gate_not_required"
+
+    # Missing required fields are reported.
+    assert planning_visual_gate_policy({"stage": "planning"}).reason == (
+        "missing_planning_visual_gate_fields"
+    )
+    # Unknown signals and bad stage are rejected.
+    assert planning_visual_gate_policy({**base, "stage": "build"}).reason == (
+        "invalid_planning_visual_gate_stage"
+    )
+    assert planning_visual_gate_policy({**base, "spec_complexity_signals": ["mystery"]}).reason == (
+        "unknown_planning_visual_gate_signal"
+    )
+
+    # Complexity-triggered with nothing produced yet and no proposal recorded:
+    # the structure/flow/optimizer artifacts must be proposed.
+    complex_unproposed = {**base, "spec_complexity_signals": ["entangled_state_transitions"]}
+    result = planning_visual_gate_policy(complex_unproposed)
+    assert result.reason == "planning_visual_gate_proposal_required"
+    assert result.data["proposed"] == ["structure_model", "flow_visual", "optimizer_pass"]
+
+    # Proposing the missing artifacts satisfies the advisory gate.
+    assert planning_visual_gate_policy({**complex_unproposed, "proposal_recorded": True}).reason == (
+        "planning_visual_gate_proposed"
+    )
+
+    # Layout-heavy specs require a UI wireframe distinct from the flow visual.
+    layout_only = {
+        **base,
+        "layout_signals": ["form_structure_change", "popup_view"],
+        "structure_artifact_present": True,
+        "flow_visual_present": True,
+        "optimizer_pass_done": True,
+    }
+    assert planning_visual_gate_policy(layout_only).data["proposed"] == ["ui_wireframe"]
+
+    # All artifacts present: gate is satisfied.
+    satisfied = {
+        **base,
+        "spec_complexity_signals": ["pdf_dashboard_migration_scope"],
+        "layout_signals": ["list_columns"],
+        "structure_artifact_present": True,
+        "flow_visual_present": True,
+        "ui_wireframe_present": True,
+        "optimizer_pass_done": True,
+    }
+    assert planning_visual_gate_policy(satisfied).reason == "planning_visual_gate_satisfied"
+
+    # Visualization can never override the authoritative source spec.
+    assert planning_visual_gate_policy({**satisfied, "visualization_overrides_spec": True}).reason == (
+        "planning_visual_gate_spec_must_stay_authoritative"
     )
 
 

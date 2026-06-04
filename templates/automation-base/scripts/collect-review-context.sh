@@ -816,6 +816,53 @@ EOF
   fi
 }
 
+write_planning_visual_gate_audit() {
+  local stage="${PLANNING_VISUAL_STAGE:-planning}"
+  local complexity="${PLANNING_VISUAL_COMPLEXITY_SIGNALS:-}"
+  local layout="${PLANNING_VISUAL_LAYOUT_SIGNALS:-}"
+  local has_complexity=0 has_layout=0 proposed=""
+
+  echo "audit_status: report_only"
+  echo "runtime_tool_install_required: false"
+  echo "stage: ${stage}"
+
+  if [ "${PLANNING_VISUAL_OVERRIDES_SPEC:-0}" = "1" ]; then
+    echo "planning_visual_status: spec_must_stay_authoritative"
+    echo "manual_review_required: true"
+    return 0
+  fi
+
+  [ -n "$(printf '%s' "${complexity}" | tr -d '[:space:],')" ] && has_complexity=1
+  [ -n "$(printf '%s' "${layout}" | tr -d '[:space:],')" ] && has_layout=1
+
+  if [ "${has_complexity}" -eq 0 ] && [ "${has_layout}" -eq 0 ]; then
+    echo "planning_visual_status: not_required"
+    return 0
+  fi
+
+  if [ "${has_complexity}" -eq 1 ]; then
+    [ "${PLANNING_VISUAL_STRUCTURE_PRESENT:-0}" = "1" ] || proposed="${proposed} structure_model"
+    [ "${PLANNING_VISUAL_FLOW_PRESENT:-0}" = "1" ] || proposed="${proposed} flow_visual"
+    [ "${PLANNING_VISUAL_OPTIMIZER_DONE:-0}" = "1" ] || proposed="${proposed} optimizer_pass"
+  fi
+  if [ "${has_layout}" -eq 1 ] && [ "${PLANNING_VISUAL_WIREFRAME_PRESENT:-0}" != "1" ]; then
+    proposed="${proposed} ui_wireframe"
+  fi
+
+  proposed="$(printf '%s' "${proposed}" | sed 's/^ *//')"
+  if [ -z "${proposed}" ]; then
+    echo "planning_visual_status: satisfied"
+    return 0
+  fi
+  echo "proposed_artifacts: ${proposed}"
+  if [ "${PLANNING_VISUAL_PROPOSAL_RECORDED:-0}" = "1" ]; then
+    echo "planning_visual_status: proposed"
+  else
+    echo "planning_visual_status: proposal_required"
+    echo "manual_review_required: true"
+  fi
+}
+
 write_browser_qa_evidence_audit() {
   local target="${BROWSER_QA_TARGET:-}"
   local report_only="${BROWSER_QA_REPORT_ONLY:-1}"
@@ -1062,6 +1109,10 @@ fi
   echo "## Visual Artifact Audit"
   echo
   write_visual_artifact_audit
+  echo
+  echo "## Planning Visual Gate Audit"
+  echo
+  write_planning_visual_gate_audit
   echo
   echo "## Browser QA Evidence Audit"
   echo

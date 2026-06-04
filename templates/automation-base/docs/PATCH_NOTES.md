@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.04.2
+
+- `collect-review-context.sh` adds a report-only `Planning Visual Gate Audit`.
+  Driven by `PLANNING_VISUAL_*` env signals, it mirrors the
+  `planning_visual_gate_policy` contract: when a spec crosses complexity or
+  layout thresholds it proposes the structure model / flow visual / optimizer
+  pass (and a UI wireframe for layout-heavy specs) as candidates, keeps the
+  source spec authoritative, and never blocks the gate.
+
 ## 2026.06.04.1
 
 - `OBSIDIAN_INTEGRATION.md` documents the large-reference baseline pattern:
