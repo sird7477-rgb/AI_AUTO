@@ -189,6 +189,7 @@ cp "${TEMPLATE_DIR}/scripts/verify.example.sh" "${TARGET_DIR}/scripts/verify.sh"
 domain_packs_dir="$(dirname "${TEMPLATE_DIR}")/domain-packs"
 if [ -d "${domain_packs_dir}" ]; then
   mkdir -p "${TARGET_DIR}/.omx/domain-packs"
+  mkdir -p "${TARGET_DIR}/.omx/domain-packs/.manifest"
   for pack_dir in "${domain_packs_dir}"/*; do
     if [ ! -d "${pack_dir}" ]; then
       continue
@@ -202,6 +203,45 @@ if [ -d "${domain_packs_dir}" ]; then
     fi
 
     cp -R "${pack_dir}" "${target_pack_dir}"
+    python3 - "${TARGET_DIR}" "${pack_name}" "${pack_dir}" "${TEMPLATE_DIR}/AI_AUTO_TEMPLATE_VERSION" <<'PY'
+import hashlib
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+target_dir = Path(sys.argv[1])
+pack_name = sys.argv[2]
+source_dir = Path(sys.argv[3])
+version_file = Path(sys.argv[4])
+
+files = {}
+for path in sorted(source_dir.rglob("*")):
+    if path.is_symlink():
+        raise SystemExit(f"refusing symlink in domain pack: {path}")
+    if path.is_file():
+        rel = path.relative_to(source_dir).as_posix()
+        files[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+root_digest = hashlib.sha256()
+for rel, digest in sorted(files.items()):
+    root_digest.update(rel.encode("utf-8"))
+    root_digest.update(b"\0")
+    root_digest.update(digest.encode("ascii"))
+    root_digest.update(b"\n")
+
+manifest = {
+    "schema": 1,
+    "pack": pack_name,
+    "source": f"templates/domain-packs/{pack_name}",
+    "template_version": version_file.read_text(encoding="utf-8").strip(),
+    "source_root_hash": root_digest.hexdigest(),
+    "installed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "files": files,
+}
+manifest_path = target_dir / ".omx/domain-packs/.manifest" / f"{pack_name}.json"
+manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
   done
 fi
 

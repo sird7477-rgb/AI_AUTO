@@ -32,6 +32,14 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Does not merge or patch files
   - With `--record-feedback`, records a sanitized project queue item through the trusted AI_AUTO feedback helper only when drift exists
 
+- `ai-domain-pack`
+  - Reports or refreshes optional domain-pack references under `.omx/domain-packs/`
+  - Uses sidecar manifests under `.omx/domain-packs/.manifest/` for a three-way comparison between installed copy, install-time baseline, and current AI_AUTO source
+  - `status` is read-only; `refresh` is dry-run by default and writes only with `--apply`
+  - Clean managed copies can be updated mechanically, exact-match legacy copies can be adopted, and locally modified, dirty legacy, unreadable, or deliberately removed packs fail closed
+  - Never merges pack content into project `AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`
+  - Advanced/test-only source overrides may set `AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE`; normal use should read source packs from the AI_AUTO checkout
+
 AI review context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked diffs
 use a lightweight diff-centered context; set `REVIEW_CONTEXT_DETAIL=full` for
 reviews that need planning artifacts or full workflow reference file excerpts.
@@ -160,6 +168,7 @@ Expected links:
     ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
     ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
+    ~/bin/ai-domain-pack -> ~/workspace/ai-lab/tools/ai-domain-pack
     ~/bin/ai-gstack-contract -> ~/workspace/ai-lab/tools/ai-gstack-contract
     ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
     ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
@@ -191,6 +200,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
     ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
+    ln -sf ~/workspace/ai-lab/tools/ai-domain-pack ~/bin/ai-domain-pack
     ln -sf ~/workspace/ai-lab/tools/ai-gstack-contract ~/bin/ai-gstack-contract
     ln -sf ~/workspace/ai-lab/tools/ai-refactor-scan ~/bin/ai-refactor-scan
     ln -sf ~/workspace/ai-lab/tools/ai-rebuild-plan ~/bin/ai-rebuild-plan

@@ -303,6 +303,10 @@ Use `docs/DOMAIN_PACKS.md` for the domain-pack lifecycle, selection, rejection,
 and application rules. Generic projects do not need a generic domain pack;
 continue with `automation-base` and any applicable completion packs when no
 installed domain pack matches.
+After the AI_AUTO source updates a pack, run `ai-domain-pack status` in the
+target project. `ai-domain-pack refresh --apply` updates only clean managed
+copies or exact-match legacy copies and never merges pack text into
+`AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`.
 
 Use `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` only when creating or changing a
 reusable source pack. Project onboarding should normally select, reject, defer,

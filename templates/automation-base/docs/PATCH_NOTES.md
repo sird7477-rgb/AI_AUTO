@@ -4,6 +4,24 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.1
+
+- Added the global `ai-domain-pack` helper for deterministic optional
+  domain-pack maintenance. It reports status read-only, keeps refresh dry-run by
+  default, writes only with `--apply`, compares installed copy / install-time
+  manifest / current AI_AUTO source, updates clean managed copies mechanically,
+  adopts exact-match legacy copies, and fails closed for local modifications,
+  dirty legacy copies, unreadable manifests, deliberately removed packs, or
+  experimental source branches.
+- New `aiinit` installs now seed sidecar domain-pack manifests under
+  `.omx/domain-packs/.manifest/` while still preserving pre-existing installed
+  pack directories. `ai-rebuild-plan`, global helper installation, bootstrap,
+  and doctor checks now know about `ai-domain-pack`.
+- `DOMAIN_PACKS.md`, `NEW_PROJECT_GUIDE.md`, `GLOBAL_TOOLS.md`, and the
+  template README now distinguish managed domain-pack reference refresh from
+  manual project instruction merges; refresh never patches project
+  `AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`.
+
 ## 2026.06.04.6
 
 - Added `feedback-resolve`, a dry-run-by-default global helper that resolves

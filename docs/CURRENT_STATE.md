@@ -297,6 +297,7 @@ Global helper tool sources are tracked in:
 - tools/ai-home
 - tools/ai-register
 - tools/ai-auto-template-status
+- tools/ai-domain-pack
 - tools/ai-refactor-scan
 - tools/ai-rebuild-plan
 - tools/ai-split-plan
@@ -319,6 +320,7 @@ Expected links:
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
 - ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
+- ~/bin/ai-domain-pack -> ~/workspace/ai-lab/tools/ai-domain-pack
 - ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
 - ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
 - ~/bin/ai-split-plan -> ~/workspace/ai-lab/tools/ai-split-plan

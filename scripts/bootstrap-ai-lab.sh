@@ -211,6 +211,13 @@ else
   suggest "chmod +x ${ROOT}/tools/ai-auto-template-status"
 fi
 
+if [ -x "${ROOT}/tools/ai-domain-pack" ]; then
+  say_pass "ai-domain-pack source helper is executable"
+else
+  say_fail "ai-domain-pack source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-domain-pack"
+fi
+
 if [ -x "${ROOT}/tools/ai-gstack-contract" ]; then
   say_pass "ai-gstack-contract source helper is executable"
 else
@@ -337,6 +344,7 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
   ensure_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   ensure_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
+  ensure_link "${HOME_DIR}/bin/ai-domain-pack" "${ROOT}/tools/ai-domain-pack"
   ensure_link "${HOME_DIR}/bin/ai-gstack-contract" "${ROOT}/tools/ai-gstack-contract"
   ensure_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
   ensure_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"

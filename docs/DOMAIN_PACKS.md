@@ -39,11 +39,24 @@ Odoo.
    as `AGENTS.md`, `docs/WORKFLOW.md`, and `scripts/verify.sh`.
 6. Record rejected packs as non-goals so generic projects do not inherit
    unrelated domain rules.
+7. During later maintenance, run `ai-domain-pack status` before using an
+   installed reference. Use `ai-domain-pack refresh --apply` only when the
+   status reports a clean managed update path.
 
 `aiinit` preserves an existing installed pack reference instead of overwriting
-it. A target repository's `.omx/domain-packs/` copy may therefore lag behind the
-AI_AUTO source pack and should be treated as onboarding context, not a managed
-template file.
+it. New installs write sidecar baseline manifests under
+`.omx/domain-packs/.manifest/`, so `ai-domain-pack` can compare the installed
+copy, the install-time baseline, and the current AI_AUTO source. Clean managed
+copies can be refreshed mechanically; locally modified copies, dirty legacy
+copies without a matching manifest, unreadable manifests, and deliberately
+removed packs fail closed or remain report-only. Refreshing a domain-pack
+reference never merges content into project `AGENTS.md`, `docs/WORKFLOW.md`, or
+`scripts/verify.sh`.
+
+Legacy projects that already have `.omx/domain-packs/<name>/` but no sidecar
+manifest are `adoptable` only when their installed files exactly match the
+current source pack. Otherwise they remain `unmanaged` and require manual review
+instead of a mechanical refresh.
 
 ## Standard Pack Layout
 
@@ -89,6 +102,9 @@ templates/domain-packs/<name>/
 ## Application Rules
 
 - Confirm the project domain before applying a pack.
+- Run `ai-domain-pack status` to check whether installed references are current,
+  cleanly outdated, adoptable legacy copies, unmanaged legacy copies, or
+  conflicts.
 - Read the installed copy from `.omx/domain-packs/<name>/` inside the target
   repository.
 - Merge only applicable content.

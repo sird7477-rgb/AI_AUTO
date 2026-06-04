@@ -99,6 +99,7 @@ python3 -m py_compile scripts/knowledge-notes.py
 python3 -m py_compile scripts/validate-odoo-kb.py
 python3 -m py_compile scripts/record-lane-decision.py
 python3 -m py_compile scripts/micro_work_contracts.py
+python3 -m py_compile tools/ai-domain-pack
 python3 -m py_compile tools/micro-work
 python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
 python3 -m py_compile templates/automation-base/scripts/todo-report.py
@@ -4929,6 +4930,111 @@ echo "[verify] testing domain pack copy preserves existing references..."
   AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
 
   grep -q "keep me" "${target_dir}/.omx/domain-packs/odoo/README.md"
+  test -f "${target_dir}/.omx/domain-packs/.manifest/browser-macro.json"
+  test ! -f "${target_dir}/.omx/domain-packs/.manifest/odoo.json"
+)
+
+echo "[verify] testing domain pack status and refresh helper..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_domain_pack_status_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_domain_pack_status_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
+
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${target_dir}" --pack odoo status > "${tmp_dir}/domain-current.out"
+  grep -q $'current\todoo' "${tmp_dir}/domain-current.out"
+  grep -q "domain_pack_refresh_enabled: yes" "${tmp_dir}/domain-current.out"
+  test -f "${target_dir}/.omx/domain-packs/.manifest/odoo.json"
+
+  cp -R templates/domain-packs "${tmp_dir}/source-packs"
+  printf '\nverify-refresh-change\n' >> "${tmp_dir}/source-packs/odoo/README.md"
+
+  before_hash="$(sha256sum "${target_dir}/.omx/domain-packs/odoo/README.md" | awk '{print $1}')"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${target_dir}" --pack odoo refresh > "${tmp_dir}/domain-dry.out"
+  after_dry_hash="$(sha256sum "${target_dir}/.omx/domain-packs/odoo/README.md" | awk '{print $1}')"
+  test "${before_hash}" = "${after_dry_hash}"
+  grep -q $'outdated_clean\todoo' "${tmp_dir}/domain-dry.out"
+
+  agents_before="$(sha256sum "${target_dir}/AGENTS.md" | awk '{print $1}')"
+  workflow_before="$(sha256sum "${target_dir}/docs/WORKFLOW.md" | awk '{print $1}')"
+  verify_before="$(sha256sum "${target_dir}/scripts/verify.sh" | awk '{print $1}')"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${target_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-apply.out"
+  grep -q $'updated\todoo' "${tmp_dir}/domain-apply.out"
+  grep -q "verify-refresh-change" "${target_dir}/.omx/domain-packs/odoo/README.md"
+  test "${agents_before}" = "$(sha256sum "${target_dir}/AGENTS.md" | awk '{print $1}')"
+  test "${workflow_before}" = "$(sha256sum "${target_dir}/docs/WORKFLOW.md" | awk '{print $1}')"
+  test "${verify_before}" = "$(sha256sum "${target_dir}/scripts/verify.sh" | awk '{print $1}')"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${target_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-idempotent.out"
+  grep -q $'current\todoo' "${tmp_dir}/domain-idempotent.out"
+
+  printf '\nlocal edit\n' >> "${target_dir}/.omx/domain-packs/odoo/README.md"
+  if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${target_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-conflict.out" 2>&1; then
+    echo "[verify] ai-domain-pack refreshed a locally modified pack"
+    exit 1
+  fi
+  grep -q $'conflict\todoo' "${tmp_dir}/domain-conflict.out"
+  grep -q "local edit" "${target_dir}/.omx/domain-packs/odoo/README.md"
+
+  legacy_dir="${tmp_dir}/legacy"
+  git -c init.defaultBranch=main init -q "${legacy_dir}"
+  mkdir -p "${legacy_dir}/.omx/domain-packs"
+  cp -R "${tmp_dir}/source-packs/odoo" "${legacy_dir}/.omx/domain-packs/odoo"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${legacy_dir}" --pack odoo status > "${tmp_dir}/domain-adoptable.out"
+  grep -q $'adoptable\todoo' "${tmp_dir}/domain-adoptable.out"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${legacy_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-adopted.out"
+  grep -q $'adopted\todoo' "${tmp_dir}/domain-adopted.out"
+  test -f "${legacy_dir}/.omx/domain-packs/.manifest/odoo.json"
+
+  dirty_legacy="${tmp_dir}/dirty-legacy"
+  git -c init.defaultBranch=main init -q "${dirty_legacy}"
+  mkdir -p "${dirty_legacy}/.omx/domain-packs"
+  cp -R "${tmp_dir}/source-packs/odoo" "${dirty_legacy}/.omx/domain-packs/odoo"
+  printf '\nlegacy local edit\n' >> "${dirty_legacy}/.omx/domain-packs/odoo/README.md"
+  if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${dirty_legacy}" --pack odoo refresh --apply > "${tmp_dir}/domain-unmanaged.out" 2>&1; then
+    echo "[verify] ai-domain-pack adopted a dirty legacy pack"
+    exit 1
+  fi
+  grep -q $'unmanaged\todoo' "${tmp_dir}/domain-unmanaged.out"
+
+  removed_dir="${tmp_dir}/removed"
+  git -c init.defaultBranch=main init -q "${removed_dir}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${removed_dir}" >/dev/null
+  rm -rf "${removed_dir}/.omx/domain-packs/odoo"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${removed_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-removed.out"
+  grep -q $'deliberately_removed\todoo' "${tmp_dir}/domain-removed.out"
+  test ! -e "${removed_dir}/.omx/domain-packs/odoo"
+
+  guarded_dir="${tmp_dir}/guarded"
+  git -c init.defaultBranch=main init -q "${guarded_dir}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${guarded_dir}" >/dev/null
+  if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/domain-pack ./tools/ai-domain-pack --target "${guarded_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-branch-guard.out" 2>&1; then
+    echo "[verify] ai-domain-pack refreshed from an experimental source branch"
+    exit 1
+  fi
+  grep -q "experimental_source_branch" "${tmp_dir}/domain-branch-guard.out"
+
+  if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${guarded_dir}" --pack missing-pack refresh --apply > "${tmp_dir}/domain-unknown-pack.out" 2>&1; then
+    echo "[verify] ai-domain-pack installed an unknown pack"
+    exit 1
+  fi
+  grep -q $'unknown_pack\tmissing-pack' "${tmp_dir}/domain-unknown-pack.out"
+  test ! -e "${guarded_dir}/.omx/domain-packs/missing-pack"
+  test ! -e "${guarded_dir}/.omx/domain-packs/.manifest/missing-pack.json"
+
+  if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${guarded_dir}" --pack ../odoo refresh --apply > "${tmp_dir}/domain-traversal-pack.out" 2>&1; then
+    echo "[verify] ai-domain-pack accepted a traversal pack name"
+    exit 1
+  fi
+  grep -q $'invalid_pack_name\t../odoo' "${tmp_dir}/domain-traversal-pack.out"
+  test ! -e "${guarded_dir}/.omx/odoo"
+  test ! -e "${guarded_dir}/.omx/domain-packs/.manifest/../odoo.json"
 )
 
 echo "[verify] testing automation template conflict guidance..."
@@ -5161,6 +5267,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
   ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
@@ -5184,6 +5291,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
@@ -5758,6 +5866,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
   ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
@@ -5781,6 +5890,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"
@@ -5814,6 +5924,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
+  ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
   ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
   ln -s "${tmp_home}/old-checkout/tools/ai-rebuild-plan" "${tmp_home}/bin/ai-rebuild-plan"
@@ -5837,6 +5948,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
+  test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
   test "$(readlink "${tmp_home}/bin/ai-rebuild-plan")" = "$(pwd)/tools/ai-rebuild-plan"

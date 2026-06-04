@@ -139,7 +139,9 @@ fi
 echo
 
 echo "4. Domain pack status"
-if [ -d "${git_root}/.omx/domain-packs" ]; then
+if [ -x "${AI_LAB_ROOT}/tools/ai-domain-pack" ]; then
+  "${AI_LAB_ROOT}/tools/ai-domain-pack" --target "$git_root" status || true
+elif [ -d "${git_root}/.omx/domain-packs" ]; then
   echo "- installed references:"
   find "${git_root}/.omx/domain-packs" -mindepth 1 -maxdepth 1 -type d -printf '  - %f\n' | sort
 else

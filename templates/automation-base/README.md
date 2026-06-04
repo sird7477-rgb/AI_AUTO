@@ -234,8 +234,11 @@ During the interview, decide which completion dimensions apply:
 - Domain packs: use `docs/DOMAIN_PACKS.md` to select, reject, or defer installed
   `.omx/domain-packs/` references. Use
   `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` when creating or changing reusable
-  packs. `automation-base` is the generic baseline; there is no separate
-  generic domain pack.
+  packs. Run `ai-domain-pack status` before relying on old installed
+  references; `ai-domain-pack refresh --apply` updates only clean managed or
+  exact-match legacy copies and never patches project instruction files.
+  `automation-base` is the generic baseline; there is no separate generic
+  domain pack.
 
 For dimensions that do not apply, record them as non-goals instead of merging
 their checks into the project workflow. After onboarding, unused completion pack
