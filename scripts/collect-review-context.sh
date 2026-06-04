@@ -816,6 +816,86 @@ EOF
   fi
 }
 
+write_spec_code_alignment_audit() {
+  local patch_size="${SPEC_ALIGN_PATCH_SIZE:-small}"
+  local applying="${SPEC_ALIGN_APPLYING_SCOPE_CHANGE:-0}"
+  local rows="${SPEC_ALIGN_ROWS:-}"
+  local triggered=0 row id status unresolved="" invalid="" mapped=0
+
+  echo "audit_status: report_only"
+  echo "runtime_tool_install_required: false"
+  echo "patch_size: ${patch_size}"
+  echo "applying_reviewer_scope_change: ${applying}"
+
+  # Mirror the contract: an unknown patch size is rejected rather than silently
+  # treated as not-required.
+  case "${patch_size}" in
+    small|medium|large) ;;
+    *)
+      echo "spec_code_alignment_status: invalid_patch_size"
+      echo "manual_review_required: true"
+      return 0
+      ;;
+  esac
+
+  case "${patch_size}" in
+    medium|large) triggered=1 ;;
+  esac
+  [ "${applying}" = "1" ] && triggered=1
+
+  if [ "${triggered}" -eq 0 ]; then
+    echo "spec_code_alignment_status: not_required"
+    return 0
+  fi
+
+  # Rows are "id:status" pairs separated by commas. A malformed row (no colon,
+  # empty id, or a status outside the contract's allowed set) is reported as
+  # invalid rather than counted as a clear mapping.
+  local IFS=','
+  for row in ${rows}; do
+    row="$(printf '%s' "${row}" | sed 's/^ *//; s/ *$//')"
+    [ -n "${row}" ] || continue
+    case "${row}" in
+      *:*) ;;
+      *) invalid="${invalid} ${row}"; continue ;;
+    esac
+    id="$(printf '%s' "${row%%:*}" | sed 's/ *$//')"
+    status="$(printf '%s' "${row#*:}" | sed 's/^ *//')"
+    if [ -z "${id}" ]; then
+      invalid="${invalid} ${row}"
+      continue
+    fi
+    case "${status}" in
+      aligned|updated|not_applicable) mapped=1 ;;
+      blocked|needs_user_confirmation) mapped=1; unresolved="${unresolved} ${id}" ;;
+      *) invalid="${invalid} ${id}" ;;
+    esac
+  done
+  unset IFS
+
+  invalid="$(printf '%s' "${invalid}" | sed 's/^ *//')"
+  if [ -n "${invalid}" ]; then
+    echo "invalid_rows: ${invalid}"
+    echo "spec_code_alignment_status: invalid_rows"
+    echo "manual_review_required: true"
+    return 0
+  fi
+
+  if [ "${mapped}" -eq 0 ]; then
+    echo "spec_code_alignment_status: mapping_required"
+    echo "manual_review_required: true"
+    return 0
+  fi
+
+  unresolved="$(printf '%s' "${unresolved}" | sed 's/^ *//')"
+  if [ -n "${unresolved}" ]; then
+    echo "unresolved_rows: ${unresolved}"
+    echo "spec_code_alignment_status: attention"
+  else
+    echo "spec_code_alignment_status: clear"
+  fi
+}
+
 write_planning_visual_gate_audit() {
   local stage="${PLANNING_VISUAL_STAGE:-planning}"
   local complexity="${PLANNING_VISUAL_COMPLEXITY_SIGNALS:-}"
@@ -1113,6 +1193,10 @@ fi
   echo "## Planning Visual Gate Audit"
   echo
   write_planning_visual_gate_audit
+  echo
+  echo "## Spec Code Alignment Audit"
+  echo
+  write_spec_code_alignment_audit
   echo
   echo "## Browser QA Evidence Audit"
   echo

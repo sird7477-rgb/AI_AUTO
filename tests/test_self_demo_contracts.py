@@ -13,6 +13,7 @@ from scripts.self_demo_contracts import (
     obsidian_autopush_policy,
     persona_lens_policy,
     planning_visual_gate_policy,
+    spec_code_alignment_policy,
     phase_scope_guard_policy,
     product_challenge_policy,
     process_cleanup_evidence,
@@ -1085,6 +1086,59 @@ def test_product_challenge_policy_triggers_only_for_broad_work() -> None:
     assert product_challenge_policy({**broad, "approved_plan_exists": True}).reason == (
         "product_challenge_skipped_approved_plan"
     )
+
+
+def test_spec_code_alignment_policy_requires_mapping_when_triggered() -> None:
+    aligned_rows = [
+        {"id": "SR-1", "status": "aligned"},
+        {"id": "SR-2", "status": "updated"},
+        {"id": "SR-3", "status": "not_applicable"},
+    ]
+    # Small patch with no reviewer scope change: gate is not required.
+    small = {"patch_size": "small", "spec_rows": [], "applying_reviewer_scope_change": False}
+    assert spec_code_alignment_policy(small).reason == "spec_code_alignment_not_required"
+
+    # Missing fields are reported.
+    assert spec_code_alignment_policy({"patch_size": "medium"}).reason == (
+        "missing_spec_alignment_fields"
+    )
+    assert spec_code_alignment_policy({**small, "patch_size": "huge"}).reason == (
+        "invalid_spec_alignment_patch_size"
+    )
+
+    # Medium+ patch with no mapping: the mapping is mandatory.
+    assert spec_code_alignment_policy({**small, "patch_size": "medium"}).reason == (
+        "spec_code_alignment_mapping_required"
+    )
+    # Applying a reviewer scope change on a small patch still triggers the gate.
+    assert spec_code_alignment_policy({**small, "applying_reviewer_scope_change": True}).reason == (
+        "spec_code_alignment_mapping_required"
+    )
+
+    # Invalid row shape/status is rejected.
+    assert spec_code_alignment_policy(
+        {"patch_size": "large", "spec_rows": [{"id": "", "status": "aligned"}], "applying_reviewer_scope_change": False}
+    ).reason == "invalid_spec_alignment_row"
+    assert spec_code_alignment_policy(
+        {"patch_size": "large", "spec_rows": [{"id": "SR-1", "status": "mystery"}], "applying_reviewer_scope_change": False}
+    ).reason == "invalid_spec_alignment_row"
+
+    # A complete clear mapping passes.
+    assert spec_code_alignment_policy(
+        {"patch_size": "large", "spec_rows": aligned_rows, "applying_reviewer_scope_change": False}
+    ).reason == "spec_code_alignment_clear"
+
+    # Blocked / needs_user_confirmation rows are surfaced as report-only attention.
+    attention = spec_code_alignment_policy(
+        {
+            "patch_size": "medium",
+            "spec_rows": aligned_rows + [{"id": "SR-4", "status": "blocked"}, {"id": "SR-5", "status": "needs_user_confirmation"}],
+            "applying_reviewer_scope_change": True,
+        }
+    )
+    assert attention.accepted
+    assert attention.reason == "spec_code_alignment_attention"
+    assert attention.data["unresolved"] == ["SR-4", "SR-5"]
 
 
 def test_planning_visual_gate_policy_proposes_and_stays_advisory() -> None:

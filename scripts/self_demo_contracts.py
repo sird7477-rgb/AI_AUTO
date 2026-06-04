@@ -1051,6 +1051,52 @@ def planning_visual_gate_policy(record: dict[str, Any]) -> ContractResult:
     return ContractResult(True, "planning_visual_gate_proposed", {"proposed": proposed})
 
 
+SPEC_ALIGNMENT_ROW_STATES = {
+    "aligned",
+    "updated",
+    "not_applicable",
+    "blocked",
+    "needs_user_confirmation",
+}
+SPEC_ALIGNMENT_PATCH_SIZES = {"small", "medium", "large"}
+
+
+def spec_code_alignment_policy(record: dict[str, Any]) -> ContractResult:
+    """Spec-row to code-evidence mapping gate inside the implement/review loop.
+
+    After a medium-or-larger patch, and before applying a reviewer-suggested
+    scope change, each spec row must be mapped to code evidence and classified
+    aligned/updated/not_applicable/blocked/needs_user_confirmation. The mapping
+    itself is mandatory when triggered; blocked or needs_user_confirmation rows
+    are surfaced as report-only attention rather than auto-blocking. This extends
+    artifact-sync and the review-revision loop; it does not own completion.
+    """
+    required = {"patch_size", "spec_rows", "applying_reviewer_scope_change"}
+    missing = sorted(field for field in required if field not in record)
+    if missing:
+        return ContractResult(False, "missing_spec_alignment_fields", {"missing": missing})
+    patch_size = record["patch_size"]
+    if patch_size not in SPEC_ALIGNMENT_PATCH_SIZES:
+        return ContractResult(False, "invalid_spec_alignment_patch_size", {"patch_size": patch_size})
+    rows = record.get("spec_rows")
+    if not isinstance(rows, list):
+        return ContractResult(False, "invalid_spec_alignment_rows", {})
+    triggered = patch_size in {"medium", "large"} or bool(record.get("applying_reviewer_scope_change"))
+    if not triggered:
+        return ContractResult(True, "spec_code_alignment_not_required", {})
+    if not rows:
+        return ContractResult(False, "spec_code_alignment_mapping_required", {})
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("id") or row.get("status") not in SPEC_ALIGNMENT_ROW_STATES:
+            return ContractResult(False, "invalid_spec_alignment_row", {"row": row})
+    unresolved = sorted(
+        str(row["id"]) for row in rows if row["status"] in {"blocked", "needs_user_confirmation"}
+    )
+    if unresolved:
+        return ContractResult(True, "spec_code_alignment_attention", {"unresolved": unresolved})
+    return ContractResult(True, "spec_code_alignment_clear", {})
+
+
 def product_challenge_policy(record: dict[str, Any]) -> ContractResult:
     required = {"request_shape", "task_size", "approved_plan_exists", "challenge_reason"}
     missing = sorted(field for field in required if field not in record)

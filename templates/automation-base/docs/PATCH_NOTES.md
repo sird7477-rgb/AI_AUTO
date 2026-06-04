@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.04.3
+
+- `collect-review-context.sh` adds a report-only `Spec Code Alignment Audit`.
+  Driven by `SPEC_ALIGN_*` env signals, it mirrors the
+  `spec_code_alignment_policy` contract: after a medium-or-larger patch, or
+  before applying a reviewer-suggested scope change, the spec-row to code
+  mapping is mandatory. It validates each row like the contract — an unknown
+  patch size or a malformed/unknown-status row is reported as invalid rather
+  than counted as a clear mapping — and `blocked` / `needs_user_confirmation`
+  rows are surfaced as report-only attention. The audit never blocks the gate.
+
 ## 2026.06.04.2
 
 - `collect-review-context.sh` adds a report-only `Planning Visual Gate Audit`.
