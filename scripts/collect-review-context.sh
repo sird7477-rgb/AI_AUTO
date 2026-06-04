@@ -816,6 +816,47 @@ EOF
   fi
 }
 
+write_standard_flow_preservation_audit() {
+  local hides="${STANDARD_FLOW_HIDES_STANDARD_FIELD:-0}"
+  local relationship="${STANDARD_FLOW_CUSTOM_RELATIONSHIP:-syncs_with_standard}"
+
+  echo "audit_status: report_only"
+  echo "runtime_tool_install_required: false"
+  echo "hides_or_replaces_standard_field: ${hides}"
+
+  if [ "${hides}" != "1" ]; then
+    echo "standard_flow_status: not_affected"
+    return 0
+  fi
+
+  echo "custom_field_relationship: ${relationship}"
+  case "${relationship}" in
+    syncs_with_standard|extends_standard|parallel_replacement) ;;
+    *)
+      echo "standard_flow_status: invalid_custom_field_relationship"
+      echo "manual_review_required: true"
+      return 0
+      ;;
+  esac
+
+  if [ "${STANDARD_FLOW_IMPACT_MAP_RECORDED:-0}" != "1" ]; then
+    echo "standard_flow_status: impact_map_required"
+    echo "manual_review_required: true"
+    return 0
+  fi
+  if [ "${STANDARD_FLOW_REGRESSION_EVIDENCE:-0}" != "1" ]; then
+    echo "standard_flow_status: regression_required"
+    echo "manual_review_required: true"
+    return 0
+  fi
+  if [ "${relationship}" = "parallel_replacement" ]; then
+    echo "standard_flow_status: parallel_replacement_blocked"
+    echo "manual_review_required: true"
+    return 0
+  fi
+  echo "standard_flow_status: preserved"
+}
+
 write_spec_code_alignment_audit() {
   local patch_size="${SPEC_ALIGN_PATCH_SIZE:-small}"
   local applying="${SPEC_ALIGN_APPLYING_SCOPE_CHANGE:-0}"
@@ -1197,6 +1238,10 @@ fi
   echo "## Spec Code Alignment Audit"
   echo
   write_spec_code_alignment_audit
+  echo
+  echo "## Standard Flow Preservation Audit"
+  echo
+  write_standard_flow_preservation_audit
   echo
   echo "## Browser QA Evidence Audit"
   echo

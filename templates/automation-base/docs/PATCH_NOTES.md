@@ -4,6 +4,18 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.04.5
+
+- `collect-review-context.sh` adds a report-only `Standard Flow Preservation
+  Audit`. Driven by `STANDARD_FLOW_*` env signals, it mirrors the
+  `standard_flow_preservation_policy` contract: hiding or replacing a
+  framework's standard business field behind custom UI requires an impact map
+  plus regression evidence, a parallel-replacement-only custom field is flagged,
+  and the audit never blocks the gate. `PLANNING_VISUALIZATION_GUIDE.md` adds
+  framework-neutral wireframe-structure, wireframe-authoring, and
+  standard-flow-preservation kernels; framework-specific names stay
+  project-owned.
+
 ## 2026.06.04.4
 
 - `doc-budget.sh` adds a plan/spec filename-label convention: files named

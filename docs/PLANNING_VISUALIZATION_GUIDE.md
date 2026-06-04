@@ -130,6 +130,34 @@ verify loop, and treat the pre-implementation-doc step as the checkpoint where
 the proposal must already be recorded. The report-only `Planning Visual Gate
 Audit` in the review context mirrors this and never blocks the gate.
 
+## Framework-Native Wireframe And Standard-Flow Kernels
+
+These framework-neutral kernels apply when a project builds on an application
+framework (such as an ERP, CMS, or admin platform). The framework-specific
+details — exact view regions, component names, and field/flow names — stay in
+the project's own runbook or domain pack.
+
+Framework-native wireframe structure: a UI wireframe should mirror the real
+view skeleton of the target framework, not a generic box diagram. Inspect the
+existing view definition or a screenshot first, and label each artifact with the
+reference screen it follows (for example "framework form view" or
+"framework dialog"). Keep any generic block diagram separate from the
+implementation-facing wireframe.
+
+Wireframe-authoring conventions: name the source of truth for each artifact;
+use a consistent notation for direct comments (a distinct callout shape plus an
+arrow), for mapped / hand-entered / read-only / hidden fields, and for shared
+attachment or document actions; lay arrows out so they do not cover the UI; and
+keep a save-time checklist so the artifact stays consistent with the spec.
+
+Preserve standard business flow before custom UI: before hiding or replacing a
+framework's standard business fields behind custom UI, record an impact map of
+the affected standard follow-on flow and regression evidence, and make a new
+custom field sync with or extend the standard field rather than only adding a
+parallel replacement. The report-only `Standard Flow Preservation Audit` in the
+review context mirrors this kernel from `STANDARD_FLOW_*` signals; the
+framework-specific field names and any hard block stay project-owned.
+
 ## Recommended Folder Shape
 
 For project-level planning:

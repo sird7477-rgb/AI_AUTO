@@ -1097,6 +1097,35 @@ def spec_code_alignment_policy(record: dict[str, Any]) -> ContractResult:
     return ContractResult(True, "spec_code_alignment_clear", {})
 
 
+def standard_flow_preservation_policy(record: dict[str, Any]) -> ContractResult:
+    """Preserve a framework's standard business flow before custom UI.
+
+    Framework-neutral kernel of the Odoo purchase-bill incident: before hiding
+    or replacing a framework's standard business fields behind custom UI, an
+    impact map of the affected standard follow-on flow plus regression evidence
+    is required, and a new custom field should sync with or extend the standard
+    field rather than only adding a parallel replacement. The framework-specific
+    field/flow names and any hard review-gate block stay project-owned; this
+    contract only checks the evidence shape.
+    """
+    required = {"hides_or_replaces_standard_field", "custom_field_relationship"}
+    missing = sorted(field for field in required if field not in record)
+    if missing:
+        return ContractResult(False, "missing_standard_flow_fields", {"missing": missing})
+    if not record.get("hides_or_replaces_standard_field"):
+        return ContractResult(True, "standard_flow_not_affected", {})
+    relationship = record["custom_field_relationship"]
+    if relationship not in {"syncs_with_standard", "extends_standard", "parallel_replacement"}:
+        return ContractResult(False, "invalid_custom_field_relationship", {"relationship": relationship})
+    if not record.get("impact_map_recorded"):
+        return ContractResult(False, "standard_flow_impact_map_required", {})
+    if not record.get("regression_evidence"):
+        return ContractResult(False, "standard_flow_regression_required", {})
+    if relationship == "parallel_replacement":
+        return ContractResult(False, "standard_flow_parallel_replacement_blocked", {})
+    return ContractResult(True, "standard_flow_preserved", {"relationship": relationship})
+
+
 def product_challenge_policy(record: dict[str, Any]) -> ContractResult:
     required = {"request_shape", "task_size", "approved_plan_exists", "challenge_reason"}
     missing = sorted(field for field in required if field not in record)

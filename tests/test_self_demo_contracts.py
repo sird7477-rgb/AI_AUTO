@@ -14,6 +14,7 @@ from scripts.self_demo_contracts import (
     persona_lens_policy,
     planning_visual_gate_policy,
     spec_code_alignment_policy,
+    standard_flow_preservation_policy,
     phase_scope_guard_policy,
     product_challenge_policy,
     process_cleanup_evidence,
@@ -1086,6 +1087,46 @@ def test_product_challenge_policy_triggers_only_for_broad_work() -> None:
     assert product_challenge_policy({**broad, "approved_plan_exists": True}).reason == (
         "product_challenge_skipped_approved_plan"
     )
+
+
+def test_standard_flow_preservation_policy_blocks_parallel_replacement() -> None:
+    base = {
+        "hides_or_replaces_standard_field": True,
+        "custom_field_relationship": "extends_standard",
+        "impact_map_recorded": True,
+        "regression_evidence": True,
+    }
+    # Not touching standard fields: nothing to enforce.
+    assert standard_flow_preservation_policy(
+        {"hides_or_replaces_standard_field": False, "custom_field_relationship": "syncs_with_standard"}
+    ).reason == "standard_flow_not_affected"
+
+    # Missing fields and invalid relationship are reported.
+    assert standard_flow_preservation_policy({"hides_or_replaces_standard_field": True}).reason == (
+        "missing_standard_flow_fields"
+    )
+    assert standard_flow_preservation_policy({**base, "custom_field_relationship": "mystery"}).reason == (
+        "invalid_custom_field_relationship"
+    )
+
+    # Hiding a standard field requires an impact map and regression evidence.
+    assert standard_flow_preservation_policy({**base, "impact_map_recorded": False}).reason == (
+        "standard_flow_impact_map_required"
+    )
+    assert standard_flow_preservation_policy({**base, "regression_evidence": False}).reason == (
+        "standard_flow_regression_required"
+    )
+
+    # A parallel replacement field is blocked even with full evidence.
+    assert standard_flow_preservation_policy(
+        {**base, "custom_field_relationship": "parallel_replacement"}
+    ).reason == "standard_flow_parallel_replacement_blocked"
+
+    # Syncing with or extending the standard field passes.
+    assert standard_flow_preservation_policy(base).reason == "standard_flow_preserved"
+    assert standard_flow_preservation_policy(
+        {**base, "custom_field_relationship": "syncs_with_standard"}
+    ).accepted
 
 
 def test_spec_code_alignment_policy_requires_mapping_when_triggered() -> None:
