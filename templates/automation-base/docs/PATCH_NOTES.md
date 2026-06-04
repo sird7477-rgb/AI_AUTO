@@ -4,6 +4,21 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.04.1
+
+- `OBSIDIAN_INTEGRATION.md` documents the large-reference baseline pattern:
+  split large ERP schema/SDK/version references into `index`, `slim`, and
+  `full` tiers; run micro-level consistency checks before vault storage; and
+  keep one curated baseline in the vault instead of copying full exports into
+  every project.
+- `summarize-ai-reviews.sh` infers the active principal from the run summary's
+  `Active principal:` line when `AI_AUTO_PRINCIPAL` is unset, so a post-hoc
+  summary or a Claude/Gemini principal-rotation run is not misclassified as
+  Codex-only coverage. A trailing CR is stripped and an unsupported inferred
+  token keeps the existing default rather than blanking the principal.
+  `test-review-summary.sh` covers the inferred-principal and unsupported-token
+  paths.
+
 ## 2026.06.03.3
 
 - MicroWork (ST-P1-21), part 2: `collect-review-context.sh` adds a self-contained,

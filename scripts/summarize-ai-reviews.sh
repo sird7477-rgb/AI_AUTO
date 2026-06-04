@@ -7,12 +7,14 @@ OUT_DIR="${OUT_DIR:-.omx/review-results}"
 mkdir -p "${OUT_DIR}"
 
 normalize_principal_runtime() {
-  case "${AI_AUTO_PRINCIPAL:-codex}" in
+  local principal="${1:-${AI_AUTO_PRINCIPAL:-codex}}"
+
+  case "${principal}" in
     ""|codex) echo "codex" ;;
     claude) echo "claude" ;;
     gemini|agy) echo "gemini" ;;
     *)
-      echo "unsupported principal runtime: ${AI_AUTO_PRINCIPAL}" >&2
+      echo "unsupported principal runtime: ${principal}" >&2
       return 2
       ;;
   esac
@@ -928,6 +930,17 @@ TASK
 }
 
 REVIEW_RUN_SUMMARY_FILE="$(latest_file 'review-summary-*.md')"
+if [ -z "${AI_AUTO_PRINCIPAL:-}" ] && [ -n "${REVIEW_RUN_SUMMARY_FILE}" ] && [ -f "${REVIEW_RUN_SUMMARY_FILE}" ]; then
+  # Strip a trailing CR so a CRLF-written summary does not yield an unsupported
+  # principal token. Keep the existing default when the inferred value is empty
+  # or unsupported, instead of blanking ACTIVE_PRINCIPAL.
+  INFERRED_ACTIVE_PRINCIPAL="$(sed -n 's/^- Active principal: //p' "${REVIEW_RUN_SUMMARY_FILE}" | tail -1 | tr -d '\r')"
+  if [ -n "${INFERRED_ACTIVE_PRINCIPAL}" ]; then
+    if INFERRED_NORMALIZED_PRINCIPAL="$(normalize_principal_runtime "${INFERRED_ACTIVE_PRINCIPAL}" 2>/dev/null)"; then
+      ACTIVE_PRINCIPAL="${INFERRED_NORMALIZED_PRINCIPAL}"
+    fi
+  fi
+fi
 REVIEW_CONTEXT_FILE="$(manifest_file 'Context' 'latest-review-context.md')"
 CLAUDE_FILE="$(manifest_file 'Claude result' 'claude-review-*.md')"
 GEMINI_FILE="$(manifest_file 'Gemini result' 'gemini-review-*.md')"

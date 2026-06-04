@@ -47,6 +47,27 @@ paths, or raw `.omx` runtime dumps.
 Sanitized references to `.omx/feedback/queue.jsonl` are allowed as
 `source_artifact`; copying the raw queue body into a note is not.
 
+## Large Reference Baselines
+
+For large technical references such as ERP schema exports, SDK inventories, or
+version baselines, split storage into three tiers before writing to a vault:
+
+- `index`: a human-readable Markdown note with frontmatter, source, counts,
+  usage order, limitations, and verification evidence
+- `slim`: compact JSON or CSV indexes used for routine lookup and coding work
+- `full`: source extracts kept as reference evidence and opened only when the
+  slim index is insufficient
+
+Run micro-level consistency checks before vault storage: expected files, JSON or
+CSV parseability, summary counts, full-to-slim count parity, required lookup
+keys, reference integrity, duplicate keys, frontmatter rules, and secret-value
+patterns. Treat keyword hits on schema field names as advisory only; fail only
+on copied credential values or secret-like payloads.
+
+Do not copy the same full baseline into every project. Store one curated
+baseline in the vault and let project repositories reference its baseline ID,
+source artifact, and vault path.
+
 ## Daily Workflow
 
 1. Start from the project index or vault Project Home view.

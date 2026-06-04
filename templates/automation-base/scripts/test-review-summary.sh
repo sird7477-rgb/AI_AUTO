@@ -171,6 +171,7 @@ write_run_summary() {
   local fallback_summary="$6"
   local split_manifest="${7:-none}"
   local context_file="${8:-none}"
+  local active_principal="${9:-none}"
 
   cat > "${dir}/review-summary-current.md" <<MSG
 # AI Review Summary
@@ -188,6 +189,9 @@ write_run_summary() {
 - Codex fallback summary: ${fallback_summary}
 - Split context manifest: ${split_manifest}
 MSG
+  if [ "${active_principal}" != "none" ]; then
+    printf -- '- Active principal: %s\n' "${active_principal}" >> "${dir}/review-summary-current.md"
+  fi
 }
 
 summary_value() {
@@ -381,6 +385,50 @@ case_principal_subagent_two_substitutes() {
     "${dir}/codex-fallback-summary-current.md"
 
   assert_summary "principal_subagent_two_substitutes" "proceed" "principal_subagent_substitute" 0
+}
+
+case_principal_inferred_from_run_summary() {
+  local dir="${TMP_ROOT}/principal_inferred_from_run_summary"
+  mkdir -p "${dir}"
+
+  # With AI_AUTO_PRINCIPAL unset, summarize infers the active principal from the
+  # run summary's "Active principal:" line. Here it is claude, so claude is the
+  # self-skipped principal and gemini + codex provide principal_rotation coverage.
+  write_skipped "${dir}/claude-review-current.md"
+  write_verdict "${dir}/gemini-review-current.md" "approve"
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" "none" "claude"
+
+  AI_AUTO_PRINCIPAL='' assert_summary "principal_inferred_from_run_summary" "proceed" "principal_rotation" 0
+}
+
+case_principal_inferred_unsupported_token_keeps_default() {
+  local dir="${TMP_ROOT}/principal_inferred_unsupported_token"
+  mkdir -p "${dir}"
+
+  # An unsupported "Active principal:" token must not blank the principal: the
+  # default (codex) is kept, so claude-skipped + gemini-approve + codex-approve
+  # is read as degraded single-external-plus-codex coverage, not a clean rotation.
+  write_skipped "${dir}/claude-review-current.md"
+  write_verdict "${dir}/gemini-review-current.md" "approve"
+  write_verdict "${dir}/codex-architect-current.md" "approve"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "informational_only"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/codex-architect-current.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md" \
+    "none" "none" "bogus-principal"
+
+  AI_AUTO_PRINCIPAL='' assert_summary "principal_inferred_unsupported_token" "proceed_degraded" "single_external_plus_codex_fallback" 0
 }
 
 case_principal_rotation_with_substitute() {
@@ -1207,6 +1255,8 @@ case_single_external_plus_codex
 case_codex_only_degraded
 case_principal_subagent_substitute
 case_principal_subagent_two_substitutes
+case_principal_inferred_from_run_summary
+case_principal_inferred_unsupported_token_keeps_default
 case_principal_rotation_with_substitute
 case_gemini_principal_rotation_with_substitute
 case_failed_external_codex_only_degraded
