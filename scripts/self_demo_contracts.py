@@ -1171,6 +1171,23 @@ def browser_qa_evidence_policy(record: dict[str, Any]) -> ContractResult:
         return ContractResult(False, "browser_qa_redaction_required", {})
     if record.get("visual_verdict") and not (record.get("verify_evidence") and record.get("review_gate_evidence")):
         return ContractResult(False, "visual_verdict_not_completion_authority", {})
+    if record.get("detailed_behavior_request"):
+        required_rows = {
+            "layout",
+            "click_targets",
+            "input_handling",
+            "alerts_errors",
+            "sync_update",
+            "business_mapping",
+        }
+        rows = record.get("micro_plan_rows") or {}
+        if not isinstance(rows, dict):
+            return ContractResult(False, "browser_qa_micro_plan_invalid", {})
+        missing_rows = sorted(
+            row for row in required_rows if rows.get(row) not in {"evidence", "not_applicable"}
+        )
+        if missing_rows:
+            return ContractResult(False, "browser_qa_micro_plan_required", {"missing": missing_rows})
     return ContractResult(True, "browser_qa_evidence_ready", {})
 
 
@@ -1210,6 +1227,8 @@ def review_revision_loop_policy(record: dict[str, Any]) -> ContractResult:
         return ContractResult(False, "review_revision_second_pass_requires_diff", {})
     if record.get("repeated_verification_failure") or not record.get("verification_passed"):
         return ContractResult(False, "review_revision_verification_failure", {})
+    if record.get("targeted_recheck") and not record.get("targeted_scope_ok", True):
+        return ContractResult(False, "review_revision_targeted_recheck_scope_expanded", {})
     return ContractResult(True, "review_revision_task_ready", {})
 
 
@@ -1232,6 +1251,58 @@ def tool_adoption_status_policy(record: dict[str, Any]) -> ContractResult:
     if state == "reference_only" and record.get("installed"):
         return ContractResult(True, "tool_reference_installed_info", {})
     return ContractResult(True, "tool_adoption_status_ready", {})
+
+
+def reviewer_first_pass_permission_policy(record: dict[str, Any]) -> ContractResult:
+    required = {"reviewer", "declared_posture", "retry_posture", "widens_privilege"}
+    missing = sorted(field for field in required if field not in record)
+    if missing:
+        return ContractResult(False, "missing_reviewer_first_pass_fields", {"missing": missing})
+    allowed = {
+        "codex": "read_only_sandbox",
+        "claude": "plan_permission_mode",
+        "gemini": "sandboxed_prompt",
+    }
+    reviewer = record["reviewer"]
+    if reviewer not in allowed:
+        return ContractResult(False, "reviewer_first_pass_unknown_reviewer", {"reviewer": reviewer})
+    if record["declared_posture"] != allowed[reviewer]:
+        return ContractResult(False, "reviewer_first_pass_wrong_posture", {})
+    if record["retry_posture"] != record["declared_posture"]:
+        return ContractResult(False, "reviewer_first_pass_retry_posture_drift", {})
+    if record.get("widens_privilege"):
+        return ContractResult(False, "reviewer_first_pass_must_not_widen_privilege", {})
+    return ContractResult(True, "reviewer_first_pass_posture_ready", {})
+
+
+def guidance_stage2_consolidation_policy(record: dict[str, Any]) -> ContractResult:
+    required = {"user_requested", "stage2_report_exists", "edits_guidance", "expected_gain_percent"}
+    missing = sorted(field for field in required if field not in record)
+    if missing:
+        return ContractResult(False, "missing_guidance_stage2_fields", {"missing": missing})
+    if not record.get("user_requested"):
+        return ContractResult(False, "guidance_stage2_user_request_required", {})
+    if not record.get("stage2_report_exists"):
+        return ContractResult(False, "guidance_stage2_report_required", {})
+    if record.get("edits_guidance") and record.get("expected_gain_percent", 0) < 10:
+        return ContractResult(False, "guidance_stage2_low_roi_blocks_edits", {})
+    return ContractResult(True, "guidance_stage2_regular_gate_ready", {})
+
+
+def domain_pack_retrospective_policy(record: dict[str, Any]) -> ContractResult:
+    required = {"project_closeout", "sanitized_feedback", "separates_reusable", "updates_project_specific_rules"}
+    missing = sorted(field for field in required if field not in record)
+    if missing:
+        return ContractResult(False, "missing_domain_pack_retrospective_fields", {"missing": missing})
+    if not record.get("project_closeout"):
+        return ContractResult(False, "domain_pack_closeout_required", {})
+    if not record.get("sanitized_feedback"):
+        return ContractResult(False, "domain_pack_sanitized_feedback_required", {})
+    if not record.get("separates_reusable"):
+        return ContractResult(False, "domain_pack_reusable_classification_required", {})
+    if record.get("updates_project_specific_rules"):
+        return ContractResult(False, "domain_pack_must_not_promote_project_specific_rules", {})
+    return ContractResult(True, "domain_pack_retrospective_ready", {})
 
 
 def completion_pack_routing_policy(record: dict[str, Any]) -> ContractResult:

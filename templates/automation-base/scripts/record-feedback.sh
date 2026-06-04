@@ -2,6 +2,7 @@
 set -euo pipefail
 
 FEEDBACK_FILE="${OMX_FEEDBACK_QUEUE_FILE:-.omx/feedback/queue.jsonl}"
+LOCK_TIMEOUT_SECONDS="${OMX_FEEDBACK_QUEUE_LOCK_TIMEOUT_SECONDS:-10}"
 TYPE="failure_pattern"
 REPEAT_KEY=""
 SUMMARY=""
@@ -105,29 +106,45 @@ done
 
 mkdir -p "$(dirname "$FEEDBACK_FILE")"
 
-python3 - "$FEEDBACK_FILE" "$TYPE" "$REPEAT_KEY" "$SUMMARY" "$RESOLUTION" "$SEVERITY" "$SURFACE" "$SOURCE" <<'PY'
+python3 - "$FEEDBACK_FILE" "$LOCK_TIMEOUT_SECONDS" "$TYPE" "$REPEAT_KEY" "$SUMMARY" "$RESOLUTION" "$SEVERITY" "$SURFACE" "$SOURCE" <<'PY'
+import fcntl
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 path = Path(sys.argv[1])
+lock_timeout = int(sys.argv[2])
 entry = {
-    "type": sys.argv[2],
-    "repeat_key": sys.argv[3],
-    "summary": sys.argv[4],
-    "severity": sys.argv[6],
+    "type": sys.argv[3],
+    "repeat_key": sys.argv[4],
+    "summary": sys.argv[5],
+    "severity": sys.argv[7],
     "status": "open",
     "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
 }
 
-if sys.argv[5]:
-    entry["resolution"] = sys.argv[5]
-if sys.argv[7]:
-    entry["surface"] = sys.argv[7]
+if sys.argv[6]:
+    entry["resolution"] = sys.argv[6]
+if sys.argv[9]:
+    entry["source"] = sys.argv[9]
 if sys.argv[8]:
-    entry["source"] = sys.argv[8]
+    entry["surface"] = sys.argv[8]
 
-path.open("a", encoding="utf-8").write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+lock_path = Path(f"{path}.lockfile")
+lock_path.parent.mkdir(parents=True, exist_ok=True)
+with lock_path.open("a+", encoding="utf-8") as lock_handle:
+    deadline = time.monotonic() + lock_timeout
+    while True:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit(f"[feedback] could not lock feedback queue: {path}")
+            time.sleep(0.1)
+
+    path.open("a", encoding="utf-8").write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
 print(f"[feedback] recorded {entry['type']}:{entry['repeat_key']} in {path}")
 PY

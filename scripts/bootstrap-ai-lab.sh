@@ -288,6 +288,13 @@ else
   suggest "chmod +x ${ROOT}/tools/feedback-collect"
 fi
 
+if [ -x "${ROOT}/tools/feedback-resolve" ]; then
+  say_pass "feedback-resolve source helper is executable"
+else
+  say_fail "feedback-resolve source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/feedback-resolve"
+fi
+
 if [ -x "${ROOT}/tools/knowledge-collect" ]; then
   say_pass "knowledge-collect source helper is executable"
 else
@@ -341,6 +348,7 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/ai-plan-review" "${ROOT}/tools/ai-plan-review"
   ensure_link "${HOME_DIR}/bin/ai-plan-export" "${ROOT}/tools/ai-plan-export"
   ensure_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
+  ensure_link "${HOME_DIR}/bin/feedback-resolve" "${ROOT}/tools/feedback-resolve"
   ensure_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   ensure_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   ensure_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"

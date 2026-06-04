@@ -4,6 +4,29 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.04.6
+
+- Added `feedback-resolve`, a dry-run-by-default global helper that resolves
+  feedback queue items by `repeat_key` across the same discovery surface as
+  `feedback-collect`. It uses per-queue locks, refuses unknown keys and
+  secret-like notes/sources, and avoids timestamp churn for idempotent repeated
+  resolutions.
+- Review-loop and browser-QA promotion refinements: accepted reviewer findings
+  can now carry a targeted-recheck boundary that falls back to manual/full
+  review when scope expands, and detailed UI behavior verification now requires
+  a micro-plan covering layout, click targets, input handling, alerts/errors,
+  sync/update behavior, and business mapping before browser/CDP evidence is
+  treated as sufficient.
+- Regularized remaining later-gated proposals as explicit contracts: reviewer
+  first-pass posture must match the existing read-only reviewer mode, Stage 2
+  guidance consolidation remains user-request/report-gated and blocks low-ROI
+  edits, and domain-pack retrospectives require sanitized closeout feedback plus
+  reusable-vs-project-specific separation.
+- Documented scoped plain-guide folder publishing for Obsidian with reusable
+  template wording: frontmatter-free guide bundles should use their own
+  inventory/source/link validator before vault copy instead of being forced
+  through `knowledge-notes.py` validation.
+
 ## 2026.06.04.5
 
 - `collect-review-context.sh` adds a report-only `Standard Flow Preservation

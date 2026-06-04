@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
+PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
+WORKSPACE="${AI_AUTO_WORKSPACE_ROOT:-${HOME:-}/workspace}"
+WORKSPACE_SCAN_MAX_DEPTH="${AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH:-2}"
+LOCK_TIMEOUT_SECONDS="${OMX_FEEDBACK_QUEUE_LOCK_TIMEOUT_SECONDS:-10}"
+
+REPEAT_KEY=""
+STATUS="resolved"
+NOTE=""
+SOURCE=""
+ALL_MATCHES=0
+WRITE=0
+EXPLICIT_PATHS=()
+
+usage() {
+  cat <<'USAGE'
+Usage: feedback-resolve --repeat-key KEY [options] [workspace-path] [repo-path...]
+
+Resolve AI_AUTO feedback queue items discovered like feedback-collect.
+Dry-run is the default; pass --write to mutate queue files.
+
+Options:
+  --repeat-key KEY  stable feedback grouping key to update
+  --status STATUS   open, resolved, ignored, or deferred (default: resolved)
+  --note TEXT       short sanitized handling note; required with --write/--apply
+  --source TEXT     command, review file, or user request reference; required with --write/--apply
+  --all             update all non-terminal items with the repeat key
+  --write, --apply  perform the queued update; otherwise preview only
+  --dry-run         preview only
+  --workspace PATH  workspace root to scan (default: ~/workspace)
+
+Environment:
+  OMX_FEEDBACK_QUEUE_FILE
+  AI_AUTO_PROJECT_REGISTRY_FILE
+  AI_AUTO_WORKSPACE_ROOT
+  AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH
+  OMX_FEEDBACK_QUEUE_LOCK_TIMEOUT_SECONDS
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repeat-key)
+      REPEAT_KEY="${2:-}"
+      shift
+      ;;
+    --status)
+      STATUS="${2:-}"
+      shift
+      ;;
+    --note)
+      NOTE="${2:-}"
+      shift
+      ;;
+    --source)
+      SOURCE="${2:-}"
+      shift
+      ;;
+    --all)
+      ALL_MATCHES=1
+      ;;
+    --write|--apply)
+      WRITE=1
+      ;;
+    --dry-run)
+      WRITE=0
+      ;;
+    --workspace)
+      WORKSPACE="${2:-}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "[feedback-resolve] unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [ -z "${WORKSPACE_SET_BY_ARG:-}" ]; then
+        WORKSPACE="$1"
+        WORKSPACE_SET_BY_ARG=1
+      else
+        EXPLICIT_PATHS+=("$1")
+      fi
+      ;;
+  esac
+  shift
+done
+
+if [ -z "${REPEAT_KEY}" ]; then
+  usage >&2
+  exit 2
+fi
+
+case "${STATUS}" in
+  open|resolved|ignored|deferred) ;;
+  *)
+    echo "[feedback-resolve] unsupported status: ${STATUS}" >&2
+    exit 2
+    ;;
+esac
+
+case "${WORKSPACE_SCAN_MAX_DEPTH}" in
+  ''|*[!0-9]*|0)
+    echo "[feedback-resolve] AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH must be a positive integer" >&2
+    exit 2
+    ;;
+esac
+
+secret_pattern='(^|[^[:alnum:]_])((password|passwd|pwd|token|secret|authorization|client[_-]?secret|api[_-]?key|apikey|access[_-]?key|private[_ -]?key)[[:space:]]*[:=]|bearer[[:space:]]+|ssh-rsa|ssh-ed25519|begin[[:space:]]+[^[:space:]]*[[:space:]]*private[[:space:]]+key)'
+for value in "${REPEAT_KEY}" "${STATUS}" "${NOTE}" "${SOURCE}"; do
+  if printf '%s' "${value}" | grep -Eiq "${secret_pattern}"; then
+    echo "[feedback-resolve] refusing to store content that looks secret-bearing" >&2
+    exit 2
+  fi
+done
+if [ "${WRITE}" -eq 1 ] && { [ -z "${NOTE}" ] || [ -z "${SOURCE}" ]; }; then
+  echo "[feedback-resolve] --write requires both --note and --source for audit traceability" >&2
+  exit 2
+fi
+
+declare -A QUEUE_PATHS
+
+add_queue_file() {
+  local queue_file="$1"
+  [ -n "${queue_file}" ] || return 0
+  [ -f "${queue_file}" ] || return 0
+  queue_file="$(cd "$(dirname "${queue_file}")" && pwd -P)/$(basename "${queue_file}")"
+  QUEUE_PATHS["${queue_file}"]=1
+}
+
+add_repo() {
+  local repo="$1"
+  [ -n "${repo}" ] || return 0
+  if git -C "${repo}" rev-parse --show-toplevel >/dev/null 2>&1; then
+    repo="$(git -C "${repo}" rev-parse --show-toplevel)"
+    add_queue_file "${repo}/.omx/feedback/queue.jsonl"
+  fi
+}
+
+if [ -n "${OMX_FEEDBACK_QUEUE_FILE:-}" ]; then
+  add_queue_file "${OMX_FEEDBACK_QUEUE_FILE}"
+fi
+
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+  add_repo "$(git rev-parse --show-toplevel)"
+fi
+
+add_repo "${WORKSPACE}"
+
+if [ -f "${PROJECT_REGISTRY}" ]; then
+  while IFS=$'\t' read -r _registered_at path _name _branch _origin; do
+    add_repo "${path}"
+  done < "${PROJECT_REGISTRY}"
+fi
+
+if [ -d "${WORKSPACE}" ]; then
+  while IFS= read -r gitdir; do
+    add_repo "$(dirname "${gitdir}")"
+  done < <(find "${WORKSPACE}" -mindepth 1 -maxdepth "${WORKSPACE_SCAN_MAX_DEPTH}" \( -type d -o -type f \) -name .git 2>/dev/null | sort)
+fi
+
+for repo in "${EXPLICIT_PATHS[@]}"; do
+  add_repo "${repo}"
+done
+
+if [ "${#QUEUE_PATHS[@]}" -eq 0 ]; then
+  echo "[feedback-resolve] no feedback queue files found" >&2
+  exit 1
+fi
+
+python3 - "${WRITE}" "${REPEAT_KEY}" "${STATUS}" "${NOTE}" "${SOURCE}" "${ALL_MATCHES}" "${LOCK_TIMEOUT_SECONDS}" "${!QUEUE_PATHS[@]}" <<'PY'
+import fcntl
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+write = sys.argv[1] == "1"
+repeat_key = sys.argv[2]
+status = sys.argv[3]
+note = sys.argv[4]
+source = sys.argv[5]
+all_matches = sys.argv[6] == "1"
+lock_timeout = int(sys.argv[7])
+queue_paths = [Path(value) for value in sys.argv[8:]]
+terminal_statuses = {"resolved", "ignored"}
+
+
+def load_items(path: Path) -> list[dict]:
+    items = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"[feedback-resolve] invalid JSON {path}:{lineno}: {exc}") from exc
+        if not isinstance(item, dict):
+            raise SystemExit(f"[feedback-resolve] expected object {path}:{lineno}")
+        items.append(item)
+    return items
+
+
+def target_indexes(items: list[dict]) -> list[int]:
+    matching = [
+        index
+        for index, item in enumerate(items)
+        if item.get("repeat_key") == repeat_key
+    ]
+    candidates = [
+        index
+        for index in matching
+        if items[index].get("status", "open") not in terminal_statuses
+    ]
+    if not candidates:
+        candidates = [
+            index
+            for index in matching
+            if desired_matches(items[index])
+        ]
+    if all_matches:
+        return candidates
+    return candidates[-1:] if candidates else []
+
+
+def desired_matches(item: dict) -> bool:
+    if item.get("status") != status:
+        return False
+    if note and item.get("status_note") != note:
+        return False
+    if source and item.get("status_source") != source:
+        return False
+    if status in terminal_statuses and not item.get(f"{status}_at"):
+        return False
+    return True
+
+
+matched = 0
+changed = 0
+for path in queue_paths:
+    lock_path = Path(f"{path}.lockfile")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        deadline = time.monotonic() + lock_timeout
+        while True:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise SystemExit(f"[feedback-resolve] could not lock feedback queue: {path}")
+                time.sleep(0.1)
+
+        items = load_items(path)
+        indexes = target_indexes(items)
+        if not indexes:
+            continue
+        matched += len(indexes)
+        already_done = all(desired_matches(items[index]) for index in indexes)
+        if not write:
+            print(f"[feedback-resolve] dry-run: would mark {len(indexes)} item(s) {status} for {repeat_key} in {path}")
+            continue
+        if already_done:
+            print(f"[feedback-resolve] unchanged: {len(indexes)} item(s) already {status} for {repeat_key} in {path}")
+            continue
+
+        updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        for index in indexes:
+            item = items[index]
+            item["status"] = status
+            item["status_updated_at"] = updated_at
+            if status in terminal_statuses and not item.get(f"{status}_at"):
+                item[f"{status}_at"] = updated_at
+            if note:
+                item["status_note"] = note
+            if source:
+                item["status_source"] = source
+        tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp_path.write_text(
+            "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in items),
+            encoding="utf-8",
+        )
+        tmp_path.replace(path)
+        changed += len(indexes)
+        print(f"[feedback-resolve] marked {len(indexes)} item(s) {status} for {repeat_key} in {path}")
+
+if matched == 0:
+    raise SystemExit(f"[feedback-resolve] unknown repeat_key: {repeat_key}")
+if write:
+    print(f"[feedback-resolve] complete: matched={matched} changed={changed}")
+else:
+    print(f"[feedback-resolve] dry-run complete: matched={matched} changed=0")
+PY

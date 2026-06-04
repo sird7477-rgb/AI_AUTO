@@ -181,6 +181,19 @@ Validate and index notes:
   --output <vault-path>/AI_AUTO/AI_AUTO_INDEX.md
 ```
 
+For reviewed plain-guide folders that are not `knowledge-notes.py` frontmatter
+notes, use a scoped validator for that folder before copying it into the vault.
+Example:
+
+```bash
+./scripts/validate-<guide-folder>.py
+rsync -a --delete "knowledge/<guide-folder>/" "<vault-path>/AI_AUTO/<guide-folder>/"
+```
+
+The generic `knowledge-notes.py validate` / `index` commands ignore top-level
+plain-guide folders because those files do not use the helper's frontmatter
+schema. Validate the folder itself with its scoped validator before copying.
+
 Promote an older flat inbox vault after review and backup:
 
 ```bash

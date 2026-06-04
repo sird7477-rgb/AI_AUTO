@@ -189,11 +189,15 @@ Out of scope:
 - `docs/INTERVIEW_PLAN_LAYER.md` defines the reusable interview, plan, ambiguity, and execution-gate contract.
 - `docs/CURRENT_STATE.md` is the current handoff document for completed automation capabilities, known limitations, and next-stage boundaries.
 - `docs/GLOBAL_TOOLS.md` describes `aiinit`, `workspace-scan`, and bootstrap helper setup.
+- `docs/OBSIDIAN_INTEGRATION.md` describes curated Obsidian note publishing and scoped plain-guide folder pushes.
 - `docs/NEW_PROJECT_GUIDE.md` explains how to apply the generic automation template to another repository.
 - `docs/DOMAIN_PACKS.md` explains reusable domain packs and their application lifecycle.
 - `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` defines quality rules for creating or changing domain packs.
 - `docs/MULTI_AI_COLLABORATION.md` documents principal-runtime review rotation, substitute reviewer coverage, degraded-review behavior, and command keywords.
 - `docs/AI_PRINCIPAL_RUNTIMES.md` documents active principal selection, permission parity, reviewer rotation, and shared artifact paths.
+- `knowledge/Odoo.sh KB/` contains the promoted Odoo 19.0 / Odoo.sh working KB prepared for Obsidian.
+- `plans/AI_AUTO_FEEDBACK_QUEUE_REGULAR_PROMOTION_PLAN_2026-06-04.md` tracks the seven-item regular-promotion execution plan.
+- `plans/ODOO_SH_KB_DRAFT_PLAN_2026-06-04.md` tracks the Odoo.sh KB promotion and Obsidian publish plan.
 - `plans/AI_AUTO_STRUCTURAL_WEAKNESS_BACKLOG.md` tracks structural workflow improvements that should stay outside immediate patch churn.
 - `.omx/plans/ralplan-ai-dev-testbed-cleanup.md` contains the approved cleanup plan for this pass.
 

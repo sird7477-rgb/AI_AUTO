@@ -96,6 +96,7 @@ python3 -m py_compile scripts/benchmark-command.py
 python3 -m py_compile scripts/todo-report.py
 python3 -m py_compile scripts/capture-knowledge-drafts.py
 python3 -m py_compile scripts/knowledge-notes.py
+python3 -m py_compile scripts/validate-odoo-kb.py
 python3 -m py_compile scripts/record-lane-decision.py
 python3 -m py_compile scripts/micro_work_contracts.py
 python3 -m py_compile tools/micro-work
@@ -3572,6 +3573,16 @@ PY
     --notes-dir "${notes_dir}" \
     --output "${notes_dir}/AI_AUTO_INDEX.md" >/dev/null
   grep -q "Docker daemon unreachable during verify" "${notes_dir}/AI_AUTO_INDEX.md"
+  mkdir -p "${notes_dir}/Odoo.sh KB"
+  printf '# Plain Guide\n\nNo frontmatter on purpose.\n' > "${notes_dir}/Odoo.sh KB/00_Index.md"
+  "${repo_root}/scripts/knowledge-notes.py" validate "${notes_dir}" >/dev/null
+  "${repo_root}/scripts/knowledge-notes.py" index \
+    --notes-dir "${notes_dir}" \
+    --output "${notes_dir}/AI_AUTO_INDEX.md" >/dev/null
+  if grep -q "Plain Guide" "${notes_dir}/AI_AUTO_INDEX.md"; then
+    echo "knowledge helper indexed plain-guide folder as a knowledge note"
+    exit 1
+  fi
   grep -q "\[\[Projects/ai-lab\]\]" "${notes_dir}/"*.md
   test -f "${notes_dir}/Projects/ai-lab.md"
   test -f "${notes_dir}/Projects/example-project.md"
@@ -4488,6 +4499,24 @@ PY
 
   if command -v flock >/dev/null 2>&1; then
     (
+      exec 9>".omx/feedback/queue.jsonl.lockfile"
+      flock 9
+      sleep 1
+    ) &
+    writer_lock_holder=$!
+    sleep 0.2
+    OMX_FEEDBACK_QUEUE_LOCK_TIMEOUT_SECONDS=5 "${repo_root}/scripts/record-feedback.sh" \
+      --type improvement \
+      --repeat-key feedback:shared-lock-writer \
+      --summary "feedback writer shares queue lock with resolver" \
+      --severity low > "${tmp_dir}/feedback-writer-lock.out"
+    wait "$writer_lock_holder"
+    grep -q "feedback:shared-lock-writer" .omx/feedback/queue.jsonl
+    grep -q "recorded improvement:feedback:shared-lock-writer" "${tmp_dir}/feedback-writer-lock.out"
+  fi
+
+  if command -v flock >/dev/null 2>&1; then
+    (
       exec 8>".omx/feedback/queue.jsonl.lockfile"
       flock 8
       sleep 3
@@ -4875,6 +4904,9 @@ grep -q "쉬운 한국어" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "plan artifact's Goal" "docs/INTERVIEW_PLAN_LAYER.md"
 grep -q "plan artifact's Goal" "templates/automation-base/docs/INTERVIEW_PLAN_LAYER.md"
 grep -q "field-test incident evidence" "templates/automation-base/docs/UI_COMPLETION.md"
+grep -q "detailed UI behavior verification requests" "templates/automation-base/docs/UI_COMPLETION.md"
+grep -q "validate-<guide-folder>.py" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
+./scripts/validate-odoo-kb.py
 grep -q "Approval Friction" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "실패 패턴 피드백" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "필요한 완료팩" "docs/NEW_PROJECT_GUIDE.md"
@@ -5056,7 +5088,7 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   grep -q "must be a positive integer" "${tmp_dir}/invalid-depth.out"
   mkdir -p "${target_dir}/.omx/feedback" "${outside_dir}/.omx/feedback"
   mkdir -p "${nested_dir}/.omx/feedback"
-  printf '%s\n' '{"created_at":"2026-05-11T00:00:00Z","repeat_key":"registered:item","severity":"high","summary":"registered queue item","type":"improvement"}' > "${target_dir}/.omx/feedback/queue.jsonl"
+  printf '%s\n' '{"created_at":"2026-05-11T00:00:00Z","repeat_key":"registered:item","severity":"high","status":"open","summary":"registered queue item","type":"improvement"}' > "${target_dir}/.omx/feedback/queue.jsonl"
   printf '%s\n' '{"created_at":"2026-05-11T00:00:01Z","repeat_key":"outside:item","severity":"medium","status":"resolved","summary":"outside queue item","type":"failure_pattern"}' > "${outside_dir}/.omx/feedback/queue.jsonl"
   printf '%s\n' '{"created_at":"2026-05-11T00:00:02Z","repeat_key":"nested:item","severity":"low","summary":"nested queue item","type":"improvement"}' > "${nested_dir}/.omx/feedback/queue.jsonl"
   feedback_output="${tmp_dir}/feedback.out"
@@ -5071,6 +5103,32 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   grep -q "nested:item" "${feedback_output}"
   AI_AUTO_PROJECT_REGISTRY_FILE="${tmp_dir}/empty-registry.tsv" ./tools/feedback-collect "${nested_dir}" > "${tmp_dir}/feedback-single-repo.out"
   grep -q "nested:item" "${tmp_dir}/feedback-single-repo.out"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-resolve --repeat-key registered:item --note "verified promotion" --source "verify fixture" "${workspace_dir}" > "${tmp_dir}/feedback-resolve-dry.out"
+  grep -q "dry-run: would mark 1 item(s) resolved for registered:item" "${tmp_dir}/feedback-resolve-dry.out"
+  grep -q '"status":"open"' "${target_dir}/.omx/feedback/queue.jsonl"
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-resolve --repeat-key registered:item --write "${workspace_dir}" > "${tmp_dir}/feedback-resolve-missing-evidence.out" 2>&1; then
+    echo "feedback-resolve accepted write without note/source"
+    exit 1
+  fi
+  grep -q -- "--write requires both --note and --source" "${tmp_dir}/feedback-resolve-missing-evidence.out"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-resolve --repeat-key registered:item --note "verified promotion" --source "verify fixture" --write "${workspace_dir}" > "${tmp_dir}/feedback-resolve-write.out"
+  grep -q "complete: matched=1 changed=1" "${tmp_dir}/feedback-resolve-write.out"
+  grep -q '"status": "resolved"' "${target_dir}/.omx/feedback/queue.jsonl"
+  before_hash="$(sha256sum "${target_dir}/.omx/feedback/queue.jsonl" | awk '{print $1}')"
+  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-resolve --repeat-key registered:item --note "verified promotion" --source "verify fixture" --write "${workspace_dir}" > "${tmp_dir}/feedback-resolve-idempotent.out"
+  after_hash="$(sha256sum "${target_dir}/.omx/feedback/queue.jsonl" | awk '{print $1}')"
+  test "${before_hash}" = "${after_hash}"
+  grep -q "unchanged: 1 item(s) already resolved" "${tmp_dir}/feedback-resolve-idempotent.out"
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-resolve --repeat-key missing:item "${workspace_dir}" > "${tmp_dir}/feedback-resolve-missing.out" 2>&1; then
+    echo "feedback-resolve accepted unknown repeat_key"
+    exit 1
+  fi
+  grep -q "unknown repeat_key: missing:item" "${tmp_dir}/feedback-resolve-missing.out"
+  if AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-resolve --repeat-key registered:item --note "token=secret" "${workspace_dir}" > "${tmp_dir}/feedback-resolve-secret.out" 2>&1; then
+    echo "feedback-resolve accepted secret-like note"
+    exit 1
+  fi
+  grep -q "refusing to store content" "${tmp_dir}/feedback-resolve-secret.out"
   if AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=bad AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/feedback-collect "${workspace_dir}" > "${tmp_dir}/feedback-invalid-depth.out" 2>&1; then
     echo "feedback-collect accepted invalid discovery depth"
     exit 1
@@ -5114,6 +5172,7 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
+  ln -s "${tmp_home}/old-checkout/tools/feedback-resolve" "${tmp_home}/bin/feedback-resolve"
   ln -s "${tmp_home}/old-checkout/tools/knowledge-collect" "${tmp_home}/bin/knowledge-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -5136,6 +5195,7 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
   test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
+  test "$(readlink "${tmp_home}/bin/feedback-resolve")" = "$(pwd)/tools/feedback-resolve"
   test "$(readlink "${tmp_home}/bin/knowledge-collect")" = "$(pwd)/tools/knowledge-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
   test "$(HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" AI_AUTO --path)" = "$(pwd)"
@@ -5709,6 +5769,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
+  ln -s "${tmp_home}/old-checkout/tools/feedback-resolve" "${tmp_home}/bin/feedback-resolve"
   ln -s "${tmp_home}/old-checkout/tools/knowledge-collect" "${tmp_home}/bin/knowledge-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -5731,6 +5792,7 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
   test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
+  test "$(readlink "${tmp_home}/bin/feedback-resolve")" = "$(pwd)/tools/feedback-resolve"
   test "$(readlink "${tmp_home}/bin/knowledge-collect")" = "$(pwd)/tools/knowledge-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
@@ -5763,6 +5825,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-review" "${tmp_home}/bin/ai-plan-review"
   ln -s "${tmp_home}/old-checkout/tools/ai-plan-export" "${tmp_home}/bin/ai-plan-export"
   ln -s "${tmp_home}/old-checkout/tools/feedback-collect" "${tmp_home}/bin/feedback-collect"
+  ln -s "${tmp_home}/old-checkout/tools/feedback-resolve" "${tmp_home}/bin/feedback-resolve"
   ln -s "${tmp_home}/old-checkout/tools/knowledge-collect" "${tmp_home}/bin/knowledge-collect"
   ln -s "${tmp_home}/old-checkout/tools/workspace-scan" "${tmp_home}/bin/workspace-scan"
 
@@ -5785,6 +5848,7 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-plan-review")" = "$(pwd)/tools/ai-plan-review"
   test "$(readlink "${tmp_home}/bin/ai-plan-export")" = "$(pwd)/tools/ai-plan-export"
   test "$(readlink "${tmp_home}/bin/feedback-collect")" = "$(pwd)/tools/feedback-collect"
+  test "$(readlink "${tmp_home}/bin/feedback-resolve")" = "$(pwd)/tools/feedback-resolve"
   test "$(readlink "${tmp_home}/bin/knowledge-collect")" = "$(pwd)/tools/knowledge-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )

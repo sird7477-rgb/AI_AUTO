@@ -51,6 +51,18 @@ def test_browser_qa_audit_blocks_fix_loop_and_unsafe_cdp(tmp_path: Path) -> None
     unsafe_cdp = _run_context(repo, CDP_ACCESS="1", LOOPBACK_BOUND="1", USER_LAUNCHED_OR_ISOLATED="0", APPROVAL_RECORDED="1")
     assert "qa_status: qa_block:credential_boundary" in unsafe_cdp
 
+    detailed_unsafe_cdp = _run_context(
+        repo,
+        CDP_ACCESS="1",
+        LOOPBACK_BOUND="1",
+        USER_LAUNCHED_OR_ISOLATED="0",
+        APPROVAL_RECORDED="1",
+        DETAILED_BEHAVIOR_REQUEST="1",
+        MICRO_PLAN="layout:evidence",
+    )
+    assert "qa_status: qa_block:credential_boundary" in detailed_unsafe_cdp
+    assert "qa_attention:micro_plan_required" not in detailed_unsafe_cdp
+
     safe_cdp = _run_context(
         repo,
         CDP_ACCESS="1",
@@ -71,3 +83,25 @@ def test_browser_qa_audit_flags_redaction_and_visual_authority(tmp_path: Path) -
 
     visual_only = _run_context(repo, VISUAL_VERDICT="1", VERIFY_EVIDENCE="1", REVIEW_GATE_EVIDENCE="0")
     assert "qa_status: qa_warning:visual_not_completion_authority" in visual_only
+
+
+def test_browser_qa_audit_requires_micro_plan_for_detailed_ui_behavior(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _prepare_repo(repo)
+
+    missing = _run_context(repo, DETAILED_BEHAVIOR_REQUEST="1", MICRO_PLAN="layout:evidence")
+    assert "micro_plan_required: true" in missing
+    assert "qa_status: qa_attention:micro_plan_required" in missing
+    assert "missing_micro_plan_rows:" in missing
+    assert "click_targets" in missing
+
+    complete = _run_context(
+        repo,
+        DETAILED_BEHAVIOR_REQUEST="1",
+        MICRO_PLAN=(
+            "layout:evidence,click_targets:evidence,input_handling:evidence,"
+            "alerts_errors:not_applicable,sync_update:evidence,business_mapping:evidence"
+        ),
+    )
+    assert "micro_plan_status: complete" in complete
+    assert "qa_status: qa_ok:report_only" in complete

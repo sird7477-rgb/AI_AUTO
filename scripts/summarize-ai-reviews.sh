@@ -807,6 +807,9 @@ write_review_revision_task() {
   local cycle_count="${REVIEW_REVISION_CYCLE_COUNT:-1}"
   local verification_passed="${REVIEW_REVISION_VERIFICATION_PASSED:-1}"
   local changed_diff="${REVIEW_REVISION_CHANGED_DIFF:-1}"
+  local targeted_recheck="${REVIEW_TARGETED_RECHECK:-0}"
+  local targeted_scope_ok="${REVIEW_TARGETED_RECHECK_SCOPE_OK:-1}"
+  local targeted_evidence="${REVIEW_TARGETED_RECHECK_EVIDENCE:-}"
   local task_file="${OUT_DIR}/review-revision-task-${timestamp}.md"
   local accepted_lines
 
@@ -870,6 +873,18 @@ TASK
     return 0
   fi
 
+  if [ "${targeted_recheck}" = "1" ] && [ "${targeted_scope_ok}" != "1" ]; then
+    cat > "${task_file}" <<TASK
+# Review Revision Task
+
+status: revision_manual_review
+reason: targeted_recheck_scope_expanded
+targeted_recheck: requested
+TASK
+    echo "${task_file}"
+    return 0
+  fi
+
   if [ "${REVIEW_REVISION_SECOND_PASS_REQUESTED:-0}" = "1" ] && [ "${changed_diff}" != "1" ]; then
     cat > "${task_file}" <<TASK
 # Review Revision Task
@@ -908,6 +923,8 @@ status: revision_task_created
 cycle_count: ${cycle_count}
 max_cycles: 2
 source: ${findings_file}
+targeted_recheck: ${targeted_recheck}
+targeted_recheck_evidence: ${targeted_evidence:-none}
 
 ## Scope
 
@@ -922,6 +939,9 @@ ${accepted_lines}
 
 - Run ./scripts/verify.sh after the revision.
 - Run a second review pass only when the revision produced a changed diff.
+- Use targeted recheck only for the accepted finding scope listed above; if the
+  changed files exceed that scope, run the full review gate or stop for manual
+  review.
 - Stop for manual decision if verification fails repeatedly, reviewer output is
   unclear, reviewers disagree, or a third automatic revision cycle would start.
 TASK

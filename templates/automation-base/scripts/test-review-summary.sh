@@ -1200,11 +1200,50 @@ case_review_revision_task_created_from_accepted_finding() {
   fi
 
   grep -q "status: revision_task_created" "${task_file}"
+  grep -q "targeted_recheck: 0" "${task_file}"
   grep -q "reviewer: claude" "${task_file}"
   grep -q "file: scripts/example.sh" "${task_file}"
   grep -q "Run ./scripts/verify.sh" "${task_file}"
 
   echo "[summary-test] review_revision_task_created_from_accepted_finding: pass"
+}
+
+case_targeted_review_recheck_rejects_expanded_scope() {
+  local dir="${TMP_ROOT}/targeted_review_recheck_rejects_expanded_scope"
+  local out_dir="${dir}/out"
+  mkdir -p "${dir}" "${out_dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "request_changes"
+  write_verdict "${dir}/gemini-review-current.md" "request_changes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf 'accepted|R1|claude|scripts/example.sh|Quote path variables safely\n' > "${dir}/accepted-findings.psv"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  set +e
+  REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
+    REVIEW_TARGETED_RECHECK=1 \
+    REVIEW_TARGETED_RECHECK_SCOPE_OK=0 \
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+  status=$?
+  set -e
+
+  if [ "${status}" -ne 1 ]; then
+    echo "[summary-test] targeted_review_recheck_rejects_expanded_scope: expected exit 1, got ${status}"
+    cat /tmp/review-summary-test-output.txt
+    exit 1
+  fi
+
+  local task_file
+  task_file="$(find "${out_dir}" -maxdepth 1 -type f -name 'review-revision-task-*.md' -print | head -1)"
+  grep -q "status: revision_manual_review" "${task_file}"
+  grep -q "reason: targeted_recheck_scope_expanded" "${task_file}"
+
+  echo "[summary-test] targeted_review_recheck_rejects_expanded_scope: pass"
 }
 
 case_review_revision_task_stops_at_cycle_limit() {
@@ -1288,6 +1327,7 @@ case_persona_gate_blocks_malformed_strict_policy
 case_persona_gate_allows_valid_strict_policy
 case_persona_gate_allows_docs_verify_only
 case_review_revision_task_created_from_accepted_finding
+case_targeted_review_recheck_rejects_expanded_scope
 case_review_revision_task_stops_at_cycle_limit
 
 echo "[summary-test] success"

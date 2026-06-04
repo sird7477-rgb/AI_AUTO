@@ -72,6 +72,14 @@ websites before claiming UI completion:
 Adapt `scripts/verify.sh` to the project stack. Prefer real project commands
 over placeholders.
 
+For detailed UI behavior verification requests, write a micro-plan before
+browser, screenshot, or CDP evidence. The plan must map each requested behavior
+to evidence for layout, click targets, input handling, alert/error behavior,
+immediate sync/update behavior, and business or downstream-document mapping.
+Mark a row `not_applicable` only when that behavior is outside the requested
+workflow. A representative smoke check is not enough unless it covers every
+applicable row.
+
 Common checks:
 
 ```bash

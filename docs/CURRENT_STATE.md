@@ -307,6 +307,7 @@ Global helper tool sources are tracked in:
 - tools/ai-plan-review
 - tools/ai-plan-export
 - tools/feedback-collect
+- tools/feedback-resolve
 - tools/knowledge-collect
 - tools/workspace-scan
 
@@ -328,6 +329,7 @@ Expected links:
 - ~/bin/ai-plan-review -> ~/workspace/ai-lab/tools/ai-plan-review
 - ~/bin/ai-plan-export -> ~/workspace/ai-lab/tools/ai-plan-export
 - ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
+- ~/bin/feedback-resolve -> ~/workspace/ai-lab/tools/feedback-resolve
 - ~/bin/knowledge-collect -> ~/workspace/ai-lab/tools/knowledge-collect
 - ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
 
@@ -447,6 +449,7 @@ For ai-lab itself:
     ai-plan-review
     ai-plan-export
     feedback-collect
+    feedback-resolve
     knowledge-collect
     workspace-scan
 

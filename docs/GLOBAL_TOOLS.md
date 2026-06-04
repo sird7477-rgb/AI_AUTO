@@ -95,6 +95,12 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Uses the same `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH` setting for workspace discovery
   - Treats missing item status as `open`
 
+- `feedback-resolve`
+  - Resolves local feedback queue items by `repeat_key` across the same discovery surface as `feedback-collect`
+  - Dry-run is the default; pass `--write` or `--apply` to mutate queue files
+  - Write mode requires both `--note` and `--source` so queue closure keeps an audit trail
+  - Uses per-queue locks, refuses unknown keys and secret-like notes/sources, and avoids timestamp churn when the same resolution is already recorded
+
 - `knowledge-collect`
   - Lists validated `.omx/knowledge/drafts/*.md` from the current repository and any explicit `--project` paths
   - Broad review is opt-in with `--include-registry` or `--include-workspace`
@@ -165,6 +171,7 @@ Expected links:
     ~/bin/ai-plan-review -> ~/workspace/ai-lab/tools/ai-plan-review
     ~/bin/ai-plan-export -> ~/workspace/ai-lab/tools/ai-plan-export
     ~/bin/feedback-collect -> ~/workspace/ai-lab/tools/feedback-collect
+    ~/bin/feedback-resolve -> ~/workspace/ai-lab/tools/feedback-resolve
     ~/bin/knowledge-collect -> ~/workspace/ai-lab/tools/knowledge-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
     ~/bin/micro-work -> ~/workspace/ai-lab/tools/micro-work
@@ -195,6 +202,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/ai-plan-review ~/bin/ai-plan-review
     ln -sf ~/workspace/ai-lab/tools/ai-plan-export ~/bin/ai-plan-export
     ln -sf ~/workspace/ai-lab/tools/feedback-collect ~/bin/feedback-collect
+    ln -sf ~/workspace/ai-lab/tools/feedback-resolve ~/bin/feedback-resolve
     ln -sf ~/workspace/ai-lab/tools/knowledge-collect ~/bin/knowledge-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
     ln -sf ~/workspace/ai-lab/tools/micro-work ~/bin/micro-work

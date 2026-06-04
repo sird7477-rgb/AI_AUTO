@@ -566,6 +566,15 @@ failure_details() {
   fi
 }
 
+first_pass_reviewer_posture() {
+  case "$1" in
+    codex) echo "read_only_sandbox" ;;
+    claude) echo "plan_permission_mode" ;;
+    gemini) echo "sandboxed_prompt" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
 failure_class() {
   local output_file="$1"
   local status="${2:-1}"
@@ -598,7 +607,7 @@ preflight_details() {
 
   case "${reviewer}" in
     gemini)
-      printf 'prompt_bytes=%s' "${prompt_bytes}"
+      printf 'prompt_bytes=%s,first_pass_posture=%s' "${prompt_bytes}" "$(first_pass_reviewer_posture gemini)"
       if help_supports_flag "${help_text}" "--prompt"; then
         printf ',prompt_flag=yes'
       else
@@ -616,7 +625,7 @@ preflight_details() {
       fi
       ;;
     claude)
-      printf 'prompt_bytes=%s' "${prompt_bytes}"
+      printf 'prompt_bytes=%s,first_pass_posture=%s' "${prompt_bytes}" "$(first_pass_reviewer_posture claude)"
       if printf '%s\n' "${help_text}" | grep -q -- '--print'; then
         printf ',print_flag=yes'
       else

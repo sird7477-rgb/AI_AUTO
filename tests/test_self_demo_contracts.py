@@ -10,6 +10,8 @@ from scripts.self_demo_contracts import (
     completion_pack_routing_policy,
     diff_scope_classification,
     guidance_minimality_boundary,
+    guidance_stage2_consolidation_policy,
+    domain_pack_retrospective_policy,
     obsidian_autopush_policy,
     persona_lens_policy,
     planning_visual_gate_policy,
@@ -20,6 +22,7 @@ from scripts.self_demo_contracts import (
     process_cleanup_evidence,
     registry_scan_boundary,
     review_revision_loop_policy,
+    reviewer_first_pass_permission_policy,
     reviewer_eligibility,
     shareable_autopromotion_policy,
     review_context_boundary,
@@ -1320,6 +1323,38 @@ def test_review_revision_loop_policy_bounds_review_fix_cycles() -> None:
     assert review_revision_loop_policy({**valid, "unclear_reviewer_output": True}).reason == (
         "review_revision_unclear_review"
     )
+    assert review_revision_loop_policy({**valid, "targeted_recheck": True, "targeted_scope_ok": False}).reason == (
+        "review_revision_targeted_recheck_scope_expanded"
+    )
+
+
+def test_browser_qa_evidence_policy_requires_micro_plan_for_detailed_behavior() -> None:
+    valid = {
+        "target": "http://127.0.0.1:3000",
+        "report_only": True,
+        "attempts_patch": False,
+        "cdp_access": False,
+        "visual_verdict": False,
+        "verify_evidence": True,
+        "review_gate_evidence": True,
+    }
+    assert browser_qa_evidence_policy(valid).accepted
+    assert browser_qa_evidence_policy({**valid, "detailed_behavior_request": True}).reason == (
+        "browser_qa_micro_plan_required"
+    )
+    complete = {
+        **valid,
+        "detailed_behavior_request": True,
+        "micro_plan_rows": {
+            "layout": "evidence",
+            "click_targets": "evidence",
+            "input_handling": "evidence",
+            "alerts_errors": "not_applicable",
+            "sync_update": "evidence",
+            "business_mapping": "evidence",
+        },
+    }
+    assert browser_qa_evidence_policy(complete).accepted
 
 
 def test_tool_adoption_status_policy_is_read_only_and_blocks_silent_promotion() -> None:
@@ -1338,8 +1373,54 @@ def test_tool_adoption_status_policy_is_read_only_and_blocks_silent_promotion() 
     )
     optional = {**required, "tool": "hyperfine", "installed": False, "adoption_state": "optional"}
     assert tool_adoption_status_policy(optional).reason == "tool_optional_missing_warning"
-    reference = {**required, "tool": "ruff", "installed": True, "adoption_state": "reference_only"}
-    assert tool_adoption_status_policy(reference).reason == "tool_reference_installed_info"
+
+
+def test_reviewer_first_pass_permission_policy_preserves_read_only_posture() -> None:
+    valid = {
+        "reviewer": "codex",
+        "declared_posture": "read_only_sandbox",
+        "retry_posture": "read_only_sandbox",
+        "widens_privilege": False,
+    }
+    assert reviewer_first_pass_permission_policy(valid).accepted
+    assert reviewer_first_pass_permission_policy({**valid, "widens_privilege": True}).reason == (
+        "reviewer_first_pass_must_not_widen_privilege"
+    )
+    assert reviewer_first_pass_permission_policy({**valid, "retry_posture": "write"}).reason == (
+        "reviewer_first_pass_retry_posture_drift"
+    )
+
+
+def test_guidance_stage2_consolidation_policy_keeps_low_roi_edits_gated() -> None:
+    valid = {
+        "user_requested": True,
+        "stage2_report_exists": True,
+        "edits_guidance": False,
+        "expected_gain_percent": 3,
+    }
+    assert guidance_stage2_consolidation_policy(valid).accepted
+    assert guidance_stage2_consolidation_policy({**valid, "user_requested": False}).reason == (
+        "guidance_stage2_user_request_required"
+    )
+    assert guidance_stage2_consolidation_policy({**valid, "edits_guidance": True}).reason == (
+        "guidance_stage2_low_roi_blocks_edits"
+    )
+
+
+def test_domain_pack_retrospective_policy_requires_closeout_and_reusable_split() -> None:
+    valid = {
+        "project_closeout": True,
+        "sanitized_feedback": True,
+        "separates_reusable": True,
+        "updates_project_specific_rules": False,
+    }
+    assert domain_pack_retrospective_policy(valid).accepted
+    assert domain_pack_retrospective_policy({**valid, "project_closeout": False}).reason == (
+        "domain_pack_closeout_required"
+    )
+    assert domain_pack_retrospective_policy({**valid, "updates_project_specific_rules": True}).reason == (
+        "domain_pack_must_not_promote_project_specific_rules"
+    )
 
 
 def test_completion_pack_routing_policy_audits_triggers_without_runtime_lane() -> None:

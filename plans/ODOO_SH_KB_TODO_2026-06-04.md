@@ -1,0 +1,24 @@
+# Odoo.sh KB TODO
+
+- [x] Confirm the Obsidian vault path and target folder name.
+- [x] Record Odoo 19.0 as the confirmed KB baseline.
+- [x] Reclassify project schema snapshots as project-specific runtime evidence, not KB promotion blockers.
+- [x] Add `plans/ODOO_SH_KB_SOURCE_INDEX_2026-06-04.md` to the KB `99_자료/Source-Index.md` draft.
+- [x] Create `Odoo.sh KB/00_Index.md`.
+- [x] Draft `AI-Working-Principles.md`.
+- [x] Draft `Schema-Usage-Guide.md`.
+- [x] Draft `Requirement-to-Spec-Template.md`.
+- [x] Draft `Field-Design-Guide.md`.
+- [x] Draft `View-Customization-Guide.md`.
+- [x] Draft `Security-Checklist.md`.
+- [x] Draft `Staging-QA-Checklist.md`.
+- [x] Add an execution trace table template for AI-assisted customization tasks.
+- [x] Add a staging QA checklist template that verifies actual task completion.
+- [x] Defer project-specific schema consistency review until applying the KB to a real project.
+- [x] Review every strong KB rule against the source index or mark it as local policy.
+- [x] Treat sample customization runs as post-promotion validation unless a safe dummy Odoo project exists.
+- [x] Record post-promotion sample gaps as a future update trigger when a real/safe project exists.
+- [x] Keep AI_AUTO guidance integration on hold until guidance/instruction files are no longer being edited separately.
+- [x] Define or add a lightweight scoped KB validator for file inventory, wikilinks, status vocabulary, source-index drift, and leakage patterns.
+- [x] Review open improvement queue items, classify valid/invalid/later, and fold accepted items into the regular-promotion plan.
+- [x] Before final completion, run full verify/review-gate and require unanimous eligible approval or record the unavailable reviewer as a blocker.

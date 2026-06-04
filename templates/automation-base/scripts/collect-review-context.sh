@@ -1000,12 +1000,13 @@ write_browser_qa_evidence_audit() {
   local review="${BROWSER_QA_REVIEW_GATE_EVIDENCE:-0}"
   local screenshot="${BROWSER_QA_SCREENSHOT_NOTE:-none}"
   local steps="${BROWSER_QA_STEPS:-none}"
+  local detailed="${BROWSER_QA_DETAILED_BEHAVIOR_REQUEST:-0}"
+  local micro_plan="${BROWSER_QA_MICRO_PLAN:-}"
 
   echo "audit_status: report_only"
   echo "target: ${target:-none}"
   echo "steps: ${steps}"
   echo "screenshot_note: ${screenshot}"
-
   if [ "${report_only}" != "1" ] || [ "${attempts_patch}" = "1" ]; then
     echo "qa_status: qa_block:auto_fix_not_allowed"
     return 0
@@ -1029,6 +1030,28 @@ write_browser_qa_evidence_audit() {
   if [ "${visual}" = "1" ] && { [ "${verify}" != "1" ] || [ "${review}" != "1" ]; }; then
     echo "qa_status: qa_warning:visual_not_completion_authority"
     return 0
+  fi
+
+  if [ "${detailed}" = "1" ]; then
+    echo "micro_plan_required: true"
+    local required_rows="layout click_targets input_handling alerts_errors sync_update business_mapping"
+    local missing_rows=""
+    local row
+    for row in ${required_rows}; do
+      case ",${micro_plan}," in
+        *",${row}:evidence,"*|*",${row}:not_applicable,"*) ;;
+        *) missing_rows="${missing_rows} ${row}" ;;
+      esac
+    done
+    if [ -n "${missing_rows}" ]; then
+      echo "micro_plan_status: missing_rows"
+      echo "missing_micro_plan_rows:${missing_rows}"
+      echo "qa_status: qa_attention:micro_plan_required"
+      return 0
+    fi
+    echo "micro_plan_status: complete"
+  else
+    echo "micro_plan_required: false"
   fi
 
   if [ "${cdp_access}" = "1" ]; then

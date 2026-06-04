@@ -59,6 +59,7 @@ UNSAFE_SOURCE_PATTERNS = (
 )
 GENERATED_INDEX_NAMES = {"AI_AUTO_INDEX.md"}
 GENERATED_ROOT_DIRS = {"Surfaces", "RepeatKeys", "Promotion", "Views"}
+NOTE_ROOT_DIRS = {"Projects", "Inbox"}
 
 
 def fail(message: str) -> None:
@@ -154,6 +155,16 @@ def generated_page(path: Path, root: Path) -> bool:
     if rel.parts[0] in GENERATED_ROOT_DIRS:
         return True
     return rel.parts[0] == "Projects" and len(rel.parts) == 2 and path.suffix == ".md"
+
+
+def outside_note_layout(path: Path, root: Path) -> bool:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    if not rel.parts or len(rel.parts) == 1:
+        return False
+    return rel.parts[0] not in NOTE_ROOT_DIRS and rel.parts[0] not in GENERATED_ROOT_DIRS
 
 
 def yaml_quote(value: object) -> str:
@@ -468,6 +479,8 @@ def validate_directory(args: argparse.Namespace) -> None:
     for path in files:
         if root.is_dir() and generated_page(path, root):
             continue
+        if root.is_dir() and outside_note_layout(path, root):
+            continue
         resolved_path = path.resolve(strict=False)
         if not resolved_path.is_relative_to(validation_root):
             fail(f"{path}: validated notes must stay under the validation root")
@@ -488,7 +501,7 @@ def write_index(args: argparse.Namespace) -> None:
     rows: list[tuple[dict[str, str], Path]] = []
     for path in files:
         resolved_path = path.resolve(strict=False)
-        if resolved_path == output_resolved or generated_page(path, notes_dir):
+        if resolved_path == output_resolved or generated_page(path, notes_dir) or outside_note_layout(path, notes_dir):
             continue
         if not resolved_path.is_relative_to(output_parent):
             fail(f"{path}: indexed notes must be under the index output directory")

@@ -36,6 +36,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/ai-plan-review
   ~/bin/ai-plan-export
   ~/bin/feedback-collect
+  ~/bin/feedback-resolve
   ~/bin/knowledge-collect
   ~/bin/workspace-scan
   ~/bin/micro-work
@@ -888,6 +889,7 @@ check_source_helper "${ROOT}/tools/ai-interview-record"
 check_source_helper "${ROOT}/tools/ai-plan-review"
 check_source_helper "${ROOT}/tools/ai-plan-export"
 check_source_helper "${ROOT}/tools/feedback-collect"
+check_source_helper "${ROOT}/tools/feedback-resolve"
 check_source_helper "${ROOT}/tools/knowledge-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
 check_source_helper "${ROOT}/tools/micro-work"
@@ -921,6 +923,7 @@ else
   install_link "${HOME_DIR}/bin/ai-plan-review" "${ROOT}/tools/ai-plan-review"
   install_link "${HOME_DIR}/bin/ai-plan-export" "${ROOT}/tools/ai-plan-export"
   install_link "${HOME_DIR}/bin/feedback-collect" "${ROOT}/tools/feedback-collect"
+  install_link "${HOME_DIR}/bin/feedback-resolve" "${ROOT}/tools/feedback-resolve"
   install_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
