@@ -135,11 +135,14 @@ Phase 3를 먼저 하면 이후 유닛 게이트 비용이 줄어든다(고려).
 - **백로그 표 무결성**: 행 사이 빈 줄 금지(파서가 표를 분할함). `todo-report.py
   --fail-on-active`로 검증.
 
-## 현재 상태 (U1.1~U1.3 진행 후)
+## 현재 상태 (U2.2 진행 후)
 - 감사 문서와 본 실행계획 문서는 같은 유닛 커밋 후보에 포함한다.
 - U1.1 분류표 작성 완료.
 - U1.2 `advisory_contract` 상태값 신설 완료(root/template `todo-report.py`,
   테스트, 템플릿 버전/패치노트 포함).
 - U1.3 advisory 백로그 재라벨 및 `self_demo_contracts.py` 모듈 docstring
   정직화 완료.
-- 다음 착수 후보: U2.2 또는 U3.1+U3.2.
+- U2.2 review-gate 내부 verify는 `AI_AUTO_IN_REVIEW_GATE=1`로 표시하고,
+  `verify.sh`는 그때 중첩 review-runner/external-review self-test만 건너뛰도록
+  배선 완료(standalone verify는 full coverage 유지).
+- 다음 착수 후보: U3.1+U3.2.

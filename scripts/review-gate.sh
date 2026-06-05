@@ -32,6 +32,7 @@ env \
   -u RUN_CLAUDE_REVIEW \
   -u REVIEW_CONTEXT_DETAIL \
   -u REVIEW_INCLUDE_UNTRACKED_CONTENT \
+  AI_AUTO_IN_REVIEW_GATE=1 \
   ./scripts/verify.sh 2>&1 | tee "$VERIFY_OUTPUT_FILE"
 
 echo "[gate] running AI reviews..."

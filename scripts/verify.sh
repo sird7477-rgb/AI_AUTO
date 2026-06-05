@@ -793,6 +793,9 @@ SH
   grep -q "Check absolute path handling" "${tmp_dir}/relative/claude-relative.stdin"
 )
 
+if [ "${AI_AUTO_IN_REVIEW_GATE:-0}" = "1" ]; then
+  echo "[verify] skipping nested review-runner self-tests inside review-gate..."
+else
 echo "[verify] testing Codex fallback uses runtime adapter read-only mode..."
 (
   tmp_dir="$(mktemp -d)"
@@ -1045,6 +1048,7 @@ SH
   grep -q "Adapter execution diagnostics" "${latest_codex}"
   grep -q "codex adapter diagnostic marker" "${latest_codex}"
 )
+fi
 
 echo "[verify] testing ai-refactor-scan..."
 (
@@ -1992,6 +1996,9 @@ echo "[verify] testing review context edge cases..."
   fi
 )
 
+if [ "${AI_AUTO_IN_REVIEW_GATE:-0}" = "1" ]; then
+  echo "[verify] skipping nested external-review self-tests inside review-gate..."
+else
 echo "[verify] testing review run manifest and external disabled guidance..."
 (
   tmp_dir="$(mktemp -d)"
@@ -2911,6 +2918,7 @@ STUB
   grep -q "class=network_or_sandbox" "${tmp_dir}/state/claude.disabled"
   grep -q "print_flag=yes" "${tmp_dir}/state/claude.disabled"
 )
+fi
 
 echo "[verify] testing .omx review artifact archiving..."
 (

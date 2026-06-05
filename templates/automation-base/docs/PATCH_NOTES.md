@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.3
+
+- Review gate verification now marks in-gate runs with
+  `AI_AUTO_IN_REVIEW_GATE=1`, letting the AI_AUTO home `verify.sh` skip nested
+  review-runner self-tests that otherwise re-enter reviewer fixtures during an
+  active review gate.
+- This preserves full standalone `./scripts/verify.sh` coverage while reducing
+  review-gate contention for real changes.
+
 ## 2026.06.05.2
 
 - Added the `advisory_contract` backlog status to distinguish report-only or

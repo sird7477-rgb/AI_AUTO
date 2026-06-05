@@ -36,6 +36,8 @@ def test_verify_script_keeps_structural_audit_markers() -> None:
         "[verify] testing ai-rebuild-plan...",
         "[verify] testing ai-split Python rebuild helpers...",
         "[verify] checking automation template sync...",
+        "[verify] skipping nested review-runner self-tests inside review-gate...",
+        "[verify] skipping nested external-review self-tests inside review-gate...",
     ]
 
     for marker in required_markers:
