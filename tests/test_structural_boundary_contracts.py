@@ -45,6 +45,16 @@ def test_verify_script_keeps_structural_audit_markers() -> None:
     for marker in required_markers:
         assert marker in verify
 
+    review_gate = _read("scripts/review-gate.sh")
+    required_unsets = [
+        "-u REVIEW_CONTEXT_DETAIL",
+        "-u REVIEW_INCLUDE_UNTRACKED_CONTENT",
+        "-u REVIEW_UNTRACKED_ALLOWLIST",
+        "-u REVIEW_UNTRACKED_MANUAL_REVIEWED",
+    ]
+    for unset in required_unsets:
+        assert unset in review_gate
+
 
 def test_rebuild_plan_reports_read_only_boundary_without_modifying_target(tmp_path: Path) -> None:
     target = tmp_path / "target"

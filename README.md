@@ -97,9 +97,9 @@ secrets are ignored:
 REVIEW_INCLUDE_UNTRACKED_CONTENT=1 REVIEW_UNTRACKED_MANUAL_REVIEWED=1 ./scripts/review-gate.sh
 ```
 
-For a targeted docs/spec-draft review, set `REVIEW_UNTRACKED_ALLOWLIST` to the
-paths, directory prefixes, or globs in scope so unrelated untracked files are
-reported but do not block the gate.
+For targeted diffs, review context derives the untracked allowlist from tracked
+changed paths. Set `REVIEW_UNTRACKED_ALLOWLIST` only when you need to override
+that scope; unrelated untracked files are reported but do not block the gate.
 
 Check first-time ai-lab checkout setup:
 

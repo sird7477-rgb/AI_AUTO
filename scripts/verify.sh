@@ -1961,6 +1961,24 @@ echo "[verify] testing review context edge cases..."
     exit 1
   fi
 
+  # Automatic untracked allowlist: once a tracked docs diff exists, unrelated
+  # material untracked files from other scopes are reported but do not block.
+  mkdir -p docs/specs
+  printf '# Baseline Spec\n' > docs/specs/brief.md
+  git add docs/specs/brief.md
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "docs baseline" >/dev/null
+  printf '\nchanged docs\n' >> docs/specs/brief.md
+  "${context_script}" >/dev/null
+  grep -q "guard_status: clear" .omx/review-context/latest-review-context.md
+  grep -q "scope_allowlist_source: auto_changed_scope" .omx/review-context/latest-review-context.md
+  grep -q "scope_allowlist: docs/" .omx/review-context/latest-review-context.md
+  grep -q "plans/candidate.md" .omx/review-context/latest-review-context.md
+  grep -q "tests/test_candidate.py" .omx/review-context/latest-review-context.md
+  if grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md; then
+    echo "[verify] automatic untracked allowlist failed to clear unrelated material"
+    exit 1
+  fi
+
   printf 'small tracked edit\n' >> staged.txt
   mkdir -p .omx/review-context
   for line in $(seq 1 100); do

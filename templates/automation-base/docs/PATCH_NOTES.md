@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.6
+
+- `collect-review-context.sh` now derives `REVIEW_UNTRACKED_ALLOWLIST` from the
+  tracked diff when no explicit allowlist is set. Untracked-only states still
+  keep every material untracked artifact in scope.
+- `review-gate.sh` clears untracked allowlist overrides before running its
+  internal verification so review-target scoping cannot leak into verify
+  fixtures.
+
 ## 2026.06.05.5
 
 - Added a one-writer-per-working-tree convention to the template instructions
