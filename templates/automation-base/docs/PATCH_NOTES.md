@@ -4,6 +4,13 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.2
+
+- Added the `advisory_contract` backlog status to distinguish report-only or
+  test-only contract surfaces from fail-closed runtime enforcement.
+- Synchronized the template `todo-report.py` status taxonomy with the root copy
+  so advisory contract rows remain non-active TODOs.
+
 ## 2026.06.05.1
 
 - Added the global `ai-domain-pack` helper for deterministic optional

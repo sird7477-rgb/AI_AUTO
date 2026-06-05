@@ -21,7 +21,7 @@ COMPLETE_STATUSES = {
     "installed_required",
     "operational_clear",
 }
-NON_ACTIVE_STATUSES = {"excluded", "reference_only", "later_gated"}
+NON_ACTIVE_STATUSES = {"advisory_contract", "excluded", "reference_only", "later_gated"}
 KNOWN_STATUSES = ACTIVE_STATUSES | ATTENTION_STATUSES | COMPLETE_STATUSES | NON_ACTIVE_STATUSES
 OBSERVE_BOUNDARY_PATTERN = re.compile(r"\bnot active\b(?!\s+TODO)", re.IGNORECASE)
 MISLEADING_COMPLETION_PATTERNS = (

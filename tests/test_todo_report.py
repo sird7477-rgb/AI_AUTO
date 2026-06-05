@@ -25,6 +25,7 @@ def test_parse_backlog_separates_active_complete_and_non_active_statuses() -> No
 | SA-2 | Runtime Future | medium | reference_only | not active |
 | SA-3 | Open Contract | medium | contract_started | runtime caller missing |
 | SA-4 | Operational | high | operational_clear | caller, runtime guard, docs, and verification evidence exist |
+| SA-5 | Advisory | medium | advisory_contract | report-only audit exists; no fail-closed caller |
 
 ## Small-Tool Detailed TODO
 
@@ -45,6 +46,7 @@ def test_parse_backlog_separates_active_complete_and_non_active_statuses() -> No
         "SA-2": "reference_only",
         "SA-3": "contract_started",
         "SA-4": "operational_clear",
+        "SA-5": "advisory_contract",
         "ST-1": "complete",
         "ST-2": "later_gated",
         "ST-3": "approval_needed",
@@ -90,6 +92,7 @@ def test_complete_status_with_unfinished_operating_surface_becomes_attention(tmp
 | SA-9 | Not Active TODO | medium | complete_contract | Optional future polish is not active TODO. |
 | SA-10 | Finished | medium | complete_contract | Runtime caller, verification, and review gate evidence exist. |
 | SA-11 | Operational Clear | high | operational_clear | Caller, runtime guard, synchronized docs, and verification evidence exist. |
+| SA-12 | Advisory Clear | medium | advisory_contract | Report-only audit exists; no fail-closed caller. |
 """,
         encoding="utf-8",
     )
@@ -99,6 +102,7 @@ def test_complete_status_with_unfinished_operating_surface_becomes_attention(tmp
 
     assert [item.item_id for item in buckets.attention] == ["SA-1", "SA-2", "SA-3", "SA-4", "SA-5", "SA-6", "SA-7"]
     assert [item.item_id for item in buckets.complete] == ["SA-8", "SA-9", "SA-10", "SA-11"]
+    assert [item.item_id for item in buckets.non_active] == ["SA-12"]
     assert completion_status_conflict(buckets.attention[0]) == "complete_status_mentions_unfinished_operating_surface"
     assert todo_report.main(["--backlog", str(backlog), "--fail-on-active"]) == 1
 

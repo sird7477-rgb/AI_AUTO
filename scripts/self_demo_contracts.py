@@ -5,6 +5,18 @@ or approve small-tool adoption. They only validate the evidence shape needed
 before a workflow upgrade can claim representative user-facing coverage.
 Self-demo required fields are intentionally string-only; use explicit sentinel
 words such as "none" or "not_applicable" when a field has no applicable content.
+
+Runtime status after the 2026-06-05 lightweighting audit:
+
+- enforce candidates: `review_gate_short_summary`, `template_parity_boundary`,
+  `completion_acceptance_scope`, `diff_scope_classification`.
+- advisory contracts: policies mirrored by report-only review-context audits
+  (`completion_pack_routing_policy`, `product_challenge_policy`,
+  `visual_artifact_policy`, `planning_visual_gate_policy`,
+  `spec_code_alignment_policy`, `standard_flow_preservation_policy`,
+  `browser_qa_evidence_policy`).
+- remaining public helpers are test-only contract mirrors unless a later unit
+  wires a named function into an actual fail-closed gate.
 """
 
 from __future__ import annotations
@@ -60,6 +72,7 @@ ATTENTION_TODO_STATUSES = {
     "blocked",
 }
 NON_ACTIVE_TODO_STATUSES = {
+    "advisory_contract",
     "later_gated",
     "reference_only",
     "excluded",
