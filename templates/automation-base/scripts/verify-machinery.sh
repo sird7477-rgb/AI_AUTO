@@ -290,6 +290,7 @@ grep -q "credential-equivalent" docs/CHROME_CDP_ACCESS.md
 grep -q "project-owned wrapper scripts" docs/CHROME_CDP_ACCESS.md
 cmp -s docs/CHROME_CDP_ACCESS.md templates/automation-base/docs/CHROME_CDP_ACCESS.md
 cmp -s docs/OBSIDIAN_INTEGRATION.md templates/automation-base/docs/OBSIDIAN_INTEGRATION.md
+cmp -s docs/PLANNING_VISUALIZATION_GUIDE.md templates/automation-base/docs/PLANNING_VISUALIZATION_GUIDE.md
 
 echo "[verify] checking guidance document budget..."
 ./scripts/doc-budget.sh
@@ -445,7 +446,7 @@ echo "[verify] testing guidance document budget accounting..."
   grep -q "template patch mode reason: verify fixture" "${tmp_dir}/budget-template-patch-mode.out"
   grep -q "warnings=" "${tmp_dir}/budget-template-patch-mode.out"
   # The escape hatch requires a reason: omitting it must fail closed.
-  if DOC_BUDGET_TEMPLATE_PATCH=1 ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-noreason.out" 2>&1; then
+  if env -u DOC_BUDGET_TEMPLATE_PATCH_REASON DOC_BUDGET_TEMPLATE_PATCH=1 ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-noreason.out" 2>&1; then
     echo "[verify] doc-budget accepted template patch mode without a reason"
     exit 1
   fi
@@ -4735,6 +4736,7 @@ echo "[verify] testing automation template installer..."
   test -f "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
   test -f "${target_dir}/docs/PATCH_NOTES.md"
   test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
+  test -f "${target_dir}/docs/PLANNING_VISUALIZATION_GUIDE.md"
   test -f "${target_dir}/docs/SECURITY_COMPLETION.md"
   test -f "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
   test -f "${target_dir}/docs/UI_COMPLETION.md"
@@ -4773,6 +4775,8 @@ echo "[verify] testing automation template installer..."
   grep -q "Project repositories and the Obsidian vault may live on an external SSD" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
   grep -q "AI_AUTO Patch Notes" "${target_dir}/docs/PATCH_NOTES.md"
   grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
+  grep -q "Planning Visualization Guide" "${target_dir}/docs/PLANNING_VISUALIZATION_GUIDE.md"
+  grep -q "Vector wireframe fidelity" "${target_dir}/docs/PLANNING_VISUALIZATION_GUIDE.md"
   grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
   grep -q "Session Quality Plan" "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
   grep -q "UI Completion Pack" "${target_dir}/docs/UI_COMPLETION.md"
@@ -4804,6 +4808,7 @@ echo "[verify] testing automation template installer..."
   grep -q "docs/research/AI_AUTOMATION_TRENDS.md" "templates/automation-base/README.md"
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/README.md"
   grep -q "docs/OBSIDIAN_INTEGRATION.md" "templates/automation-base/README.md"
+  grep -q "docs/PLANNING_VISUALIZATION_GUIDE.md" "templates/automation-base/README.md"
   grep -q "scripts/docker-config-guard.sh" "templates/automation-base/README.md"
   grep -q "scripts/capture-knowledge-drafts.py" "templates/automation-base/README.md"
   grep -q "scripts/knowledge-notes.py" "templates/automation-base/README.md"
@@ -4890,6 +4895,7 @@ echo "[verify] testing automation template installer..."
   grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/PATCH_NOTES.md" "${tmp_dir}/template-status-current.out"
   grep -q "docs/OBSIDIAN_INTEGRATION.md" "${tmp_dir}/template-status-current.out"
+  grep -q "docs/PLANNING_VISUALIZATION_GUIDE.md" "${tmp_dir}/template-status-current.out"
   grep -q $'STATE\tPATH\tTEMPLATE_PATH\tOWNERSHIP\tPATCH_POLICY' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-current.out"
@@ -4902,6 +4908,7 @@ echo "[verify] testing automation template installer..."
   grep -q $'same\tscripts/ai-runtime-adapter.sh\tscripts/ai-runtime-adapter.sh\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/PATCH_NOTES.md\tdocs/PATCH_NOTES.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tdocs/OBSIDIAN_INTEGRATION.md\tdocs/OBSIDIAN_INTEGRATION.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
+  grep -q $'same\tdocs/PLANNING_VISUALIZATION_GUIDE.md\tdocs/PLANNING_VISUALIZATION_GUIDE.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/benchmark-command.py\tscripts/benchmark-command.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/todo-report.py\tscripts/todo-report.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
   grep -q $'same\tscripts/capture-knowledge-drafts.py\tscripts/capture-knowledge-drafts.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"

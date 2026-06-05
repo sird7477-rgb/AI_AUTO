@@ -23,6 +23,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - docs/OBSERVABILITY_COMPLETION.md: optional observability/operations completion pack
 - docs/PATCH_NOTES.md: template version changes to review before patching
 - docs/UI_COMPLETION.md: optional UI completion and verification pack
+- docs/PLANNING_VISUALIZATION_GUIDE.md: planning diagrams, framework-native UI wireframes, and vector wireframe fidelity guidance
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
 - scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
 - scripts/ai-principal-runtime.sh: active principal runtime contract helper for `codex`, `claude`, and `gemini`

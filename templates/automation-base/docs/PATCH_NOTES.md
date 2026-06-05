@@ -4,6 +4,18 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.8
+
+- Promoted `docs/PLANNING_VISUALIZATION_GUIDE.md` into the automation template
+  so downstream projects receive the planning visualization gate guidance,
+  framework-native wireframe structure rules, vector wireframe fidelity
+  boundary, and standard-flow preservation kernel through normal template
+  patch flow.
+- Isolated the doc-budget template-patch fixture from inherited
+  `DOC_BUDGET_TEMPLATE_PATCH_REASON` so `verify-machinery.sh` can validate the
+  no-reason failure path even when the outer verify run uses template patch
+  mode.
+
 ## 2026.06.05.7
 
 - Split the AI_AUTO self-test/tooling suite into `scripts/verify-machinery.sh`.
