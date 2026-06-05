@@ -144,6 +144,18 @@ reference screen it follows (for example "framework form view" or
 "framework dialog"). Keep any generic block diagram separate from the
 implementation-facing wireframe.
 
+Vector wireframe fidelity: when the user asks for an artifact that matches a
+real framework UI, the screenshot is a reference artifact, not the deliverable.
+The final Excalidraw source must redraw the UI with vector elements
+(rectangles, text, lines, icons, and callouts) and must not satisfy the request
+by embedding the screenshot as an image element. Reference screenshots should
+live under a temporary or references path and may be used for side-by-side
+review exports, but the implementation-facing `.excalidraw` file should keep
+the UI body vector-authored. A valid completion report should identify the
+reference screenshot, the vector wireframe source, and the comparison evidence
+used to judge layout, spacing, density, headers/status bars, body regions, and
+framework-native side panels.
+
 Wireframe-authoring conventions: name the source of truth for each artifact;
 use a consistent notation for direct comments (a distinct callout shape plus an
 arrow), for mapped / hand-entered / read-only / hidden fields, and for shared
