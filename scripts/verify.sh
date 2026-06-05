@@ -3415,8 +3415,8 @@ PY
   grep -q "this field s... \\[truncated\\]" .omx/state/session-checkpoint.md
 	)
 
-	echo "[verify] testing review-gate captures failed verdict drafts before exiting..."
-	(
+echo "[verify] testing review-gate captures failed verdict drafts before exiting..."
+(
 	  tmp_dir="$(mktemp -d)"
 
 	  cleanup_review_gate_capture_tmp() {
@@ -3427,12 +3427,13 @@ PY
 
 	  target_dir="${tmp_dir}/target"
 	  git -c init.defaultBranch=main init -q "${target_dir}"
-	  cd "${target_dir}"
-	  mkdir -p scripts .omx/review-results
-	  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
-	  cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
-	  cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
-	  chmod +x scripts/review-gate.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
+  cd "${target_dir}"
+  mkdir -p scripts .omx/review-results
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
+  cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
 	  cat > scripts/verify.sh <<-'SH'
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -3474,12 +3475,119 @@ PY
 	  failed_draft="$(find .omx/knowledge/drafts -maxdepth 1 -type f -name '*.md' | head -n 1)"
 	  test -f "${failed_draft}"
 	  grep -q 'repeat_key: "review-gate:revise"' "${failed_draft}"
-	  grep -q "severity: high" "${failed_draft}"
-	  grep -q "claude:request_changes" "${failed_draft}"
-	)
+  grep -q "severity: high" "${failed_draft}"
+  grep -q "claude:request_changes" "${failed_draft}"
+)
 
-	echo "[verify] testing knowledge note helper..."
-	(
+echo "[verify] testing review-gate verify-only diff skip..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_skip_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_skip_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts docs
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run for verify-only docs diffs" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run for verify-only docs diffs" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  printf 'baseline\n' > docs/note.md
+  git add .gitignore scripts docs
+  git commit -q -m baseline
+  printf 'changed docs\n' > docs/note.md
+
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out"
+
+  grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
+  verdict="$(find .omx/review-results -maxdepth 1 -type f -name 'review-verdict-*.md' | head -1)"
+  test -f "${verdict}"
+  grep -q "verify_only_diff_scope" "${verdict}"
+  grep -q "review skipped: docs-only" "${verdict}"
+)
+
+echo "[verify] testing review-gate code diff keeps external review..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_full_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_full_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "reviewer ran" > ../called-reviewer
+exit 0
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summary ran" > ../called-summary
+exit 0
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  printf '#!/usr/bin/env bash\necho baseline\n' > scripts/changed.sh
+  chmod +x scripts/changed.sh
+  git add .gitignore scripts
+  git commit -q -m baseline
+  printf '#!/usr/bin/env bash\necho changed\n' > scripts/changed.sh
+
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out"
+
+  test -f "${tmp_dir}/called-reviewer"
+  test -f "${tmp_dir}/called-summary"
+  ! grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
+)
+
+echo "[verify] testing knowledge note helper..."
+(
 	  tmp_dir="$(mktemp -d)"
 
   cleanup_knowledge_tmp() {

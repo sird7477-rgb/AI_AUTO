@@ -38,6 +38,8 @@ def test_verify_script_keeps_structural_audit_markers() -> None:
         "[verify] checking automation template sync...",
         "[verify] skipping nested review-runner self-tests inside review-gate...",
         "[verify] skipping nested external-review self-tests inside review-gate...",
+        "[verify] testing review-gate verify-only diff skip...",
+        "[verify] testing review-gate code diff keeps external review...",
     ]
 
     for marker in required_markers:

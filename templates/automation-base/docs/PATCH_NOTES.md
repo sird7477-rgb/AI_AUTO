@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.4
+
+- `review-gate.sh` now consumes the diff-scope policy before launching external
+  reviewers. Diffs whose scope is only `docs`/`plans` and whose guards are clear
+  record `review skipped: docs-only` after verification instead of running
+  Claude/Gemini.
+- Code, script, template, guidance, unknown, or guarded diffs still fall through
+  to the full external review path.
+
 ## 2026.06.05.3
 
 - Review gate verification now marks in-gate runs with
