@@ -135,7 +135,7 @@ Phase 3를 먼저 하면 이후 유닛 게이트 비용이 줄어든다(고려).
 - **백로그 표 무결성**: 행 사이 빈 줄 금지(파서가 표를 분할함). `todo-report.py
   --fail-on-active`로 검증.
 
-## 현재 상태 (U3.1+U3.2 진행 후)
+## 현재 상태 (U4.1+U4.2 진행 후)
 - 감사 문서와 본 실행계획 문서는 같은 유닛 커밋 후보에 포함한다.
 - U1.1 분류표 작성 완료.
 - U1.2 `advisory_contract` 상태값 신설 완료(root/template `todo-report.py`,
@@ -149,4 +149,9 @@ Phase 3를 먼저 하면 이후 유닛 게이트 비용이 줄어든다(고려).
   `docs`/`plans`뿐이고 untracked/phase guard가 깨끗한 diff는 verify 후
   `review skipped: docs-only` verdict를 기록하고 외부 LLM 리뷰를 생략한다.
   code/script/template/guidance/unknown/guarded diff는 full review 유지.
-- 다음 착수 후보: U4.1+U4.2.
+- U4.1 one-writer-per-working-tree 컨벤션을 root/template `AGENTS.md`와
+  `docs/WORKFLOW.md`에 명시 완료.
+- U4.2 review context에 report-only `Tree Churn Audit` 추가 완료. context 수집
+  중 git status가 바뀌면 신규 untracked 포함 경고를 남기며, gate를 자동 차단하지
+  않는다.
+- 남은 결정 후보: U1.4 enforce 후보 강제배선 여부, U2.3 verify 대수술 여부.

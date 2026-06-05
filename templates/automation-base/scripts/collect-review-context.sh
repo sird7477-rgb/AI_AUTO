@@ -13,7 +13,7 @@ REVIEW_UNTRACKED_ALLOWLIST="${REVIEW_UNTRACKED_ALLOWLIST:-}"
 REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
-REPO_STATUS_BEFORE_CONTEXT="$(git status --porcelain 2>/dev/null || true)"
+REPO_STATUS_BEFORE_CONTEXT="${REPO_STATUS_BEFORE_CONTEXT-$(git status --porcelain 2>/dev/null || true)}"
 OUT_FILE="${OUT_DIR}/latest-review-context.md"
 
 mkdir -p "${OUT_DIR}"
@@ -396,6 +396,32 @@ write_diff_scope_summary() {
     [ -n "${file}" ] || continue
     echo "| ${file} | $(classify_review_scope_for_path "${file}") |"
   done
+}
+
+write_tree_churn_audit() {
+  local current_status before_untracked current_untracked new_untracked
+  current_status="$(git status --porcelain 2>/dev/null || true)"
+
+  echo "audit_status: report_only"
+  if [ "${current_status}" = "${REPO_STATUS_BEFORE_CONTEXT}" ]; then
+    echo "tree_churn_status: stable"
+    echo "No working tree status changes were detected while collecting review context."
+    return 0
+  fi
+
+  echo "tree_churn_status: changed"
+  echo "Working tree status changed while collecting review context. Reviewers should treat this as a concurrency warning, not an automatic blocker."
+
+  before_untracked="$(printf '%s\n' "${REPO_STATUS_BEFORE_CONTEXT}" | sed -n 's/^?? //p' | sort -u)"
+  current_untracked="$(printf '%s\n' "${current_status}" | sed -n 's/^?? //p' | sort -u)"
+  new_untracked="$(comm -13 <(printf '%s\n' "${before_untracked}") <(printf '%s\n' "${current_untracked}") | sed '/^[[:space:]]*$/d')"
+
+  if [ -n "${new_untracked}" ]; then
+    echo "new_untracked_during_context:"
+    printf '%s\n' "${new_untracked}" | sed 's/^/- /'
+  else
+    echo "new_untracked_during_context: none"
+  fi
 }
 
 untracked_path_allowed() {
@@ -1241,6 +1267,10 @@ fi
   echo "## Phase Scope Guard"
   echo
   write_phase_scope_guard
+  echo
+  echo "## Tree Churn Audit"
+  echo
+  write_tree_churn_audit
   echo
   echo "## Completion Pack Routing Audit"
   echo

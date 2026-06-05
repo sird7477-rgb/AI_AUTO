@@ -48,6 +48,12 @@ Not allowed without a new explicit plan:
 - large architecture rewrites
 - deployment hardening
 
+## Writer Isolation
+
+Use one writer per working tree. When multiple agents must work in parallel,
+give each writer a separate git worktree or keep downstream agents confined to
+their own project tree. Do not stage unrelated files produced by another agent.
+
 ## Planning And Interview Escalation
 
 Use `docs/AUTOMATION_OPERATING_POLICY.md` for the full policy. In short:

@@ -35,6 +35,12 @@ verification script improvements, and small testbed maintenance.
 Not allowed without a new explicit plan: new todo app features, UI work,
 authentication, background jobs, large architecture rewrites, or deployment hardening.
 
+## Writer Isolation
+
+Use one writer per working tree. When multiple agents must work in parallel,
+give each writer a separate git worktree or keep downstream agents confined to
+their own project tree. Do not stage unrelated files produced by another agent.
+
 ## Planning And Interview Escalation
 
 Use `docs/AUTOMATION_OPERATING_POLICY.md` for the full policy. In short:

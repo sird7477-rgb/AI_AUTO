@@ -4,6 +4,13 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.5
+
+- Added a one-writer-per-working-tree convention to the template instructions
+  and workflow guide.
+- Review context now includes a report-only Tree Churn Audit that warns when git
+  status changes while context is being collected, including new untracked files.
+
 ## 2026.06.05.4
 
 - `review-gate.sh` now consumes the diff-scope policy before launching external
