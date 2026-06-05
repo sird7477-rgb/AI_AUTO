@@ -135,7 +135,7 @@ Phase 3를 먼저 하면 이후 유닛 게이트 비용이 줄어든다(고려).
 - **백로그 표 무결성**: 행 사이 빈 줄 금지(파서가 표를 분할함). `todo-report.py
   --fail-on-active`로 검증.
 
-## 현재 상태 (U2.3+U2.4 진행 후)
+## 현재 상태 (Phase 1~4 완료)
 - 감사 문서와 본 실행계획 문서는 같은 유닛 커밋 후보에 포함한다.
 - U1.1 분류표 작성 완료.
 - U1.2 `advisory_contract` 상태값 신설 완료(root/template `todo-report.py`,
@@ -161,4 +161,10 @@ Phase 3를 먼저 하면 이후 유닛 게이트 비용이 줄어든다(고려).
 - U4.2 review context에 report-only `Tree Churn Audit` 추가 완료. context 수집
   중 git status가 바뀌면 신규 untracked 포함 경고를 남기며, gate를 자동 차단하지
   않는다.
-- 남은 결정 후보: U1.4 enforce 후보 추가 강제배선 여부.
+- U1.4 추가 enforce 후보 검토 완료. `diff_scope_classification`은 U3.1+U3.2에서
+  실제 review-gate caller로 승격됐고, `review_gate_short_summary`와
+  `template_parity_boundary`는 각각 review summary/parser와 verify/template parity
+  gate에서 이미 강제된다. `completion_acceptance_scope`는 리더/사용자 승인 규율에
+  속해 자연스러운 fail-closed 런타임 훅이 없으므로 추가 배선하지 않는다.
+  결론: 추가 강제배선은 생략하고, 현 enforce surface + advisory 정직화 + diff-비례
+  gate로 Phase 1~4를 닫는다.
