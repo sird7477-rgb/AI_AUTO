@@ -172,6 +172,7 @@ env \
   -u REVIEW_UNTRACKED_ALLOWLIST \
   -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
   AI_AUTO_IN_REVIEW_GATE=1 \
+  AI_AUTO_VERIFY_SCOPE=product \
   ./scripts/verify.sh 2>&1 | tee "$VERIFY_OUTPUT_FILE"
 
 echo "[gate] collecting review context for diff-scope policy..."

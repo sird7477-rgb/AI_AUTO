@@ -29,6 +29,7 @@ def _target_snapshot(root: Path) -> dict[str, tuple[str, str]]:
 
 def test_verify_script_keeps_structural_audit_markers() -> None:
     verify = _read("scripts/verify.sh")
+    machinery = _read("scripts/verify-machinery.sh")
 
     required_markers = [
         "[verify] testing review summary decisions...",
@@ -43,6 +44,17 @@ def test_verify_script_keeps_structural_audit_markers() -> None:
     ]
 
     for marker in required_markers:
+        assert marker in machinery
+
+    required_scope_markers = [
+        "AI_AUTO_VERIFY_SCOPE",
+        "full)",
+        "product)",
+        "machinery)",
+        "./scripts/verify-machinery.sh",
+        ".venv/bin/python -m pytest -q tests/test_app.py",
+    ]
+    for marker in required_scope_markers:
         assert marker in verify
 
     review_gate = _read("scripts/review-gate.sh")
@@ -51,6 +63,7 @@ def test_verify_script_keeps_structural_audit_markers() -> None:
         "-u REVIEW_INCLUDE_UNTRACKED_CONTENT",
         "-u REVIEW_UNTRACKED_ALLOWLIST",
         "-u REVIEW_UNTRACKED_MANUAL_REVIEWED",
+        "AI_AUTO_VERIFY_SCOPE=product",
     ]
     for unset in required_unsets:
         assert unset in review_gate

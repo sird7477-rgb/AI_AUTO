@@ -4,6 +4,14 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.7
+
+- Split the AI_AUTO self-test/tooling suite into `scripts/verify-machinery.sh`.
+  `verify.sh` keeps full coverage by default and now supports
+  `AI_AUTO_VERIFY_SCOPE=product|machinery|full`.
+- `review-gate.sh` now runs the product verify scope before external review, so
+  the gate no longer replays the full machinery suite after standalone verify.
+
 ## 2026.06.05.6
 
 - `collect-review-context.sh` now derives `REVIEW_UNTRACKED_ALLOWLIST` from the

@@ -68,6 +68,11 @@ Docker config when `~/.docker/config.json` points at `credsStore: desktop.exe`.
 - automation contract tests
 - Docker Compose API/Postgres smoke checks
 
+By default, `./scripts/verify.sh` runs the full machinery suite and product
+smoke. Use `AI_AUTO_VERIFY_SCOPE=product ./scripts/verify.sh` only for
+review-gate-style product smoke, or `AI_AUTO_VERIFY_SCOPE=machinery
+./scripts/verify.sh` for the self-test/tooling suite without Docker smoke.
+
 ShellCheck info/style findings are not part of the required gate yet. Treat them
 as cleanup candidates unless a later plan promotes a narrower rule set.
 
