@@ -186,6 +186,7 @@ scripts/make-review-prompts.sh|scripts/make-review-prompts.sh|template-owned|upd
 scripts/record-feedback.sh|scripts/record-feedback.sh|template-owned|update
 scripts/record-project-memory.sh|scripts/record-project-memory.sh|template-owned|update
 scripts/resolve-feedback.sh|scripts/resolve-feedback.sh|template-owned|update
+scripts/validate-odoo-docs-kb.py|scripts/validate-odoo-docs-kb.py|template-owned|update
 scripts/run-ai-reviews.sh|scripts/run-ai-reviews.sh|template-owned|update
 scripts/summarize-ai-reviews.sh|scripts/summarize-ai-reviews.sh|template-owned|update
 scripts/test-review-summary.sh|scripts/test-review-summary.sh|template-owned|update

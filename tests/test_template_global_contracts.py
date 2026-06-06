@@ -103,6 +103,15 @@ def test_template_status_reports_source_checkout_without_install_marker_noise() 
     assert "source-only\tdocs/PATCH_NOTES.md" in result.stdout
 
 
+def test_template_does_not_hardcode_local_obsidian_paths() -> None:
+    template_verify = _read("templates/automation-base/scripts/verify-machinery.sh")
+    template_docs = _read("templates/automation-base/docs/OBSIDIAN_INTEGRATION.md")
+
+    assert "/mnt/c/JSJEON/Obsidian" not in template_verify
+    assert "AI_AUTO_ODOO_DOCS_KB_PATH" in template_verify
+    assert "AI_AUTO_ODOO_DOCS_KB_PATH" in template_docs
+
+
 def test_tool_adoption_status_surfaces_are_explicit() -> None:
     for path in (
         "scripts/automation-doctor.sh",

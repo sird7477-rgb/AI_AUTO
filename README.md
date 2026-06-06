@@ -201,6 +201,7 @@ Out of scope:
 - `docs/MULTI_AI_COLLABORATION.md` documents principal-runtime review rotation, substitute reviewer coverage, degraded-review behavior, and command keywords.
 - `docs/AI_PRINCIPAL_RUNTIMES.md` documents active principal selection, permission parity, reviewer rotation, and shared artifact paths.
 - `knowledge/Odoo.sh KB/` contains the promoted Odoo 19.0 / Odoo.sh working KB prepared for Obsidian.
+- `Odoo19_Docs_KB` in the configured Obsidian vault is the Odoo 19 official-docs baseline (`odoo-19-docs-2026-06`): use project guide first, then `slim` for navigation only, then one matching `raw` topic, then the pinned source URL.
 - `plans/AI_AUTO_FEEDBACK_QUEUE_REGULAR_PROMOTION_PLAN_2026-06-04.md` tracks the seven-item regular-promotion execution plan.
 - `plans/ODOO_SH_KB_DRAFT_PLAN_2026-06-04.md` tracks the Odoo.sh KB promotion and Obsidian publish plan.
 - `plans/AI_AUTO_STRUCTURAL_WEAKNESS_BACKLOG.md` tracks structural workflow improvements that should stay outside immediate patch churn.

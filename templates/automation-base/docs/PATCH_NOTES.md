@@ -4,6 +4,19 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.9
+
+- Added the official documentation baseline pattern to Obsidian guidance:
+  project-authored guide first, official slim topic as navigation-only lookup,
+  one raw topic only for exact semantics, source URL fallback for freshness, and
+  index-only storage for end-user manuals. The local Odoo 19 reference baseline
+  is documented as vault-owned (`odoo-19-docs-2026-06`) with validator guidance
+  that does not make Obsidian authoritative.
+- Added `scripts/validate-odoo-docs-kb.py` as a template-managed optional
+  validator for projects that maintain an Odoo official-docs raw/slim baseline.
+  `verify.sh` can run this optional check via `AI_AUTO_ODOO_DOCS_KB_PATH`; no
+  user-specific vault path is embedded in the template.
+
 ## 2026.06.05.8
 
 - Promoted `docs/PLANNING_VISUALIZATION_GUIDE.md` into the automation template

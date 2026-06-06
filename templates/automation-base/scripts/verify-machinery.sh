@@ -85,6 +85,7 @@ python3 -m py_compile scripts/todo-report.py
 python3 -m py_compile scripts/capture-knowledge-drafts.py
 python3 -m py_compile scripts/knowledge-notes.py
 python3 -m py_compile scripts/validate-odoo-kb.py
+python3 -m py_compile scripts/validate-odoo-docs-kb.py
 python3 -m py_compile scripts/record-lane-decision.py
 python3 -m py_compile scripts/micro_work_contracts.py
 python3 -m py_compile tools/ai-domain-pack
@@ -93,6 +94,7 @@ python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
 python3 -m py_compile templates/automation-base/scripts/todo-report.py
 python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
 python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
+python3 -m py_compile templates/automation-base/scripts/validate-odoo-docs-kb.py
 python3 -m py_compile templates/automation-base/scripts/record-lane-decision.py
 
 echo "[verify] checking secret hygiene..."
@@ -3133,6 +3135,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     record-feedback.sh \
     record-project-memory.sh \
     resolve-feedback.sh \
+    validate-odoo-docs-kb.py \
     review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
@@ -3218,6 +3221,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     record-feedback.sh \
     record-project-memory.sh \
     resolve-feedback.sh \
+    validate-odoo-docs-kb.py \
     review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
@@ -3289,6 +3293,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     record-feedback.sh \
     record-project-memory.sh \
     resolve-feedback.sh \
+    validate-odoo-docs-kb.py \
     review-gate.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
@@ -5020,6 +5025,8 @@ test -x "scripts/capture-knowledge-drafts.py"
 test -x "templates/automation-base/scripts/capture-knowledge-drafts.py"
 test -x "scripts/knowledge-notes.py"
 test -x "templates/automation-base/scripts/knowledge-notes.py"
+test -x "scripts/validate-odoo-docs-kb.py"
+test -x "templates/automation-base/scripts/validate-odoo-docs-kb.py"
 grep -q "Post-Code Spec/Design Alignment" "docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "Post-Code Spec/Design Alignment" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "User-Facing Report Language" "docs/AUTOMATION_OPERATING_POLICY.md"
@@ -5037,6 +5044,9 @@ grep -q "field-test incident evidence" "templates/automation-base/docs/UI_COMPLE
 grep -q "detailed UI behavior verification requests" "templates/automation-base/docs/UI_COMPLETION.md"
 grep -q "validate-<guide-folder>.py" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
 ./scripts/validate-odoo-kb.py
+if [ -n "${AI_AUTO_ODOO_DOCS_KB_PATH:-}" ]; then
+  ./scripts/validate-odoo-docs-kb.py "${AI_AUTO_ODOO_DOCS_KB_PATH}"
+fi
 grep -q "Approval Friction" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "실패 패턴 피드백" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "필요한 완료팩" "docs/NEW_PROJECT_GUIDE.md"
@@ -6132,6 +6142,7 @@ for script in \
   record-lane-decision.py \
   record-project-memory.sh \
   resolve-feedback.sh \
+  validate-odoo-docs-kb.py \
   review-gate.sh \
   run-ai-reviews.sh \
   summarize-ai-reviews.sh \

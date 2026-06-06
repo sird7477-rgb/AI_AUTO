@@ -68,6 +68,40 @@ Do not copy the same full baseline into every project. Store one curated
 baseline in the vault and let project repositories reference its baseline ID,
 source artifact, and vault path.
 
+Official product documentation baselines may use the same pattern. Keep the
+official content and URL set in the project or vault that owns the domain, while
+AI_AUTO keeps only the reusable operating rule and validator shape:
+
+- read the project-authored guide or decision note first
+- read the official `slim` topic as a navigation-only or heading-only lookup aid
+- open the matching official `full`/`raw` topic only when exact semantics are
+  needed, and only one topic at a time
+- fall back to the version-pinned source URL when the local extract is
+  insufficient or freshness matters
+
+End-user manuals should usually be stored as `index` tier only: table of
+contents, version-pinned URLs, and short purpose notes. Fetch the exact page on
+demand instead of mirroring a full manual corpus whose content is low-value for
+coding and expensive to maintain.
+
+For the local Odoo 19 baseline, the curated vault reference is
+`Odoo19_Docs_KB` with baseline ID `odoo-19-docs-2026-06`. Validate it with:
+
+```bash
+./scripts/validate-odoo-docs-kb.py <vault-path>/AI_AUTO/Odoo19_Docs_KB
+```
+
+To include that optional baseline in `./scripts/verify.sh`, set
+`AI_AUTO_ODOO_DOCS_KB_PATH` to the local baseline directory. The template must
+not hardcode a user-specific vault path; absent this variable, verification
+skips the optional official-docs baseline check.
+
+That validator checks the raw/slim/index/runbook structure and metadata only,
+including that every `slim` file warns it is not authoritative implementation
+text. It does not make Obsidian authoritative for Odoo behavior, project schema
+facts, verification, review, queue resolution, or upstream documentation
+freshness.
+
 ## Daily Workflow
 
 1. Start from the project index or vault Project Home view.

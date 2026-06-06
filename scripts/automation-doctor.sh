@@ -514,6 +514,7 @@ REQUIRED_FILES=(
   "scripts/record-feedback.sh"
   "scripts/record-project-memory.sh"
   "scripts/resolve-feedback.sh"
+  "scripts/validate-odoo-docs-kb.py"
   "scripts/run-ai-reviews.sh"
   "scripts/summarize-ai-reviews.sh"
   "scripts/test-review-summary.sh"
