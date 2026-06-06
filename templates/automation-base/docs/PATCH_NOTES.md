@@ -4,6 +4,16 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.10
+
+- Changed the generated AI tmux wrapper so an interactive runtime call no
+  longer attaches to an already-open session for the same runtime and project.
+  It now tries the base session name first, then starts the next numbered
+  session (`-2`, `-3`, ...) when that name is already in use, preserving
+  parallel Codex/Claude/agy terminals without closing existing sessions.
+- Updated wrapper verification to simulate a tmux session-name collision and
+  assert that the generated wrapper retries with the numbered session name.
+
 ## 2026.06.05.9
 
 - Added the official documentation baseline pattern to Obsidian guidance:

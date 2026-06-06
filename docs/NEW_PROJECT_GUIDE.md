@@ -212,9 +212,9 @@ multi-runtime wrapper installed with `--install-ai-tmux-auto-entry`, use
 wrapper also best-effort raises the runtime `nofile` soft limit; override the
 target with `AI_AUTO_NOFILE_LIMIT` if a local shell needs a different value.
 Re-running the same runtime command for a project with an existing tmux session
-attaches to that runtime's session instead of starting a duplicate. Different
-runtimes in the same project use separate sessions, so `claude` does not attach
-to a `codex` session.
+starts the next numbered session instead of attaching to the already-open one.
+Different runtimes in the same project also use separate session names, so
+`claude` does not attach to a `codex` session.
 
 ## Project Registry
 

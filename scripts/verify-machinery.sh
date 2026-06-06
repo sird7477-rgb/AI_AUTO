@@ -5720,6 +5720,10 @@ STUB
   cat > "${fake_bin}/tmux" <<'STUB'
 #!/bin/bash
 printf '%s\n' "$*" >> "${TMUX_FAKE_LOG}"
+if [ "${TMUX_FAIL_FIRST_NEW_SESSION:-0}" = "1" ] && [ ! -e "${TMUX_FAKE_LOG}.failed-once" ]; then
+  touch "${TMUX_FAKE_LOG}.failed-once"
+  exit 1
+fi
 exit "${TMUX_STUB_EXIT:-0}"
 STUB
 
@@ -5738,6 +5742,7 @@ STUB
   grep -q "AI_AUTO codex drift notice integration" "${tmp_home}/.bashrc"
   grep -q "AI_AUTO_CODEX_TMUX_AUTO" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
   grep -q "_ai_auto_codex_tmux_session_name" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
+  grep -q "_ai_auto_start_tmux_session" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
 
   HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
   HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-tmux-auto-entry >/dev/null
@@ -5754,9 +5759,16 @@ STUB
   HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     TMUX="" TMUX_FAKE_LOG="${tmp_home}/tmux-on.log" \
     /usr/bin/script -q -c "${tmux_tty_cmd}" /dev/null >/dev/null
-  grep -Eq '^new-session -A -s ai-codex-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-on.log"
+  grep -Eq '^new-session -s ai-codex-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-on.log"
   grep -q "'--alpha' 'two words'" "${tmp_home}/tmux-on.log"
   grep -Fq "'quote'\\''s'" "${tmp_home}/tmux-on.log"
+
+  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+    TMUX="" TMUX_FAKE_LOG="${tmp_home}/tmux-retry.log" TMUX_FAIL_FIRST_NEW_SESSION=1 \
+    /usr/bin/script -q -c "${tmux_tty_cmd}" /dev/null >/dev/null
+  test "$(wc -l < "${tmp_home}/tmux-retry.log")" -eq 2
+  grep -Eq '^new-session -s ai-codex-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-retry.log"
+  grep -Eq '^new-session -s ai-codex-project-[[:alnum:]]+-2 -c .*/project/subdir ' "${tmp_home}/tmux-retry.log"
 
   printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
     TMUX_FAKE_LOG="${tmp_home}/tmux-nontty.log" \
@@ -5841,9 +5853,9 @@ STUB
     TMUX="" TMUX_FAKE_LOG="${tmp_home}/tmux-ai.log" \
     /usr/bin/script -q -c "${tmux_tty_cmd}" /dev/null >/dev/null
   test "$(wc -l < "${tmp_home}/tmux-ai.log")" -eq 3
-  grep -Eq '^new-session -A -s ai-codex-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-ai.log"
-  grep -Eq '^new-session -A -s ai-claude-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-ai.log"
-  grep -Eq '^new-session -A -s ai-agy-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-ai.log"
+  grep -Eq '^new-session -s ai-codex-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-ai.log"
+  grep -Eq '^new-session -s ai-claude-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-ai.log"
+  grep -Eq '^new-session -s ai-agy-project-[[:alnum:]]+ -c .*/project/subdir ' "${tmp_home}/tmux-ai.log"
   grep -q "/codex' '--alpha' 'two words'" "${tmp_home}/tmux-ai.log"
   grep -q "/claude' '--beta' 'two words'" "${tmp_home}/tmux-ai.log"
   grep -q "/agy' '--prompt' 'two words'" "${tmp_home}/tmux-ai.log"
@@ -5859,13 +5871,13 @@ STUB
   grep -q "real agy <e>" "${tmp_home}/global-off.out"
   test ! -e "${tmp_home}/tmux-global-off.log"
 
-  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    TMUX_FAKE_LOG="${tmp_home}/tmux-runtime-off.log" \
-    bash -c 'ulimit -n 10240; . "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_CLAUDE_TMUX_AUTO=0 claude direct; AI_AUTO_AGY_TMUX_AUTO=0 agy direct' \
-    > "${tmp_home}/runtime-off.out"
-  grep -q "real claude <direct>" "${tmp_home}/runtime-off.out"
-  grep -q "real agy <direct>" "${tmp_home}/runtime-off.out"
-  test "$(grep -Fc "nofile <1048576>" "${tmp_home}/runtime-off.out")" -eq 2
+	  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
+	    TMUX_FAKE_LOG="${tmp_home}/tmux-runtime-off.log" \
+	    bash -c 'ulimit -n 10240; . "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; AI_AUTO_NOFILE_LIMIT=10240 AI_AUTO_CLAUDE_TMUX_AUTO=0 claude direct; AI_AUTO_NOFILE_LIMIT=10240 AI_AUTO_AGY_TMUX_AUTO=0 agy direct' \
+	    > "${tmp_home}/runtime-off.out"
+	  grep -q "real claude <direct>" "${tmp_home}/runtime-off.out"
+	  grep -q "real agy <direct>" "${tmp_home}/runtime-off.out"
+	  test "$(grep -Fc "nofile <10240>" "${tmp_home}/runtime-off.out")" -eq 2
   test ! -e "${tmp_home}/tmux-runtime-off.log"
 
   printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \

@@ -663,6 +663,34 @@ _ai_auto_runtime_command() {
   fi
 }
 
+_ai_auto_start_tmux_session() {
+  local tmux_binary="\$1"
+  local tmux_session_base="\$2"
+  local tmux_command="\$3"
+  local attempt=1
+  local max_attempts="\${AI_AUTO_TMUX_SESSION_ATTEMPTS:-50}"
+  local tmux_session=""
+
+  case "\${max_attempts}" in
+    ''|*[!0-9]*)
+      max_attempts=50
+      ;;
+  esac
+
+  while [ "\${attempt}" -le "\${max_attempts}" ]; do
+    if [ "\${attempt}" -eq 1 ]; then
+      tmux_session="\${tmux_session_base}"
+    else
+      tmux_session="\${tmux_session_base}-\${attempt}"
+    fi
+
+    command "\${tmux_binary}" new-session -s "\${tmux_session}" -c "\$(pwd)" "\${tmux_command}" && return 0
+    attempt=\$((attempt + 1))
+  done
+
+  return 1
+}
+
 _ai_auto_enter_tmux_if_needed() {
   local runtime_name="\$1"
   local runtime_binary="\$2"
@@ -693,7 +721,7 @@ _ai_auto_enter_tmux_if_needed() {
   tmux_base="\${AI_AUTO_TMUX_BASE:-\$(pwd)}"
   tmux_session="\$(_ai_auto_tmux_session_name "\${runtime_name}" "\${tmux_base}")"
   tmux_command="\$(_ai_auto_runtime_command "\${runtime_binary}" "\$@")"
-  command "\${tmux_binary}" new-session -A -s "\${tmux_session}" -c "\$(pwd)" "\${tmux_command}" && return 0
+  _ai_auto_start_tmux_session "\${tmux_binary}" "\${tmux_session}" "\${tmux_command}" && return 0
   return 1
 }
 

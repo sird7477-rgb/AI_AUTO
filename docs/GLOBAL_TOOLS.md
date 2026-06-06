@@ -328,9 +328,10 @@ when direct execution is needed:
 
     AI_AUTO_CODEX_TMUX_AUTO=0 codex
 
-Interactive `codex` calls outside tmux attach to a stable project-scoped tmux
-session and start in the current directory. If that session already exists,
-tmux attaches to it instead of starting a second Codex command.
+Interactive `codex` calls outside tmux start in the current directory and use a
+project-scoped tmux session name. If that session already exists, the wrapper
+starts the next numbered session instead of attaching to the already-open Codex
+command.
 Calls already inside tmux, calls with non-terminal stdin/stdout such as pipes or
 redirects, calls without `tmux` on `PATH`, and calls with
 `AI_AUTO_CODEX_TMUX_AUTO=0` continue to run the real Codex binary directly. This
@@ -346,9 +347,10 @@ normal Gemini reviewer path uses `agy`, so no separate `gemini` wrapper is
 installed by default. These wrappers affect only interactive terminal starts.
 They do not change `scripts/ai-runtime-adapter.sh`, review-gate capability
 rules, model routing, credentials, or tool permissions. Session names include
-the runtime name, so parallel VS Code terminals in the same project keep
-`codex`, `claude`, and `agy` in separate tmux sessions instead of attaching to
-the first AI runtime opened for that project.
+the runtime name and add a numeric suffix when an existing session is already
+open, so parallel terminals in the same project keep `codex`, `claude`, and
+`agy` in separate tmux sessions instead of attaching to an already-open AI
+runtime.
 
 Disable all AI_AUTO tmux auto-entry wrappers for a shell command with:
 
