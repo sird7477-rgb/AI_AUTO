@@ -4,6 +4,14 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.05.11
+
+- Added `DOC_BUDGET_COMPLETION_BASE_REF` to `scripts/doc-budget.sh` so
+  long-lived branch guidance bloat can remain visible as a warning while task
+  completion is judged against the current work/run baseline.
+- Documented the completion-scoped guidance budget workflow in the automation
+  operating policy.
+
 ## 2026.06.05.10
 
 - Changed the generated AI tmux wrapper so an interactive runtime call no

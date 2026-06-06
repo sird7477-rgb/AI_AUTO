@@ -7,6 +7,9 @@ TEMPLATE_PATCH_REASON="${DOC_BUDGET_TEMPLATE_PATCH_REASON:-}"
 # Integration branch the cumulative diff is measured against. On that branch (or
 # with no merge-base) the measurement degrades to the uncommitted diff.
 BASE_REF="${DOC_BUDGET_BASE_REF:-main}"
+# Optional task/work-session baseline. When set, cumulative branch guidance
+# growth is still reported, but hard failure is applied to this narrower diff.
+COMPLETION_BASE_REF="${DOC_BUDGET_COMPLETION_BASE_REF:-}"
 # Extra content/spec paths to exempt from the guidance budget, space separated.
 EXEMPT_GLOBS="${DOC_BUDGET_EXEMPT_GLOBS:-}"
 
@@ -69,28 +72,32 @@ check_number() {
 }
 
 check_current_guidance_diff() {
-  local value="$1" warn_at=150 fail_at=300
+  local value="$1" label="${2:-current guidance diff}" mode="${3:-fail}" warn_at=150 fail_at=300
 
-  printf '[budget] current guidance diff net added lines: %s\n' "$value"
+  printf '[budget] %s net added lines: %s\n' "$label" "$value"
 
   if [ "$value" -gt "$fail_at" ]; then
+    if [ "$mode" = "warn" ]; then
+      warn "${label} net added lines exceeds hard limit ${fail_at}; completion-scoped budget will decide task completion"
+      return
+    fi
     if [ "$TEMPLATE_PATCH_MODE" = "1" ]; then
-      warn "current guidance diff net added lines exceeds hard limit ${fail_at}; DOC_BUDGET_TEMPLATE_PATCH=1 treats template patch adoption as a reported warning"
+      warn "${label} net added lines exceeds hard limit ${fail_at}; DOC_BUDGET_TEMPLATE_PATCH=1 treats template patch adoption as a reported warning"
       echo "[budget] template patch mode reason: ${TEMPLATE_PATCH_REASON}"
       echo "[budget] template patch mode: verify that additions are template-owned or explicitly review-merged"
       echo "[budget] template patch mode is attestation-only; report this warning and the reviewed scope"
     else
-      fail "current guidance diff net added lines exceeds hard limit ${fail_at}"
+      fail "${label} net added lines exceeds hard limit ${fail_at}"
       echo "[budget] if this is a reviewed AI_AUTO template patch with legitimate template-owned guide additions, rerun with DOC_BUDGET_TEMPLATE_PATCH=1 DOC_BUDGET_TEMPLATE_PATCH_REASON='...' and report the warning"
     fi
   elif [ "$value" -gt "$warn_at" ]; then
     if [ "$TEMPLATE_PATCH_MODE" = "1" ]; then
       echo "[budget] template patch mode reason: ${TEMPLATE_PATCH_REASON}"
-      echo "[budget] template patch mode: current guidance diff exceeds warning budget ${warn_at} but stays within hard limit ${fail_at}"
+      echo "[budget] template patch mode: ${label} exceeds warning budget ${warn_at} but stays within hard limit ${fail_at}"
       echo "[budget] template patch mode is accepted for reviewed template-owned or review-merged guidance"
       return
     fi
-    warn "current guidance diff net added lines exceeds warning budget ${warn_at}"
+    warn "${label} net added lines exceeds warning budget ${warn_at}"
   fi
 }
 
@@ -208,7 +215,28 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     diff_net=0
   fi
   printf '[budget] current guidance diff added lines: %s\n' "$diff_added"
-  check_current_guidance_diff "$diff_net"
+  if [ -n "${COMPLETION_BASE_REF}" ]; then
+    check_current_guidance_diff "$diff_net" "branch-cumulative guidance diff" "warn"
+
+    completion_base_ref="$(git merge-base "${COMPLETION_BASE_REF}" HEAD 2>/dev/null || git rev-parse "${COMPLETION_BASE_REF}" 2>/dev/null || echo "")"
+    if [ -z "${completion_base_ref}" ]; then
+      fail "DOC_BUDGET_COMPLETION_BASE_REF=${COMPLETION_BASE_REF} could not be resolved"
+    else
+      completion_numstat="$(git diff --numstat "${completion_base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
+      completion_added="$(printf '%s\n' "${completion_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
+      completion_removed="$(printf '%s\n' "${completion_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
+      completion_added=$((completion_added + untracked_added))
+      completion_net=$((completion_added - completion_removed))
+      if [ "$completion_net" -lt 0 ]; then
+        completion_net=0
+      fi
+      printf '[budget] completion-scoped guidance diff base: %s\n' "${completion_base_ref}"
+      printf '[budget] completion-scoped guidance diff added lines: %s\n' "$completion_added"
+      check_current_guidance_diff "$completion_net" "completion-scoped guidance diff"
+    fi
+  else
+    check_current_guidance_diff "$diff_net" "current guidance diff"
+  fi
 
   # Plan/spec labeled artifacts are exempt from the guidance budget above, but
   # their net-added lines are still reported separately so the volume stays

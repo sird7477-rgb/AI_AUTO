@@ -489,6 +489,32 @@ echo "[verify] testing guidance document budget cumulative-vs-base accounting...
   git merge -q --ff-only feature
   ./scripts/doc-budget.sh > "${tmp_dir}/budget-cumulative-main.out"
   grep -q "current guidance diff net added lines: 0" "${tmp_dir}/budget-cumulative-main.out"
+
+  # A task/run baseline can narrow the hard-fail decision to the current work
+  # while still reporting the branch-cumulative bloat as a warning.
+  git checkout -q -b bloated-feature
+  : > docs/BLOAT.md
+  for i in $(seq 1 310); do
+    printf 'branch guidance line %s\n' "$i" >> docs/BLOAT.md
+  done
+  git add docs/BLOAT.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed branch guidance bloat"
+  completion_base="$(git rev-parse HEAD)"
+  printf 'small current-work guidance line\n' >> docs/WORKFLOW.md
+  DOC_BUDGET_COMPLETION_BASE_REF="${completion_base}" ./scripts/doc-budget.sh > "${tmp_dir}/budget-completion-scope-pass.out"
+  grep -q "branch-cumulative guidance diff net added lines: 311" "${tmp_dir}/budget-completion-scope-pass.out"
+  grep -q "completion-scoped guidance diff net added lines: 1" "${tmp_dir}/budget-completion-scope-pass.out"
+  grep -q "warnings=" "${tmp_dir}/budget-completion-scope-pass.out"
+
+  : > docs/TASK_BLOAT.md
+  for i in $(seq 1 310); do
+    printf 'task guidance line %s\n' "$i" >> docs/TASK_BLOAT.md
+  done
+  if DOC_BUDGET_COMPLETION_BASE_REF="${completion_base}" ./scripts/doc-budget.sh > "${tmp_dir}/budget-completion-scope-fail.out" 2>&1; then
+    echo "[verify] doc-budget accepted completion-scoped guidance bloat"
+    exit 1
+  fi
+  grep -q "completion-scoped guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-completion-scope-fail.out"
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."

@@ -335,6 +335,13 @@ Stage 1 is the normal guidance budget check. It may run during verification and
 should report document-volume warnings to the user. A warning is evidence to
 recommend the next review step, not approval to edit guidance.
 
+When a long-lived branch already contains unrelated accumulated guidance bloat,
+set `DOC_BUDGET_COMPLETION_BASE_REF` to the task or Ralph-run starting commit.
+`scripts/doc-budget.sh` still reports the branch-cumulative diff against
+`main`, but the hard failure applies to the completion-scoped diff from that
+baseline. Report both numbers so implementation completion is not confused with
+branch-integration guidance debt.
+
 Stage 2 is a read-only duplicate or consolidation report, typically produced by
 `scripts/guidance-duplicate-report.sh`. Run it only when the user asks for that
 report after seeing the Stage 1 recommendation. The report should identify
