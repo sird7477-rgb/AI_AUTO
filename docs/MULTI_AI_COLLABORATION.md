@@ -277,6 +277,9 @@ Current handling:
 - external reviewer execution uses REVIEW_OUTPUT_MODE=tee by default so prompts and approval waits remain visible
 - external reviewer execution uses SKIP_CONTEXT_GENERATION=1 by default so it reviews the already-prepared prompts
 - external reviewer preparation shows disabled reviewers before stopping, because the generated runner shares `.omx/reviewer-state/`
+- when Claude is unavailable (e.g. a Codex desktop runtime), set RUN_CLAUDE_REVIEW=0 to skip Claude and run the gate on the remaining reviewers (Gemini + Codex)
+- raw `gemini` is a degraded last resort only when `agy` is missing; it is not class-fixed (`docs/AI_MODEL_ROUTING.md`), so `agy` stays the default/recommended GEMINI_REVIEW_COMMAND
+- raw `gemini --sandbox` needs a Docker/podman runtime (or macOS Seatbelt); on WSL or a desktop runtime without a usable one (CLI present but daemon down counts as unusable) the adapter auto-skips `--sandbox` (the review path is read-only), and GEMINI_SANDBOX=0/1 forces it off/on explicitly
 
 Future work:
 

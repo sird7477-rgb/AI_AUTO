@@ -692,6 +692,109 @@ SH
   grep -q "Check this fixture" "${tmp_dir}/agy.prompt"
   grep -qx -- "--sandbox" "${tmp_dir}/agy.argv"
 
+  # The raw `gemini` CLI's --sandbox needs a container runtime (Docker/podman);
+  # on a host without one (WSL, desktop AI runtime) it must be dropped so the
+  # review still runs. GEMINI_SANDBOX gives a deterministic override either way.
+  # agy and other wrappers keep --sandbox (asserted above).
+  cat > "${tmp_dir}/bin/gemini" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ] || [ "${2:-}" = "--help" ]; then
+  echo "usage: gemini --prompt-file FILE --sandbox --approval-mode MODE --output-format text"
+  exit 0
+fi
+: > "${GEMINI_ARGV_CAPTURE}"
+for arg in "$@"; do printf '%s\n' "${arg}" >> "${GEMINI_ARGV_CAPTURE}"; done
+printf '# Gemini Review\n\n## Verdict\n\napprove\n'
+SH
+  chmod +x "${tmp_dir}/bin/gemini"
+
+  rm -f "${output_file}"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_AGY_COMMAND=gemini \
+  GEMINI_SANDBOX=0 \
+  GEMINI_ARGV_CAPTURE="${tmp_dir}/gemini-nosandbox.argv" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime agy \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  grep -q "## Verdict" "${output_file}"
+  if grep -qx -- "--sandbox" "${tmp_dir}/gemini-nosandbox.argv"; then
+    echo "[verify] raw gemini received --sandbox while GEMINI_SANDBOX=0 (would fail without Docker)"
+    exit 1
+  fi
+
+  # GEMINI_SANDBOX matching is case-insensitive, so an uppercase opt-out still
+  # drops --sandbox instead of falling through to runtime auto-detection.
+  rm -f "${output_file}"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_AGY_COMMAND=gemini \
+  GEMINI_SANDBOX=FALSE \
+  GEMINI_ARGV_CAPTURE="${tmp_dir}/gemini-upper.argv" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime agy \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  if grep -qx -- "--sandbox" "${tmp_dir}/gemini-upper.argv"; then
+    echo "[verify] raw gemini received --sandbox while GEMINI_SANDBOX=FALSE (case-insensitive opt-out failed)"
+    exit 1
+  fi
+
+  # Auto-detect (GEMINI_SANDBOX unset): an installed-but-unusable container
+  # runtime (CLI present, daemon down) must NOT count as a usable sandbox, so
+  # --sandbox is still dropped. This is the common WSL/desktop failure state.
+  cat > "${tmp_dir}/bin/docker" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = "info" ] && exit 1
+exit 0
+SH
+  chmod +x "${tmp_dir}/bin/docker"
+  rm -f "${output_file}"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_AGY_COMMAND=gemini \
+  GEMINI_ARGV_CAPTURE="${tmp_dir}/gemini-daemon-down.argv" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime agy \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  if grep -qx -- "--sandbox" "${tmp_dir}/gemini-daemon-down.argv"; then
+    echo "[verify] raw gemini received --sandbox with an installed-but-unusable docker daemon"
+    exit 1
+  fi
+
+  # A usable container runtime (daemon answers) keeps --sandbox on auto-detect.
+  cat > "${tmp_dir}/bin/docker" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "${tmp_dir}/bin/docker"
+  rm -f "${output_file}"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_AGY_COMMAND=gemini \
+  GEMINI_ARGV_CAPTURE="${tmp_dir}/gemini-daemon-up.argv" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime agy \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  grep -qx -- "--sandbox" "${tmp_dir}/gemini-daemon-up.argv"
+
+  rm -f "${tmp_dir}/bin/docker"
+
+  rm -f "${output_file}"
+  PATH="${tmp_dir}/bin:${PATH}" \
+  RUNTIME_ADAPTER_AGY_COMMAND=gemini \
+  GEMINI_SANDBOX=1 \
+  GEMINI_ARGV_CAPTURE="${tmp_dir}/gemini-sandbox.argv" \
+    ./scripts/ai-runtime-adapter.sh run-readonly \
+      --runtime agy \
+      --capability review \
+      --prompt-file "${prompt_file}" \
+      --output "${output_file}"
+  grep -qx -- "--sandbox" "${tmp_dir}/gemini-sandbox.argv"
+
   cat > "${tmp_dir}/bin/prompt-only-agy" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--help" ]; then

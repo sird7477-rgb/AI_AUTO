@@ -109,6 +109,52 @@ help_supports_flag() {
   printf '%s\n' "${help_text}" | grep -Eq "(^|[^[:alnum:]_-])${flag}($|[^[:alnum:]_-])"
 }
 
+# A container runtime counts as usable only when its daemon actually answers,
+# not merely when the CLI is on PATH. On WSL/desktop the docker/podman client is
+# frequently installed while the daemon/socket is down, so `command -v` alone
+# would wrongly conclude the Gemini sandbox is available. `info` is bounded by a
+# short timeout so a hung/unreachable daemon cannot stall the review.
+container_runtime_usable() {
+  local runtime="$1"
+
+  command -v "${runtime}" >/dev/null 2>&1 || return 1
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${GEMINI_SANDBOX_PROBE_TIMEOUT_SECONDS:-5}" "${runtime}" info >/dev/null 2>&1
+  else
+    "${runtime}" info >/dev/null 2>&1
+  fi
+}
+
+# The official Gemini CLI's --sandbox boots a container runtime (Docker/podman)
+# or macOS Seatbelt; on a host without a usable one (e.g. WSL or a desktop AI
+# runtime where the Docker daemon is down) it fails to pull/start the sandbox
+# image and the review never runs. agy and other wrappers manage their own
+# no-edit posture, so only the raw `gemini` command is gated here. Honor an
+# explicit GEMINI_SANDBOX override, otherwise pass --sandbox only when a sandbox
+# runtime is actually usable. Dropping it is safe for the read-only review path:
+# this adapter never treats agy/Gemini as a filesystem sandbox boundary (it
+# relies on no-edit/approval flags), and a reviewer only reads the prepared
+# prompt.
+agy_command_sandbox_ok() {
+  local command_name="$1"
+
+  case "$(basename -- "${command_name}")" in
+    gemini)
+      case "${GEMINI_SANDBOX:-}" in
+        0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) return 1 ;;
+        1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) return 0 ;;
+      esac
+      container_runtime_usable docker && return 0
+      container_runtime_usable podman && return 0
+      [ "$(uname -s 2>/dev/null)" = "Darwin" ] && return 0
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 print_capability() {
   local runtime="$1"
   local capability="$2"
@@ -253,7 +299,7 @@ run_readonly_agy() {
   prompt_bytes="$(wc -c < "${prompt_file}")"
   if help_supports_flag "${help_text}" "--prompt-file"; then
     local agy_args=(--prompt-file "${prompt_file}")
-    if help_supports_flag "${help_text}" "--sandbox"; then
+    if help_supports_flag "${help_text}" "--sandbox" && agy_command_sandbox_ok "${command_name}"; then
       agy_args+=(--sandbox)
     fi
     if help_supports_flag "${help_text}" "--approval-mode"; then
@@ -279,7 +325,7 @@ run_readonly_agy() {
     fi
     prompt_text="$(sed -n '1,$p' "${prompt_file}")"
     local agy_args=(--prompt "${prompt_text}")
-    if help_supports_flag "${help_text}" "--sandbox"; then
+    if help_supports_flag "${help_text}" "--sandbox" && agy_command_sandbox_ok "${command_name}"; then
       agy_args+=(--sandbox)
     fi
     if help_supports_flag "${help_text}" "--approval-mode"; then

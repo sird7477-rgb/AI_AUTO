@@ -304,6 +304,23 @@ Gemini 리뷰 lane은 reviewer 이름과 산출물 호환성은 유지하지만,
 명령은 Antigravity CLI `agy`다. 필요하면 `GEMINI_REVIEW_COMMAND`로 실행
 명령만 덮어쓴다.
 
+Codex 데스크탑앱처럼 Claude 리뷰어를 쓸 수 없는 외부 런타임에서는
+`RUN_CLAUDE_REVIEW=0`으로 Claude 리뷰를 건너뛰고 나머지 리뷰어(Gemini +
+Codex)로 gate를 운영할 수 있다. 함께 `REVIEW_EXECUTION_MODE=external`을 쓰면
+제한 없는 대화형 터미널용 러너(`.omx/external-review/run-reviewers-latest.sh`)를
+준비해서 리뷰어를 실행하고 verdict를 요약한다.
+
+`GEMINI_REVIEW_COMMAND`를 raw `gemini`로 덮어쓰는 것은 `agy`가 없는 환경의
+degraded 최후수단이다. raw `gemini`는 `agy`와 달리 모델이 class-fixed로
+고정되지 않으므로(`docs/AI_MODEL_ROUTING.md`) 기본·권장 실행 명령은 `agy`를
+유지한다. 또한 raw `gemini --sandbox`는 Docker/podman 컨테이너 런타임(또는
+macOS Seatbelt)을 요구해서, WSL이나 Docker가 없는 데스크탑 런타임에서는
+샌드박스 이미지 pull/기동 실패로 리뷰 자체가 중단된다. 이 경우 어댑터는
+사용 가능한 컨테이너 런타임(데몬 응답 포함)을 찾지 못하면 자동으로 `--sandbox`를
+생략하며(리뷰는 프롬프트만 읽는 read-only 경로라 안전), `GEMINI_SANDBOX=0`으로 명시적으로 끄거나
+`GEMINI_SANDBOX=1`로(또는 Docker가 있으면 자동 감지로) 샌드박스를 유지할 수
+있다.
+
 Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로 응답할 수
 없으면 해당 리뷰어는 `.omx/reviewer-state/`에 disabled 상태로 기록된다.
 disabled 리뷰어는 사용자가 `RESET_DISABLED_AI_REVIEWERS=claude|gemini|all`로

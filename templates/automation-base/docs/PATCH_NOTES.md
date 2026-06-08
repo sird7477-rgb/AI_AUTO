@@ -4,6 +4,21 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.09.0
+
+- `scripts/ai-runtime-adapter.sh` no longer passes `--sandbox` to the raw
+  `gemini` CLI when no *usable* container runtime (Docker/podman daemon actually
+  reachable via a timeout-bounded `info` probe) or macOS Seatbelt is available,
+  so external/WSL/desktop review runs no longer die on a missing Gemini sandbox
+  image — including the common case where the docker CLI is installed but the
+  daemon is down. Case-insensitive `GEMINI_SANDBOX=0|1` forces it off/on; `agy`
+  and other wrappers keep `--sandbox`. `verify-machinery.sh` self-tests lock the
+  explicit-override and installed-but-unusable-daemon paths.
+- Documented in `docs/WORKFLOW.md` the external/Claude-unavailable review path:
+  `RUN_CLAUDE_REVIEW=0` to skip Claude, `REVIEW_EXECUTION_MODE=external` runner,
+  the raw-`gemini` degraded-last-resort caveat (not class-fixed; `agy` stays the
+  default), and the Gemini Docker-sandbox/WSL no-sandbox handling.
+
 ## 2026.06.05.11
 
 - Added `DOC_BUDGET_COMPLETION_BASE_REF` to `scripts/doc-budget.sh` so
