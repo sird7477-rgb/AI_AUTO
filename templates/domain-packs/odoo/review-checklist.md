@@ -8,7 +8,11 @@ changes.
 - The change is limited to the requested module or business flow.
 - Model fields, computes, constraints, and onchange logic match the intended
   behavior.
-- Views reference valid fields and groups.
+- Views reference valid fields and groups. View inheritance is
+  registry-validated, not XML-validated: a clean XML parse does not prove the
+  inheritance anchor resolves, so changed addon view XML needs a registry load
+  (`-u <module> --stop-after-init`) or explicit build-blocking-risk alternative
+  evidence, not a static parse pass.
 - Reports, wizards, and data files are updated consistently.
 
 ## Security And Data

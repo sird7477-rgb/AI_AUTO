@@ -28,7 +28,32 @@ Prefer project-local linters when already present, such as `ruff`, `pylint`, or
 `pylint-odoo`. Do not add new dependencies during onboarding unless the user
 explicitly requests it.
 
+**Static XML parsing is syntax-only, not a validity check.** `ET.parse` confirms
+well-formed XML; it cannot confirm that a view inheritance anchor (xpath/`field`
+selector) resolves against the model's fields or the combined parent arch. View
+inheritance is **registry-validated, not XML-validated**: Odoo resolves selectors
+at registry load against base view + every inheriting module's contribution, so a
+clean static parse does **not** mean the change is installable. Cross-module and
+enterprise-view anchors are the common gap. Treat static checks as a fast
+pre-filter and a fallback only — never as installable-evidence.
+
 ## Module Install Or Update
+
+This is the **only complete detection** for view-inheritance/registry errors and
+is therefore a **fail-closed gate whenever an addon view `*.xml` changed**: run
+`-u <changed module> --stop-after-init` on a disposable test DB and fail on any
+`ParseError`, `Element ... cannot be located`, or `Field ... does not exist`.
+
+When no Odoo runtime is available, do **not** record this as "skipped/Not-tested":
+mark it **build-blocking risk** and require alternative evidence before merge
+(strongest first): a lightweight Docker `-u` of the standard module that defines
+the view; an odoo.sh staging build as the pre-merge validator; or a non-runtime
+parent-arch source check across the installed inheriting modules. Commit such a
+change with an explicit marker, e.g.
+`odoo-view-registry: NOT validated locally; evidence=<...>; risk=build-blocking
+until staging registry load passes`. Gate reliability requires **module-set +
+point-release parity** with the odoo.sh build; without parity, "local green" is
+false confidence.
 
 Example shape:
 
@@ -89,4 +114,6 @@ docker compose run --rm odoo odoo-bin -d "${ODOO_TEST_DB}" -i "${ODOO_MODULE}" -
 - Clean up disposable test databases only when the project defines a safe cleanup
   command.
 - If runtime verification is unavailable, report the skipped reason clearly and
-  keep static checks as the fallback, not as full completion evidence.
+  keep static checks as the fallback, not as full completion evidence. For
+  changed addon view XML this fallback is **build-blocking risk**, not a clean
+  skip: record the marker and alternative evidence from Module Install Or Update.
