@@ -1,0 +1,32 @@
+# Odoo 19 registry-load validation harness (parity-pinned source, deps from odoo:19 image)
+# Env (set by validate-odoo.sh):
+#   ODOO_COMMUNITY  -> "00. DATA/01. Odoo.19(커뮤니티)"
+#   ODOO_ENTERPRISE -> "00. DATA/02. Odoo.19(enterprise)"
+#   PROJECT_ADDONS  -> <project>/custom-addons
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo
+    volumes:
+      - odoo_pgdata:/var/lib/postgresql/data   # persists the regenerable warm base
+  odoo:
+    build:                         # odoo:19 + project python deps (.deps.txt)
+      context: .
+      dockerfile: Dockerfile
+    image: odoo19-validate:local
+    depends_on: [db]
+    entrypoint: []                 # clear image entrypoint; run our pinned source
+    working_dir: /mnt/community
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - "${ODOO_COMMUNITY}:/mnt/community:ro"
+      - "${ODOO_ENTERPRISE}:/mnt/enterprise:ro"
+      - "${PROJECT_ADDONS}:/mnt/extra-addons:ro"
+      - "${HARNESS_DIR:-.}:/mnt/harness:ro"
+
+volumes:
+  odoo_pgdata:   # regenerable warm-base storage (drop to rebuild from scratch)

@@ -117,3 +117,15 @@ docker compose run --rm odoo odoo-bin -d "${ODOO_TEST_DB}" -i "${ODOO_MODULE}" -
   keep static checks as the fallback, not as full completion evidence. For
   changed addon view XML this fallback is **build-blocking risk**, not a clean
   skip: record the marker and alternative evidence from Module Install Or Update.
+
+## Local Registry-Load Validation Harness
+
+`validation-harness/` is a reference harness that runs the registry-load gate
+locally before push: a disposable Odoo 19 DB (parity-pinned community+enterprise
+source from an odoo.sh build) installs/updates the changed addons and fails on
+`ParseError` / `cannot be located` / `Field ... does not exist` /
+`Failed to load registry`. A one-time **regenerable warm base** (full module set
++ locale baseline) makes per-change validation ~tens of seconds via clone + `-u`.
+See `validation-harness/README.md`. Wire it as a `pre-push` gate. Enterprise
+source is mounted, never baked; reliability requires odoo.sh module-set +
+point-release parity.
