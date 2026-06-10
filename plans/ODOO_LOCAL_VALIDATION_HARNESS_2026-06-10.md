@@ -68,9 +68,17 @@ The compose mounts these as the odoo core + addons-path; the project's
 
 > **Concern (user):** stacking this Odoo gate on top of pytest hook + review-gate
 > would make the commit-time bottleneck severe. **This section is a proposal;
-> implementation is gated on user consultation.** It directly extends the original
-> session-efficiency finding (review churn ~98/day) — shift-left must NOT re-add
+> implementation is gated on user consultation.** Shift-left must NOT re-add
 > inner-loop friction.
+>
+> **Measured baseline (jw_dev 5/18–6/10, hanseo 5/15–6/9, from `.omx/review-results`):**
+> **229 review-gate runs, ~17h cumulative wall-time** (avg ~272s/run); **51% (118
+> runs) were re-runs within 15 min of a prior run** = rapid re-review churn,
+> ≈ **8–9h** of it; plus **~24 user manual re-review requests** layered on top.
+> Counts/churn% measured; per-run duration estimated (summary "Generated at" −
+> start). The pre-commit pytest(199) cost is **ai-lab-only** — the project hooks
+> did not run. So the dominant measured cost is **review-gate churn**, and the
+> single largest lever is making targeted recheck the default after one finding.
 
 ### 5.1 Tier the gates by frequency (the main lever)
 Move heavy gates OUT of the frequent inner loop. Match cost to cadence:
@@ -116,6 +124,24 @@ Commit stays in seconds; the build-error gate moves to push at ~tens of seconds
 catch rate is preserved while the **inner loop gets faster, not slower**, because
 remote build-fail + human-log-paste cycles (and their recurrence chains) are
 removed.
+
+### 5.7 Default reallocation (recommended — the highest-ROI changes)
+
+Most lightweighting machinery already exists in AI_AUTO but ships heavy/OFF by
+default, so it is unused. The recommendation is **reallocating defaults by tier**,
+not removing safety. Fixes are scope/condition, never global disable.
+
+| Default procedure | Current default | Measured cost | Recommended change | Tier | Risk note |
+|---|---|---|---|---|---|
+| External review-gate re-run | full multi-part re-review per finding (`REVIEW_TARGETED_RECHECK=0`) | 229 runs / ~17h; **51% churn (~8–9h)** | prefer targeted recheck after a single accepted finding; full review only at PR/merge | PR | **no global default-on** — scope to that finding only |
+| Review context detail | `REVIEW_CONTEXT_DETAIL=auto` (heavy) | heavy context per run | `light` default for iteration; `full` at PR | push/commit | low |
+| User manual re-review | requested per stage | **~24 turns** redundant with the auto gate | reserve manual re-review for confirmed boundaries; delegate mid-iteration to auto/targeted | — | user habit |
+| Pre-commit tests | unconditional `pytest -v` (ai-lab); project hook inert | ai-lab-only; **projects ~0** | docs/plans-only → skip; code → affected tests via diff-scope | commit | no global disable |
+| `verify.sh` Docker smoke | `docker compose up --build` always | full build for non-app changes | gate behind app/code-path change | push | low |
+
+The top two rows (targeted recheck + manual-review discipline) are the largest
+measured savings (~8–9h of churn + 24 manual passes) and require no new tooling —
+only reallocating an existing default. These pair directly with the §5.1 tiering.
 
 ## 6. Mainline promotion path (Ralph goal: 정규승격 + main merge)
 
