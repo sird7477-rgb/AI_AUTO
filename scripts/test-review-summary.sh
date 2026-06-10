@@ -1200,7 +1200,9 @@ case_review_revision_task_created_from_accepted_finding() {
   fi
 
   grep -q "status: revision_task_created" "${task_file}"
-  grep -q "targeted_recheck: 0" "${task_file}"
+  # R1: default REVIEW_TARGETED_RECHECK is 1 (no env override set above), so the
+  # emitted revision task scopes to the accepted finding instead of a fresh full gate.
+  grep -q "targeted_recheck: 1" "${task_file}"
   grep -q "reviewer: claude" "${task_file}"
   grep -q "file: scripts/example.sh" "${task_file}"
   grep -q "Run ./scripts/verify.sh" "${task_file}"
@@ -1244,6 +1246,204 @@ case_targeted_review_recheck_rejects_expanded_scope() {
   grep -q "reason: targeted_recheck_scope_expanded" "${task_file}"
 
   echo "[summary-test] targeted_review_recheck_rejects_expanded_scope: pass"
+}
+
+case_targeted_recheck_defaults_on() {
+  # R1 contract: with no REVIEW_TARGETED_RECHECK override the revision task must be
+  # emitted targeted (recheck=1), so a finding triggers a scoped revision task
+  # instead of a fresh full gate. Guards the default flip at summarize:810.
+  local dir="${TMP_ROOT}/targeted_recheck_defaults_on"
+  local out_dir="${dir}/out"
+  mkdir -p "${dir}" "${out_dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "request_changes"
+  write_verdict "${dir}/gemini-review-current.md" "request_changes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  printf 'accepted|R1|claude|scripts/example.sh|Quote path variables safely\n' > "${dir}/accepted-findings.psv"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  set +e
+  REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
+    REVIEW_REVISION_CYCLE_COUNT=2 \
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+  set -e
+
+  local task_file
+  task_file="$(find "${out_dir}" -maxdepth 1 -type f -name 'review-revision-task-*.md' -print | head -1)"
+  if [ -z "${task_file}" ]; then
+    echo "[summary-test] targeted_recheck_defaults_on: missing task file"
+    cat /tmp/review-summary-test-output.txt
+    exit 1
+  fi
+
+  grep -q "status: revision_task_created" "${task_file}"
+  grep -q "targeted_recheck: 1" "${task_file}"
+  grep -q "Use targeted recheck only for the accepted finding scope" "${task_file}"
+
+  echo "[summary-test] targeted_recheck_defaults_on: pass"
+}
+
+provenance_block_source() {
+  awk '/# >>> review-provenance-shared/{f=1} f{print} /# <<< review-provenance-shared/{f=0}' "$1"
+}
+
+case_provenance_block_identical() {
+  # R2: the shared provenance block is inlined in both scripts and MUST stay
+  # byte-identical, else the recorded hash and the consumed hash could diverge and a
+  # skip would compare against a different algorithm.
+  local a b
+  a="$(provenance_block_source "${REPO_ROOT}/scripts/review-gate.sh")"
+  b="$(provenance_block_source "${REPO_ROOT}/scripts/summarize-ai-reviews.sh")"
+  if [ -z "${a}" ]; then
+    echo "[summary-test] provenance_block_identical: shared block not found"
+    exit 1
+  fi
+  if [ "${a}" != "${b}" ]; then
+    echo "[summary-test] provenance_block_identical: block diverged between review-gate.sh and summarize-ai-reviews.sh"
+    exit 1
+  fi
+  echo "[summary-test] provenance_block_identical: pass"
+}
+
+case_provenance_record_and_decision() {
+  local dir="${TMP_ROOT}/provenance_record_and_decision"
+  mkdir -p "${dir}/state"
+  (
+    export REVIEW_STATE_DIR="${dir}/state"
+    # shellcheck disable=SC1090
+    source <(provenance_block_source "${REPO_ROOT}/scripts/review-gate.sh")
+
+    # the flag fingerprint includes the active principal (codex finding 2)
+    review_provenance_flags | grep -q 'principal=' || { echo "[summary-test] provenance: flags missing principal fingerprint"; exit 1; }
+
+    # record writes an atomic env carrying the current working-tree hash
+    review_provenance_record
+    if [ ! -f "${REVIEW_PROVENANCE_ENV}" ]; then
+      echo "[summary-test] provenance: env not written"; exit 1
+    fi
+    grep -q '^approved_hash=' "${REVIEW_PROVENANCE_ENV}" || { echo "[summary-test] provenance: no approved_hash"; exit 1; }
+
+    # unchanged tree + matching flags + no disabled marker → skip
+    [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] provenance: expected skip on exact match"; exit 1; }
+
+    # D.9: a persisted reviewer-disable marker forces a full review
+    : > "${REVIEW_STATE_DIR}/claude.disabled"
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] provenance: expected full with disabled reviewer"; exit 1; }
+    rm -f "${REVIEW_STATE_DIR}/claude.disabled"
+    [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] provenance: expected skip after re-enable"; exit 1; }
+
+    # D.4: an untracked-content flag that differs from the approving run forces full.
+    # exported because the sourced provenance functions read it as an environment flag.
+    export REVIEW_INCLUDE_UNTRACKED_CONTENT=1
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] provenance: expected full on flag mismatch"; exit 1; }
+    export REVIEW_INCLUDE_UNTRACKED_CONTENT=0
+    [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] provenance: expected skip with matching flags"; exit 1; }
+
+    # a recorded hash that differs from the current tree forces full
+    printf 'approved_hash=deadbeef\napproved_flags=%s\napproved_head=x\napproved_at=x\n' \
+      "$(review_provenance_flags)" > "${REVIEW_PROVENANCE_ENV}"
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] provenance: expected full on hash mismatch"; exit 1; }
+
+    # no record at all → full
+    rm -f "${REVIEW_PROVENANCE_ENV}"
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] provenance: expected full with no record"; exit 1; }
+
+    echo "[summary-test] provenance_record_and_decision: pass"
+  )
+}
+
+case_provenance_untracked_path_sensitive() {
+  # codex finding 3: the provenance hash must include untracked PATHS so a same-content
+  # rename / path swap is NOT treated as a byte-identical exact match.
+  local dir="${TMP_ROOT}/provenance_untracked_path"
+  mkdir -p "${dir}"
+  (
+    git -c init.defaultBranch=main init -q "${dir}"
+    cd "${dir}"
+    # Mirror the real repo: .omx is gitignored, so provenance state the recorder writes
+    # does not leak into the working-tree hash.
+    printf '.omx/\n' > .gitignore
+    git -c user.email=t@e.com -c user.name=t commit -q --allow-empty -m init
+    export REVIEW_STATE_DIR="${dir}/.omx/reviewer-state"
+    # shellcheck disable=SC1090
+    source <(provenance_block_source "${REPO_ROOT}/scripts/review-gate.sh")
+
+    printf 'SAME\n' > a.txt
+    review_provenance_record
+    [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] untracked_path: expected skip on unchanged tree"; exit 1; }
+
+    rm a.txt
+    printf 'SAME\n' > b.txt   # identical content, different path
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] untracked_path: same-content rename must NOT exact-match"; exit 1; }
+
+    echo "[summary-test] provenance_untracked_path_sensitive: pass"
+  )
+}
+
+case_provenance_principal_evidence_gate() {
+  # codex finding (round 2): a provenance skip must not ride invalid / tampered /
+  # mismatched principal evidence — it mirrors run-ai-reviews validation and fails open
+  # to full otherwise.
+  local dir="${TMP_ROOT}/provenance_principal_evidence"
+  mkdir -p "${dir}"
+  (
+    git -c init.defaultBranch=main init -q "${dir}"
+    cd "${dir}"
+    printf '.omx/\n' > .gitignore
+    git -c user.email=t@e.com -c user.name=t commit -q --allow-empty -m init
+    export REVIEW_STATE_DIR="${dir}/.omx/reviewer-state"
+    export AI_AUTO_PRINCIPAL_EVIDENCE="${dir}/.omx/state/principal-runtime/current.env"
+    # shellcheck disable=SC1090
+    source <(provenance_block_source "${REPO_ROOT}/scripts/review-gate.sh")
+
+    printf 'X\n' > a.txt
+    review_provenance_record
+    # no evidence file + no explicit principal → skip allowed (default codex flow)
+    [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] evidence_gate: expected skip with no evidence/no explicit"; exit 1; }
+
+    # non-codex explicit principal with no evidence → run-ai-reviews would fail, so full
+    export AI_AUTO_PRINCIPAL=claude
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] evidence_gate: non-codex explicit + no evidence must be full"; exit 1; }
+    unset AI_AUTO_PRINCIPAL
+
+    # valid launcher evidence matching workspace → re-record under it, then skip
+    mkdir -p "$(dirname "${AI_AUTO_PRINCIPAL_EVIDENCE}")"
+    printf 'principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${dir}" > "${AI_AUTO_PRINCIPAL_EVIDENCE}"
+    review_provenance_record
+    [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] evidence_gate: expected skip with valid matching evidence"; exit 1; }
+
+    # tampered evidence (non-launcher source) but identical fingerprint → fail open full
+    printf 'principal_runtime=claude\nexecution_mode=principal\nsource=hand-edited\nworkspace=%s\n' "${dir}" > "${AI_AUTO_PRINCIPAL_EVIDENCE}"
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] evidence_gate: tampered source must fail open to full"; exit 1; }
+
+    echo "[summary-test] provenance_principal_evidence_gate: pass"
+  )
+}
+
+case_decision_gate_forces_full_panel() {
+  # R4: REVIEW_DECISION_GATE=1 must turn OFF every efficiency reduction so the
+  # PR/pre-merge gate is always a full unanimous panel. Static guard against a knob
+  # silently dropping out of the override.
+  local gate="${REPO_ROOT}/scripts/review-gate.sh"
+  local block
+  block="$(awk '/REVIEW_DECISION_GATE:-0/{f=1} f{print} f&&/^fi$/{exit}' "${gate}")"
+  if [ -z "${block}" ]; then
+    echo "[summary-test] decision_gate_forces_full_panel: decision-gate block not found"
+    exit 1
+  fi
+  printf '%s\n' "${block}" | grep -q 'export REVIEW_CONTEXT_DETAIL="full"' || { echo "[summary-test] decision_gate: context not forced full"; exit 1; }
+  printf '%s\n' "${block}" | grep -q 'export REVIEW_PROVENANCE_SKIP="0"' || { echo "[summary-test] decision_gate: provenance skip not disabled"; exit 1; }
+  printf '%s\n' "${block}" | grep -q 'export REVIEW_INTEGRATION_ONLY="0"' || { echo "[summary-test] decision_gate: integration-only not disabled"; exit 1; }
+  printf '%s\n' "${block}" | grep -q 'export REVIEW_TARGETED_RECHECK="0"' || { echo "[summary-test] decision_gate: targeted recheck not disabled"; exit 1; }
+  # codex finding 1: the decision gate must also bypass the docs-only verify_only skip.
+  grep -q 'REVIEW_DECISION_GATE:-0.*!= "1".*&& verify_only_diff_scope_ready' "${gate}" \
+    || { echo "[summary-test] decision_gate: verify_only skip not bypassed under decision gate"; exit 1; }
+  echo "[summary-test] decision_gate_forces_full_panel: pass"
 }
 
 case_review_revision_task_stops_at_cycle_limit() {
@@ -1327,6 +1527,12 @@ case_persona_gate_blocks_malformed_strict_policy
 case_persona_gate_allows_valid_strict_policy
 case_persona_gate_allows_docs_verify_only
 case_review_revision_task_created_from_accepted_finding
+case_targeted_recheck_defaults_on
+case_provenance_block_identical
+case_provenance_record_and_decision
+case_provenance_untracked_path_sensitive
+case_provenance_principal_evidence_gate
+case_decision_gate_forces_full_panel
 case_targeted_review_recheck_rejects_expanded_scope
 case_review_revision_task_stops_at_cycle_limit
 

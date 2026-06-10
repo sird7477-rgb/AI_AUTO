@@ -68,6 +68,19 @@
 12. `./scripts/verify.sh`를 실행한다.
 13. 실패하면 수정 후 다시 검증한다.
 14. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
+    - 리뷰에서 finding이 나오면 전체 게이트를 새로 돌리지 말고, 승인된
+      finding scope에 한정한 targeted revision task로만 수정한다
+      (`REVIEW_TARGETED_RECHECK` 기본 1). 변경 파일이 그 scope를 벗어나면
+      (`REVIEW_TARGETED_RECHECK_SCOPE_OK=0`) 전체 게이트 또는 수동 검토로
+      fail-closed한다.
+    - 이미 개별 승인된 task diff를 2개 이상 합쳐 한 커밋으로 올릴 때는
+      `REVIEW_INTEGRATION_ONLY=1`로 게이트를 돌린다. cross-task 상호작용만
+      보는 light 패스이며(리뷰어 패널·trust 로직은 불변), provenance
+      exact-match skip이 억제되어 통합 리뷰가 항상 실행된다.
+    - 반복 루프 리뷰는 `REVIEW_CONTEXT_DETAIL=light`로 가볍게 돌리되, PR/병합
+      직전의 결정 게이트에서는 `REVIEW_DECISION_GATE=1`로 돌려 전체 만장일치
+      패널을 강제한다(provenance skip·targeted recheck·integration-only가 모두
+      꺼지고 context=full). 결정 지점에서는 어떤 축소도 적용하지 않는다.
 15. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
 16. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
 

@@ -4,6 +4,33 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.11.0
+
+- Review-gate efficiency: cut redundant AI-panel churn (measured R0 baseline of
+  531 verdicts / 33 days, 61% re-running <15min on an unchanged diff) without
+  weakening the decisive gate.
+  - `REVIEW_TARGETED_RECHECK` now defaults to `1`: after a finding, the revision
+    task is scoped to the accepted finding instead of a fresh full gate. Fails
+    closed to manual review when the changed files exceed that scope
+    (`REVIEW_TARGETED_RECHECK_SCOPE_OK=0`).
+  - Review provenance: `summarize-ai-reviews.sh` records a working-tree-inclusive
+    hash of an approved change in `.omx/reviewer-state/` ONLY on proceed +
+    normal trust. `review-gate.sh` skips the external AI panel (carrying the prior
+    verdict) when the working tree is byte-identical, and fails open to a full
+    review on any change, flag mismatch (`REVIEW_INCLUDE_UNTRACKED_CONTENT` /
+    allowlist), or disabled reviewer. `verify.sh` always runs; the skip is
+    AI-panel-only.
+  - `REVIEW_INTEGRATION_ONLY=1` runs a mandatory light, cross-task-interaction
+    review when combining already-approved task diffs (suppresses the exact-match
+    skip; reviewer panel and trust logic unchanged).
+  - `REVIEW_DECISION_GATE=1` (PR / pre-merge) forces the full unanimous panel:
+    provenance skip, targeted recheck, and integration-only are all disabled and
+    context is forced to full.
+  - `docs/WORKFLOW.md` documents the iterate-light / decide-full cadence.
+  - Deferred (documented): delta-scoped review against the last approval (needs a
+    diff base in `collect-review-context.sh`); every non-exact case fails open to
+    a full review until then.
+
 ## 2026.06.10.1
 
 - Tightened Obsidian external-SSD guidance: the current local vault lives under

@@ -1275,6 +1275,16 @@ fi
     echo "Full context includes planning artifacts and repository workflow reference files."
   fi
   echo
+  if [ "${REVIEW_INTEGRATION_ONLY:-0}" = "1" ]; then
+    echo "## Integration-Only Review Focus"
+    echo
+    echo "This is a combine pass: each underlying task diff was already approved on its"
+    echo "own. Review ONLY the cross-task interaction — conflicts, collisions, or"
+    echo "regressions that arise from combining the already-approved changes (duplicate"
+    echo "definitions, ordering, shared-state contention, cross-module name clashes)."
+    echo "Do not re-litigate findings already settled in the per-task reviews."
+    echo
+  fi
   echo "## Repository"
   echo
   echo '```text'

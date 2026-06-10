@@ -4,6 +4,135 @@ set -euo pipefail
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
 
+# >>> review-provenance-shared: keep byte-identical in review-gate.sh and summarize-ai-reviews.sh >>>
+# R2 (AI_AUTO_REVIEW_GATE_EFFICIENCY): record the working-tree-inclusive hash of an
+# approved change so a byte-identical re-review can skip the full AI panel (the
+# measured 61% of verdicts that re-run <15min on an unchanged diff). Recorded only on
+# proceed + normal trust; consumed before run-ai-reviews. Every non-exact case fails
+# open to a full review.
+REVIEW_STATE_DIR="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
+REVIEW_PROVENANCE_ENV="${REVIEW_STATE_DIR}/approved-provenance.env"
+REVIEW_PROVENANCE_LOG="${REVIEW_STATE_DIR}/approved-provenance.log"
+
+# Working-tree-inclusive provenance hash: HEAD commit + staged + unstaged + untracked
+# content. Corrects DR1 (a committed-tree SHA would false-skip unstaged edits). Never
+# uses `git write-tree`, which would mutate the index.
+review_provenance_hash() {
+  {
+    git rev-parse HEAD 2>/dev/null || printf 'NO_HEAD\n'
+    printf '\037diff\037\n'; git diff 2>/dev/null
+    printf '\037cached\037\n'; git diff --cached 2>/dev/null
+    printf '\037untracked\037\n'
+    # Include each untracked file's PATH next to its blob hash so a same-content
+    # rename / path swap changes the hash (content-only would false-match).
+    git ls-files --others --exclude-standard -z 2>/dev/null \
+      | while IFS= read -r -d '' provenance_file; do
+          printf '%s\t' "${provenance_file}"
+          git hash-object "${provenance_file}" 2>/dev/null
+        done
+  } | git hash-object --stdin
+}
+
+review_provenance_head() {
+  git rev-parse HEAD 2>/dev/null || true
+}
+
+# Active AI_AUTO principal from launcher evidence (empty when unrecorded). Part of the
+# flag fingerprint so a skip recorded under one principal does not ride a run with a
+# different principal / reviewer rotation.
+review_provenance_principal() {
+  local ev=".omx/state/principal-runtime/current.env"
+  [ -f "${ev}" ] || return 0
+  sed -n 's/^principal_runtime=//p' "${ev}" | head -1
+}
+
+# Flag fingerprint (D.4): a skip must run under the same untracked-content inclusion,
+# allowlist, and active principal as the approving run, else it could ride coverage
+# the approval lacked or misreport the reviewer rotation.
+review_provenance_flags() {
+  printf 'untracked=%s;allowlist=%s;manual=%s;principal=%s' \
+    "${REVIEW_INCLUDE_UNTRACKED_CONTENT:-0}" \
+    "${REVIEW_UNTRACKED_ALLOWLIST:-}" \
+    "${REVIEW_UNTRACKED_MANUAL_REVIEWED:-0}" \
+    "$(review_provenance_principal)"
+}
+
+# Any persisted reviewer-disable marker (D.9): a stale approval must not ride a
+# now-degraded panel.
+review_provenance_disabled_present() {
+  find "${REVIEW_STATE_DIR}" -maxdepth 1 -type f -name '*.disabled' 2>/dev/null \
+    | head -1 | grep -q .
+}
+
+# Record an approved provenance record. Atomic (mktemp+mv) so a concurrent session
+# never reads a half-written env. Caller gates on proceed + normal trust.
+review_provenance_record() {
+  local hash head flags ts tmp
+  hash="$(review_provenance_hash)"
+  head="$(review_provenance_head)"
+  flags="$(review_provenance_flags)"
+  ts="$(date -Iseconds)"
+  mkdir -p "${REVIEW_STATE_DIR}"
+  tmp="$(mktemp "${REVIEW_STATE_DIR}/.approved-provenance.XXXXXX")" || return 0
+  {
+    printf 'approved_hash=%s\n' "${hash}"
+    printf 'approved_head=%s\n' "${head}"
+    printf 'approved_flags=%s\n' "${flags}"
+    printf 'approved_at=%s\n' "${ts}"
+  } > "${tmp}"
+  mv -f "${tmp}" "${REVIEW_PROVENANCE_ENV}"
+  printf '%s\t%s\t%s\t%s\n' "${ts}" "${head:-NO_HEAD}" "${hash}" "${flags}" >> "${REVIEW_PROVENANCE_LOG}"
+}
+
+review_provenance_field() {
+  local key="$1"
+  [ -f "${REVIEW_PROVENANCE_ENV}" ] || return 0
+  sed -n "s/^${key}=//p" "${REVIEW_PROVENANCE_ENV}" | head -1
+}
+
+# Mirror run-ai-reviews.sh launcher-evidence validation so a provenance skip never
+# rides stale / manual / mismatched / symlinked principal evidence (it skips
+# run-ai-reviews, which is where that guard otherwise runs). Returns 0 only for a
+# principal state run-ai-reviews would also accept; else the skip fails open to full.
+review_provenance_principal_evidence_ok() {
+  local workspace ev declared explicit
+  workspace="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+  ev="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
+  explicit="${AI_AUTO_PRINCIPAL:-}"
+  if [ -f "${ev}" ]; then
+    [ ! -L "${ev}" ] || return 1
+    grep -Fqx "execution_mode=principal" "${ev}" || return 1
+    grep -Fqx "source=ai-auto-principal-launcher" "${ev}" || return 1
+    grep -Fqx "workspace=${workspace}" "${ev}" || return 1
+    declared="$(sed -n 's/^principal_runtime=//p' "${ev}" | head -1)"
+    case "${declared}" in codex|claude|gemini) ;; *) return 1 ;; esac
+    [ -z "${explicit}" ] || [ "${explicit}" = "${declared}" ] || return 1
+    return 0
+  fi
+  # No evidence: a non-codex explicit principal would make run-ai-reviews fail, so a
+  # skip in that state would bypass the failure.
+  case "${explicit}" in ""|codex) return 0 ;; *) return 1 ;; esac
+}
+
+# Echoes "skip" (exact match, same flags, no disabled reviewer → carry prior verdict)
+# or "full" (no record / changed tree / flag mismatch / disabled present). Delta is
+# deferred until collect-review-context honors a base, so every non-exact case is a
+# full review.
+review_provenance_decision() {
+  local approved_hash approved_flags cur_hash cur_flags
+  approved_hash="$(review_provenance_field approved_hash)"
+  if [ -z "${approved_hash}" ]; then printf 'full\n'; return 0; fi
+  cur_hash="$(review_provenance_hash)"
+  if [ "${cur_hash}" != "${approved_hash}" ]; then printf 'full\n'; return 0; fi
+  approved_flags="$(review_provenance_field approved_flags)"
+  cur_flags="$(review_provenance_flags)"
+  if [ "${cur_flags}" != "${approved_flags}" ]; then printf 'full\n'; return 0; fi
+  if review_provenance_disabled_present; then printf 'full\n'; return 0; fi
+  if ! review_provenance_principal_evidence_ok; then printf 'full\n'; return 0; fi
+  printf 'skip\n'
+}
+# <<< review-provenance-shared <<<
+
 latest_review_context() {
   find ".omx/review-context" -maxdepth 1 -type f -name 'latest-review-context.md' -print 2>/dev/null | head -1
 }
@@ -145,6 +274,78 @@ EOF
   echo "${verdict_file}"
 }
 
+write_provenance_skip_verdict() {
+  local timestamp verdict_file summary_file run_file approved_at approved_head principal
+  timestamp="$(date +%Y%m%dT%H%M%S)"
+  mkdir -p .omx/review-results
+  verdict_file=".omx/review-results/review-verdict-${timestamp}.md"
+  summary_file=".omx/review-results/review-summary-${timestamp}.md"
+  run_file=".omx/review-results/review-run-${timestamp}.md"
+  approved_at="$(review_provenance_field approved_at)"
+  approved_head="$(review_provenance_field approved_head)"
+  # Report the actual active principal, not a hardcoded runtime — the skip carries the
+  # prior approval's coverage, which the principal fingerprint (D.4) has confirmed.
+  principal="$(review_provenance_principal)"
+  principal="${principal:-codex}"
+
+  cat > "${verdict_file}" <<EOF
+# AI Review Verdict
+
+Generated at: $(date -Iseconds)
+
+## Short Summary
+
+- decision: proceed
+- reason: provenance_exact_match
+- coverage: carried_forward_from_prior_approval
+- trust: normal
+- active_principal: ${principal}
+- missing_or_unusable_reviewers: none
+- authority: proceed is not commit approval unless normal verification and user commit approval are also satisfied.
+
+## Final Decision
+
+proceed
+
+## Decision Reason
+
+provenance_exact_match
+
+## Review Coverage
+
+carried_forward_from_prior_approval
+
+## Prior Approval
+
+- approved_at: ${approved_at:-unknown}
+- approved_head: ${approved_head:-unknown}
+
+## Reviewer Verdicts
+
+review skipped: provenance exact-match (working tree byte-identical to a prior normal-trust approval)
+EOF
+
+  cat > "${summary_file}" <<EOF
+# AI Review Summary
+
+review skipped: provenance exact-match
+
+- decision: proceed
+- reason: provenance_exact_match
+- approved_at: ${approved_at:-unknown}
+EOF
+
+  cat > "${run_file}" <<EOF
+# Review Run
+
+Review run id: ${timestamp}
+Mode: provenance_exact_match
+Review context: $(latest_review_context)
+EOF
+
+  echo "${verdict_file}"
+}
+
 print_diff_scope_gate() {
   local context_file
   context_file="$(latest_review_context)"
@@ -164,6 +365,18 @@ print_diff_scope_gate() {
   printf '%s\n' "${scope_summary}" | sed 's/^/[gate] /'
 }
 
+# R4: a decision gate (PR / pre-merge, set by the agent) forces the full unanimous
+# panel. It turns OFF every reduction so the decisive review is never a skipped,
+# targeted, or narrowed pass — including the docs-only verify_only skip below, which is
+# also bypassed under the decision gate so the contract is "full panel, no exceptions".
+if [ "${REVIEW_DECISION_GATE:-0}" = "1" ]; then
+  export REVIEW_CONTEXT_DETAIL="full"
+  export REVIEW_PROVENANCE_SKIP="0"
+  export REVIEW_INTEGRATION_ONLY="0"
+  export REVIEW_TARGETED_RECHECK="0"
+  echo "[gate] decision gate: full unanimous panel (provenance skip / targeted recheck / integration-only OFF, context=full)"
+fi
+
 echo "[gate] running verification..."
 env \
   -u RUN_CLAUDE_REVIEW \
@@ -179,12 +392,40 @@ echo "[gate] collecting review context for diff-scope policy..."
 ./scripts/collect-review-context.sh
 print_diff_scope_gate
 
-if verify_only_diff_scope_ready; then
+if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && verify_only_diff_scope_ready; then
   echo "[gate] review skipped: docs-only"
   write_verify_only_skip_verdict
   review_gate_housekeeping 0
   echo "[gate] complete"
   exit 0
+fi
+
+# R2: skip the AI panel when the working tree is byte-identical to a prior
+# normal-trust approval (carries that verdict forward). Any change, flag mismatch
+# (D.4), or disabled reviewer (D.9) fails open to a full review below. verify.sh has
+# already run above, so this only skips the external AI panel, never verification.
+# R3: an integration-only pass is mandatory — it must NOT be short-circuited by an
+# exact-match skip, so the cross-task interaction review always runs.
+if [ "${REVIEW_INTEGRATION_ONLY:-0}" != "1" ] \
+   && [ "${REVIEW_PROVENANCE_SKIP:-1}" = "1" ] \
+   && [ "$(review_provenance_decision)" = "skip" ]; then
+  echo "[gate] review skipped: provenance exact-match (carrying prior approval)"
+  write_provenance_skip_verdict
+  review_gate_housekeeping 0
+  echo "[gate] complete"
+  exit 0
+fi
+
+# R3: integration-only combine pass. When ≥2 already-approved task diffs are combined
+# into one commit, the safe-but-expensive default is a full re-review (R2 fails open
+# because the combined tree matches no single approval). This mode keeps that review
+# mandatory but cheaper: a light, cross-task-interaction-focused context (the banner is
+# emitted by collect-review-context.sh). The reviewer panel and trust logic are
+# unchanged — only the context is narrowed.
+if [ "${REVIEW_INTEGRATION_ONLY:-0}" = "1" ]; then
+  export REVIEW_INTEGRATION_ONLY
+  export REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-light}"
+  echo "[gate] integration-only pass: cross-task interaction review on light context (REVIEW_CONTEXT_DETAIL=${REVIEW_CONTEXT_DETAIL})"
 fi
 
 echo "[gate] running AI reviews..."

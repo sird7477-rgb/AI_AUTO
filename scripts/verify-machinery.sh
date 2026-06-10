@@ -2047,6 +2047,20 @@ echo "[verify] testing review context edge cases..."
   grep -q "Diff Scope Summary" .omx/review-context/latest-review-context.md
   grep -q "Untracked Review Guard" .omx/review-context/latest-review-context.md
 
+  # R3: the integration-only banner is emitted only under REVIEW_INTEGRATION_ONLY=1.
+  if grep -q "Integration-Only Review Focus" .omx/review-context/latest-review-context.md; then
+    echo "[verify] integration banner present without REVIEW_INTEGRATION_ONLY"
+    exit 1
+  fi
+  REVIEW_INTEGRATION_ONLY=1 "${context_script}" >/dev/null
+  grep -q "Integration-Only Review Focus" .omx/review-context/latest-review-context.md
+  grep -q "cross-task interaction" .omx/review-context/latest-review-context.md
+  REVIEW_INTEGRATION_ONLY=0 "${context_script}" >/dev/null
+  if grep -q "Integration-Only Review Focus" .omx/review-context/latest-review-context.md; then
+    echo "[verify] integration banner present with REVIEW_INTEGRATION_ONLY=0"
+    exit 1
+  fi
+
   mkdir -p .omx/plans
   printf '# PRD Fixture\n\nModule boundaries are documented here.\n' > .omx/plans/prd-fixture.md
   printf '# Test Spec Fixture\n\nRun focused verification.\n' > .omx/plans/test-spec-fixture.md
