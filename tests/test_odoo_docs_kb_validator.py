@@ -341,7 +341,7 @@ def test_secret_like_payload_fails(tmp_path: Path) -> None:
 
 
 def test_current_vault_fixture_passes_when_present(tmp_path: Path) -> None:
-    vault = Path("/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB")
+    vault = Path("/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB")
     if not vault.exists():
         return
     local_copy = tmp_path / "Odoo19_Docs_KB"

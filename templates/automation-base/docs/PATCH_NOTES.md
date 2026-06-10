@@ -4,6 +4,19 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.10.1
+
+- Tightened Obsidian external-SSD guidance: the current local vault lives under
+  `/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault`, while legacy
+  `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault` and
+  `C:\JSJEON\Obsidian\AI_AUTO_Vault` paths are stale migration sources only and
+  must not be used for new Obsidian writes.
+- Clarified Obsidian labeling/index lanes so `AI_AUTO_INDEX.md` is not mistaken
+  for a vault-wide table of contents, and required Inbox/Projects conflict
+  review before real vault migration.
+- Added a read-only Obsidian vault audit helper so cleanup can start from
+  duplicate/conflict evidence instead of graph-view impressions.
+
 ## 2026.06.10.0
 
 - Extended the Odoo official-docs baseline contract so user manuals can be

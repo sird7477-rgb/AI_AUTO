@@ -18,7 +18,7 @@ The KB is the decision layer that teaches the AI to use factual metadata before 
 
 ### KB Promotion Inputs
 
-1. Obsidian vault path and target folder name: `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
+1. Obsidian vault path and target folder name: `/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
 2. Odoo major version: `19.0` confirmed.
 3. Scoped KB validator or equivalent documented validation output.
 
@@ -326,5 +326,5 @@ If any required reviewer is unavailable or does not return a final verdict, reco
 
 - Project schema snapshots are intentionally project-specific runtime evidence, not shared KB promotion inputs. Implementation-ready customization specs still require the target project's snapshot.
 - Sample customization runs are post-promotion validation unless a safe dummy Odoo project is available.
-- The Obsidian vault target is explicit: `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
+- The Obsidian vault target is explicit: `/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
 - `knowledge-notes.py validate` is designed for curated AI_AUTO notes with strict frontmatter, not general Obsidian guides. A separate KB validation path may be needed.

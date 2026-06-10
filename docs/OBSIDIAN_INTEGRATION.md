@@ -149,6 +149,12 @@ AI_AUTO/
 `Inbox/<project--hash>` layout. The hub pages and each note's `## Links`
 section are generated from note frontmatter and can be rebuilt.
 
+Do not treat `AI_AUTO_INDEX.md` as a vault-wide table of contents. It covers the
+curated AI_AUTO note lane only: source notes under `Projects/` and `Inbox`, plus
+generated hubs under `Surfaces/`, `RepeatKeys/`, `Promotion/`, and `Views/`.
+Top-level domain KB folders and large reference baselines keep their own
+folder-local indexes and validators.
+
 Recommended views: Project Home, Inbox, Open Incidents, Work Review Findings,
 Technical Specs, Repeat Keys, Promotion Candidates, Recently Updated.
 
@@ -239,6 +245,32 @@ The generic `knowledge-notes.py validate` / `index` commands ignore top-level
 plain-guide folders because those files do not use the helper's frontmatter
 schema. Validate the folder itself with its scoped validator before copying.
 
+Use these lanes when checking whether Obsidian material is properly connected:
+
+- `AI_AUTO curated notes`: `Projects/`, `Inbox/`, generated hubs, and
+  `AI_AUTO_INDEX.md`; relationships come from helper frontmatter and generated
+  `## Links`
+- `domain KB folders`: folder-local indexes such as `00_Index.md` plus a scoped
+  validator
+- `large reference baselines`: baseline indexes, `slim`/`raw` tiers, runbook
+  metadata, and parity validators
+
+The Obsidian graph view can make domain KB pages or reference-baseline pages
+look like standalone notes. That is not a defect by itself. Treat missing
+folder-local indexes, failed scoped validators, missing generated links in
+curated notes, or stale `Inbox` conflicts as defects.
+
+Before cleaning up perceived standalone notes, run the read-only vault audit:
+
+```bash
+./scripts/audit-obsidian-vault.py <vault-path>/AI_AUTO
+```
+
+Use the report to separate exact duplicate Inbox notes, same-source conflicts,
+same-repeat-key conflicts, and distinct evidence that needs manual merge or a
+unique Projects filename. The audit command is evidence only; it must not be
+used as deletion approval.
+
 Promote an older flat inbox vault after review and backup:
 
 ```bash
@@ -252,6 +284,12 @@ to `Projects/<project--hash>`, refreshes note links, rebuilds hub pages, and
 validates the result. It refuses existing backup paths, symlink escape targets,
 and target overwrites.
 
+If dry-run reports an existing `Projects/` target, stop and audit the pair
+before running the real migration. Classify each conflict as an exact duplicate,
+a newer or more complete version to merge, or distinct evidence that needs a
+unique Projects filename. Do not bypass the overwrite guard merely to make the
+graph view look cleaner.
+
 ## External SSD Operation
 
 Project repositories and the Obsidian vault may live on an external SSD. Keep
@@ -264,6 +302,12 @@ For the local `Z:` SSD, the expected WSL paths are
 `/mnt/z` as read-only, treat it first as a sandbox writable-root boundary, not
 as SSD failure. Use one approved real write probe for the target path before
 diagnosing Windows disk state, WSL remounting, or drive health.
+
+Do not use legacy `C:\JSJEON\Obsidian\AI_AUTO_Vault` or
+`/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault` paths for new Obsidian writes. Treat
+those paths as stale migration sources only, and prefer `config/ai-auto-local.json`,
+`AI_AUTO_OBSIDIAN_VAULT_DIR`, or an explicit current vault path before writing
+or validating Obsidian material.
 
 Agent-written `aiinit`, AI_AUTO template patches, and Obsidian vault pushes under
 `/mnt/z` require either an approved write command for that target path or a Codex

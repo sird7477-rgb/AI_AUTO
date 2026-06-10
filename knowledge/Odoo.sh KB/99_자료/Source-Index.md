@@ -47,7 +47,7 @@ Generated from: `plans/ODOO_SH_KB_SOURCE_INDEX_2026-06-04.md`
 
 ## Open Items
 
-- Vault target confirmed: `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
+- Vault target confirmed: `/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
 - Attach standard and project schema snapshots when applying the KB to a specific project.
 - Confirm local project conventions.
 

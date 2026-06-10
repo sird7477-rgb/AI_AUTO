@@ -87,6 +87,7 @@ for path in \
   "scripts/ai-principal-runtime.sh" \
   "scripts/ai-runtime-adapter.sh" \
   "scripts/automation-doctor.sh" \
+  "scripts/audit-obsidian-vault.py" \
   "scripts/benchmark-command.py" \
   "scripts/capture-knowledge-drafts.py" \
   "scripts/collect-odoo-docs-kb.py" \
@@ -170,6 +171,7 @@ cp "${TEMPLATE_DIR}/scripts/archive-omx-artifacts.sh" "${TARGET_DIR}/scripts/arc
 cp "${TEMPLATE_DIR}/scripts/ai-principal-runtime.sh" "${TARGET_DIR}/scripts/ai-principal-runtime.sh"
 cp "${TEMPLATE_DIR}/scripts/ai-runtime-adapter.sh" "${TARGET_DIR}/scripts/ai-runtime-adapter.sh"
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
+cp "${TEMPLATE_DIR}/scripts/audit-obsidian-vault.py" "${TARGET_DIR}/scripts/audit-obsidian-vault.py"
 cp "${TEMPLATE_DIR}/scripts/benchmark-command.py" "${TARGET_DIR}/scripts/benchmark-command.py"
 cp "${TEMPLATE_DIR}/scripts/capture-knowledge-drafts.py" "${TARGET_DIR}/scripts/capture-knowledge-drafts.py"
 cp "${TEMPLATE_DIR}/scripts/collect-odoo-docs-kb.py" "${TARGET_DIR}/scripts/collect-odoo-docs-kb.py"

@@ -49,6 +49,6 @@ Evidence with `pass` or `ready` is invalid unless it names the file/snapshot, lo
 
 ## Current Open Inputs
 
-- Vault target: `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
+- Vault target: `/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
 - Add or run the scoped KB validator before promotion.
 - For each real project task, locate that project's standard/project schema snapshots before producing implementation-ready output.

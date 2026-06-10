@@ -27,6 +27,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/automation-doctor.sh: diagnoses automation readiness and suggests safe repairs
 - scripts/archive-omx-artifacts.sh: archives old ignored review artifacts while preserving latest evidence
 - scripts/ai-principal-runtime.sh: active principal runtime contract helper for `codex`, `claude`, and `gemini`
+- scripts/audit-obsidian-vault.py: read-only Obsidian vault labeling/index audit
 - scripts/benchmark-command.py: optional benchmark evidence capture using
   `hyperfine` when available
 - scripts/todo-report.py: canonical backlog TODO report and active-work guard

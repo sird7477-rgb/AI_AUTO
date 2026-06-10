@@ -57,7 +57,7 @@ Primary baseline: Odoo 19.0 official documentation
 
 ## Open Research Items
 
-- Vault target confirmed: `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
+- Vault target confirmed: `/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo.sh KB`.
 - Locate standard and project schema snapshots when applying the KB to a specific project.
 - Confirm whether the project has local Odoo coding conventions that override generic Odoo guidance.
 - Final KB uses Korean folders with English technical page titles.

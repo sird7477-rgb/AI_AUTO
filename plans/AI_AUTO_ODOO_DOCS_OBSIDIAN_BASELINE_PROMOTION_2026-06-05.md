@@ -16,7 +16,7 @@
 
 ## 기준선
 
-- Vault: `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB`
+- Vault: `/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB`
 - Baseline ID: `odoo-19-docs-2026-06`
 - Version: `19.0`
 - 구조: developer `raw/` 12개 topic, developer `slim/` 12개 topic,
@@ -49,10 +49,10 @@
 필수 검증:
 
 ```bash
-python3 scripts/validate-odoo-docs-kb.py /mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB
+python3 scripts/validate-odoo-docs-kb.py /mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB
 .venv/bin/python -m pytest -q tests/test_odoo_docs_kb_validator.py tests/test_template_global_contracts.py
-AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/verify.sh
-AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/review-gate.sh
+AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/verify.sh
+AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/review-gate.sh
 ```
 
 만장일치 완료 조건:
@@ -63,5 +63,5 @@ AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Do
 
 최종 증거:
 
-- `AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/verify.sh`: green, pytest 199개 통과, Odoo docs baseline 12 topic 검증 통과, Docker smoke 통과.
-- `AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/review-gate.sh`: `proceed`, `principal_rotation`, trust `normal`, Gemini `approve_with_notes`, Codex `approve`.
+- `AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/verify.sh`: green, pytest 199개 통과, Odoo docs baseline 12 topic 검증 통과, Docker smoke 통과.
+- `AI_AUTO_ODOO_DOCS_KB_PATH=/mnt/z/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB ./scripts/review-gate.sh`: `proceed`, `principal_rotation`, trust `normal`, Gemini `approve_with_notes`, Codex `approve`.

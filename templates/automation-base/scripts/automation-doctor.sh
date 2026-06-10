@@ -501,6 +501,7 @@ REQUIRED_FILES=(
   "docs/WORKFLOW.md"
   "scripts/archive-omx-artifacts.sh"
   "scripts/ai-runtime-adapter.sh"
+  "scripts/audit-obsidian-vault.py"
   "scripts/benchmark-command.py"
   "scripts/todo-report.py"
   "scripts/review-gate.sh"

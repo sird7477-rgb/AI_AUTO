@@ -3254,6 +3254,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     archive-omx-artifacts.sh \
     ai-runtime-adapter.sh \
     automation-doctor.sh \
+    audit-obsidian-vault.py \
     benchmark-command.py \
     todo-report.py \
     collect-review-context.sh \
@@ -3340,6 +3341,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     archive-omx-artifacts.sh \
     ai-runtime-adapter.sh \
     automation-doctor.sh \
+    audit-obsidian-vault.py \
     benchmark-command.py \
     todo-report.py \
     collect-review-context.sh \
@@ -3412,6 +3414,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     archive-omx-artifacts.sh \
     ai-runtime-adapter.sh \
     automation-doctor.sh \
+    audit-obsidian-vault.py \
     benchmark-command.py \
     todo-report.py \
     collect-review-context.sh \
