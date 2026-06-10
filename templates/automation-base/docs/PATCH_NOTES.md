@@ -4,6 +4,25 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.10.0
+
+- Extended the Odoo official-docs baseline contract so user manuals can be
+  mirrored as `user-manual/raw` plus `user-manual/slim` when user-facing
+  workflows are part of normal work. The local Odoo 19 baseline now expects the
+  index to route to mirrored raw/slim manual pages instead of index-only
+  on-demand fetches.
+- Strengthened Obsidian guidance for Odoo work: when `AI_AUTO_ODOO_DOCS_KB_PATH`
+  or an explicit vault path is available, consult the local baseline before
+  implementation-ready framework or user-flow guidance, while preserving that
+  Obsidian is not authoritative for project schema, verification, review,
+  queue resolution, completion, or upstream freshness.
+- Migration note: existing Odoo docs vaults that still have only
+  `01_UserManual_Index.md` must be recollected with
+  `scripts/collect-odoo-docs-kb.py <vault>/AI_AUTO/Odoo19_Docs_KB` before
+  enabling the `2026.06.10.0` validator through `AI_AUTO_ODOO_DOCS_KB_PATH`;
+  otherwise verification will correctly fail on missing `user-manual/raw` and
+  `user-manual/slim` coverage.
+
 ## 2026.06.09.0
 
 - `scripts/ai-runtime-adapter.sh` no longer passes `--sandbox` to the raw

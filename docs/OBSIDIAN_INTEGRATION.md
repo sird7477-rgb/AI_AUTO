@@ -79,10 +79,12 @@ AI_AUTO keeps only the reusable operating rule and validator shape:
 - fall back to the version-pinned source URL when the local extract is
   insufficient or freshness matters
 
-End-user manuals should usually be stored as `index` tier only: table of
-contents, version-pinned URLs, and short purpose notes. Fetch the exact page on
-demand instead of mirroring a full manual corpus whose content is low-value for
-coding and expensive to maintain.
+End-user manuals can stay `index` tier only when they are rarely used and cheap
+to fetch, but a domain baseline should mirror them into `raw` plus `slim` tiers
+when operational workflows, UI steps, or repeated business-flow questions are
+part of normal work. Keep the index as the routing table, read slim for
+navigation, and open one raw manual page at a time for exact user-facing
+workflow detail.
 
 For the local Odoo 19 baseline, the curated vault reference is
 `Odoo19_Docs_KB` with baseline ID `odoo-19-docs-2026-06`. Validate it with:
@@ -96,11 +98,20 @@ To include that optional baseline in `./scripts/verify.sh`, set
 not hardcode a user-specific vault path; absent this variable, verification
 skips the optional official-docs baseline check.
 
+For Odoo work, consult the local Obsidian baseline when
+`AI_AUTO_ODOO_DOCS_KB_PATH` or an explicit vault path is available before giving
+implementation-ready framework or user-flow guidance. Use the project-authored
+guide first, then the matching official slim page, then one matching raw page,
+then the pinned source URL if freshness or exact wording matters. If the local
+baseline is unavailable, say so and fall back to official documentation lookup
+instead of guessing from memory.
+
 That validator checks the raw/slim/index/runbook structure and metadata only,
 including that every `slim` file warns it is not authoritative implementation
-text. It does not make Obsidian authoritative for Odoo behavior, project schema
-facts, verification, review, queue resolution, or upstream documentation
-freshness.
+text and every indexed user-manual page has matching `user-manual/raw` and
+`user-manual/slim` files. It does not make Obsidian authoritative for Odoo
+behavior, project schema facts, verification, review, queue resolution, or
+upstream documentation freshness.
 
 ## Daily Workflow
 

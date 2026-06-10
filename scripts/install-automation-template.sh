@@ -89,6 +89,7 @@ for path in \
   "scripts/automation-doctor.sh" \
   "scripts/benchmark-command.py" \
   "scripts/capture-knowledge-drafts.py" \
+  "scripts/collect-odoo-docs-kb.py" \
   "scripts/collect-review-context.sh" \
   "scripts/docker-config-guard.sh" \
   "scripts/doc-budget.sh" \
@@ -171,6 +172,7 @@ cp "${TEMPLATE_DIR}/scripts/ai-runtime-adapter.sh" "${TARGET_DIR}/scripts/ai-run
 cp "${TEMPLATE_DIR}/scripts/automation-doctor.sh" "${TARGET_DIR}/scripts/automation-doctor.sh"
 cp "${TEMPLATE_DIR}/scripts/benchmark-command.py" "${TARGET_DIR}/scripts/benchmark-command.py"
 cp "${TEMPLATE_DIR}/scripts/capture-knowledge-drafts.py" "${TARGET_DIR}/scripts/capture-knowledge-drafts.py"
+cp "${TEMPLATE_DIR}/scripts/collect-odoo-docs-kb.py" "${TARGET_DIR}/scripts/collect-odoo-docs-kb.py"
 cp "${TEMPLATE_DIR}/scripts/collect-review-context.sh" "${TARGET_DIR}/scripts/collect-review-context.sh"
 cp "${TEMPLATE_DIR}/scripts/docker-config-guard.sh" "${TARGET_DIR}/scripts/docker-config-guard.sh"
 cp "${TEMPLATE_DIR}/scripts/doc-budget.sh" "${TARGET_DIR}/scripts/doc-budget.sh"

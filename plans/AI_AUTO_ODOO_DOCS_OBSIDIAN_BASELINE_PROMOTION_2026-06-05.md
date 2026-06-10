@@ -4,20 +4,23 @@
 
 2026-06-05에 수집된 `Odoo19_Docs_KB` Obsidian 기준선을 대상으로 한다.
 이 계획은 공식문서 raw/slim/index 데이터의 보관 품질, 요약 왜곡 방지,
-문서 지침 연결, 검증 도구 연결을 정규 산출물로 승격한다.
+문서 지침 연결, 검증 도구 연결을 정규 산출물로 승격한다. 2026-06-10
+후속 승격에서 사용자 매뉴얼도 index-only가 아니라 `user-manual/raw`와
+`user-manual/slim` mirror로 보관하도록 확장했다.
 
 범위 밖:
 
 - 프로젝트별 DB 스키마를 본진 기준선으로 중앙화하지 않는다.
 - Obsidian 데이터를 프로젝트 검증, 리뷰, 최신성, 완료 판정의 권위로 만들지 않는다.
-- Odoo 사용자 매뉴얼 전체 raw 미러를 강제하지 않는다.
+- Odoo 사용자 매뉴얼 mirror는 이 baseline index에 명시된 페이지로 제한한다.
 
 ## 기준선
 
 - Vault: `/mnt/c/JSJEON/Obsidian/AI_AUTO_Vault/AI_AUTO/Odoo19_Docs_KB`
 - Baseline ID: `odoo-19-docs-2026-06`
 - Version: `19.0`
-- 구조: `raw/` 12개 topic, `slim/` 12개 topic, 사용자 매뉴얼은 index-only
+- 구조: developer `raw/` 12개 topic, developer `slim/` 12개 topic,
+  사용자 매뉴얼 `user-manual/raw`/`user-manual/slim` mirror
 
 ## 마이크로 단위
 
@@ -30,6 +33,7 @@
 | U5 | 지침 연결 | `OBSIDIAN_INTEGRATION.md`, README, template patch note에 공식문서 기준선 사용 순서를 연결한다. | complete |
 | U6 | 피드백/백로그 정리 | `obsidian:reference-tier-user-manual-index-only` 개선 제안을 resolved로 전환하고 `ST-P1-49`를 complete_contract로 남긴다. | complete |
 | U7 | 검증/리뷰 | targeted pytest, vault validator, `./scripts/verify.sh`, `./scripts/review-gate.sh`가 모두 통과한다. | complete |
+| U8 | 사용자 매뉴얼 mirror 승격 | 기존 index의 사용자 매뉴얼 링크를 `user-manual/raw`/`user-manual/slim`으로 수집하고 validator가 coverage를 검증한다. | complete |
 
 ## 사용 규칙
 
@@ -37,7 +41,8 @@
 2. 공식 `slim` topic은 탐색용 목차와 heading 확인에만 쓴다.
 3. 정확한 의미, 코드 예시, 보안 규칙, API 세부는 matching `raw` topic 1건을 연다.
 4. freshness가 중요하면 frontmatter의 `source_url`을 공식 원문 확인 경로로 쓴다.
-5. 사용자 매뉴얼은 index-only/on-demand로 유지하고, 전체 raw 미러를 정규 기준으로 삼지 않는다.
+5. 사용자 매뉴얼은 index를 routing table로 쓰고, `user-manual/slim`으로 탐색한 뒤
+   필요한 경우 matching `user-manual/raw` 1건만 연다.
 
 ## 검증
 

@@ -20,8 +20,19 @@ SECRET_VALUE = re.compile(
     re.IGNORECASE,
 )
 TOKEN_VALUE = re.compile(r"\b(token)\s*[:=]\s*(['\"]|bearer|sk-|ghp_|[A-Za-z0-9_./+=-]{24,})", re.IGNORECASE)
+SAFE_DOC_VALUES = {
+    "click",
+    "copy",
+    "enable",
+    "enter",
+    "generate",
+    "select",
+}
 ROW = re.compile(
     r"^\|\s*(?P<topic>[^|]+?)\s*\|\s*(?P<url>[^|]+?)\s*\|\s*(?P<slim>slim/[^|]+?)\s*\|\s*(?P<raw>raw/[^|]+?)\s*\|\s*(?P<status>[^|]+?)\s*\|$"
+)
+USER_ROW = re.compile(
+    r"^\|\s*(?P<group>[^|]+?)\s*\|\s*(?P<topic>[^|]+?)\s*\|\s*(?P<url>https://www\.odoo\.com/documentation/(?P<url_version>[^/]+)/applications/[^|]+?\.html)\s*\|\s*(?P<slim>user-manual/slim/[^|]+?)\s*\|\s*(?P<raw>user-manual/raw/[^|]+?)\s*\|\s*(?P<status>[^|]+?)\s*\|$"
 )
 
 
@@ -66,7 +77,15 @@ def markdown_files(root: Path) -> list[Path]:
 def validate_secret_scan(root: Path) -> None:
     for path in markdown_files(root):
         for line in read(path).splitlines():
-            if SECRET_VALUE.search(line) or TOKEN_VALUE.search(line):
+            if TOKEN_VALUE.search(line):
+                fail(f"secret-like payload found in {path}")
+            secret_match = SECRET_VALUE.search(line)
+            if secret_match:
+                value = secret_match.group(0).split(":", 1)[-1].split("=", 1)[-1].strip().strip("`'\"")
+                first_word = re.split(r"\s+", value, maxsplit=1)[0].lower()
+                if first_word in SAFE_DOC_VALUES:
+                    continue
+            if secret_match:
                 fail(f"secret-like payload found in {path}")
 
 
@@ -77,6 +96,9 @@ def validate_required_layout(root: Path) -> None:
         if not (root / relative).is_file():
             fail(f"missing required file: {relative}")
     for directory in ("raw", "slim"):
+        if not (root / directory).is_dir():
+            fail(f"missing required directory: {directory}")
+    for directory in ("user-manual/raw", "user-manual/slim"):
         if not (root / directory).is_dir():
             fail(f"missing required directory: {directory}")
 
@@ -185,11 +207,81 @@ def validate_user_manual(root: Path, baseline_id: str, version: str) -> None:
             fail(f"01_UserManual_Index.md must define {key}: {value}")
     if "applications.html" not in meta.get("source_url", ""):
         fail("01_UserManual_Index.md source_url must point at applications.html")
-    for required in ("raw 미수집", "on-demand", "Studio"):
+    for forbidden in ("raw 미수집", "raw-on-demand", "URL on-demand fetch", "index-only"):
+        if forbidden in text:
+            fail(f"01_UserManual_Index.md still describes user manuals as index-only: {forbidden}")
+    for required in ("user-manual/raw", "user-manual/slim", "Studio"):
         if required not in text:
-            fail(f"01_UserManual_Index.md missing index-only rule: {required}")
-    if (root / "raw" / "applications.md").exists() or (root / "raw" / "user-manual.md").exists():
-        fail("user manual raw mirror detected; expected index-only manual storage")
+            fail(f"01_UserManual_Index.md missing user-manual mirror rule: {required}")
+
+    raw_topics: list[str] = []
+    slim_topics: list[str] = []
+    source_urls: list[str] = []
+    for line in text.splitlines():
+        match = USER_ROW.match(line)
+        if not match:
+            continue
+        if match.group("status").strip() != "collected":
+            continue
+        if match.group("url_version").strip() != version:
+            fail(f"user manual index URL version mismatch for {match.group('topic').strip()}: {match.group('url').strip()}")
+        raw_path = root / match.group("raw").strip()
+        slim_path = root / match.group("slim").strip()
+        if not raw_path.is_file():
+            fail(f"user manual index references missing raw file: {raw_path.relative_to(root)}")
+        if not slim_path.is_file():
+            fail(f"user manual index references missing slim file: {slim_path.relative_to(root)}")
+        raw_topics.append(raw_path.stem)
+        slim_topics.append(slim_path.stem)
+        source_urls.append(match.group("url").strip())
+
+    if not raw_topics:
+        fail("01_UserManual_Index.md must contain collected user-manual raw/slim rows")
+    for label, topics in (("raw", raw_topics), ("slim", slim_topics)):
+        duplicate_topics = sorted({topic for topic in topics if topics.count(topic) > 1})
+        if duplicate_topics:
+            fail(f"user manual index contains duplicate {label} rows: {duplicate_topics}")
+    duplicate_urls = sorted({url for url in source_urls if source_urls.count(url) > 1})
+    if duplicate_urls:
+        fail(f"user manual index contains duplicate source_url rows: {duplicate_urls}")
+
+    raw_files = topic_files(root, "user-manual/raw")
+    slim_files = topic_files(root, "user-manual/slim")
+    if set(raw_files) != set(slim_files):
+        missing_slim = sorted(set(raw_files) - set(slim_files))
+        missing_raw = sorted(set(slim_files) - set(raw_files))
+        fail(f"user manual raw/slim mismatch: missing_slim={missing_slim} missing_raw={missing_raw}")
+    expected_topics = set(raw_topics)
+    if set(raw_files) != expected_topics:
+        missing = sorted(expected_topics - set(raw_files))
+        extra = sorted(set(raw_files) - expected_topics)
+        fail(f"user manual file coverage mismatch: missing={missing} extra={extra}")
+
+    for topic in sorted(raw_files):
+        raw_meta = frontmatter(raw_files[topic])
+        slim_meta = frontmatter(slim_files[topic])
+        for key in ("baseline_id", "version", "tier", "view", "source_url", "fetched_at"):
+            if not raw_meta.get(key):
+                fail(f"user-manual/raw/{topic}.md missing frontmatter key: {key}")
+            if not slim_meta.get(key):
+                fail(f"user-manual/slim/{topic}.md missing frontmatter key: {key}")
+        if raw_meta["baseline_id"] != baseline_id or raw_meta["version"] != version:
+            fail(f"user manual raw metadata does not match baseline for {topic}")
+        if slim_meta["baseline_id"] != baseline_id or slim_meta["version"] != version:
+            fail(f"user manual slim metadata does not match baseline for {topic}")
+        if raw_meta["tier"] != "user" or slim_meta["tier"] != "user":
+            fail(f"user manual tier metadata must be user for {topic}")
+        if raw_meta["view"] != "raw" or slim_meta["view"] != "slim":
+            fail(f"user manual view metadata mismatch for {topic}")
+        if raw_meta["source_url"] != slim_meta["source_url"]:
+            fail(f"user manual raw/slim source_url mismatch for {topic}")
+        if raw_meta["source_url"] not in source_urls:
+            fail(f"user manual file not referenced by index for {topic}")
+        slim_text = read(slim_files[topic])
+        if "navigation-only / heading-only user-manual slim view" not in slim_text:
+            fail(f"user-manual/slim/{topic}.md must declare navigation-only user-manual scope")
+        if "Do not use" not in slim_text or "authoritative implementation text" not in slim_text:
+            fail(f"user-manual/slim/{topic}.md must declare non-authoritative implementation scope")
 
 
 def validate_runbook(root: Path, baseline_id: str, version: str) -> None:
@@ -198,7 +290,7 @@ def validate_runbook(root: Path, baseline_id: str, version: str) -> None:
     text = read(runbook)
     if meta.get("baseline_id") != baseline_id or meta.get("version") != version:
         fail("02_Retrieval_Runbook.md metadata must match baseline")
-    for required in ("자작 가이드 먼저", "navigation-only / heading-only", "공식 raw", "1건만", "raw-on-demand"):
+    for required in ("자작 가이드 먼저", "navigation-only / heading-only", "공식 raw", "1건만", "user-manual/raw"):
         if required not in text:
             fail(f"02_Retrieval_Runbook.md missing retrieval rule: {required}")
 
@@ -211,7 +303,11 @@ def validate(root: Path) -> None:
     validate_index(root, raw, slim, baseline_id, version)
     validate_user_manual(root, baseline_id, version)
     validate_runbook(root, baseline_id, version)
-    print(f"[odoo-docs-kb-validate] ok: {len(raw)} topic(s), baseline={baseline_id}, version={version}")
+    user_manual_count = len(topic_files(root, "user-manual/raw"))
+    print(
+        f"[odoo-docs-kb-validate] ok: {len(raw)} developer topic(s), "
+        f"{user_manual_count} user manual page(s), baseline={baseline_id}, version={version}"
+    )
 
 
 def main() -> None:

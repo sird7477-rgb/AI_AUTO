@@ -83,6 +83,7 @@ done
 python3 -m py_compile scripts/benchmark-command.py
 python3 -m py_compile scripts/todo-report.py
 python3 -m py_compile scripts/capture-knowledge-drafts.py
+python3 -m py_compile scripts/collect-odoo-docs-kb.py
 python3 -m py_compile scripts/knowledge-notes.py
 python3 -m py_compile scripts/validate-odoo-kb.py
 python3 -m py_compile scripts/validate-odoo-docs-kb.py
@@ -93,6 +94,7 @@ python3 -m py_compile tools/micro-work
 python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
 python3 -m py_compile templates/automation-base/scripts/todo-report.py
 python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
+python3 -m py_compile templates/automation-base/scripts/collect-odoo-docs-kb.py
 python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
 python3 -m py_compile templates/automation-base/scripts/validate-odoo-docs-kb.py
 python3 -m py_compile templates/automation-base/scripts/record-lane-decision.py
@@ -5152,6 +5154,8 @@ test -x "scripts/todo-report.py"
 test -x "templates/automation-base/scripts/todo-report.py"
 test -x "scripts/capture-knowledge-drafts.py"
 test -x "templates/automation-base/scripts/capture-knowledge-drafts.py"
+test -x "scripts/collect-odoo-docs-kb.py"
+test -x "templates/automation-base/scripts/collect-odoo-docs-kb.py"
 test -x "scripts/knowledge-notes.py"
 test -x "templates/automation-base/scripts/knowledge-notes.py"
 test -x "scripts/validate-odoo-docs-kb.py"
@@ -6273,6 +6277,7 @@ for script in \
   benchmark-command.py \
   todo-report.py \
   capture-knowledge-drafts.py \
+  collect-odoo-docs-kb.py \
   collect-review-context.sh \
   doc-budget.sh \
   guidance-duplicate-report.sh \

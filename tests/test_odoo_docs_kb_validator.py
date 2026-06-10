@@ -1,10 +1,17 @@
 import shutil
 import subprocess
+import importlib.util
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "validate-odoo-docs-kb.py"
+COLLECTOR_SCRIPT = ROOT / "scripts" / "collect-odoo-docs-kb.py"
+COLLECTOR_SPEC = importlib.util.spec_from_file_location("collect_odoo_docs_kb", COLLECTOR_SCRIPT)
+assert COLLECTOR_SPEC is not None
+COLLECTOR = importlib.util.module_from_spec(COLLECTOR_SPEC)
+assert COLLECTOR_SPEC.loader is not None
+COLLECTOR_SPEC.loader.exec_module(COLLECTOR)
 
 
 def write(path: Path, text: str) -> None:
@@ -71,17 +78,55 @@ source_root: https://www.odoo.com/documentation/19.0/
     write(
         kb / "01_UserManual_Index.md",
         """---
+type: technical-spec
 baseline_id: odoo-19-docs-2026-06
 version: "19.0"
 tier: user
 view: index
 source_url: https://www.odoo.com/documentation/19.0/applications.html
 fetched_at: 2026-06-05T07:10:09Z
+sync_class: external_private_vault
 ---
 
-# User manual
+# Odoo 19 User Manual
 
-raw 미수집. URL on-demand fetch. Studio excluded.
+User manual pages are mirrored as `user-manual/raw` and `user-manual/slim`. Studio excluded.
+
+| group | topic | source_url | slim | raw | status |
+| --- | --- | --- | --- | --- | --- |
+| essentials | essentials | https://www.odoo.com/documentation/19.0/applications/essentials.html | user-manual/slim/essentials.md | user-manual/raw/essentials.md | collected |
+""",
+    )
+    write(
+        kb / "user-manual" / "raw" / "essentials.md",
+        """---
+baseline_id: odoo-19-docs-2026-06
+version: "19.0"
+tier: user
+view: raw
+source_url: https://www.odoo.com/documentation/19.0/applications/essentials.html
+fetched_at: 2026-06-10T00:00:00Z
+---
+
+# Odoo essentials
+
+Raw user manual page.
+""",
+    )
+    write(
+        kb / "user-manual" / "slim" / "essentials.md",
+        """---
+baseline_id: odoo-19-docs-2026-06
+version: "19.0"
+tier: user
+view: slim
+source_url: https://www.odoo.com/documentation/19.0/applications/essentials.html
+fetched_at: 2026-06-10T00:00:00Z
+---
+
+# Odoo essentials slim
+
+> Scope: navigation-only / heading-only user-manual slim view. Do not use this file as authoritative implementation text. For exact operational semantics, workflow details, or UI steps, open the matching `user-manual/raw` file or the pinned source URL.
 """,
     )
     write(
@@ -93,7 +138,7 @@ version: "19.0"
 
 # Runbook
 
-자작 가이드 먼저, navigation-only / heading-only 공식 slim, 공식 raw 1건만, raw-on-demand.
+자작 가이드 먼저, navigation-only / heading-only 공식 slim, 공식 raw 1건만, user-manual/raw 1건만.
 """,
     )
     return kb
@@ -113,7 +158,7 @@ def run_validator(path: Path) -> subprocess.CompletedProcess[str]:
 def test_valid_fixture_passes(tmp_path: Path) -> None:
     result = run_validator(valid_fixture(tmp_path))
     assert result.returncode == 0
-    assert "ok: 1 topic(s)" in result.stdout
+    assert "ok: 1 developer topic(s), 1 user manual page(s)" in result.stdout
 
 
 def test_missing_raw_slim_parity_fails(tmp_path: Path) -> None:
@@ -205,13 +250,85 @@ def test_frontmatter_allows_comments_lists_and_crlf(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_user_manual_must_remain_index_only(tmp_path: Path) -> None:
+def test_user_manual_mirror_rows_are_required(tmp_path: Path) -> None:
     kb = valid_fixture(tmp_path)
     manual = kb / "01_UserManual_Index.md"
-    manual.write_text(manual.read_text(encoding="utf-8").replace("view: index", "view: full"), encoding="utf-8")
+    manual.write_text(manual.read_text(encoding="utf-8").replace("user-manual/raw/essentials.md", "user-manual/raw/missing.md"), encoding="utf-8")
     result = run_validator(kb)
     assert result.returncode != 0
-    assert "view: index" in result.stderr
+    assert "user manual index references missing raw file" in result.stderr
+
+
+def test_user_manual_index_only_wording_fails(tmp_path: Path) -> None:
+    kb = valid_fixture(tmp_path)
+    manual = kb / "01_UserManual_Index.md"
+    manual.write_text(manual.read_text(encoding="utf-8") + "\nraw 미수집. URL on-demand fetch.\n", encoding="utf-8")
+    result = run_validator(kb)
+    assert result.returncode != 0
+    assert "still describes user manuals as index-only" in result.stderr
+
+
+def test_user_manual_slim_metadata_mismatch_fails(tmp_path: Path) -> None:
+    kb = valid_fixture(tmp_path)
+    slim = kb / "user-manual" / "slim" / "essentials.md"
+    slim.write_text(slim.read_text(encoding="utf-8").replace("view: slim", "view: raw"), encoding="utf-8")
+    result = run_validator(kb)
+    assert result.returncode != 0
+    assert "user manual view metadata mismatch" in result.stderr
+
+
+def test_user_manual_slim_non_authority_warning_required(tmp_path: Path) -> None:
+    kb = valid_fixture(tmp_path)
+    slim = kb / "user-manual" / "slim" / "essentials.md"
+    slim.write_text(slim.read_text(encoding="utf-8").replace("authoritative implementation text", "main text"), encoding="utf-8")
+    result = run_validator(kb)
+    assert result.returncode != 0
+    assert "non-authoritative implementation scope" in result.stderr
+
+
+def test_safe_doc_secret_phrase_does_not_bypass_token_scan(tmp_path: Path) -> None:
+    kb = valid_fixture(tmp_path)
+    raw = kb / "user-manual" / "raw" / "essentials.md"
+    raw.write_text(raw.read_text(encoding="utf-8") + "\nsecret: enter the value and token = ghp_abcdefghijklmnopqrstuvwxyz\n", encoding="utf-8")
+    result = run_validator(kb)
+    assert result.returncode != 0
+    assert "secret-like payload" in result.stderr
+
+
+def test_collector_reads_rewritten_user_manual_table(tmp_path: Path) -> None:
+    kb = valid_fixture(tmp_path)
+    links = COLLECTOR.read_index_links(kb / "01_UserManual_Index.md")
+    assert links == [
+        (
+            "essentials",
+            "essentials",
+            "https://www.odoo.com/documentation/19.0/applications/essentials.html",
+        )
+    ]
+
+
+def test_collector_rewrites_index_with_cli_metadata(tmp_path: Path) -> None:
+    index = tmp_path / "01_UserManual_Index.md"
+    links = [
+        (
+            "sales",
+            "Sales",
+            "https://www.odoo.com/documentation/20.0/applications/sales/sales.html",
+        )
+    ]
+    COLLECTOR.rewrite_user_manual_index(
+        index,
+        links,
+        "2026-06-10T00:00:00Z",
+        baseline_id="odoo-20-docs-2026-06",
+        version="20.0",
+    )
+    text = index.read_text(encoding="utf-8")
+    assert "baseline_id: odoo-20-docs-2026-06" in text
+    assert 'version: "20.0"' in text
+    assert "source_url: https://www.odoo.com/documentation/20.0/applications.html" in text
+    assert "user-manual/slim/sales__sales.md" in text
+    assert COLLECTOR.read_index_links(index) == links
 
 
 def test_secret_like_payload_fails(tmp_path: Path) -> None:
