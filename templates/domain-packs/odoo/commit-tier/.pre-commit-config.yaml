@@ -1,0 +1,31 @@
+# Odoo COMMIT-tier static checks (advisory, fast, per-file) — sample/reference.
+# Feeds the PUSH-tier registry-load gate in ../validation-harness/. Opt-in only:
+# copy to the project repo root, then `pip install pre-commit && pre-commit install`.
+# Pins target Odoo 19.0. NOTE: pylint-odoo v10 requires pylint v4.
+#
+# What this tier catches (fast, static): manifest/XML/CSV/PO hygiene, duplicate
+# record-id / duplicate <field> within a file, deprecated nodes/attributes, and
+# Odoo-specific lint (odoolint). What it does NOT catch (needs the push tier):
+# view-inheritance anchor resolution (T2), renamed/removed field/model schema (the
+# bulk of T1), post-install test/demo/NOT-NULL load errors (T4/T5/T7), and
+# cross-file/cross-module duplicate fields/labels (partial T6). A clean run here
+# is a pre-filter, never proof of installability — run ../validation-harness/.
+repos:
+  - repo: https://github.com/OCA/odoo-pre-commit-hooks
+    rev: v0.2.22
+    hooks:
+      - id: oca-checks-odoo-module
+      - id: oca-checks-po
+
+  - repo: https://github.com/OCA/pylint-odoo
+    rev: v10.0.2
+    hooks:
+      - id: pylint_odoo
+        # Run ONLY the Odoo-specific checks. Disabling plain pylint avoids
+        # import-error/no-member false positives when Odoo is not importable on
+        # PYTHONPATH (the key operational caveat — see README.md).
+        args:
+          - --rcfile=.pylintrc
+          - --disable=all
+          - --enable=odoolint
+          - --valid-odoo-versions=19.0

@@ -40,6 +40,14 @@ changes.
   workflow rules are kept in the target project instructions rather than this
   reusable pack.
 
+## Validation Tiers
+
+- If the project adopts the `commit-tier/` OCA static checks, confirm pre-commit
+  ran clean — but a clean commit-tier pass does **not** prove installability:
+  view-inheritance (T2) and renamed/removed schema (bulk of T1) are uncaught, so
+  changed addon view/model XML still requires the `validation-harness/` registry
+  load (push tier) or build-blocking-risk alternative evidence.
+
 ## Completion Evidence
 
 - `scripts/verify.sh` passes.

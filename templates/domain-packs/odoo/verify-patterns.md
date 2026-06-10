@@ -129,3 +129,17 @@ source from an odoo.sh build) installs/updates the changed addons and fails on
 See `validation-harness/README.md`. Wire it as a `pre-push` gate. Enterprise
 source is mounted, never baked; reliability requires odoo.sh module-set +
 point-release parity.
+
+## Validation Tiers (commit → push → merge)
+
+Match cost to cadence; do not stack everything on one stage:
+
+- **commit (fast, static):** adopt the off-the-shelf OCA tools in `commit-tier/`
+  (`pylint-odoo` + `odoo-pre-commit-hooks`) — manifest/XML/CSV/PO hygiene, duplicate
+  id/field, deprecated nodes, `odoolint`. Do **not** build a custom static lint.
+  Catches a pre-filter subset; **misses view-inheritance (T2) and renamed/removed
+  schema (the bulk of T1)** — a clean static pass is never proof of installability.
+- **push (definitive):** `validation-harness/` registry load on parity-pinned
+  Odoo 19 — the only tier that catches T2 and field/model/registry/NOT-NULL errors.
+- **merge (final):** odoo.sh staging + AI review-gate for data-baseline-dependent
+  cases the warm base only best-effort covers.

@@ -1,0 +1,13 @@
+# Sample pylint config for the Odoo commit tier (standalone pylint use).
+# Runs ONLY the pylint-odoo "odoolint" checks so plain-pylint messages
+# (import-error / no-member / undefined-variable against `odoo.*`) do not
+# false-positive when Odoo is not importable on PYTHONPATH. Copy to repo root.
+[MASTER]
+load-plugins=pylint_odoo
+
+[MESSAGES CONTROL]
+disable=all
+enable=odoolint
+
+[ODOOLINT]
+valid_odoo_versions=19.0
