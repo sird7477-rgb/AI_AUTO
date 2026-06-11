@@ -9,7 +9,8 @@
 #        a brand-new untracked module is not seen by git diff — pass its name explicitly)
 # Env:
 #   ODOO_SERVE_DB=serve          persistent DB you interact with
-#   ODOO_SERVE_PORT=8069         host port -> http://localhost:<port>
+#   ODOO_SERVE_PORT              host port -> http://localhost:<port>; unset = auto-pick the
+#                                first free port from 8069 (serve several projects at once)
 #   ODOO_SERVE_SOURCE=base_demo  warm base to clone on first run (base_demo = demo data to
 #                                click; set =base for an empty-but-installed instance)
 #   ODOO_SERVE_FRESH=1           drop + re-clone the serve DB (discard prior interactions)
@@ -33,9 +34,28 @@ COMPOSE_PROJECT_NAME="$(harness_proj_slug "$PROJECT")"
 export COMPOSE_PROJECT_NAME
 
 SERVE_DB="${ODOO_SERVE_DB:-serve}"
-PORT="${ODOO_SERVE_PORT:-8069}"
 SOURCE="${ODOO_SERVE_SOURCE:-base_demo}"
 DEV="${ODOO_SERVE_DEV:-xml}"
+
+# Host port: an explicit ODOO_SERVE_PORT wins; otherwise auto-pick the first FREE port
+# from 8069 so several projects can be served at once without manual port juggling.
+serve_port_in_use() {  # 0/true = something is already listening on port $1
+  if command -v ss >/dev/null 2>&1; then
+    [ -n "$(ss -ltnH "sport = :$1" 2>/dev/null)" ]
+  elif command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$1" >/dev/null 2>&1
+  else
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1 && { exec 3>&- 2>/dev/null; return 0; }
+    return 1
+  fi
+}
+if [ -n "${ODOO_SERVE_PORT:-}" ]; then
+  PORT="$ODOO_SERVE_PORT"
+else
+  PORT=8069
+  while serve_port_in_use "$PORT" && [ "$PORT" -lt 8119 ]; do PORT=$((PORT + 1)); done
+  echo "[serve] auto-selected free port $PORT (set ODOO_SERVE_PORT to pin it)"
+fi
 
 # Changed custom modules to update into the serve DB (so the UI shows your latest code).
 if [ "$#" -gt 0 ]; then

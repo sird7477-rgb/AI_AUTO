@@ -53,11 +53,12 @@ hand before pushing.
 ```
 serve.sh <project_repo> [module ...]      # then open http://localhost:8069  (admin / admin)
 ```
-- `ODOO_SERVE_PORT=8069` host port · `ODOO_SERVE_DB=serve` persistent (records you create
-  stay across runs) · `ODOO_SERVE_SOURCE=base_demo` clone source (demo data to click; use
-  `base` for empty) · `ODOO_SERVE_FRESH=1` drop+re-clone · `ODOO_SERVE_DEV=xml` live-reloads
-  view XML without a restart. Ctrl-C to stop. Uses the per-project compose stack, so it is
-  concurrency-safe; give each project a distinct `ODOO_SERVE_PORT` to serve several at once.
+- `ODOO_SERVE_PORT` host port — **unset = auto-pick the first free port from 8069**, so
+  several projects can be served at once with no manual port juggling (set it to pin a
+  fixed port). `ODOO_SERVE_DB=serve` persistent (records you create stay across runs) ·
+  `ODOO_SERVE_SOURCE=base_demo` clone source (demo data to click; use `base` for empty) ·
+  `ODOO_SERVE_FRESH=1` drop+re-clone · `ODOO_SERVE_DEV=xml` live-reloads view XML without a
+  restart. Ctrl-C to stop. Uses the per-project compose stack, so it is concurrency-safe.
 - Scope boundary: local serve still does NOT reproduce prod asset bundling/minification,
   real-data volume, or prod infra (workers/cron/mail/CDN) — those remain an odoo.sh/staging
   concern. It DOES let you verify form layout and per-field interactive behavior locally.
