@@ -110,6 +110,37 @@ if [ -z "${VAULT_DIR}" ] || [ ! -d "${VAULT_DIR}" ]; then
   exit 0
 fi
 
+# Vault preflight (Stage 1A.2): fail loud rather than push into a non-writable vault, and WARN
+# when a more-recently-touched AI_AUTO_Vault exists on a sibling drive — the config-drift class
+# found 2026-06-11 (config pointed at /mnt/c while the live vault was /mnt/z). The configured
+# vault is still honoured; the warning surfaces a likely stale-config so it is never silent.
+if [ ! -w "${VAULT_DIR}" ]; then
+  echo "[obsidian-autopush] FAIL: configured vault is not writable: ${VAULT_DIR}" >&2
+  exit 1
+fi
+case "${VAULT_DIR}" in
+  /mnt/*/*)
+    cur_drive="$(printf '%s' "${VAULT_DIR}" | cut -d/ -f3)"
+    vault_rel="${VAULT_DIR#/mnt/"${cur_drive}"/}"
+    ref_file="${VAULT_DIR}/AI_AUTO_INDEX.md"
+    [ -f "${ref_file}" ] || ref_file="${VAULT_DIR}"
+    for drive_dir in /mnt/*/; do
+      other_drive="$(basename "${drive_dir}")"
+      [ "${other_drive}" = "${cur_drive}" ] && continue
+      cand="/mnt/${other_drive}/${vault_rel}"
+      [ -d "${cand}" ] || continue
+      cand_file="${cand}/AI_AUTO_INDEX.md"
+      [ -f "${cand_file}" ] || cand_file="${cand}"
+      if [ "${cand_file}" -nt "${ref_file}" ]; then
+        echo "[obsidian-autopush] WARNING: a more recently modified AI_AUTO_Vault exists on another drive:" >&2
+        echo "    configured (push target): ${VAULT_DIR}" >&2
+        echo "    more recent:              ${cand}" >&2
+        echo "    If the configured vault is stale, fix obsidian.ai_auto_vault_dir in ${LOCAL_CONFIG} before pushing." >&2
+      fi
+    done
+    ;;
+esac
+
 # Build the explicit project list: home checkout plus registered repos.
 PROJECTS=("${HOME_ROOT}")
 if [ -f "${REGISTRY_FILE}" ]; then

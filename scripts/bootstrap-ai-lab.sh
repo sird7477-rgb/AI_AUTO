@@ -363,6 +363,7 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
   ensure_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"
   ensure_link "${HOME_DIR}/bin/ai-project-profile" "${ROOT}/tools/ai-project-profile"
+  ensure_link "${HOME_DIR}/bin/knowledge-capture" "${ROOT}/tools/knowledge-capture"
 
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)

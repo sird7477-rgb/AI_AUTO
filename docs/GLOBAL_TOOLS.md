@@ -142,6 +142,18 @@ reviews that need planning artifacts or full workflow reference file excerpts.
     entry) · `read` · `domain`. Advisory metadata only — changes no project behaviour; read by
     the domain-gated retrieval hook and written on aiinit for detected Odoo projects
 
+- `knowledge-capture`
+  - Harvests reusable findings the author already distilled into sanitized local knowledge
+    drafts (`.omx/knowledge/drafts/`, the schema `knowledge-collect` reads) — instead of an
+    end-of-session "what did we learn?" recall
+  - `harvest [--since <ref>] [--write]` scans commits carrying single-line Lore-style Finding
+    trailers (`Finding:`, `Finding-Evidence:`, `Finding-Scope:`, optional `Finding-NotWhen:` /
+    `Finding-Surface:` / `Finding-Share:`); `list` is dry-run
+  - **Reuse-test gate** (junk-vault defence): a finding is drafted only if it states rule +
+    evidence + scope; missing any → skipped. All harvested text is secret/path-redacted, and
+    drafts are `local_private` unless `Finding-Share: shareable`. Push to the vault stays a
+    separate, user-triggered step — capture is local only
+
 Repo-local command installed by the automation template:
 
 - `./scripts/automation-doctor.sh`
@@ -209,6 +221,7 @@ Expected links:
     ~/bin/ai-worktree -> ~/workspace/ai-lab/tools/ai-worktree
     ~/bin/ai-tmux-worktree -> ~/workspace/ai-lab/tools/ai-tmux-worktree
     ~/bin/ai-project-profile -> ~/workspace/ai-lab/tools/ai-project-profile
+    ~/bin/knowledge-capture -> ~/workspace/ai-lab/tools/knowledge-capture
 
 To recreate the links:
 
@@ -244,6 +257,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/ai-worktree ~/bin/ai-worktree
     ln -sf ~/workspace/ai-lab/tools/ai-tmux-worktree ~/bin/ai-tmux-worktree
     ln -sf ~/workspace/ai-lab/tools/ai-project-profile ~/bin/ai-project-profile
+    ln -sf ~/workspace/ai-lab/tools/knowledge-capture ~/bin/knowledge-capture
 
 Make sure `~/bin` is in PATH:
 

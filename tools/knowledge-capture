@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""knowledge-capture — scoped artifact harvest (Stage 1A of KB bidirectional retrieval).
+
+Captures reusable findings that the author ALREADY distilled, instead of asking "what did we
+learn?" at session end (the weakest moment). It harvests commits the author opted in as findings
+by adding Lore-style git trailers, into sanitized local knowledge drafts
+(`.omx/knowledge/drafts/`, the same schema `knowledge-collect` reads):
+
+       Finding:          <the reusable rule>            (required)
+       Finding-Evidence: <source: commit/test/file>     (required)
+       Finding-Scope:    <where the rule applies>        (required)
+       Finding-NotWhen:  <when NOT to apply it>          (optional, encouraged)
+       Finding-Surface:  <surface, e.g. odoo>            (optional)
+       Finding-Share:    shareable | local              (optional; default local_private)
+Each trailer is a SINGLE line (standard git trailer style); folded multi-line values are not
+supported — keep the rule, evidence, and scope each to one line.
+
+THE REUSE-TEST GATE (the junk-vault defence the AI council required): a finding is harvested
+ONLY if it states {reusable rule, evidence, scope}. Missing any of the three -> skipped, not a
+draft. `when-not` is recorded when present. This keeps the vault signal-dense.
+
+All harvested text is SANITIZED (secret/credential/absolute-path spans redacted) before writing;
+drafts are `sync_class: local_private` unless `Finding-Share: shareable`. Push to the vault stays
+a separate, user-triggered step (`옵시디언 푸시해줘`) — capture is local only. (Capturing review-gate
+verdicts is intentionally out of scope until verdicts carry an explicit finding-trailer convention;
+this tool harvests only commit trailers, which already work end to end.)
+
+Usage:
+  knowledge-capture harvest [--since <ref>] [--repo <path>] [--write]
+  knowledge-capture list [--since <ref>] [--repo <path>]      # candidates, no write (alias of dry-run)
+Dry-run is the default; pass --write to create drafts.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+# Mirrors scripts/knowledge-notes.py SECRET_PATTERN (kept in sync deliberately; capture must
+# never write an unsanitized draft). Absolute /home|Users|root|mnt paths are treated as
+# secret-like, so they are redacted out of harvested findings.
+SECRET_PATTERN = re.compile(
+    r"(^|[^A-Za-z0-9_])("
+    r"(password|passwd|pwd|token|secret|authorization|client[_-]?secret|api[_-]?key|apikey|access[_-]?key|private[_ -]?key)\s*[:=]"
+    r"|bearer\s+|ssh-rsa|ssh-ed25519|begin\s+[^ \t\r\n]*\s*private\s+key"
+    r"|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{20,}"
+    r"|cookie\s*[:=]|set-cookie\s*:"
+    r"|https?://[^/\s:@]+:[^/\s@]+@"
+    r"|/(home|Users|root|mnt)/[^\s]+"
+    r"|\b(system|developer|user)\s+prompt\s*:"
+    r"|screenshot\s*[:=]"
+    r")",
+    re.IGNORECASE,
+)
+
+DRAFTS_REL = os.path.join(".omx", "knowledge", "drafts")
+
+
+def sanitize(text: str) -> str:
+    """Redact secret-like spans; preserve the leading boundary char the pattern captures."""
+    def repl(m: re.Match) -> str:
+        lead = m.group(1) or ""
+        return f"{lead}[redacted]"
+    return SECRET_PATTERN.sub(repl, text or "")
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._:-]+", "-", value.strip().lower()).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    return slug[:80] or "finding"
+
+
+def repeat_key_slug(value: str) -> str:
+    return slugify(value).replace(":", "-")
+
+
+def yaml_quote(value: str) -> str:
+    v = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{v}"'
+
+
+def repo_root(arg: str | None) -> str:
+    if arg:
+        return os.path.abspath(arg)
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, check=True)
+        if out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return os.getcwd()
+
+
+def project_name(repo: str) -> str:
+    return os.path.basename(repo.rstrip("/")) or "project"
+
+
+def git_log(repo: str, since: str | None) -> list[str]:
+    """Return commit SHAs in range (oldest..newest). Default: @{u}..HEAD, else last 20."""
+    rng: list[str]
+    if since:
+        rng = [f"{since}..HEAD"]
+    else:
+        # not-yet-pushed commits if an upstream exists, else a bounded recent window
+        up = subprocess.run(["git", "-C", repo, "rev-parse", "--abbrev-ref",
+                             "--symbolic-full-name", "@{u}"],
+                            capture_output=True, text=True)
+        if up.returncode == 0 and up.stdout.strip():
+            rng = ["@{u}..HEAD"]
+        else:
+            # No upstream: scan a bounded recent window (avoid an unbounded sweep). If the branch
+            # is deeper, the window may miss older findings — pass --since <ref> to widen.
+            rng = ["-n", "20", "HEAD"]
+            total = subprocess.run(["git", "-C", repo, "rev-list", "--count", "HEAD"],
+                                   capture_output=True, text=True)
+            if total.stdout.strip().isdigit() and int(total.stdout.strip()) > 20:
+                sys.stderr.write("[knowledge-capture] no upstream — scanning last 20 commits only; "
+                                 "pass --since <ref> to harvest older findings.\n")
+    out = subprocess.run(["git", "-C", repo, "rev-list", "--reverse", *rng],
+                         capture_output=True, text=True)
+    return [s for s in out.stdout.splitlines() if s.strip()]
+
+
+def commit_message(repo: str, sha: str) -> str:
+    out = subprocess.run(["git", "-C", repo, "show", "-s", "--format=%B", sha],
+                         capture_output=True, text=True)
+    return out.stdout
+
+
+TRAILER_RE = re.compile(r"^(Finding(?:-[A-Za-z]+)?)\s*:\s*(.+)$")
+
+
+def parse_finding(message: str) -> dict[str, str] | None:
+    """Extract Finding-* trailers. Returns None if no Finding: trailer present."""
+    fields: dict[str, str] = {}
+    for line in message.splitlines():
+        m = TRAILER_RE.match(line.strip())
+        if m:
+            fields[m.group(1)] = m.group(2).strip()
+    if "Finding" not in fields:
+        return None
+    return fields
+
+
+def reuse_test_ok(fields: dict[str, str]) -> tuple[bool, list[str]]:
+    """Gate: rule (Finding) + evidence + scope are mandatory."""
+    missing = [k for k in ("Finding", "Finding-Evidence", "Finding-Scope") if not fields.get(k)]
+    return (not missing, missing)
+
+
+def build_draft(repo: str, source_id: str, fields: dict[str, str], severity: str) -> tuple[str, str, str]:
+    """Return (repeat_key, filename, markdown). Caller decides whether to write."""
+    rule = sanitize(fields["Finding"])
+    evidence = sanitize(fields.get("Finding-Evidence", ""))
+    scope = sanitize(fields.get("Finding-Scope", ""))
+    when_not = sanitize(fields.get("Finding-NotWhen", ""))
+    surface = slugify(fields.get("Finding-Surface", "general")) or "general"
+    share = fields.get("Finding-Share", "local").strip().lower()
+    sync_class = "shareable_summary" if share in ("shareable", "share", "shareable_summary") else "local_private"
+
+    rk = f"{surface}:{repeat_key_slug(rule)[:48]}"
+    today = date.today().isoformat()
+    title = rule[:90]
+    src_hash = "sha256:" + hashlib.sha256(f"{source_id}\n{rule}".encode("utf-8")).hexdigest()
+    fname = f"{today}--{rk.replace(':', '-')}--{slugify(rule)[:40]}.md"
+
+    fm = [
+        "---",
+        "confidence: medium",
+        f"created: {today}",
+        "evidence_count: 1",
+        f"project: {project_name(repo)}",
+        "promotion_state: not_candidate",
+        "redaction_status: sanitized",
+        f"repeat_key: {yaml_quote(rk)}",
+        f"severity: {severity}",
+        f"source_artifact: {yaml_quote(source_id)}",
+        f"source_hash: {yaml_quote(src_hash)}",
+        "status: draft",
+        f"summary: {yaml_quote(rule)}",
+        f"surface: {surface}",
+        f"sync_class: {sync_class}",
+        f"title: {yaml_quote(title)}",
+        "type: finding",
+        f"updated: {today}",
+        "---",
+    ]
+    body = [
+        "",
+        f"# {title}",
+        "",
+        "## Reuse Test",
+        f"- **Reusable rule:** {rule}",
+        f"- **Evidence:** {evidence}",
+        f"- **Scope (where it applies):** {scope}",
+        f"- **When NOT to apply:** {when_not or '(unspecified — narrow to the evidenced scope)'}",
+        "",
+        f"_Captured from {source_id}. Advisory — current repo evidence overrides this note._",
+        "",
+    ]
+    return rk, fname, "\n".join(fm + body)
+
+
+def write_draft(repo: str, fname: str, markdown: str) -> str:
+    drafts = os.path.join(repo, DRAFTS_REL)
+    os.makedirs(drafts, exist_ok=True)
+    path = os.path.join(drafts, fname)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(markdown)
+    os.replace(tmp, path)
+    return path
+
+
+def existing_repeat_keys(repo: str) -> set[str]:
+    keys = set()
+    drafts = Path(repo) / DRAFTS_REL
+    if not drafts.is_dir():
+        return keys
+    for p in drafts.glob("*.md"):
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        # Per-file frontmatter scan: enter on the opening '---', read repeat_key, stop at the
+        # closing '---'. (A per-file flag — never the accumulated `keys` — gates the close, so
+        # a key found in an earlier file cannot short-circuit a later file's scan.)
+        in_frontmatter = False
+        for line in lines:
+            if line.strip() == "---":
+                if in_frontmatter:
+                    break
+                in_frontmatter = True
+                continue
+            if in_frontmatter and line.startswith("repeat_key:"):
+                keys.add(line.split(":", 1)[1].strip().strip('"'))
+                break
+    return keys
+
+
+def cmd_harvest(args) -> int:
+    repo = repo_root(args.repo)
+    seen = existing_repeat_keys(repo)
+    candidates = git_log(repo, args.since)
+    made = 0
+    skipped_gate = 0
+    skipped_dup = 0
+    for sha in candidates:
+        msg = commit_message(repo, sha)
+        fields = parse_finding(msg)
+        if fields is None:
+            continue
+        ok, missing = reuse_test_ok(fields)
+        if not ok:
+            skipped_gate += 1
+            sys.stderr.write(f"[knowledge-capture] {sha[:9]}: Finding trailer fails reuse-test "
+                             f"(missing {', '.join(missing)}) — skipped\n")
+            continue
+        rk, fname, md = build_draft(repo, f"commit:{sha[:12]}", fields, args.severity)
+        if rk in seen:
+            skipped_dup += 1
+            continue
+        if args.write:
+            path = write_draft(repo, fname, md)
+            print(f"[knowledge-capture] drafted {rk} -> {path}")
+        else:
+            print(f"[knowledge-capture] would draft {rk}  (commit {sha[:9]})")
+        seen.add(rk)
+        made += 1
+    mode = "wrote" if args.write else "would write"
+    print(f"[knowledge-capture] {mode} {made} draft(s); "
+          f"{skipped_gate} failed reuse-test, {skipped_dup} duplicate(s).")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="knowledge-capture", add_help=True)
+    sub = p.add_subparsers(dest="cmd")
+
+    h = sub.add_parser("harvest", help="harvest Finding-trailer commits into drafts")
+    h.add_argument("--since", default=None)
+    h.add_argument("--repo", default=None)
+    h.add_argument("--severity", default="medium", choices=["low", "medium", "high", "critical"])
+    h.add_argument("--write", action="store_true")
+    h.set_defaults(func=cmd_harvest)
+
+    li = sub.add_parser("list", help="list harvest candidates (dry-run)")
+    li.add_argument("--since", default=None)
+    li.add_argument("--repo", default=None)
+    li.add_argument("--severity", default="medium", choices=["low", "medium", "high", "critical"])
+    li.set_defaults(func=cmd_harvest, write=False)
+
+    args = p.parse_args(argv[1:])
+    if not getattr(args, "cmd", None):
+        p.print_help()
+        return 2
+    if getattr(args, "cmd") == "list":
+        args.write = False
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

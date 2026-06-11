@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.12.1
+
+- KB bidirectional retrieval, Stage 1A + 1A.2 (the WRITE path). `automation-doctor.sh` now
+  checks the `knowledge-capture` global-helper link. New helper `tools/knowledge-capture`
+  harvests reusable findings the author already distilled — commits carrying Lore-style
+  `Finding:`/`Finding-Evidence:`/`Finding-Scope:` trailers (+ optional `Finding-NotWhen:` /
+  `Finding-Surface:` / `Finding-Share:`, each a single line) → sanitized local
+  `.omx/knowledge/drafts/` (the schema `knowledge-collect` reads). A **reuse-test gate** drops
+  any finding missing rule/evidence/scope (junk-vault defence); all harvested text is
+  secret/path-redacted; drafts are `local_private` unless `Finding-Share: shareable`. Capture is
+  local + opt-in; the vault push stays user-triggered. `obsidian-autopush.sh` gains a vault
+  preflight: fails loud on a non-writable vault and warns when a more-recently-modified
+  AI_AUTO_Vault exists on a sibling drive (the /mnt/c-vs-/mnt/z config-drift class).
+
 ## 2026.06.12.0
 
 - KB bidirectional retrieval, Stage 0 (foundation). `automation-doctor.sh` now checks the

@@ -706,6 +706,7 @@ if [ "${IN_AI_LAB:-0}" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ];
   check_helper_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
   check_helper_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"
   check_helper_link "${HOME_DIR}/bin/ai-project-profile" "${ROOT}/tools/ai-project-profile"
+  check_helper_link "${HOME_DIR}/bin/knowledge-capture" "${ROOT}/tools/knowledge-capture"
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)
       say_pass "global helper directory is on PATH: ${HOME_DIR}/bin"

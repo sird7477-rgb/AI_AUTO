@@ -44,6 +44,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/ai-worktree
   ~/bin/ai-tmux-worktree
   ~/bin/ai-project-profile
+  ~/bin/knowledge-capture
 
 It may also add a managed AI_AUTO shell function under ~/.config/ai-lab and a
 small source block in ~/.bashrc so typing AI_AUTO with no arguments changes the
@@ -1007,6 +1008,7 @@ check_source_helper "${ROOT}/tools/micro-work"
 check_source_helper "${ROOT}/tools/ai-worktree"
 check_source_helper "${ROOT}/tools/ai-tmux-worktree"
 check_source_helper "${ROOT}/tools/ai-project-profile"
+check_source_helper "${ROOT}/tools/knowledge-capture"
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   print_summary
@@ -1045,6 +1047,7 @@ else
   install_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
   install_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"
   install_link "${HOME_DIR}/bin/ai-project-profile" "${ROOT}/tools/ai-project-profile"
+  install_link "${HOME_DIR}/bin/knowledge-capture" "${ROOT}/tools/knowledge-capture"
   install_shell_function
   if [ "$INSTALL_TMUX_WORKTREE" = "1" ]; then
     install_tmux_hooks
