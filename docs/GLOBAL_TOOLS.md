@@ -134,6 +134,14 @@ reviews that need planning artifacts or full workflow reference file excerpts.
     unpushed work is kept and logged, never forced. On by default; set
     `AI_AUTO_TMUX_WORKTREE=0` to opt out, `AI_AUTO_TMUX_WORKTREE_KEEP=1` to keep all.
 
+- `ai-project-profile`
+  - Detects a repo's domain from repo signals (Odoo = `custom-addons/` with module
+    `__manifest__.py`) and records it in machine-local `.omx/project-profile.json`
+    (`{domain, version, addons, detected_by, confirmed_at}`)
+  - `detect` (print, no write) · `write` (detect + persist, preserving an aiinit-confirmed
+    entry) · `read` · `domain`. Advisory metadata only — changes no project behaviour; read by
+    the domain-gated retrieval hook and written on aiinit for detected Odoo projects
+
 Repo-local command installed by the automation template:
 
 - `./scripts/automation-doctor.sh`
@@ -200,6 +208,7 @@ Expected links:
     ~/bin/micro-work -> ~/workspace/ai-lab/tools/micro-work
     ~/bin/ai-worktree -> ~/workspace/ai-lab/tools/ai-worktree
     ~/bin/ai-tmux-worktree -> ~/workspace/ai-lab/tools/ai-tmux-worktree
+    ~/bin/ai-project-profile -> ~/workspace/ai-lab/tools/ai-project-profile
 
 To recreate the links:
 
@@ -234,6 +243,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/micro-work ~/bin/micro-work
     ln -sf ~/workspace/ai-lab/tools/ai-worktree ~/bin/ai-worktree
     ln -sf ~/workspace/ai-lab/tools/ai-tmux-worktree ~/bin/ai-tmux-worktree
+    ln -sf ~/workspace/ai-lab/tools/ai-project-profile ~/bin/ai-project-profile
 
 Make sure `~/bin` is in PATH:
 

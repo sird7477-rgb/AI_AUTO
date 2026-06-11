@@ -63,6 +63,16 @@ Do not proceed without a clear plan when the change involves:
 - deployment credentials, hosted build IDs, SSH endpoints, or production-like
   access paths that are project-specific
 
+## Knowledge Retrieval
+
+Before Odoo schema/view/field/security work, consult the relevant `Odoo19_Docs_KB/slim/<topic>`
+navigation file first (token-cheap), and the project's `Odoo.sh KB/` decision guides; read
+`raw/<topic>` only when slim is insufficient. The KB is **advisory** — current repo evidence
+(actual code, registry-load validation, tests) always overrides a KB note; a stale slim entry
+must never justify code that contradicts the live module. (A domain-gated retrieval hook may
+surface this slim pointer automatically when the project profile is `odoo`; the boundary is the
+same — repo evidence wins.)
+
 ## Verification Rule
 
 Odoo changes are not complete until the project-specific verification command

@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.12.0
+
+- KB bidirectional retrieval, Stage 0 (foundation). `automation-doctor.sh` now checks the
+  `ai-project-profile` global-helper link. New helper `tools/ai-project-profile` detects a
+  repo's domain (Odoo = `custom-addons/` with module `__manifest__.py`) and records it in
+  machine-local `.omx/project-profile.json`; `aiinit` writes it for detected Odoo projects
+  (no-op otherwise). The odoo domain pack gains a "consult the slim KB first; KB is advisory —
+  repo evidence wins" retrieval rule (WORKFLOW.md dev-loop step 0 + AGENTS.patch.md). Advisory
+  metadata + guidance only — no runtime behaviour change; the domain-gated retrieval hook
+  (later stage) reads the profile.
+
 ## 2026.06.11.3
 
 - The odoo domain pack now ships a `hooks/pre-push` validation gate, and `aiinit`

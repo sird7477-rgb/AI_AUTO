@@ -29,6 +29,12 @@ confirming that the project is Odoo-based.
 
 ## Development Loop
 
+0. **Consult the KB first** (before schema/view/field/security work): read the relevant
+   `Odoo19_Docs_KB/slim/<topic>` navigation file first (token-cheap heading/signature tree),
+   and the project's own `Odoo.sh KB/` decision guides. Read `raw/<topic>` only when slim is
+   insufficient or a security/implementation judgment is needed. **The KB is advisory — current
+   repo evidence (actual code, registry-load validation, tests) always overrides a KB note;
+   never let a stale slim entry justify code that contradicts the live module.**
 1. Identify the affected module, model, view, security file, report, or data
    file.
 2. Keep the change inside the confirmed addon scope.

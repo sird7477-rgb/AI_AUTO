@@ -288,6 +288,15 @@ for script_path in "${TARGET_DIR}"/scripts/*.sh "${TARGET_DIR}"/scripts/*.py; do
   chmod +x "${script_path}"
 done
 
+# Record the project's domain profile (machine-local .omx/project-profile.json) for detected
+# domains (currently Odoo). No-op for projects with no known domain. Read by the domain-gated
+# retrieval hook; advisory metadata only.
+if [ -x "${AI_LAB_ROOT}/tools/ai-project-profile" ]; then
+  if "${AI_LAB_ROOT}/tools/ai-project-profile" write "${TARGET_DIR}" >/dev/null 2>&1; then
+    echo "Recorded project domain profile: ${TARGET_DIR}/.omx/project-profile.json"
+  fi
+fi
+
 echo "Automation template installed into: ${TARGET_DIR}"
 echo "Local git exclude updated for .omx/ runtime artifacts."
 if [ -d "${TARGET_DIR}/.omx/domain-packs" ]; then
