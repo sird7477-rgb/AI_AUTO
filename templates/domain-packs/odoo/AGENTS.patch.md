@@ -69,6 +69,12 @@ Odoo changes are not complete until the project-specific verification command
 passes. At minimum, verification should cover syntax/import checks and one Odoo
 module install/update or test path when the runtime is available.
 
+Trigger "로컬띄워" (also "로컬 띄워" / "serve 띄워" / "UI 확인"): start the harness
+`serve.sh <project> [changed modules]` in the BACKGROUND (long-running HTTP server —
+never block the session), then report `http://localhost:<port>` and `admin / admin` so
+the user verifies the rendered UI by hand before push. See the workflow pack's "Local UI
+Preview" section for details.
+
 Project-specific deployment workflows such as odoo.sh SSH access, branch routing,
 temporary admin password handling, Playwright login variables, commit-message
 approval rules, and customer-specific attachment or document automation rules

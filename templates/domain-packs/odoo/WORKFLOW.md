@@ -37,6 +37,24 @@ confirming that the project is Odoo-based.
 5. Run the business smoke check when the change affects user workflow.
 6. Run the standard review gate before presenting a commit candidate.
 
+## Local UI Preview — trigger: "로컬띄워"
+
+When the user asks to preview the project in a browser — trigger phrases
+**"로컬띄워"**, "로컬 띄워", "serve 띄워", "로컬 serve", "UI 확인" — start the harness
+`serve.sh` so they can verify form layout and per-field behavior by hand before pushing:
+
+- Run `serve.sh <project_repo> [changed modules]` in the BACKGROUND. It is a long-running
+  foreground HTTP server, so never run it blocking in the session — background it, poll
+  until the port answers, then report the URL.
+- Report `http://localhost:<port>` (default 8069, `ODOO_SERVE_PORT`) and the login
+  `admin / admin`. The user clicks through the actual forms; you do not drive the UI.
+- No module argument updates the git-diff changed modules; pass a module name explicitly
+  for a brand-new (untracked) module. It clones the warm base into a persistent `serve`
+  DB (records the user enters persist; `ODOO_SERVE_FRESH=1` resets it).
+- Stop it by killing the background run (the user can also Ctrl-C their own foreground run).
+- The harness lives outside the repo (`ODOO_HARNESS_DIR` / the project's `00. DATA/harness`);
+  if it is not configured, say so rather than guessing a path.
+
 ## Project-Specific Rules
 
 Keep reusable Odoo guidance separate from project-specific operations:
