@@ -155,6 +155,19 @@ generated hubs under `Surfaces/`, `RepeatKeys/`, `Promotion/`, and `Views/`.
 Top-level domain KB folders and large reference baselines keep their own
 folder-local indexes and validators.
 
+Two separate index lanes exist, and automated retrieval covers only one of them:
+
+- **Reference-baseline lane** (`Odoo19_Docs_KB` and similar): a `slim` routing
+  table (`00_Index.md`) that the domain-gated `knowledge-retrieve` hook searches
+  to inject capped pointers. This is the only lane auto-surfaced during work.
+- **Curated-findings lane** (`AI_AUTO_INDEX.md` + `Projects/`/`Surfaces/`/
+  `RepeatKeys/`): fully rebuilt from note frontmatter on every push (idempotent —
+  re-running `knowledge-notes.py index` over the whole note set keeps it
+  consistent, so routing a new draft to a different `project:` never requires
+  reindexing existing notes). This lane is **browse-only**; the retrieval hook
+  does not read it, so a captured `surface: odoo` finding is not auto-retrieved
+  even after push. Extending retrieval to the findings lane is a backlog item.
+
 Recommended views: Project Home, Inbox, Open Incidents, Work Review Findings,
 Technical Specs, Repeat Keys, Promotion Candidates, Recently Updated.
 

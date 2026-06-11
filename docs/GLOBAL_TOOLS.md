@@ -172,6 +172,12 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - **Fail-graceful**: no reachable vault / unknown domain / no match / no keywords → prints nothing
     and exits 0, so a retrieval miss never blocks the caller. Called by the domain-gated retrieval
     hook and runnable on demand to deepen into a topic
+  - **Coverage boundary**: it searches the registered domain's **reference baseline** slim routing
+    index only (e.g. `Odoo19_Docs_KB/00_Index.md`). It does **not** search the curated-findings lane
+    (`Projects/`, `Surfaces/`, `RepeatKeys/`, `AI_AUTO_INDEX.md`) — those stay browse-only in Obsidian.
+    So a captured `surface: odoo` finding is not auto-surfaced by the hook even after push. Making the
+    findings lane retrievable is a tracked backlog item (see
+    `plans/AI_AUTO_STRUCTURAL_WEAKNESS_BACKLOG.md`), not current behavior
 
 Repo-local command installed by the automation template:
 

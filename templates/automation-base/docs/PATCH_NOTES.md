@@ -4,6 +4,22 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.12.3
+
+- `OBSIDIAN_INTEGRATION.md`: documented the two-lane index boundary for the KB.
+  Automated retrieval (`knowledge-retrieve` / the domain-gated hook) covers the
+  **reference-baseline lane** (`Odoo19_Docs_KB` slim routing index) ONLY; the
+  **curated-findings lane** (`AI_AUTO_INDEX.md` + `Projects/`/`Surfaces/`/
+  `RepeatKeys/`) is browse-only and is NOT auto-retrieved, so a captured
+  `surface: odoo` finding is not surfaced by the hook even after push. Also
+  clarified that the findings index is fully rebuilt (idempotent) from
+  frontmatter on every push, so routing a new draft to a different `project:`
+  never requires reindexing existing notes. Doc-only clarification of existing
+  behavior; extending retrieval to the findings lane is tracked as a later-gated
+  backlog item, not shipped here. The same coverage-boundary note was added to the home-only
+  `docs/GLOBAL_TOOLS.md` (`knowledge-retrieve` entry); that file is not template-owned, so it is not
+  mirrored under `templates/` and needs no template-status sync.
+
 ## 2026.06.12.2
 
 - KB bidirectional retrieval, Stage 2 + 1B (the READ path). `automation-doctor.sh` now checks the
