@@ -35,8 +35,52 @@ Korean projects default to `ko_KR` / `base.kr`; override with
 | `Dockerfile` | odoo:19 + project python deps auto-collected to `.deps.txt` |
 | `setup_company.py` | 1-lite baseline: set company fiscal country (no full chart), stateless |
 | `validate-odoo.sh` | stateless full/single validation on a fresh DB |
-| `prepare-base-db.sh` | build the **regenerable warm base** (full module set + baseline) |
+| `prepare-base-db.sh` | build the **regenerable warm base**; `ODOO_WITH_DEMO=1` builds a `base_demo` (demo kept) for the demo pass |
 | `validate-warm.sh` | routine fast validation: clone base, `-u` changed, drop |
+| `validate-full.sh` | **on-demand / pre-PR** test + demo pass (scoped `--test-enable` on `base` + `-u` on `base_demo`), reverse-dep closure |
+| `gen-requirements.sh` | generate / `--check` root `requirements.txt` from manifest `external_dependencies.python` (deps parity with odoo.sh) |
+
+## On-demand test + demo tier (`validate-full.sh`)
+The warm push gate catches the registry-load class; the slower test/demo classes
+(post-install tests, demo data) run **on demand before push/PR**, not on every push:
+```bash
+# one-time: a second base WITH demo data
+ODOO_WITH_DEMO=1 ./prepare-base-db.sh /path/to/project_repo
+# per change (auto git-diff, or pass modules): scoped tests + demo-data load
+./validate-full.sh /path/to/project_repo
+```
+Scope = changed modules **+ their reverse-dependents** (a dependent's test catches a
+break in a module it depends on); registry coverage stays **full-set**. Sub-routing
+(git-diff mode) runs the demo pass only on `demo/` changes and the test pass on
+code/test/data changes — and a `demo/` change also runs the test pass to re-validate
+module load (`[test=N demo=N]` banner). Because `-u` does not reload demo, a `demo/`
+change fails closed unless `ODOO_DEMO_REBUILD=1` rebuilds `base_demo` to validate the
+changed demo data. `MAX_FULL_SCOPE` warns on a wide reverse-dep blast radius so this
+stays off the push hot path.
+
+Measured behavior (keep these in mind — they shaped the design):
+- **`-u` does not reload `demo/` data** (only data/security/views reload). The demo
+  pass `-u`s the full `base_demo` to validate module load against demo-populated
+  tables; to validate a **changed** `demo/` file's data, rebuild `base_demo`
+  (`ODOO_WITH_DEMO=1 prepare-base-db.sh`).
+- A fresh `-i $SCOPE` on an **empty** DB false-fails on partial module graphs (a field
+  whose comodel lives in an unrelated/enterprise module), so the demo pass never does a
+  partial install — it always runs against the full `base_demo`.
+- `createdb -T` clone is ~instant (~0.8 s) and the harness already runs the pinned
+  source via explicit `odoo-bin` path, so **click-odoo is not adopted** (optional only).
+
+## Deps parity (`gen-requirements.sh`)
+odoo.sh installs python deps from a **root `requirements.txt`**; a manifest
+`external_dependencies.python` entry absent from it passes locally but fails the
+odoo.sh build. Generate and drift-check it:
+```bash
+./gen-requirements.sh /path/to/project_repo            # write root requirements.txt
+./gen-requirements.sh --check /path/to/project_repo    # M\R = error (breaks odoo.sh), R\M = warn (stale)
+```
+When a root `requirements.txt` is present, `prepare-base-db.sh` installs the harness
+image from **it** (not the manifest scan) and drift-checks it, so the local image and
+odoo.sh install the same set automatically. Versions are unpinned (names only) — pin in
+`requirements.txt` if odoo.sh parity needs exact versions.
 
 ## Pre-push gate
 Install a `pre-push` hook (project `core.hooksPath`) that **computes changed
