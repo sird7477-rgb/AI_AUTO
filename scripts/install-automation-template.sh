@@ -253,6 +253,36 @@ PY
   done
 fi
 
+# Auto-install the Odoo domain-pack git hook(s) into Odoo projects (custom-addons present),
+# non-destructively, so a freshly aiinit'd Odoo project gets the pre-push validation gate.
+# The hook self-skips loudly until ODOO_HARNESS_DIR is configured, so this never blocks a
+# project that has not set up the local harness yet.
+odoo_hooks_dir="${domain_packs_dir}/odoo/hooks"
+if [ -d "${odoo_hooks_dir}" ] && [ -d "${TARGET_DIR}/custom-addons" ]; then
+  mkdir -p "${TARGET_DIR}/.githooks"
+  for hook_src in "${odoo_hooks_dir}"/*; do
+    [ -f "${hook_src}" ] || continue
+    hook_dest="${TARGET_DIR}/.githooks/$(basename "${hook_src}")"
+    if [ -e "${hook_dest}" ]; then
+      echo "Preserving existing git hook: ${hook_dest}"
+    else
+      cp "${hook_src}" "${hook_dest}"
+      chmod +x "${hook_dest}"
+      echo "Installed Odoo git hook: ${hook_dest}"
+    fi
+  done
+  if git -C "${TARGET_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
+    if [ -z "$(git -C "${TARGET_DIR}" config --local core.hooksPath 2>/dev/null)" ]; then
+      git -C "${TARGET_DIR}" config --local core.hooksPath .githooks \
+        && echo "Set core.hooksPath=.githooks (Odoo validation hook active)"
+    else
+      echo "Note: core.hooksPath already set; ensure it points at .githooks for the Odoo hook to run"
+    fi
+  else
+    echo "Note: ${TARGET_DIR} is not a git repo; installed .githooks/ but did not set core.hooksPath"
+  fi
+fi
+
 for script_path in "${TARGET_DIR}"/scripts/*.sh "${TARGET_DIR}"/scripts/*.py; do
   [ -e "${script_path}" ] || continue
   chmod +x "${script_path}"

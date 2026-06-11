@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.11.3
+
+- The odoo domain pack now ships a `hooks/pre-push` validation gate, and `aiinit`
+  (`install-automation-template.sh`) auto-installs it into Odoo projects (those with a
+  `custom-addons/` directory): the hook is copied to `.githooks/pre-push`
+  non-destructively and `core.hooksPath` is set to `.githooks` only when unset. The hook
+  is fail-closed (a missing warm base is auto-built, never silently skipped) but stays
+  inert with a loud "NOT VALIDATED" notice until `ODOO_HARNESS_DIR` is configured, so it
+  never blocks a project that has not set up the local harness. Non-Odoo projects are
+  unaffected.
+
 ## 2026.06.11.2
 
 - `automation-doctor.sh` now checks the `ai-tmux-worktree` global-helper link

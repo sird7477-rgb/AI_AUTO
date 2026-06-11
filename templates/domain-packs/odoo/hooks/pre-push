@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Odoo registry-load validation gate (pre-push tier) — shipped by the AI_AUTO odoo domain
+# pack, auto-installed into Odoo projects by aiinit.
+# Blocks push when changed custom-addons modules fail to install/update on the
+# parity-pinned warm base (catches view-inheritance/field/registry errors that odoo.sh
+# would otherwise fail on). ~95s via warm base.
+#
+# Setup (once per environment): point ODOO_HARNESS_DIR at your local validation harness
+#   export ODOO_HARNESS_DIR="/path/to/00. DATA/harness"
+# Until it is set, this hook skips loudly (NOT VALIDATED) so onboarding is never blocked.
+#
+# Override (emergency):   SKIP_ODOO_VALIDATE=1 git push
+# Fail-closed: once the harness is configured, a missing warm base is auto-built (first
+# push, ~10min) instead of skipped, so validation is never silently bypassed.
+# ODOO_SKIP_AUTO_BASE=1 blocks-with-instructions instead of auto-building.
+set -u
+[ "${SKIP_ODOO_VALIDATE:-0}" = "1" ] && { echo "[pre-push] Odoo validation skipped (SKIP_ODOO_VALIDATE=1)"; exit 0; }
+
+PROJECT="$(git rev-parse --show-toplevel)"
+HARNESS="${ODOO_HARNESS_DIR:-}"
+
+# The harness location is environment-specific (it sits next to your local Odoo source).
+# Require it explicitly; skip loudly until configured so a fresh clone can still push.
+if [ -z "$HARNESS" ]; then
+  echo "[pre-push] ⚠️  ODOO_HARNESS_DIR not set — Odoo validation skipped (NOT VALIDATED)."
+  echo "[pre-push]     Enable: export ODOO_HARNESS_DIR=\"/path/to/00. DATA/harness\""
+  exit 0
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "[pre-push] ⚠️  docker unavailable — pushing WITHOUT Odoo validation (NOT VALIDATED)"; exit 0
+fi
+if [ ! -x "$HARNESS/validate-warm.sh" ]; then
+  echo "[pre-push] ⚠️  harness not found at: $HARNESS — pushing WITHOUT validation (NOT VALIDATED)"; exit 0
+fi
+
+# Collect changed custom-addons modules across the COMMITS being pushed (stdin). Use the
+# commit list (not a worktree diff): `git diff <sha>` would compare against the working
+# tree and miss everything on a clean checkout (e.g. a new-branch first push).
+mods=""
+zero=0000000000000000000000000000000000000000
+while read -r _lref lsha _rref rsha; do
+  # skip branch deletions (local sha all-zeros) and empty lines
+  case "${lsha:-}" in ""|"$zero") continue ;; esac
+  case "${rsha:-}" in
+    ""|"$zero") commits="$(git -C "$PROJECT" rev-list "$lsha" --not --remotes 2>/dev/null)" ;;  # new branch
+    *)          commits="$(git -C "$PROJECT" rev-list "$rsha..$lsha" 2>/dev/null)" ;;
+  esac
+  m="$(printf '%s\n' "$commits" | while read -r c; do
+        [ -n "$c" ] && git -C "$PROJECT" diff-tree -r --no-commit-id --name-only "$c" 2>/dev/null
+      done | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p')"
+  mods="$mods$m
+"
+done
+mods=$(printf '%s' "$mods" | sed '/^$/d' | sort -u | tr '\n' ' ')
+
+[ -n "$mods" ] || { echo "[pre-push] no custom-addons changes; skip Odoo validation"; exit 0; }
+echo "[pre-push] Odoo validating changed modules: $mods"
+
+"$HARNESS/validate-warm.sh" "$PROJECT" $mods
+rc=$?
+if [ "$rc" = "3" ]; then
+  # Warm base missing. Fail-closed: never silently skip. Auto-build it once (default), or
+  # block-with-instructions if ODOO_SKIP_AUTO_BASE=1.
+  if [ "${ODOO_SKIP_AUTO_BASE:-0}" = "1" ]; then
+    echo "[pre-push] ❌ BLOCKED: warm base not built. Build it: \"$HARNESS/prepare-base-db.sh\" \"$PROJECT\"  (or SKIP_ODOO_VALIDATE=1 git push to bypass)"
+    exit 1
+  fi
+  echo "[pre-push] ⏳ first-time setup: warm base missing — building it now (~10min, one-time for this project)..."
+  if ! "$HARNESS/prepare-base-db.sh" "$PROJECT"; then
+    echo "[pre-push] ❌ BLOCKED: base build failed (a custom module is not installable on a clean base). Fix the error above, or SKIP_ODOO_VALIDATE=1 git push to bypass."
+    exit 1
+  fi
+  echo "[pre-push] base built — re-running validation..."
+  "$HARNESS/validate-warm.sh" "$PROJECT" $mods
+  rc=$?
+fi
+if [ "$rc" != "0" ]; then
+  echo "[pre-push] ❌ BLOCKED: Odoo validation failed. Fix the error above, or override: SKIP_ODOO_VALIDATE=1 git push"
+  exit 1
+fi
+echo "[pre-push] ✅ Odoo validation passed"; exit 0
