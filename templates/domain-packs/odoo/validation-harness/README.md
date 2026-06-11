@@ -41,6 +41,26 @@ Korean projects default to `ko_KR` / `base.kr`; override with
 | `gen-requirements.sh` | generate / `--check` root `requirements.txt` from manifest `external_dependencies.python` (deps parity with odoo.sh) |
 | `harness-slug.sh` | derive a per-project `COMPOSE_PROJECT_NAME` slug so each project gets its own container/network/**volume**/base — different projects run fully parallel |
 | `harness-lock.sh` | reader/writer lock on the shared base (`validate-*` = read, `prepare-base-db` = write) so concurrent validations coexist but never clone a base mid-rebuild |
+| `serve.sh` | serve Odoo locally over HTTP for hands-on UI verification before push (clone warm base → serve DB, `-u` changed modules, browse at `localhost`) |
+
+## Local UI verification before push (`serve.sh`)
+The `validate-*` gates catch registry/test errors headlessly, but do not show the rendered
+UI. `serve.sh` closes that gap: it clones the warm base into a persistent `serve` DB (your
+custom modules already installed), updates the changed modules to your current code, and
+serves Odoo over HTTP so you can open it in a browser and click through the real forms by
+hand before pushing.
+
+```
+serve.sh <project_repo> [module ...]      # then open http://localhost:8069  (admin / admin)
+```
+- `ODOO_SERVE_PORT=8069` host port · `ODOO_SERVE_DB=serve` persistent (records you create
+  stay across runs) · `ODOO_SERVE_SOURCE=base_demo` clone source (demo data to click; use
+  `base` for empty) · `ODOO_SERVE_FRESH=1` drop+re-clone · `ODOO_SERVE_DEV=xml` live-reloads
+  view XML without a restart. Ctrl-C to stop. Uses the per-project compose stack, so it is
+  concurrency-safe; give each project a distinct `ODOO_SERVE_PORT` to serve several at once.
+- Scope boundary: local serve still does NOT reproduce prod asset bundling/minification,
+  real-data volume, or prod infra (workers/cron/mail/CDN) — those remain an odoo.sh/staging
+  concern. It DOES let you verify form layout and per-field interactive behavior locally.
 
 ## Concurrency (multiple sessions / multiple projects)
 The harness is concurrency-safe by construction:
