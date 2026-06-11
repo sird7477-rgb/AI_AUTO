@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.11.2
+
+- `automation-doctor.sh` now checks the `ai-tmux-worktree` global-helper link
+  alongside `ai-worktree`. New helper `tools/ai-tmux-worktree` (root-only) drives a
+  tmux-integrated worktree lifecycle: with `install-global-files.sh
+  --install-tmux-worktree` + `AI_AUTO_TMUX_WORKTREE=1`, each tmux window in an
+  AI_AUTO project gets its own worktree (auto-created on open, removed on close only
+  when there is no uncommitted or unpushed work).
+
 ## 2026.06.11.1
 
 - Multi-terminal concurrency safety (one project, several terminals):

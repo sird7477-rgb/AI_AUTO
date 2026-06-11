@@ -10,6 +10,7 @@ FAIL_COUNT=0
 INSTALL_CODEX_DRIFT_NOTICE=0
 INSTALL_CODEX_TMUX_AUTO_ENTRY=0
 INSTALL_AI_TMUX_AUTO_ENTRY=0
+INSTALL_TMUX_WORKTREE=0
 
 usage() {
   cat <<'USAGE'
@@ -41,6 +42,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/workspace-scan
   ~/bin/micro-work
   ~/bin/ai-worktree
+  ~/bin/ai-tmux-worktree
 
 It may also add a managed AI_AUTO shell function under ~/.config/ai-lab and a
 small source block in ~/.bashrc so typing AI_AUTO with no arguments changes the
@@ -60,6 +62,12 @@ Options:
       interactive codex, claude, and agy calls outside tmux. Use
       AI_AUTO_TMUX_AUTO=0 to opt out globally, or AI_AUTO_<RUNTIME>_TMUX_AUTO=0
       for one runtime.
+  --install-tmux-worktree
+      Install a managed ~/.tmux.conf hook block so each tmux window in an
+      AI_AUTO project gets its own git worktree (auto-created on open, removed
+      on close only if clean). Inert until AI_AUTO_TMUX_WORKTREE=1 is exported
+      into the tmux server environment; AI_AUTO_TMUX_WORKTREE_KEEP=1 disables
+      auto-removal.
   -h, --help
       Show this help.
 
@@ -79,6 +87,9 @@ while [ "$#" -gt 0 ]; do
     --install-ai-tmux-auto-entry)
       INSTALL_AI_TMUX_AUTO_ENTRY=1
       INSTALL_CODEX_TMUX_AUTO_ENTRY=1
+      ;;
+    --install-tmux-worktree)
+      INSTALL_TMUX_WORKTREE=1
       ;;
     -h|--help)
       usage
@@ -912,6 +923,66 @@ echo "[global-files] installing ai-lab global helper files"
 echo "[global-files] checkout: ${ROOT}"
 echo
 
+install_tmux_hooks() {
+  local conf="${HOME_DIR}/.tmux.conf"
+  local begin="# >>> AI_AUTO tmux worktree integration >>>"
+  local end="# <<< AI_AUTO tmux worktree integration <<<"
+  local tmp begin_count end_count
+
+  if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
+    say_fail "HOME is not ready; cannot install tmux worktree hooks"
+    return
+  fi
+  if [ -e "$conf" ] && [ ! -f "$conf" ]; then
+    say_fail "tmux config path exists but is not a file: ${conf}"
+    return
+  fi
+  if [ -e "$conf" ] && [ ! -w "$conf" ]; then
+    say_fail "tmux config is not writable: ${conf}"
+    return
+  fi
+  if [ ! -e "$conf" ] && [ ! -w "$HOME_DIR" ]; then
+    say_fail "HOME directory is not writable; cannot create tmux config: ${conf}"
+    return
+  fi
+
+  begin_count=0
+  end_count=0
+  if [ -f "$conf" ]; then
+    begin_count="$(grep -cFx "$begin" "$conf" || true)"
+    end_count="$(grep -cFx "$end" "$conf" || true)"
+  fi
+  if [ "$begin_count" -ne "$end_count" ]; then
+    say_fail "tmux worktree markers are unbalanced in ${conf}; not editing tmux config"
+    return
+  fi
+
+  tmp="${conf}.ai-auto.$$"
+  {
+    if [ -f "$conf" ]; then
+      awk -v b="$begin" -v e="$end" '
+        $0==b {skip=1; next}
+        $0==e {skip=0; next}
+        skip!=1 {print}
+      ' "$conf"
+    fi
+    printf '%s\n' "$begin"
+    printf '%s\n' "set-hook -g after-new-session 'run-shell \"ai-tmux-worktree create #{window_id} #{pane_id} #{pane_current_path}\"'"
+    printf '%s\n' "set-hook -g after-new-window 'run-shell \"ai-tmux-worktree create #{window_id} #{pane_id} #{pane_current_path}\"'"
+    printf '%s\n' "set-hook -g window-unlinked 'run-shell \"ai-tmux-worktree remove #{hook_window}\"'"
+    printf '%s\n' "set-hook -g session-closed 'run-shell \"ai-tmux-worktree gc\"'"
+    printf '%s\n' "$end"
+  } > "$tmp"
+
+  if [ -f "$conf" ] && cmp -s "$tmp" "$conf"; then
+    rm -f "$tmp"
+    say_pass "tmux worktree hooks already installed: ${conf}"
+  else
+    mv -f "$tmp" "$conf"
+    say_fix "installed tmux worktree hooks in ${conf} (arm with AI_AUTO_TMUX_WORKTREE=1; reload: tmux source-file ~/.tmux.conf)"
+  fi
+}
+
 check_source_helper "${ROOT}/tools/ai-auto-init"
 check_source_helper "${ROOT}/tools/ai-home"
 check_source_helper "${ROOT}/tools/ai-register"
@@ -933,6 +1004,7 @@ check_source_helper "${ROOT}/tools/knowledge-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
 check_source_helper "${ROOT}/tools/micro-work"
 check_source_helper "${ROOT}/tools/ai-worktree"
+check_source_helper "${ROOT}/tools/ai-tmux-worktree"
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   print_summary
@@ -969,7 +1041,11 @@ else
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
   install_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
+  install_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"
   install_shell_function
+  if [ "$INSTALL_TMUX_WORKTREE" = "1" ]; then
+    install_tmux_hooks
+  fi
   install_codex_wrapper
 
   case ":${PATH}:" in

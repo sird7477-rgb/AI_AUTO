@@ -361,6 +361,7 @@ if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   ensure_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
   ensure_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
+  ensure_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"
 
   case ":${PATH}:" in
     *":${HOME_DIR}/bin:"*)

@@ -120,6 +120,19 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Read-only: validates shape, reports `scope_drift`/`non_goal_leak` against `--changed` paths, and never executes work or holds completion authority
   - `scripts/micro-check.sh` is a thin repo wrapper that validates `.omx/micro/current.json` (or `MICRO_WORK_FILE`) against the current git changes
 
+- `ai-worktree` (+ the `aiwt` shell function)
+  - Create-or-enter a per-terminal git worktree (`aiwt <name>` → `<repo>-<name>` on
+    branch `wt/<name>`), so concurrent terminals on one project never share a working
+    tree or `.omx` review/validation state. `--list` / `--remove <name>` (refuses the
+    current/primary tree); prints the path on stdout for the `aiwt` cd.
+
+- `ai-tmux-worktree`
+  - Hook-driven (not for manual use): with `--install-tmux-worktree` + exported
+    `AI_AUTO_TMUX_WORKTREE=1`, each tmux **window** in an AI_AUTO project gets its own
+    worktree, auto-created on open (the pane lands in it) and auto-removed on close —
+    but only if clean; uncommitted or unpushed work is kept and logged, never forced.
+    `AI_AUTO_TMUX_WORKTREE_KEEP=1` disables removal.
+
 Repo-local command installed by the automation template:
 
 - `./scripts/automation-doctor.sh`
@@ -185,6 +198,7 @@ Expected links:
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
     ~/bin/micro-work -> ~/workspace/ai-lab/tools/micro-work
     ~/bin/ai-worktree -> ~/workspace/ai-lab/tools/ai-worktree
+    ~/bin/ai-tmux-worktree -> ~/workspace/ai-lab/tools/ai-tmux-worktree
 
 To recreate the links:
 
@@ -218,6 +232,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
     ln -sf ~/workspace/ai-lab/tools/micro-work ~/bin/micro-work
     ln -sf ~/workspace/ai-lab/tools/ai-worktree ~/bin/ai-worktree
+    ln -sf ~/workspace/ai-lab/tools/ai-tmux-worktree ~/bin/ai-tmux-worktree
 
 Make sure `~/bin` is in PATH:
 

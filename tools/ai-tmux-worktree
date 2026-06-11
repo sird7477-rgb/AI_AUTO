@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# tmux <-> git worktree lifecycle. Each tmux WINDOW gets its own git worktree (its own
+# working tree AND its own .omx), auto-created when the window opens and auto-removed —
+# ONLY if clean — when it closes. Driven by ~/.tmux.conf hooks (see install-global-files.sh
+# install_tmux_hooks). Window granularity because on tmux 3.4 session ids are empty at
+# create/close; window ids are the only reliable key (#{window_id} on open, #{hook_window}
+# on close). Opt-in: AI_AUTO_TMUX_WORKTREE=1 AND the start dir must be an AI_AUTO project.
+# It drives the already-installed `ai-worktree` for creation and never destroys
+# uncommitted or unpushed work.
+#
+# Subcommands (called only by tmux hooks):
+#   ai-tmux-worktree create <window_id> <pane_id> <start_path>
+#   ai-tmux-worktree remove <window_id>
+#   ai-tmux-worktree gc
+set -euo pipefail
+
+CACHE_DIR="${AI_LAB_TMUX_WT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/ai-lab/tmux-worktrees}"
+LOG_FILE="${AI_LAB_TMUX_WT_LOG:-${XDG_CACHE_HOME:-$HOME/.cache}/ai-lab/tmux-worktree.log}"
+mkdir -p "$CACHE_DIR" "$(dirname "$LOG_FILE")" 2>/dev/null || true
+
+log() { mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true; printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG_FILE" 2>/dev/null || true; }
+wid_token() { printf '%s' "${1:-}" | tr -cd '0-9'; }   # '@5' -> '5'
+
+is_ai_auto_project() {
+  local top
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -f "$top/AI_AUTO_TEMPLATE_VERSION" ] \
+    || [ -f "$top/templates/automation-base/AI_AUTO_TEMPLATE_VERSION" ] \
+    || [ -f "$top/.omx/tmux-worktree" ]
+}
+
+# Absolute primary-worktree root for the repo containing $1 (a linked worktree path).
+primary_root_of() {
+  local common
+  common="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  common="$(cd "$1" && cd "$common" 2>/dev/null && pwd)" || return 1
+  dirname "$common"
+}
+
+cmd_create() {
+  local wid="${1:-}" pane="${2:-}" start="${3:-}" top tok name path base
+  [ "${AI_AUTO_TMUX_WORKTREE:-0}" = "1" ] || exit 0
+  { [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1 && [ -n "$wid" ]; } || exit 0
+  # idempotent: this window already handled (covers after-new-session + after-new-window)
+  [ "$(tmux show-options -wqv -t "$wid" @ai_wt_done 2>/dev/null || true)" = "1" ] && exit 0
+  [ -n "$start" ] && cd "$start" 2>/dev/null || exit 0
+  is_ai_auto_project || exit 0
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+  # recursion guard: already inside a tmux-managed worktree -> mark done, do nothing
+  case "$top" in
+    *-tmux-w[0-9]*) tmux set-option -w -t "$wid" @ai_wt_done 1 2>/dev/null || true; exit 0 ;;
+  esac
+  tok="$(wid_token "$wid")"; [ -n "$tok" ] || exit 0
+  name="tmux-w${tok}"
+  path="$(command ai-worktree "$name" 2>>"$LOG_FILE")" || { log "create $wid: ai-worktree $name failed"; exit 0; }
+  [ -n "$path" ] && [ -d "$path" ] || { log "create $wid: no path"; exit 0; }
+  base="$(git -C "$path" rev-parse HEAD 2>/dev/null || true)"
+  mkdir -p "$CACHE_DIR"
+  printf '%s\t%s\n' "$path" "$base" > "$CACHE_DIR/$wid"
+  tmux set-option -w -t "$wid" @ai_wt_done 1 2>/dev/null || true
+  [ -n "$pane" ] && tmux respawn-pane -k -t "$pane" -c "$path" 2>>"$LOG_FILE" || true
+  log "create $wid -> $path"
+}
+
+# Echoes "removable" or "keep:<reason>" for the worktree at $1 with base commit $2.
+removability() {
+  local path="$1" base="$2" count
+  [ -d "$path" ] || { printf 'gone'; return; }
+  [ "${AI_AUTO_TMUX_WORKTREE_KEEP:-0}" = "1" ] && { printf 'keep:keep-mode'; return; }
+  [ -z "$(git -C "$path" status --porcelain 2>/dev/null)" ] || { printf 'keep:uncommitted'; return; }
+  # "unsafe to drop" = HEAD has commits not on ANY remote-tracking branch. This is true
+  # local work; a branch switch (HEAD now on a remote-tracked branch) or a pushed commit
+  # both reduce to 0 -> removable. Falls back to base..HEAD only when the repo has no
+  # remote at all (nowhere to push -> conservative keep on any commit).
+  if [ -n "$(git -C "$path" remote 2>/dev/null)" ]; then
+    count="$(git -C "$path" rev-list --count HEAD --not --remotes 2>/dev/null || echo 0)"
+  elif [ -n "$base" ]; then
+    count="$(git -C "$path" rev-list --count "$base..HEAD" 2>/dev/null || echo 1)"
+  else
+    count=1
+  fi
+  [ "$count" = 0 ] || { printf 'keep:unpushed(%s)' "$count"; return; }
+  printf 'removable'
+}
+
+remove_one() {  # <window_id>
+  local wid="$1" line path base verdict primary
+  line="$(cat "$CACHE_DIR/$wid" 2>/dev/null)" || return 0
+  path="${line%%	*}"; base="${line#*	}"; [ "$base" = "$line" ] && base=""
+  [ -n "$path" ] || { rm -f "$CACHE_DIR/$wid" 2>/dev/null || true; return 0; }
+  verdict="$(removability "$path" "$base")"
+  case "$verdict" in
+    removable)
+      primary="$(primary_root_of "$path")" || { log "remove $wid: no primary for $path"; return 0; }
+      if git -C "$primary" worktree remove "$path" 2>>"$LOG_FILE"; then
+        git -C "$primary" worktree prune 2>/dev/null || true
+        rm -f "$CACHE_DIR/$wid" 2>/dev/null || true
+        log "remove $wid: removed $path"
+      else
+        log "remove $wid: git worktree remove refused $path (kept)"
+      fi
+      ;;
+    gone) rm -f "$CACHE_DIR/$wid" 2>/dev/null || true; log "remove $wid: worktree already gone" ;;
+    keep:*) log "remove $wid: KEEP $path (${verdict#keep:}) — resume with: aiwt tmux-w$(wid_token "$wid")"; rm -f "$CACHE_DIR/$wid" 2>/dev/null || true ;;
+  esac
+}
+
+cmd_gc() {
+  command -v tmux >/dev/null 2>&1 || exit 0
+  [ -d "$CACHE_DIR" ] || exit 0
+  local live f wid
+  live="$(tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)"
+  for f in "$CACHE_DIR"/@*; do
+    [ -e "$f" ] || continue
+    wid="$(basename "$f")"
+    printf '%s\n' "$live" | grep -qx "$wid" && continue   # window still alive
+    remove_one "$wid"
+  done
+}
+
+case "${1:-}" in
+  create) shift; cmd_create "${1:-}" "${2:-}" "${3:-}" ;;
+  remove) shift; remove_one "${1:-}" ;;
+  gc)     cmd_gc ;;
+  -h|--help) sed -n '2,18p' "$0" ;;
+  *) echo "usage: ai-tmux-worktree {create <win> <pane> <path>|remove <win>|gc}" >&2; exit 2 ;;
+esac
