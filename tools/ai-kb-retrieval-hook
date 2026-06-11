@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""ai-kb-retrieval-hook — domain-gated KB retrieval for the Claude Code UserPromptSubmit hook
+(Stage 1B of KB bidirectional retrieval).
+
+Reads the hook's JSON on stdin, and — ONLY when both gates pass — prints a small, capped slim-KB
+routing block that the runtime injects as additional context:
+
+  gate 1 (project IS the domain): `.omx/project-profile.json` domain is a registered KB domain.
+  gate 2 (prompt IS domain work):  the prompt matches that domain's keyword classifier.
+
+When both pass it shells out to `knowledge-retrieve` (the worker), which returns slim POINTERS only
+(never raw content), capped, tagged advisory. Generic prompts and non-domain projects get nothing.
+
+NON-NEGOTIABLE: this fires on every prompt, so it is FAIL-OPEN — any error, missing input, missing
+tool, unknown domain, timeout, or no match results in exit 0 with NO output. A retrieval hook must
+never block or delay a user's prompt. It is opt-in (installed only via
+`install-global-files.sh --install-kb-retrieval-hook`).
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+# Per-domain prompt classifier. A prompt is "domain work" only if it hits these distinctive terms
+# (low false-positive). Generic prompts match nothing -> no injection (denylist by omission).
+DOMAIN_KEYWORDS = {
+    "odoo": re.compile(
+        r"\b("
+        r"ir\.(model|ui\.view|actions|cron|rule|config_parameter)|"
+        r"odoo|addons?|manifest|"
+        r"record\s+rules?|access\s+rights?|ir\.model\.access|security\s+(csv|group)|"
+        r"qweb|report|"
+        r"orm|recordset|compute[d]?\s+field|related\s+field|"
+        r"view\s+(inherit|architecture)|xpath|"
+        r"http\s*controller|controller\s+route|"
+        r"wizard|transient\s+model|mixin"
+        r")\b",
+        re.IGNORECASE,
+    ),
+}
+
+# Tokens worth sending to the worker as the query (the topical terms it scores against slim names).
+QUERY_HINTS = re.compile(
+    r"\b("
+    r"orm|model|field|compute|related|recordset|"
+    r"view|form|list|kanban|search|xpath|inherit|architecture|"
+    r"security|access|record|rule|group|acl|"
+    r"report|qweb|pdf|"
+    r"action|menu|window|"
+    r"controller|http|route|"
+    r"wizard|transient|mixin|cron|"
+    r"data|xml|csv|manifest|module|addon|migration|test"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def find_repo_root(start: str) -> str:
+    """Walk up from `start` to the repo root (a dir holding .omx or .git), so a prompt submitted
+    from a nested subdirectory still resolves the project's profile. Falls back to `start`."""
+    cur = os.path.abspath(start)
+    while True:
+        if os.path.isdir(os.path.join(cur, ".omx")) or os.path.isdir(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return os.path.abspath(start)
+        cur = parent
+
+
+def read_domain(repo: str) -> str:
+    profile = os.path.join(repo, ".omx", "project-profile.json")
+    if not os.path.isfile(profile):
+        return ""
+    try:
+        data = json.load(open(profile, encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return (data.get("domain") or "").strip()
+
+
+def retrieve_tool() -> str:
+    """Prefer the linked global helper; fall back to the sibling source copy."""
+    candidate = os.path.join(os.path.expanduser("~"), "bin", "knowledge-retrieve")
+    if os.access(candidate, os.X_OK):
+        return candidate
+    sibling = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge-retrieve")
+    return sibling if os.access(sibling, os.X_OK) else ""
+
+
+def main() -> int:
+    try:
+        raw = sys.stdin.read()
+    except Exception:
+        return 0
+    if not raw.strip():
+        return 0
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return 0
+
+    prompt = (data.get("prompt") or "").strip()
+    cwd = data.get("cwd") or os.getcwd()
+    if not prompt:
+        return 0
+    repo = find_repo_root(cwd)            # resolve from a nested subdir to the project root
+
+    domain = read_domain(repo)
+    classifier = DOMAIN_KEYWORDS.get(domain)
+    if classifier is None:                      # gate 1: registered domain only
+        return 0
+    if not classifier.search(prompt):           # gate 2: prompt is domain work
+        return 0
+
+    hints = QUERY_HINTS.findall(prompt)
+    # de-dup while preserving order, bound the query length
+    seen, query = set(), []
+    for h in hints:
+        hl = h.lower()
+        if hl not in seen:
+            seen.add(hl)
+            query.append(hl)
+    if not query:
+        return 0
+    query = query[:8]
+
+    tool = retrieve_tool()
+    if not tool:
+        return 0
+    try:
+        result = subprocess.run(
+            [tool, *query, "--domain", domain, "--repo", repo, "--limit", "2"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return 0
+    block = (result.stdout or "").strip()
+    if block:
+        sys.stdout.write(block + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        # Absolute fail-open backstop: never let an unexpected error block the prompt.
+        raise SystemExit(0)

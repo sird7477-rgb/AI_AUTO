@@ -11,10 +11,11 @@ INSTALL_CODEX_DRIFT_NOTICE=0
 INSTALL_CODEX_TMUX_AUTO_ENTRY=0
 INSTALL_AI_TMUX_AUTO_ENTRY=0
 INSTALL_TMUX_WORKTREE=0
+INSTALL_KB_RETRIEVAL_HOOK=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/install-global-files.sh [--install-codex-drift-notice] [--install-codex-tmux-auto-entry] [--install-ai-tmux-auto-entry]
+Usage: ./scripts/install-global-files.sh [--install-codex-drift-notice] [--install-codex-tmux-auto-entry] [--install-ai-tmux-auto-entry] [--install-kb-retrieval-hook]
 
 Install or repair ai-lab global helper files for this checkout.
 
@@ -45,6 +46,8 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/ai-tmux-worktree
   ~/bin/ai-project-profile
   ~/bin/knowledge-capture
+  ~/bin/knowledge-retrieve
+  ~/bin/ai-kb-retrieval-hook
 
 It may also add a managed AI_AUTO shell function under ~/.config/ai-lab and a
 small source block in ~/.bashrc so typing AI_AUTO with no arguments changes the
@@ -70,6 +73,11 @@ Options:
       on close only if clean). On by default once installed; set
       AI_AUTO_TMUX_WORKTREE=0 to opt out and AI_AUTO_TMUX_WORKTREE_KEEP=1 to
       disable auto-removal.
+  --install-kb-retrieval-hook
+      Register the domain-gated KB retrieval hook as a Claude Code
+      UserPromptSubmit hook in ~/.claude/settings.json (idempotent, backed up).
+      Fail-open + opt-in: it injects capped slim-KB pointers only for prompts in
+      a registered domain project (e.g. Odoo) and stays silent otherwise.
   -h, --help
       Show this help.
 
@@ -92,6 +100,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --install-tmux-worktree)
       INSTALL_TMUX_WORKTREE=1
+      ;;
+    --install-kb-retrieval-hook)
+      INSTALL_KB_RETRIEVAL_HOOK=1
       ;;
     -h|--help)
       usage
@@ -1009,6 +1020,73 @@ check_source_helper "${ROOT}/tools/ai-worktree"
 check_source_helper "${ROOT}/tools/ai-tmux-worktree"
 check_source_helper "${ROOT}/tools/ai-project-profile"
 check_source_helper "${ROOT}/tools/knowledge-capture"
+check_source_helper "${ROOT}/tools/knowledge-retrieve"
+check_source_helper "${ROOT}/tools/ai-kb-retrieval-hook"
+
+install_kb_retrieval_hook() {
+  # Opt-in: register the domain-gated KB retrieval hook as a Claude Code UserPromptSubmit hook in
+  # ~/.claude/settings.json. Idempotent, backed up, and merges without clobbering existing hooks.
+  local settings_dir="${HOME_DIR}/.claude"
+  local settings_path="${settings_dir}/settings.json"
+  local hook_cmd="${HOME_DIR}/bin/ai-kb-retrieval-hook"
+  local result
+
+  if [ ! -e "${hook_cmd}" ]; then
+    say_fail "KB retrieval hook link missing; install helper links first: ${hook_cmd}"
+    return
+  fi
+  if [ -e "${settings_path}" ] && [ ! -f "${settings_path}" ]; then
+    say_fail "Claude settings path exists but is not a file: ${settings_path}"
+    return
+  fi
+  mkdir -p "${settings_dir}"
+
+  result="$(HOOK_CMD="${hook_cmd}" SETTINGS_PATH="${settings_path}" python3 - <<'PY'
+import json, os, shutil, sys
+
+path = os.environ["SETTINGS_PATH"]
+cmd = os.environ["HOOK_CMD"]
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        print("fail:settings.json is not a JSON object"); sys.exit(0)
+except FileNotFoundError:
+    data = {}
+except (ValueError, OSError) as exc:
+    print(f"fail:cannot read settings.json: {exc}"); sys.exit(0)
+
+hooks = data.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    print("fail:hooks is not an object"); sys.exit(0)
+groups = hooks.setdefault("UserPromptSubmit", [])
+if not isinstance(groups, list):
+    print("fail:hooks.UserPromptSubmit is not a list"); sys.exit(0)
+
+for group in groups:
+    if isinstance(group, dict):
+        for hook in group.get("hooks", []) or []:
+            if isinstance(hook, dict) and hook.get("command") == cmd:
+                print("pass:already installed"); sys.exit(0)
+
+groups.append({"hooks": [{"type": "command", "command": cmd}]})
+if os.path.exists(path):
+    shutil.copy2(path, path + ".ai-auto.bak")
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False)
+    fh.write("\n")
+os.replace(tmp, path)
+print("fix:installed")
+PY
+)"
+  case "${result}" in
+    pass:*) say_pass "KB retrieval hook already registered: ${settings_path}" ;;
+    fix:*) say_fix "registered KB retrieval hook (UserPromptSubmit): ${settings_path}" ;;
+    fail:*) say_fail "KB retrieval hook install: ${result#fail:}" ;;
+    *) say_warn "KB retrieval hook install: unexpected result: ${result}" ;;
+  esac
+}
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   print_summary
@@ -1048,9 +1126,14 @@ else
   install_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"
   install_link "${HOME_DIR}/bin/ai-project-profile" "${ROOT}/tools/ai-project-profile"
   install_link "${HOME_DIR}/bin/knowledge-capture" "${ROOT}/tools/knowledge-capture"
+  install_link "${HOME_DIR}/bin/knowledge-retrieve" "${ROOT}/tools/knowledge-retrieve"
+  install_link "${HOME_DIR}/bin/ai-kb-retrieval-hook" "${ROOT}/tools/ai-kb-retrieval-hook"
   install_shell_function
   if [ "$INSTALL_TMUX_WORKTREE" = "1" ]; then
     install_tmux_hooks
+  fi
+  if [ "$INSTALL_KB_RETRIEVAL_HOOK" = "1" ]; then
+    install_kb_retrieval_hook
   fi
   install_codex_wrapper
 

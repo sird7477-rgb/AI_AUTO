@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""knowledge-retrieve — the PULL worker for KB bidirectional retrieval (Stage 2).
+
+Symmetric to `knowledge-collect` (push): given keywords it searches a registered domain KB's slim
+navigation index and prints a CAPPED routing block of slim-file POINTERS — never raw content. It is
+the worker the domain-gated hook (Stage 1B) calls, and is runnable on demand to deepen into a topic.
+
+Guardrails (anti context-poisoning): pointers only (raw needs an explicit separate read); hard cap;
+output tagged ADVISORY (live repo evidence overrides any KB note). Fail-GRACEFUL: no reachable
+vault / unknown domain / no match / no keywords -> prints nothing, exits 0 (a miss never blocks).
+
+Registry holds only domains with a rich, shaped KB (Odoo first); adding one is a deliberate edit.
+
+Usage: knowledge-retrieve <keywords...> [--domain N] [--repo P] [--vault-dir P] [--limit N] [--json]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+
+REGISTRY = {
+    "odoo": {"index": os.path.join("Odoo19_Docs_KB", "00_Index.md"), "kb_root": "Odoo19_Docs_KB"},
+}
+
+STOPWORDS = {
+    "the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "is", "are", "how", "do",
+    "i", "we", "with", "add", "fix", "make", "this", "that", "it", "my", "odoo",
+}
+
+INDEX_ROW = re.compile(r"^\|(?P<topic>[^|]+)\|(?P<url>[^|]*)\|(?P<slim>[^|]*)\|")
+
+
+def find_repo_root(start: str) -> str:
+    """Walk up from `start` to the repo root (a dir holding .omx or .git), so a prompt submitted
+    from a nested subdirectory still resolves the project's profile/config. Falls back to `start`."""
+    cur = os.path.abspath(start)
+    while True:
+        if os.path.isdir(os.path.join(cur, ".omx")) or os.path.isdir(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return os.path.abspath(start)
+        cur = parent
+
+
+def load_local_config_vault(repo: str) -> str:
+    cfg = os.path.join(repo, ".omx", "local-config.json")
+    if not os.path.isfile(cfg):
+        return ""
+    try:
+        data = json.load(open(cfg, encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return ((data.get("obsidian") or {}).get("ai_auto_vault_dir") or "").strip()
+
+
+def detect_domain(repo: str, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    profile = os.path.join(repo, ".omx", "project-profile.json")
+    if not os.path.isfile(profile):
+        return ""
+    try:
+        return (json.load(open(profile, encoding="utf-8")).get("domain") or "").strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def tokenize(text: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", text.lower()) if t and t not in STOPWORDS]
+
+
+def parse_index(index_path: str) -> list[tuple[str, str]]:
+    """Return [(topic, slim_rel)] rows from a KB index routing table."""
+    rows: list[tuple[str, str]] = []
+    try:
+        lines = open(index_path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        m = INDEX_ROW.match(line.strip())
+        if not m:
+            continue
+        topic, slim = m.group("topic").strip(), m.group("slim").strip()
+        if not slim.endswith(".md") or slim.lower() == "slim" or set(topic) <= {"-", " "}:
+            continue
+        rows.append((topic, slim))
+    return rows
+
+
+def name_tokens(topic: str, slim: str) -> set[str]:
+    return set(tokenize(topic)) | set(tokenize(slim.replace("/", " ").replace(".md", "")))
+
+
+def slim_heading_tokens(vault: str, kb_root: str, slim: str) -> set[str]:
+    """Tokens from a slim file's heading lines — extends recall past the coarse topic name (e.g. an
+    'ORM reference' slim whose headings mention model/field/compute). Headings cluster near the top,
+    so only the first lines are read; this runs ONLY for rows the cheap name pass missed."""
+    rel = slim if slim.startswith(kb_root) else os.path.join(kb_root, slim)
+    path = slim if os.path.isabs(slim) else os.path.join(vault, rel)
+    toks: set[str] = set()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i > 64:
+                    break
+                if line.lstrip().startswith("#"):
+                    toks.update(tokenize(line))
+    except OSError:
+        return toks
+    return toks
+
+
+def retrieve(keywords: str, domain: str, vault: str, limit: int) -> list[dict]:
+    reg = REGISTRY.get(domain)
+    if not reg or not vault:
+        return []
+    rows = parse_index(os.path.join(vault, reg["index"]))
+    qtokens = tokenize(keywords)
+    if not rows or not qtokens:
+        return []
+    # Phase 1: cheap topic-name/filename scoring — zero file I/O.
+    scored = [[sum(1 for q in qtokens if q in name_tokens(t, s)), t, s] for t, s in rows]
+    # Phase 2 (only when the cheap pass under-fills the cap): rescue name-missed rows with bounded
+    # slim heading reads. Common queries that hit a topic name pay no per-file I/O at all.
+    if sum(1 for e in scored if e[0] > 0) < limit:
+        for entry in scored:
+            if entry[0] == 0:
+                extra = slim_heading_tokens(vault, reg["kb_root"], entry[2])
+                entry[0] = sum(1 for q in qtokens if q in extra)
+    hits = sorted((e for e in scored if e[0] > 0), key=lambda x: (-x[0], x[1]))
+    out = []
+    for s, topic, slim in hits[:limit]:
+        full = slim if slim.startswith(reg["kb_root"]) else os.path.join(reg["kb_root"], slim)
+        out.append({"topic": topic, "slim": full, "score": s})
+    return out
+
+
+def render_block(domain: str, hits: list[dict]) -> str:
+    lines = [f"[knowledge-retrieve] domain={domain} — relevant slim KB pointers "
+             f"(ADVISORY; current repo evidence overrides any KB note):"]
+    lines += [f"  - {h['topic']} → {h['slim']}" for h in hits]
+    lines.append("  Read the slim navigation file first (token-cheap); open raw/<topic> only when "
+                 "slim is insufficient. Do not treat the KB as authoritative over the live code.")
+    return "\n".join(lines)
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="knowledge-retrieve", add_help=True)
+    p.add_argument("keywords", nargs="*")
+    p.add_argument("--domain", default=None)
+    p.add_argument("--repo", default=None)
+    p.add_argument("--vault-dir", default=None)
+    p.add_argument("--limit", type=int, default=3)
+    p.add_argument("--json", action="store_true")
+    args = p.parse_args(argv[1:])
+
+    keywords = " ".join(args.keywords).strip()
+    if not keywords:
+        return 0  # fail-graceful: nothing to search for
+    repo = find_repo_root(args.repo or os.getcwd())
+    domain = detect_domain(repo, args.domain)
+    if domain not in REGISTRY:
+        return 0  # unregistered/unknown domain -> no retrieval, never an error
+    vault = args.vault_dir or load_local_config_vault(repo)
+    if not vault or not os.path.isdir(vault):
+        return 0  # no reachable vault -> silent miss
+
+    hits = retrieve(keywords, domain, vault, max(1, args.limit))
+    if not hits:
+        return 0
+    if args.json:
+        json.dump({"domain": domain, "hits": hits}, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+    else:
+        print(render_block(domain, hits))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

@@ -134,6 +134,14 @@ reviews that need planning artifacts or full workflow reference file excerpts.
     unpushed work is kept and logged, never forced. On by default; set
     `AI_AUTO_TMUX_WORKTREE=0` to opt out, `AI_AUTO_TMUX_WORKTREE_KEEP=1` to keep all.
 
+- `ai-kb-retrieval-hook`
+  - Hook-driven (not for manual use): once `install-global-files.sh --install-kb-retrieval-hook`
+    has registered it as a Claude Code `UserPromptSubmit` hook, it reads the prompt and injects a
+    capped slim-KB routing block ONLY when both gates pass — the project profile is a registered
+    domain (Odoo) AND the prompt matches that domain's keyword classifier
+  - Calls `knowledge-retrieve` (slim pointers only, advisory) and is **fail-open**: any error,
+    missing tool, unknown domain, generic prompt, or no match → no output, never blocks the prompt
+
 - `ai-project-profile`
   - Detects a repo's domain from repo signals (Odoo = `custom-addons/` with module
     `__manifest__.py`) and records it in machine-local `.omx/project-profile.json`
@@ -153,6 +161,17 @@ reviews that need planning artifacts or full workflow reference file excerpts.
     evidence + scope; missing any → skipped. All harvested text is secret/path-redacted, and
     drafts are `local_private` unless `Finding-Share: shareable`. Push to the vault stays a
     separate, user-triggered step — capture is local only
+
+- `knowledge-retrieve`
+  - The PULL worker (symmetric to `knowledge-collect`): `knowledge-retrieve <keywords>` searches a
+    registered domain KB's slim index (Odoo first) and prints a CAPPED routing block of slim-file
+    pointers — never raw content
+  - `--domain` (else read from `.omx/project-profile.json`), `--vault-dir` (else
+    `obsidian.ai_auto_vault_dir`), `--limit` (default 3), `--json`. Output is tagged ADVISORY —
+    current repo evidence overrides any KB note
+  - **Fail-graceful**: no reachable vault / unknown domain / no match / no keywords → prints nothing
+    and exits 0, so a retrieval miss never blocks the caller. Called by the domain-gated retrieval
+    hook and runnable on demand to deepen into a topic
 
 Repo-local command installed by the automation template:
 
@@ -222,6 +241,8 @@ Expected links:
     ~/bin/ai-tmux-worktree -> ~/workspace/ai-lab/tools/ai-tmux-worktree
     ~/bin/ai-project-profile -> ~/workspace/ai-lab/tools/ai-project-profile
     ~/bin/knowledge-capture -> ~/workspace/ai-lab/tools/knowledge-capture
+    ~/bin/knowledge-retrieve -> ~/workspace/ai-lab/tools/knowledge-retrieve
+    ~/bin/ai-kb-retrieval-hook -> ~/workspace/ai-lab/tools/ai-kb-retrieval-hook
 
 To recreate the links:
 
@@ -258,6 +279,8 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/ai-tmux-worktree ~/bin/ai-tmux-worktree
     ln -sf ~/workspace/ai-lab/tools/ai-project-profile ~/bin/ai-project-profile
     ln -sf ~/workspace/ai-lab/tools/knowledge-capture ~/bin/knowledge-capture
+    ln -sf ~/workspace/ai-lab/tools/knowledge-retrieve ~/bin/knowledge-retrieve
+    ln -sf ~/workspace/ai-lab/tools/ai-kb-retrieval-hook ~/bin/ai-kb-retrieval-hook
 
 Make sure `~/bin` is in PATH:
 

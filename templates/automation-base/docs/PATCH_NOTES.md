@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.12.2
+
+- KB bidirectional retrieval, Stage 2 + 1B (the READ path). `automation-doctor.sh` now checks the
+  `knowledge-retrieve` and `ai-kb-retrieval-hook` global-helper links. New helper
+  `tools/knowledge-retrieve` is the PULL worker (symmetric to `knowledge-collect`): given keywords
+  it searches a registered domain KB's slim index (Odoo first, matched against topic names AND slim
+  headings) and prints a CAPPED routing block of slim pointers — never raw content, tagged advisory,
+  fail-graceful on any miss. New `tools/ai-kb-retrieval-hook` is a Claude Code `UserPromptSubmit`
+  hook that injects that block ONLY when both gates pass (project profile is a registered domain AND
+  the prompt matches the domain keyword classifier); it is fail-open (never blocks a prompt) and
+  opt-in via `install-global-files.sh --install-kb-retrieval-hook`, which idempotently registers it
+  in `~/.claude/settings.json` (backed up, merge-safe). Behavior contract tests lock retrieval
+  matching, the gates, and fail-open/graceful posture.
+
 ## 2026.06.12.1
 
 - KB bidirectional retrieval, Stage 1A + 1A.2 (the WRITE path). `automation-doctor.sh` now
