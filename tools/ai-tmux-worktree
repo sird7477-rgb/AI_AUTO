@@ -4,9 +4,9 @@
 # ONLY if clean — when it closes. Driven by ~/.tmux.conf hooks (see install-global-files.sh
 # install_tmux_hooks). Window granularity because on tmux 3.4 session ids are empty at
 # create/close; window ids are the only reliable key (#{window_id} on open, #{hook_window}
-# on close). Opt-in: AI_AUTO_TMUX_WORKTREE=1 AND the start dir must be an AI_AUTO project.
-# It drives the already-installed `ai-worktree` for creation and never destroys
-# uncommitted or unpushed work.
+# on close). On by default once the hooks are installed (the start dir must be an AI_AUTO
+# project); set AI_AUTO_TMUX_WORKTREE=0 to opt out. It drives the already-installed
+# `ai-worktree` for creation and never destroys uncommitted or unpushed work.
 #
 # Subcommands (called only by tmux hooks):
 #   ai-tmux-worktree create <window_id> <pane_id> <start_path>
@@ -39,7 +39,8 @@ primary_root_of() {
 
 cmd_create() {
   local wid="${1:-}" pane="${2:-}" start="${3:-}" top tok name path base
-  [ "${AI_AUTO_TMUX_WORKTREE:-0}" = "1" ] || exit 0
+  # On by default once the hooks are installed; AI_AUTO_TMUX_WORKTREE=0 opts out.
+  [ "${AI_AUTO_TMUX_WORKTREE:-1}" != "0" ] || exit 0
   { [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1 && [ -n "$wid" ]; } || exit 0
   # idempotent: this window already handled (covers after-new-session + after-new-window)
   [ "$(tmux show-options -wqv -t "$wid" @ai_wt_done 2>/dev/null || true)" = "1" ] && exit 0
@@ -83,6 +84,10 @@ removability() {
   printf 'removable'
 }
 
+# NOTE: the remove/gc paths deliberately do NOT gate on AI_AUTO_TMUX_WORKTREE — only
+# creation is gated. So setting AI_AUTO_TMUX_WORKTREE=0 stops NEW worktrees but still
+# lets existing tmux worktrees be cleaned up on close (no stranded trees). Safety is the
+# clean-only check in removability(), not the on/off toggle.
 remove_one() {  # <window_id>
   local wid="$1" line path base verdict primary
   line="$(cat "$CACHE_DIR/$wid" 2>/dev/null)" || return 0

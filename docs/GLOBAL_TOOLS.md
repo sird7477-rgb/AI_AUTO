@@ -127,11 +127,12 @@ reviews that need planning artifacts or full workflow reference file excerpts.
     current/primary tree); prints the path on stdout for the `aiwt` cd.
 
 - `ai-tmux-worktree`
-  - Hook-driven (not for manual use): with `--install-tmux-worktree` + exported
-    `AI_AUTO_TMUX_WORKTREE=1`, each tmux **window** in an AI_AUTO project gets its own
-    worktree, auto-created on open (the pane lands in it) and auto-removed on close —
-    but only if clean; uncommitted or unpushed work is kept and logged, never forced.
-    `AI_AUTO_TMUX_WORKTREE_KEEP=1` disables removal.
+  - Hook-driven (not for manual use): once `install-global-files.sh
+    --install-tmux-worktree` has added the `~/.tmux.conf` hook block, each tmux
+    **window** in an AI_AUTO project gets its own worktree, auto-created on open (the
+    pane lands in it) and auto-removed on close — but only if clean; uncommitted or
+    unpushed work is kept and logged, never forced. On by default; set
+    `AI_AUTO_TMUX_WORKTREE=0` to opt out, `AI_AUTO_TMUX_WORKTREE_KEEP=1` to keep all.
 
 Repo-local command installed by the automation template:
 

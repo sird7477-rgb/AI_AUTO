@@ -65,9 +65,9 @@ Options:
   --install-tmux-worktree
       Install a managed ~/.tmux.conf hook block so each tmux window in an
       AI_AUTO project gets its own git worktree (auto-created on open, removed
-      on close only if clean). Inert until AI_AUTO_TMUX_WORKTREE=1 is exported
-      into the tmux server environment; AI_AUTO_TMUX_WORKTREE_KEEP=1 disables
-      auto-removal.
+      on close only if clean). On by default once installed; set
+      AI_AUTO_TMUX_WORKTREE=0 to opt out and AI_AUTO_TMUX_WORKTREE_KEEP=1 to
+      disable auto-removal.
   -h, --help
       Show this help.
 
@@ -979,7 +979,7 @@ install_tmux_hooks() {
     say_pass "tmux worktree hooks already installed: ${conf}"
   else
     mv -f "$tmp" "$conf"
-    say_fix "installed tmux worktree hooks in ${conf} (arm with AI_AUTO_TMUX_WORKTREE=1; reload: tmux source-file ~/.tmux.conf)"
+    say_fix "installed tmux worktree hooks in ${conf} (on by default; reload a running server with: tmux source-file ~/.tmux.conf; AI_AUTO_TMUX_WORKTREE=0 to disable)"
   fi
 }
 
