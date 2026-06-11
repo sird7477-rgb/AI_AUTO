@@ -27,6 +27,7 @@ for script in \
   scripts/resolve-feedback.sh \
   scripts/review-gate.sh \
   scripts/run-ai-reviews.sh \
+  scripts/session-lock.sh \
   scripts/summarize-ai-reviews.sh \
   scripts/test-review-summary.sh \
   scripts/verify-machinery.sh \
@@ -46,6 +47,7 @@ for script in \
   templates/automation-base/scripts/resolve-feedback.sh \
   templates/automation-base/scripts/review-gate.sh \
   templates/automation-base/scripts/run-ai-reviews.sh \
+  templates/automation-base/scripts/session-lock.sh \
   templates/automation-base/scripts/summarize-ai-reviews.sh \
   templates/automation-base/scripts/test-review-summary.sh \
   templates/automation-base/scripts/verify-machinery.sh \
@@ -6308,6 +6310,7 @@ for script in \
   validate-odoo-docs-kb.py \
   review-gate.sh \
   run-ai-reviews.sh \
+  session-lock.sh \
   summarize-ai-reviews.sh \
   test-review-summary.sh \
   verify-machinery.sh \

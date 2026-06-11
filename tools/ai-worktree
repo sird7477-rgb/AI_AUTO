@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Per-terminal git worktree helper. Each terminal that works on a project gets its own
+# worktree (its own working tree AND its own gitignored .omx/), so multiple terminals on
+# ONE project never race on edits or share review/validation state (WORKFLOW.md "Writer
+# 격리"). Mirrors tools/ai-home: prints the destination path on stdout so the parent
+# shell can cd into it (a child process cannot cd its parent). Use the `aiwt` function
+# (installed by install-global-files.sh) to actually move:  aiwt <name>
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  case "$LINK_TARGET" in
+    /*) SOURCE="$LINK_TARGET" ;;
+    *)  SOURCE="${SOURCE_DIR}/${LINK_TARGET}" ;;
+  esac
+done
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-worktree <name>          create-or-enter the worktree for <name> (prints its path)
+       ai-worktree --list          list this project's worktrees
+       ai-worktree --remove <name> remove the <name> worktree (refuses if dirty / current)
+       ai-worktree --branch <ref> <name>   base the new worktree on <ref> instead of HEAD
+
+The default prints the worktree path on stdout; wrap with the installed `aiwt` function
+(aiwt <name>) or `cd "$(ai-worktree <name>)"` to move there. Each worktree is a separate
+working tree with its own .omx/, so concurrent terminals do not collide.
+USAGE
+}
+
+# All human/progress text goes to stderr so stdout carries ONLY the path (for cd).
+log() { printf '%s\n' "$*" >&2; }
+die() { printf 'ai-worktree: %s\n' "$*" >&2; exit "${2:-1}"; }
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git work tree"
+
+# The primary (first) worktree; siblings are created next to it as <repo>-<name>.
+primary_root="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+[ -n "$primary_root" ] || die "could not resolve the primary worktree"
+repo_name="$(basename "$primary_root")"
+parent_dir="$(dirname "$primary_root")"
+
+worktree_path_for() { printf '%s/%s-%s' "$parent_dir" "$repo_name" "$1"; }
+registered_path() {  # echo the registered worktree path matching $1, else nothing
+  git worktree list --porcelain | sed -n 's/^worktree //p' | grep -Fx "$(worktree_path_for "$1")" || true
+}
+
+BRANCH_BASE=""
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  --list)
+    log "[worktree] ${repo_name} worktrees:"
+    git worktree list >&2
+    exit 0
+    ;;
+  --remove|--clean)
+    name="${2:-}"; [ -n "$name" ] || die "usage: ai-worktree --remove <name>"
+    target="$(worktree_path_for "$name")"
+    cur="$(git rev-parse --show-toplevel)"
+    [ "$target" != "$cur" ] || die "refusing to remove the worktree you are standing in"
+    [ "$target" != "$primary_root" ] || die "refusing to remove the primary worktree"
+    [ -n "$(registered_path "$name")" ] || die "no worktree named '${name}' (${target})"
+    git worktree remove "$target" || die "remove failed (use a clean tree, or 'git worktree remove --force')"
+    git worktree prune
+    log "[worktree] removed ${target}"
+    exit 0
+    ;;
+  --branch)
+    BRANCH_BASE="${2:-}"; [ -n "$BRANCH_BASE" ] || die "usage: ai-worktree --branch <ref> <name>"
+    shift 2
+    ;;
+  "") usage >&2; exit 2 ;;
+  -*) die "unknown option: $1 (ai-worktree --help)" 2 ;;
+esac
+
+name="${1:-}"; [ -n "$name" ] || { usage >&2; exit 2; }
+target="$(worktree_path_for "$name")"
+wt_branch="wt/${name}"
+
+# Idempotent enter: already registered -> just print its path.
+if [ -n "$(registered_path "$name")" ]; then
+  log "[worktree] entering existing ${target}"
+  printf '%s\n' "$target"
+  exit 0
+fi
+
+[ ! -e "$target" ] || die "path already exists but is not a registered worktree: ${target}"
+
+if git show-ref --verify --quiet "refs/heads/${wt_branch}"; then
+  # Reuse an existing wt/<name> branch (not checked out elsewhere -> attach).
+  git worktree add "$target" "$wt_branch" >&2
+else
+  # New branch wt/<name> off the chosen base (default: current HEAD). Using a NEW branch
+  # avoids the multi-terminal footgun of checking out a branch already live elsewhere.
+  git worktree add -b "$wt_branch" "$target" "${BRANCH_BASE:-HEAD}" >&2
+fi
+log "[worktree] created ${target} on branch ${wt_branch}"
+printf '%s\n' "$target"

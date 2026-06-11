@@ -12,11 +12,23 @@ if [ -f "${repo_root}/scripts/docker-config-guard.sh" ]; then
   ai_auto_configure_docker_config
 fi
 
+# Concurrency guard: a standalone verify in a second terminal on the SAME tree warns /
+# soft-blocks; nested under review-gate it is re-entrant (shared AI_AUTO_SESSION_ID).
+if [ -f "${repo_root}/scripts/session-lock.sh" ]; then
+  # shellcheck source=scripts/session-lock.sh
+  . "${repo_root}/scripts/session-lock.sh"
+fi
+
 cleanup() {
   docker compose down >/dev/null 2>&1 || true
+  command -v session_lock_release >/dev/null 2>&1 && session_lock_release
 }
 
 trap cleanup EXIT
+
+if command -v session_lock_acquire >/dev/null 2>&1; then
+  session_lock_acquire validate || exit 1
+fi
 
 run_product_pytest() {
   echo "[verify] running product pytest..."

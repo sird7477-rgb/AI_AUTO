@@ -184,6 +184,7 @@ Expected links:
     ~/bin/knowledge-collect -> ~/workspace/ai-lab/tools/knowledge-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
     ~/bin/micro-work -> ~/workspace/ai-lab/tools/micro-work
+    ~/bin/ai-worktree -> ~/workspace/ai-lab/tools/ai-worktree
 
 To recreate the links:
 
@@ -216,6 +217,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/knowledge-collect ~/bin/knowledge-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
     ln -sf ~/workspace/ai-lab/tools/micro-work ~/bin/micro-work
+    ln -sf ~/workspace/ai-lab/tools/ai-worktree ~/bin/ai-worktree
 
 Make sure `~/bin` is in PATH:
 

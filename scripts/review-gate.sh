@@ -4,6 +4,14 @@ set -euo pipefail
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
 
+# Concurrency guard: warn / soft-block when another live session shares this working tree
+# (prefer one git worktree per terminal — aiwt <name>). Released on every exit path.
+if [ -f "$(dirname "$0")/session-lock.sh" ]; then
+  # shellcheck source=scripts/session-lock.sh
+  . "$(dirname "$0")/session-lock.sh"
+  trap 'session_lock_release' EXIT
+fi
+
 # >>> review-provenance-shared: keep byte-identical in review-gate.sh and summarize-ai-reviews.sh >>>
 # R2 (AI_AUTO_REVIEW_GATE_EFFICIENCY): record the working-tree-inclusive hash of an
 # approved change so a byte-identical re-review can skip the full AI panel (the
@@ -364,6 +372,10 @@ print_diff_scope_gate() {
   echo "[gate] consuming diff scope summary..."
   printf '%s\n' "${scope_summary}" | sed 's/^/[gate] /'
 }
+
+if command -v session_lock_acquire >/dev/null 2>&1; then
+  session_lock_acquire review-gate || exit 1
+fi
 
 # R4: a decision gate (PR / pre-merge, set by the agent) forces the full unanimous
 # panel. It turns OFF every reduction so the decisive review is never a skipped,

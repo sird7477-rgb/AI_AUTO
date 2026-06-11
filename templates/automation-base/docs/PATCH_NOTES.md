@@ -4,6 +4,22 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.11.1
+
+- Multi-terminal concurrency safety (one project, several terminals):
+  - New global helper `ai-worktree` (+ `aiwt` shell function): create-or-enter a
+    per-terminal git worktree (`aiwt <name>`), so each terminal has its own working
+    tree AND its own `.omx/` — the robust fix for writer races and review-gate
+    flakiness under concurrent sessions (operationalizes WORKFLOW.md "Writer 격리").
+  - New `scripts/session-lock.sh` (sourced by `review-gate.sh` and `verify.sh`): a
+    per-working-tree lock at `.omx/state/session.lock` (gitignored, tree-local). A
+    second live session on the SAME tree is warned and soft-blocked, pointing at
+    `aiwt`; override with `AI_AUTO_ALLOW_SHARED_TREE=1`. Re-entrant for the
+    review-gate→verify nesting (shared `AI_AUTO_SESSION_ID`), stale locks are
+    reclaimed by liveness check, and two SEPARATE worktrees never false-block.
+  - Deferred: `.omx` per-session sub-scoping (only needed for those who insist on
+    sharing one tree; the worktree-per-terminal model isolates `.omx` by construction).
+
 ## 2026.06.11.0
 
 - Review-gate efficiency: cut redundant AI-panel churn (measured R0 baseline of

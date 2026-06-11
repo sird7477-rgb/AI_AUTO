@@ -40,6 +40,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/knowledge-collect
   ~/bin/workspace-scan
   ~/bin/micro-work
+  ~/bin/ai-worktree
 
 It may also add a managed AI_AUTO shell function under ~/.config/ai-lab and a
 small source block in ~/.bashrc so typing AI_AUTO with no arguments changes the
@@ -241,6 +242,15 @@ AI_AUTO() {
   else
     command AI_AUTO "\$@"
   fi
+}
+
+aiwt() {
+  # Enter a per-terminal git worktree so concurrent terminals on one project do not
+  # share a working tree or .omx state. Create/list/remove run in the child; only the
+  # final cd happens here. \`aiwt --list\` / \`aiwt --remove <name>\` emit no path -> no cd.
+  local d
+  d="\$(command ai-worktree "\$@")" || return
+  [ -n "\$d" ] && cd "\$d"
 }
 
 _ai_auto_project_list_cd() {
@@ -922,6 +932,7 @@ check_source_helper "${ROOT}/tools/feedback-resolve"
 check_source_helper "${ROOT}/tools/knowledge-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
 check_source_helper "${ROOT}/tools/micro-work"
+check_source_helper "${ROOT}/tools/ai-worktree"
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   print_summary
@@ -957,6 +968,7 @@ else
   install_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
   install_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
+  install_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
   install_shell_function
   install_codex_wrapper
 
