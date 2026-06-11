@@ -25,6 +25,11 @@ export HARNESS_DIR="$HERE"
 PROJECT="${1:?usage: validate-odoo.sh <project_repo> [module ...]}"; shift || true
 export PROJECT_ADDONS="$PROJECT/custom-addons"
 [ -d "$PROJECT_ADDONS" ] || { echo "[validate] no custom-addons at $PROJECT_ADDONS" >&2; exit 2; }
+# Per-project isolation: namespace this project's compose stack (container/network/volume)
+# so a different project never shares the postgres/base. Must precede any docker compose call.
+. "$HERE/harness-slug.sh"
+COMPOSE_PROJECT_NAME="$(harness_proj_slug "$PROJECT")"
+export COMPOSE_PROJECT_NAME
 
 if [ "$#" -gt 0 ]; then
   MODCOMMA="$(echo "$*" | tr ' ' ',')"
@@ -62,7 +67,7 @@ docker compose -f "$HERE/docker-compose.validate.yml" up -d db >/dev/null
 docker compose -f "$HERE/docker-compose.validate.yml" exec -T db \
   sh -c 'until pg_isready -U odoo -q; do sleep 1; done'
 
-DB="val_$(date +%s)"
+DB="val_$$_$(date +%s%N)"
 LOG="$(mktemp)"
 # Disposable contract: drop the validation DB on success or failure so it does not
 # accumulate in the compose volume.

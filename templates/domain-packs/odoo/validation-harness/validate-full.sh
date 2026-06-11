@@ -41,6 +41,16 @@ DEMO_BASE_DB="${ODOO_DEMO_BASE_DB:-base_demo}"
 DEMO_MODE="${ODOO_DEMO_PASS_MODE:-update}"   # update = -u on full-set base_demo (registry-complete); fresh empty-DB -i false-fails on partial graphs (U-A2)
 cd "$HERE"   # so `docker compose -f docker-compose.validate.yml` avoids spaces in $HERE
 dc() { docker compose -f docker-compose.validate.yml "$@"; }
+# Per-project isolation: COMPOSE_PROJECT_NAME namespaces this project's container/network/
+# volume so a DIFFERENT project never shares the postgres/base. Must precede any `dc` call.
+. "$HERE/harness-slug.sh"
+COMPOSE_PROJECT_NAME="$(harness_proj_slug "$PROJECT")"
+export COMPOSE_PROJECT_NAME
+export HARNESS_SLUG="$COMPOSE_PROJECT_NAME"
+# Concurrency: cloning the shared base is a READ — coexist with other validations, wait
+# only while prepare-base-db.sh rebuilds the base.
+. "$HERE/harness-lock.sh"
+harness_lock read
 
 # U-A3 sub-routing: with explicit modules we cannot classify file types, so run both
 # passes. In git-diff mode, run the test pass only when code/test/data files changed and
@@ -148,7 +158,7 @@ overall=0
 if [ "${SKIP_TEST_PASS:-0}" != "1" ] && [ "$WANT_TEST" = "1" ]; then
   ensure_base "$BASE_DB" || exit 3
   TAGS="/$(echo "$SCOPE" | sed 's/,/,\//g')"   # mod1,mod2 -> /mod1,/mod2 (only these modules' tests)
-  run_pass "test-pass" "$BASE_DB" "valt_$(date +%s)" \
+  run_pass "test-pass" "$BASE_DB" "valt_$$_$(date +%s%N)" \
     "-u $SCOPE --test-enable --test-tags=$TAGS" || overall=1
 fi
 
@@ -166,6 +176,7 @@ if [ "${SKIP_DEMO_PASS:-0}" != "1" ] && [ "$WANT_DEMO" = "1" ]; then
     # full set, which is the only thing that actually validates the changed demo data
     # (U-A0: -u does not reload demo). Its success IS the demo-data validation.
     echo "[full] demo/ changed -> rebuilding base_demo to validate changed demo data (full reload)..."
+    harness_unlock   # release our READ lock so the child prepare-base can take the WRITE lock (no self-deadlock)
     if ODOO_WITH_DEMO=1 ./prepare-base-db.sh "$PROJECT"; then
       echo "[full] demo-pass(rebuild) PASS — changed demo data loads cleanly on the full set"
     else
@@ -174,7 +185,7 @@ if [ "${SKIP_DEMO_PASS:-0}" != "1" ] && [ "$WANT_DEMO" = "1" ]; then
   else
     # update: -u scope on the full-set demo base — registry-complete, validates the
     # module update against demo-populated tables.
-    run_pass "demo-pass(update)" "$DEMO_BASE_DB" "vald_$(date +%s)" "-u $SCOPE" || overall=1
+    run_pass "demo-pass(update)" "$DEMO_BASE_DB" "vald_$$_$(date +%s%N)" "-u $SCOPE" || overall=1
     # U-A0: -u does NOT reload changed demo/ records. When a demo/ file changed, this
     # pass validated module load with demo PRESENT but NOT the changed demo data — so we
     # fail closed (incomplete field evidence must not read as a clean pass).

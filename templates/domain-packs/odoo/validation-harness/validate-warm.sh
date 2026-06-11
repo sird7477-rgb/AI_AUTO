@@ -14,6 +14,16 @@ export PROJECT_ADDONS="$PROJECT/custom-addons"
 BASE_DB="${ODOO_BASE_DB:-base}"
 cd "$HERE"   # so `docker compose -f docker-compose.validate.yml` avoids spaces in $HERE
 dc() { docker compose -f docker-compose.validate.yml "$@"; }
+# Per-project isolation: COMPOSE_PROJECT_NAME namespaces this project's container/network/
+# volume so a DIFFERENT project never shares the postgres/base. Must precede any `dc` call.
+. "$HERE/harness-slug.sh"
+COMPOSE_PROJECT_NAME="$(harness_proj_slug "$PROJECT")"
+export COMPOSE_PROJECT_NAME
+export HARNESS_SLUG="$COMPOSE_PROJECT_NAME"
+# Concurrency: cloning the shared base is a READ — coexist with other validations, wait
+# only while prepare-base-db.sh rebuilds the base.
+. "$HERE/harness-lock.sh"
+harness_lock read
 
 if [ "$#" -gt 0 ]; then
   MODCOMMA="$(echo "$*" | tr ' ' ',')"
@@ -34,7 +44,7 @@ dc exec -T db sh -c 'until pg_isready -U odoo -q; do sleep 1; done'
 dc exec -T db psql -U odoo -lqt | cut -d'|' -f1 | tr -d ' ' | grep -qx "$BASE_DB" \
   || { echo "[warm] base DB '$BASE_DB' missing — run prepare-base-db.sh first" >&2; exit 3; }
 
-CLONE="val_$(date +%s)"
+CLONE="val_$$_$(date +%s%N)"
 dc exec -T db createdb -U odoo -T "$BASE_DB" "$CLONE"
 LOG="$(mktemp)"
 set +e

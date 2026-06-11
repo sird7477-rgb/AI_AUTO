@@ -27,6 +27,16 @@ else
 fi
 cd "$HERE"   # so `docker compose -f docker-compose.validate.yml` avoids spaces in $HERE
 dc() { docker compose -f docker-compose.validate.yml "$@"; }
+# Per-project isolation: COMPOSE_PROJECT_NAME namespaces this project's container/network/
+# volume so a DIFFERENT project never shares the postgres/base. Must precede any `dc` call.
+. "$HERE/harness-slug.sh"
+COMPOSE_PROJECT_NAME="$(harness_proj_slug "$PROJECT")"
+export COMPOSE_PROJECT_NAME
+export HARNESS_SLUG="$COMPOSE_PROJECT_NAME"
+# Concurrency: rebuilding the shared base is a WRITE — block concurrent rebuilds and any
+# in-flight validations (which read/clone the base) until this finishes.
+. "$HERE/harness-lock.sh"
+harness_lock write
 
 MODS="$(python3 - "$PROJECT_ADDONS" <<'PY'
 import ast,glob,os,sys

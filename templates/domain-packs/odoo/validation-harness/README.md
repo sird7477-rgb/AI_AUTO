@@ -39,6 +39,22 @@ Korean projects default to `ko_KR` / `base.kr`; override with
 | `validate-warm.sh` | routine fast validation: clone base, `-u` changed, drop |
 | `validate-full.sh` | **on-demand / pre-PR** test + demo pass (scoped `--test-enable` on `base` + `-u` on `base_demo`), reverse-dep closure |
 | `gen-requirements.sh` | generate / `--check` root `requirements.txt` from manifest `external_dependencies.python` (deps parity with odoo.sh) |
+| `harness-slug.sh` | derive a per-project `COMPOSE_PROJECT_NAME` slug so each project gets its own container/network/**volume**/base — different projects run fully parallel |
+| `harness-lock.sh` | reader/writer lock on the shared base (`validate-*` = read, `prepare-base-db` = write) so concurrent validations coexist but never clone a base mid-rebuild |
+
+## Concurrency (multiple sessions / multiple projects)
+The harness is concurrency-safe by construction:
+- **Same project, many sessions in parallel**: each validation clones the base under a
+  unique name (`val_$$_$(date +%s%N)`) and takes a **shared** base lock, so they run
+  together; a `prepare-base-db` rebuild takes the **exclusive** lock and waits for
+  in-flight validations (and blocks other rebuilds) — no clone ever reads a half-rebuilt
+  base. (`docker compose` is invoked from the harness dir so spaces in the path are safe.)
+- **Different projects in parallel**: `harness-slug.sh` sets `COMPOSE_PROJECT_NAME` to a
+  stable docker-safe slug of each project's path, which namespaces the container, network,
+  AND the `odoo_pgdata` volume per project. Two projects therefore have **separate postgres
+  servers, volumes, bases, and lock files** — zero cross-project contention or corruption.
+  Adopting this on an existing single-tenant checkout means each project rebuilds its base
+  once under its own volume (the base is a regenerable cache).
 
 ## On-demand test + demo tier (`validate-full.sh`)
 The warm push gate catches the registry-load class; the slower test/demo classes
