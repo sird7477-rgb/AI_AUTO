@@ -34,7 +34,11 @@ confirming that the project is Odoo-based.
    and the project's own `Odoo.sh KB/` decision guides. Read `raw/<topic>` only when slim is
    insufficient or a security/implementation judgment is needed. **The KB is advisory — current
    repo evidence (actual code, registry-load validation, tests) always overrides a KB note;
-   never let a stale slim entry justify code that contradicts the live module.**
+   never let a stale slim entry justify code that contradicts the live module.** To check
+   standard Odoo *code* (exact field/method names, selection values, view ids/xpath targets),
+   grep the local Odoo source first — the harness ships the full community/enterprise trees on
+   disk (`ODOO_COMMUNITY`/`ODOO_ENTERPRISE`, e.g. `<00. DATA>/01. Odoo.19(커뮤니티)/{odoo,addons}/`);
+   GitHub raw or the odoo.sh build-server source is only the fallback when no local source is configured.
 1. Identify the affected module, model, view, security file, report, or data
    file.
 2. Keep the change inside the confirmed addon scope.

@@ -73,6 +73,19 @@ must never justify code that contradicts the live module. (A domain-gated retrie
 surface this slim pointer automatically when the project profile is `odoo`; the boundary is the
 same — repo evidence wins.)
 
+## Standard Source Lookup
+
+To verify standard Odoo **code** — exact field/method names, selection values, compute/onchange
+bodies, view ids and xpath targets — read the local Odoo source FIRST. On a harness-equipped
+project the full community and enterprise trees are on disk via the harness's `ODOO_COMMUNITY` /
+`ODOO_ENTERPRISE` (e.g. `<00. DATA>/01. Odoo.19(커뮤니티)/{odoo,addons}/<module>/` and the
+enterprise tree); grep those before guessing from memory. Fetching from
+`raw.githubusercontent.com/odoo/odoo/<major>.0` or reading the odoo.sh build-server source is the
+**fallback** for when no local source is configured — say the source is unavailable rather than
+assuming it is absent when the harness ships it. This is distinct from the docs KB above
+(navigation/semantics); registry-load validation via the harness stays the definitive check that
+code is installable.
+
 ## Verification Rule
 
 Odoo changes are not complete until the project-specific verification command
