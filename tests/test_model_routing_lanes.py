@@ -140,6 +140,67 @@ def test_lane_decision_recorder_appends_valid_record(tmp_path: Path) -> None:
     assert lines[1].split("\t")[1:3] == ["codex", "low_cost_impl"]
 
 
+def test_lane_decision_recorder_caps_to_max_rows(tmp_path: Path) -> None:
+    # Verify that append_record caps the file to header + MAX_ROWS=1000 data rows,
+    # dropping the oldest rows and keeping the most recent.
+    log = tmp_path / "lane-decisions.tsv"
+
+    # Pre-seed the log with header + 1000 data rows, each identifiable by index.
+    header = "\t".join([
+        "timestamp", "principal", "lane", "role", "requested_class",
+        "resolved_model", "model_source", "model_class_applied", "reason",
+        "fallback", "confidence",
+    ])
+    seeded_rows = []
+    for i in range(1000):
+        # Create a valid-looking row with reason field set to "seed-{i}"
+        seeded_rows.append("\t".join([
+            "2026-06-12T12:00:00+00:00",  # timestamp
+            "codex",                       # principal
+            "low_cost_impl",               # lane
+            "executor-low",                # role
+            "fast",                        # requested_class
+            "model-123",                   # resolved_model
+            "omx-contract",                # model_source
+            "true",                        # model_class_applied
+            f"seed-{i}",                   # reason (distinctive marker)
+            "",                            # fallback
+            "medium",                      # confidence
+        ]))
+    log.write_text(header + "\n" + "\n".join(seeded_rows) + "\n", encoding="utf-8")
+
+    # Append a new record via the recorder.
+    result = _record(
+        log,
+        "--principal", "codex",
+        "--lane", "low_cost_impl",
+        "--role", "executor-low",
+        "--requested-class", "fast",
+        "--resolved-model", "gpt-5.3-codex-spark",
+        "--model-source", "omx-contract",
+        "--model-class-applied", "true",
+        "--reason", "newest-row",
+        "--confidence", "medium",
+    )
+    assert result.returncode == 0, result.stderr
+
+    # Read and verify the file.
+    lines = log.read_text(encoding="utf-8").splitlines()
+
+    # Should be exactly 1001 lines: 1 header + 1000 capped data rows (not 1001).
+    assert len(lines) == 1001, f"expected 1001 lines, got {len(lines)}"
+
+    # First line must be the exact header.
+    assert lines[0] == header
+
+    # Oldest seeded row "seed-0" must be evicted (no longer present).
+    full_text = log.read_text(encoding="utf-8")
+    assert "seed-0" not in full_text, "oldest seeded row should be evicted"
+
+    # Newest record must be present as the last line.
+    assert "newest-row" in lines[-1], "newest record should be in the last line"
+
+
 def test_lane_decision_requires_reason_when_class_not_applied(tmp_path: Path) -> None:
     result = _record(
         tmp_path / "ld.tsv",

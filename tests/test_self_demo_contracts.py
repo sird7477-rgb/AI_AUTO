@@ -8,6 +8,7 @@ from scripts.self_demo_contracts import (
     completion_acceptance_scope,
     completion_authority,
     completion_pack_routing_policy,
+    delegation_recording_policy,
     diff_scope_classification,
     guidance_minimality_boundary,
     guidance_stage2_consolidation_policy,
@@ -1441,3 +1442,46 @@ def test_completion_pack_routing_policy_audits_triggers_without_runtime_lane() -
     assert completion_pack_routing_policy({**security, "adds_runtime_lane": True}).reason == (
         "completion_pack_audit_must_not_add_runtime_lane"
     )
+
+
+def test_delegation_recording_policy_requires_record_when_delegated() -> None:
+    # No delegation: the protocol does not apply.
+    assert delegation_recording_policy({"delegation_occurred": False}).reason == (
+        "delegation_recording_not_applicable"
+    )
+    # Unknown lane is rejected.
+    assert delegation_recording_policy(
+        {"delegation_occurred": True, "lane": "turbo", "decision_recorded": True}
+    ).reason == "invalid_delegation_lane"
+    # A delegation that was not recorded fails closed.
+    not_recorded = delegation_recording_policy(
+        {"delegation_occurred": True, "lane": "low_cost_impl", "decision_recorded": False}
+    )
+    assert not not_recorded.accepted
+    assert not_recorded.reason == "delegation_not_recorded"
+    # Recording must never be claimed as completion or a reviewer verdict.
+    assert delegation_recording_policy(
+        {
+            "delegation_occurred": True,
+            "lane": "low_cost_impl",
+            "decision_recorded": True,
+            "recording_claims_authority": True,
+        }
+    ).reason == "recording_is_observability_only"
+    # A recorded delegation onto a valid lane is accepted.
+    ok = delegation_recording_policy(
+        {"delegation_occurred": True, "lane": "low_cost_impl", "decision_recorded": True}
+    )
+    assert ok.accepted
+    assert ok.reason == "delegation_recorded"
+    assert ok.data["lane"] == "low_cost_impl"
+
+
+def test_delegation_recording_policy_accepts_all_class_lanes() -> None:
+    for lane in {"fast_scan", "low_cost_impl", "standard_impl", "frontier_review"}:
+        result = delegation_recording_policy(
+            {"delegation_occurred": True, "lane": lane, "decision_recorded": True}
+        )
+        assert result.accepted
+        assert result.reason == "delegation_recorded"
+        assert result.data["lane"] == lane

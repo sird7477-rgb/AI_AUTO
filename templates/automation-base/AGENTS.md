@@ -151,6 +151,17 @@ guard) is not completion: complete only by proving the user's deliverable with
 its required evidence, or by an explicit no-result final report carrying every
 required evidence item (candidates, backtests, fallback loops, AI unanimity).
 
+## Delegation Recording Protocol
+
+When the leader delegates a unit of code work onto a model-class lane
+(`fast_scan`, `low_cost_impl`, `standard_impl`, `frontier_review`), record the
+decision via `scripts/record-lane-decision.py` into
+`.omx/model-routing/lane-decisions.tsv`. Recording is required whenever a
+delegation happens, not a one-time log step. It is observability evidence only:
+it never carries completion authority or a reviewer verdict and never replaces
+the delegation guardrails or the leader's diff review, per the
+`delegation_recording_policy` contract.
+
 ## Evidence And Uncertainty
 
 - Do not present guesses, inferred model availability, undocumented behavior, or unverified project assumptions as facts.

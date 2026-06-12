@@ -14,7 +14,7 @@ Runtime status after the 2026-06-05 lightweighting audit:
   (`completion_pack_routing_policy`, `product_challenge_policy`,
   `visual_artifact_policy`, `planning_visual_gate_policy`,
   `spec_code_alignment_policy`, `standard_flow_preservation_policy`,
-  `browser_qa_evidence_policy`).
+  `browser_qa_evidence_policy`, `delegation_recording_policy`).
 - remaining public helpers are test-only contract mirrors unless a later unit
   wires a named function into an actual fail-closed gate.
 """
@@ -624,6 +624,34 @@ def completion_acceptance_scope(record: dict[str, Any]) -> ContractResult:
 
     # Completion claimed with neither a proven deliverable nor a no-result report.
     return ContractResult(False, "completion_requires_deliverable_or_no_result_report", {})
+
+
+DELEGATION_LANES = {"fast_scan", "low_cost_impl", "standard_impl", "frontier_review"}
+
+
+def delegation_recording_policy(record: dict[str, Any]) -> ContractResult:
+    """A model-class lane delegation must be recorded for routing observability.
+
+    When the leader delegates a unit of code work onto a model-class lane, the
+    decision must be recorded via scripts/record-lane-decision.py into
+    .omx/model-routing/lane-decisions.tsv (per the AGENTS.md Delegation Recording
+    Protocol). The record is observability evidence only: it never carries
+    completion authority or a reviewer verdict, and it never replaces the
+    delegation guardrails or the leader's diff review. When no delegation
+    happened the protocol does not apply.
+    """
+    if not record.get("delegation_occurred"):
+        return ContractResult(True, "delegation_recording_not_applicable", {})
+    lane = record.get("lane")
+    if lane not in DELEGATION_LANES:
+        return ContractResult(False, "invalid_delegation_lane", {"lane": lane})
+    if not record.get("decision_recorded"):
+        return ContractResult(False, "delegation_not_recorded", {"lane": lane})
+    # Recording is evidence only; it must never be claimed as completion or a
+    # reviewer verdict.
+    if record.get("recording_claims_authority"):
+        return ContractResult(False, "recording_is_observability_only", {"lane": lane})
+    return ContractResult(True, "delegation_recorded", {"lane": lane})
 
 
 def startup_preflight_boundary(record: dict[str, Any]) -> ContractResult:
