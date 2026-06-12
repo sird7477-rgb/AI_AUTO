@@ -139,7 +139,15 @@ Match cost to cadence; do not stack everything on one stage:
   id/field, deprecated nodes, `odoolint`. Do **not** build a custom static lint.
   Catches a pre-filter subset; **misses view-inheritance (T2) and renamed/removed
   schema (the bulk of T1)** — a clean static pass is never proof of installability.
-- **push (definitive):** `validation-harness/` registry load on parity-pinned
-  Odoo 19 — the only tier that catches T2 and field/model/registry/NOT-NULL errors.
+- **push (definitive):** `validation-harness/validate-warm.sh` registry load on
+  parity-pinned Odoo 19 — the only tier that catches T2 and field/model/registry/NOT-NULL
+  errors. Wire it as the `pre-push` gate.
+- **pre-PR (test + demo, on demand):** `validation-harness/validate-full.sh` — scoped
+  post-install tests (`--test-enable --test-tags`) on the warm base plus a demo-data `-u`
+  pass on `base_demo`; catches the post-install test (T4) and demo-data (T5) classes the
+  warm push gate does **not**. Slow (minutes), so run before a push/PR, not on every push.
+  Scope = changed modules + reverse-dependents. See `validation-harness/README.md`. This
+  tier ships in the harness; surface it in the project runbook rather than leaving it
+  undocumented.
 - **merge (final):** odoo.sh staging + AI review-gate for data-baseline-dependent
   cases the warm base only best-effort covers.
