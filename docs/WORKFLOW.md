@@ -30,7 +30,11 @@
     승인된 scope, non-goal, success criteria, execution boundary,
     verification plan과 대조한다. 관련 artifact가 없으면 그 이유를 기록한다.
 12. `./scripts/verify.sh`를 실행한다.
-13. 실패하면 수정 후 다시 검증한다.
+13. 실패하면 수정 후 다시 검증한다. 같은 검증/실패가 2회 이상 반복되면 맹목
+    재시도 대신, 활성 `plans/*.md`의 `## Tried & Failed`(없으면 신설)에 3줄(시도 /
+    실패 원인 / 다음 가설·회피규칙)을 적고 다음 시도 전 읽는다. 세션 내 thrashing
+    (동일 실패의 미세변형 반복)을 막는 intra-session 리플렉션이며, raw log 기반
+    cross-session `feedback_pattern`(아래)과 별개다.
 14. 커밋 후보를 만들기 전에는 `./scripts/review-gate.sh`를 실행한다.
     - 리뷰에서 finding이 나오면 전체 게이트를 새로 돌리지 말고, 승인된
       finding scope에 한정한 targeted revision task로만 수정한다

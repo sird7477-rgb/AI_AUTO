@@ -4,6 +4,19 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.12.4
+
+- `docs/WORKFLOW.md` (+ template mirror) dev-loop step 13: added an intra-session
+  reflexion / anti-thrash rule. When the same verification/failure recurs ≥2 times in
+  one task, instead of blindly retrying, append 3 lines (tried / why it failed / next
+  hypothesis or avoid-rule) to the active `plans/*.md` `## Tried & Failed` section and
+  re-read before the next attempt. This is the intra-session complement to the existing
+  post-hoc cross-session `feedback_pattern` capture; it targets thrashing (retrying minor
+  variations of an already-failed fix). Guidance-only, reuses `plans/*.md` (no new file or
+  tooling); enforcement (observe failure signatures → advisory → soft-block) is a tracked
+  later-gated backlog item, not shipped here. Absorbed from a loops.elorm.xyz review +
+  unanimous AI council (codex + gemini).
+
 ## 2026.06.12.3
 
 - `OBSIDIAN_INTEGRATION.md`: documented the two-lane index boundary for the KB.
