@@ -17,6 +17,7 @@ for script in \
   scripts/docker-config-guard.sh \
   scripts/doc-budget.sh \
   scripts/refresh-guidance-baseline.sh \
+  scripts/check-template-version.sh \
   scripts/guidance-duplicate-report.sh \
   scripts/discover-ai-models.sh \
   scripts/install-ubuntu-prereqs.sh \
@@ -331,17 +332,8 @@ echo "[verify] checking Codex native goal mode boundary guidance..."
   diff -u "${goal_boundary_tmp}/root.md" "${goal_boundary_tmp}/template.md"
 )
 
-template_version="$(
-  sed -n '1{s/\r$//; s/[[:space:]]*$//; p; q}' templates/automation-base/AI_AUTO_TEMPLATE_VERSION
-)"
-latest_patch_note="$(
-  sed -n '/^## /{s/^## //; s/\r$//; s/[[:space:]]*$//; p; q}' templates/automation-base/docs/PATCH_NOTES.md
-)"
-echo "[verify] latest template patch note: ${latest_patch_note:-<none>}"
-if test -z "${template_version}" || test -z "${latest_patch_note}" || test "${latest_patch_note}" != "${template_version}"; then
-  echo "[verify] template version ${template_version:-<none>} must match the top PATCH_NOTES heading (got: ${latest_patch_note:-<none>})" >&2
-  exit 1
-fi
+echo "[verify] checking template version + patch-note hygiene..."
+./scripts/check-template-version.sh
 grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" AGENTS.md
 grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" templates/automation-base/AGENTS.md
 grep -qF "action: AI_AUTO 최신 패치 적용해줘" docs/GLOBAL_TOOLS.md
@@ -608,6 +600,69 @@ grep -q "Guidance Budget Escalation" templates/automation-base/docs/AUTOMATION_O
 grep -q "Stage 2 is a read-only duplicate or consolidation" templates/automation-base/README.md
 grep -q "Tool Adoption Before Custom Development" docs/AUTOMATION_OPERATING_POLICY.md
 grep -q "Tool Adoption Before Custom Development" templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
+
+echo "[verify] testing template version bump-on-change gate..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_ctv_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_ctv_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}"
+  cd "${tmp_dir}"
+  mkdir -p scripts templates/automation-base/docs templates/automation-base/scripts
+  cp "${repo_root}/scripts/check-template-version.sh" scripts/check-template-version.sh
+  chmod +x scripts/check-template-version.sh
+  printf '1.0.0\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
+  printf '# AI_AUTO Patch Notes\n\n## 1.0.0\n\n- seed\n' > templates/automation-base/docs/PATCH_NOTES.md
+  printf '# sample\n' > templates/automation-base/scripts/sample.sh
+  git add .
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed template version fixture"
+
+  # On the base branch there is no diff to measure; consistency holds -> OK.
+  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-base.out"
+  grep -q "OK" "${tmp_dir}/ctv-base.out"
+
+  # A template-owned change on a branch WITHOUT a version bump must fail.
+  git checkout -q -b feature
+  printf '# sample changed\n' > templates/automation-base/scripts/sample.sh
+  git add templates/automation-base/scripts/sample.sh
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "change template without bump"
+  if ./scripts/check-template-version.sh > "${tmp_dir}/ctv-nobump.out" 2>&1; then
+    echo "[verify] template gate accepted a template change without a version bump"
+    exit 1
+  fi
+  grep -q "without a version bump" "${tmp_dir}/ctv-nobump.out"
+
+  # Bumping the version + adding a matching patch-note heading clears the gate.
+  printf '1.0.1\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
+  printf '# AI_AUTO Patch Notes\n\n## 1.0.1\n\n- changed sample\n\n## 1.0.0\n\n- seed\n' > templates/automation-base/docs/PATCH_NOTES.md
+  git add -A
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "bump version + patch note"
+  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-bumped.out"
+  grep -q "OK" "${tmp_dir}/ctv-bumped.out"
+
+  # Version file out of sync with the top patch-note heading must fail (consistency).
+  printf '9.9.9\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
+  if ./scripts/check-template-version.sh > "${tmp_dir}/ctv-inconsistent.out" 2>&1; then
+    echo "[verify] template gate accepted a version/patch-note mismatch"
+    exit 1
+  fi
+  grep -q "must match the top" "${tmp_dir}/ctv-inconsistent.out"
+  git checkout -q -- templates/automation-base/AI_AUTO_TEMPLATE_VERSION
+
+  # A non-template change needs no bump -> passes.
+  git checkout -q main
+  git checkout -q -b docs-only
+  printf 'hello\n' > README.md
+  git add README.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "non-template change"
+  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-nontemplate.out"
+  grep -q "OK" "${tmp_dir}/ctv-nontemplate.out"
+)
 
 echo "[verify] testing Stage 2 guidance duplicate reporter fallback..."
 (
