@@ -194,6 +194,13 @@ cp "${TEMPLATE_DIR}/scripts/review-gate.sh" "${TARGET_DIR}/scripts/review-gate.s
 cp "${TEMPLATE_DIR}/scripts/write-session-checkpoint.sh" "${TARGET_DIR}/scripts/write-session-checkpoint.sh"
 cp "${TEMPLATE_DIR}/scripts/verify.example.sh" "${TARGET_DIR}/scripts/verify.sh"
 
+# Record the install-time guidance baseline (tracked .ai-auto/guidance-baseline.sha256):
+# the sha256 of every guidance doc just copied in, byte-identical to the template.
+# doc-budget.sh reads this to exclude inherited-unchanged guidance from the absolute
+# budget, so a derived project's budget measures only what it authors or changes.
+# Shared with the template-update flow via refresh-guidance-baseline.sh.
+"${AI_LAB_ROOT}/scripts/refresh-guidance-baseline.sh" "${TARGET_DIR}"
+
 domain_packs_dir="$(dirname "${TEMPLATE_DIR}")/domain-packs"
 if [ -d "${domain_packs_dir}" ]; then
   mkdir -p "${TARGET_DIR}/.omx/domain-packs"

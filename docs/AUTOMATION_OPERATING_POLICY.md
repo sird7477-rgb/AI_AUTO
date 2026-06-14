@@ -342,6 +342,15 @@ set `DOC_BUDGET_COMPLETION_BASE_REF` to the task or Ralph-run starting commit.
 baseline. Report both numbers so implementation completion is not confused with
 branch-integration guidance debt.
 
+In a project installed from the AI_AUTO template, `scripts/doc-budget.sh`
+excludes guidance docs that are byte-identical to the install-time baseline
+(`.ai-auto/guidance-baseline.sha256`, written by the installer) from the
+absolute size budget, so the budget measures only what the project authored or
+changed; the branch-cumulative diff lane is unaffected. The AI_AUTO source repo
+has no baseline file and budgets all guidance. After adopting a newer template
+into a project, run `scripts/refresh-guidance-baseline.sh <target>` so newly
+adopted but unchanged template docs are recognized as inherited again.
+
 Stage 2 is a read-only duplicate or consolidation report, typically produced by
 `scripts/guidance-duplicate-report.sh`. Run it only when the user asks for that
 report after seeing the Stage 1 recommendation. The report should identify

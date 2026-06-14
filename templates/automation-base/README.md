@@ -35,6 +35,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/collect-review-context.sh: collects git diff and workflow context
 - scripts/docker-config-guard.sh: uses a temporary Docker config for WSL Docker Desktop credential-helper failures
 - scripts/doc-budget.sh: reports guidance document volume and bloat warnings
+- scripts/refresh-guidance-baseline.sh: (re)writes the install-time guidance baseline so doc-budget excludes inherited-unchanged docs; run after adopting a newer template
 - scripts/guidance-duplicate-report.sh: creates read-only Stage 2 guidance duplicate reports
 - scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
 - scripts/capture-knowledge-drafts.py: captures sanitized local knowledge draft candidates
@@ -111,7 +112,12 @@ Guidance context budget is a staged workflow. The installed `scripts/doc-budget.
 is Stage 1: it reports document-volume warnings during verification and
 recommends the next step. It budgets primary project guidance and template
 guidance separately because template-owned mirrored docs are intentionally
-duplicated for distribution. Stage 2 is a read-only duplicate or consolidation
+duplicated for distribution. In an installed project, doc-budget excludes
+guidance docs byte-identical to the install-time baseline
+(`.ai-auto/guidance-baseline.sha256`) from the absolute size budget, so the
+budget measures only what the project authored or changed; after adopting a
+newer template, run `scripts/refresh-guidance-baseline.sh <target>` to refresh
+it. Stage 2 is a read-only duplicate or consolidation
 report produced by `scripts/guidance-duplicate-report.sh` and should run only
 when the user asks for it after seeing a Stage 1 recommendation. The Stage 2
 tool prefers an existing duplicate detector such as `jscpd` when available and

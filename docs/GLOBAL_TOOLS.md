@@ -306,8 +306,8 @@ The same managed shell integration adds small convenience functions:
 
 - `jwlist`
   - Lists project folders directly under `/mnt/z/JSJEON/Project_JW`
-  - Set `AI_AUTO_JW_PROJECT_ROOT` if your JW projects still live under an extra
-    grouping folder such as `Project_JW/99. 개발개발`
+  - Set `AI_AUTO_JW_PROJECT_ROOT` if your JW projects live under an extra
+    grouping folder such as `Project_JW/99. odoo`
   - If the default root does not exist, the function prints a hint to set
     `AI_AUTO_JW_PROJECT_ROOT=/path/to/root`
   - Prompts for a number; choose `0` to enter the current folder, or choose a

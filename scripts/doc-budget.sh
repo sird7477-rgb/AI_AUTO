@@ -12,6 +12,12 @@ BASE_REF="${DOC_BUDGET_BASE_REF:-main}"
 COMPLETION_BASE_REF="${DOC_BUDGET_COMPLETION_BASE_REF:-}"
 # Extra content/spec paths to exempt from the guidance budget, space separated.
 EXEMPT_GLOBS="${DOC_BUDGET_EXEMPT_GLOBS:-}"
+# Install-time guidance baseline (sha256sum format). When present, primary
+# guidance files byte-identical to their recorded install hash are inherited and
+# unchanged, so they are excluded from the absolute guidance budget: a derived
+# project's budget then measures only what it actually authored or changed.
+# Absent (the AI_AUTO source repo, or a pre-baseline install) -> full budget.
+GUIDANCE_BASELINE="${DOC_BUDGET_BASELINE_FILE:-.ai-auto/guidance-baseline.sha256}"
 
 WARN_COUNT=0
 FAIL_COUNT=0
@@ -44,6 +50,41 @@ doc_budget_is_exempt() {
     set +f
   fi
   return 1
+}
+
+doc_budget_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+doc_budget_is_inherited_unchanged() {
+  # 0 (true) when the file is byte-identical to the version recorded in the
+  # install-time guidance baseline -- inherited from the AI_AUTO template and
+  # untouched. Such files are excluded from the absolute guidance budget. No
+  # baseline file, no recorded entry, or any byte change -> false -> full budget.
+  # This only gates the absolute (size/total) lane; the branch-cumulative diff
+  # lane below is unaffected, so local edits to an inherited file are still
+  # tracked there.
+  local path="$1" recorded current
+  [ -f "${GUIDANCE_BASELINE}" ] || return 1
+  [ -f "${path}" ] || return 1
+  recorded="$(awk -v p="${path}" '$1 !~ /^#/ && $2 == p { print $1; exit }' "${GUIDANCE_BASELINE}")"
+  [ -n "${recorded}" ] || return 1
+  current="$(doc_budget_sha256 "${path}")"
+  [ "${current}" = "${recorded}" ]
+}
+
+budget_primary_file() {
+  # Per-file absolute check that honors the inherited-unchanged baseline.
+  local label="$1" path="$2" warn_at="$3" fail_at="$4"
+  if doc_budget_is_inherited_unchanged "${path}"; then
+    printf '[budget] %s: inherited unchanged (skipped; matches install baseline)\n' "${label}"
+    return
+  fi
+  check_number "${label}" "$(line_count "${path}")" "${warn_at}" "${fail_at}"
 }
 
 warn() {
@@ -118,9 +159,9 @@ fi
 
 echo "[budget] checking guidance document volume..."
 
-check_number "AGENTS.md lines" "$(line_count AGENTS.md)" 150 220
-check_number "docs/WORKFLOW.md lines" "$(line_count docs/WORKFLOW.md)" 350 450
-check_number "docs/AUTOMATION_OPERATING_POLICY.md lines" "$(line_count docs/AUTOMATION_OPERATING_POLICY.md)" 650 800
+budget_primary_file "AGENTS.md lines" AGENTS.md 150 220
+budget_primary_file "docs/WORKFLOW.md lines" docs/WORKFLOW.md 350 450
+budget_primary_file "docs/AUTOMATION_OPERATING_POLICY.md lines" docs/AUTOMATION_OPERATING_POLICY.md 650 800
 
 if [ -f "templates/automation-base/AGENTS.md" ]; then
   check_number "template AGENTS.md lines" "$(line_count templates/automation-base/AGENTS.md)" 180 240
@@ -134,7 +175,7 @@ if [ -f "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md" ]; then
   check_number "template AUTOMATION_OPERATING_POLICY.md lines" "$(line_count templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md)" 650 800
 fi
 
-primary_guidance_total="$(
+primary_scan="$(
   {
     printf '%s\n' AGENTS.md
     if [ -d docs ]; then
@@ -142,10 +183,21 @@ primary_guidance_total="$(
     fi
   } | while IFS= read -r path; do
     if [ -f "$path" ] && ! doc_budget_is_exempt "$path"; then
-      line_count "$path"
+      if doc_budget_is_inherited_unchanged "$path"; then
+        printf 'inherited %s\n' "$(line_count "$path")"
+      else
+        printf 'budgeted %s\n' "$(line_count "$path")"
+      fi
     fi
-  done | awk '{ total += $1 } END { print total + 0 }'
+  done
 )"
+primary_guidance_total="$(printf '%s\n' "$primary_scan" | awk '$1 == "budgeted" { total += $2 } END { print total + 0 }')"
+inherited_count="$(printf '%s\n' "$primary_scan" | awk '$1 == "inherited" { count += 1 } END { print count + 0 }')"
+inherited_lines="$(printf '%s\n' "$primary_scan" | awk '$1 == "inherited" { total += $2 } END { print total + 0 }')"
+if [ "$inherited_count" -gt 0 ]; then
+  # Surface what was excluded so the inherited volume is visible, not silently dropped.
+  printf '[budget] primary guidance: excluded %s inherited-unchanged docs (%s lines) matching install baseline\n' "$inherited_count" "$inherited_lines"
+fi
 check_number "primary guidance markdown total lines" "$primary_guidance_total" 6500 8000
 
 template_guidance_total="$(

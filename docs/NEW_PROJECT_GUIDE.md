@@ -181,8 +181,8 @@ AI_AUTO checkout. Use `AI_AUTO --path` when you only need the path, or
 The managed shell integration also adds two local project-list shortcuts:
 `jwlist` lists project folders directly under
 `/mnt/z/JSJEON/Project_JW`, and `sirdlist` lists project folders
-directly under `/mnt/z/JSJEON/Project_SirD`. If your JW projects still live under
-an extra grouping folder such as `Project_JW/99. 개발개발`, set
+directly under `/mnt/z/JSJEON/Project_SirD`. If your JW projects live under
+an extra grouping folder such as `Project_JW/99. odoo`, set
 `AI_AUTO_JW_PROJECT_ROOT` to that folder. The folders do not need to be git
 repositories or AI_AUTO-initialized projects. Each command prompts for a number:
 choose `0` to enter the currently displayed folder, or choose a subfolder to

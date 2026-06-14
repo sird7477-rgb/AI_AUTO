@@ -287,7 +287,7 @@ if [ "$RECORD_FEEDBACK" -eq 1 ]; then
         --summary "AI_AUTO automation template status differs from the current template" \
         --severity medium \
         --surface automation-template \
-        --resolution "Run ai-auto-template-status, review the reported file differences, and patch manually if appropriate" \
+        --resolution "Run ai-auto-template-status, review the reported file differences, patch manually if appropriate, then run scripts/refresh-guidance-baseline.sh <target> to refresh the guidance baseline" \
         --source ai-auto-template-status >/dev/null
     echo "feedback: recorded automation-template:update-available"
   else

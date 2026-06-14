@@ -16,6 +16,7 @@ for script in \
   scripts/collect-review-context.sh \
   scripts/docker-config-guard.sh \
   scripts/doc-budget.sh \
+  scripts/refresh-guidance-baseline.sh \
   scripts/guidance-duplicate-report.sh \
   scripts/discover-ai-models.sh \
   scripts/install-ubuntu-prereqs.sh \
@@ -539,6 +540,61 @@ echo "[verify] testing guidance document budget missing-file tolerance..."
   ./scripts/doc-budget.sh > "${tmp_dir}/budget-missing.out"
   grep -q "AGENTS.md lines: 0" "${tmp_dir}/budget-missing.out"
   grep -q "guidance markdown total lines: 0" "${tmp_dir}/budget-missing.out"
+)
+
+echo "[verify] testing guidance budget inherited-unchanged baseline exclusion..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_doc_budget_baseline_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_doc_budget_baseline_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}"
+  cd "${tmp_dir}"
+  mkdir -p docs scripts .ai-auto
+  printf '# Agents\n' > AGENTS.md
+  # A large inherited doc and a smaller project-authored doc.
+  : > docs/INHERITED.md
+  for i in $(seq 1 500); do printf 'inherited guidance line %s\n' "$i" >> docs/INHERITED.md; done
+  : > docs/PROJECT_OWNED.md
+  for i in $(seq 1 100); do printf 'project guidance line %s\n' "$i" >> docs/PROJECT_OWNED.md; done
+  cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
+  chmod +x scripts/doc-budget.sh
+  # Baseline records the inherited docs (AGENTS.md + INHERITED.md) as the
+  # installer would; the project-authored doc is intentionally absent from it.
+  {
+    echo "# AI_AUTO guidance baseline"
+    sha256sum AGENTS.md docs/INHERITED.md
+  } > .ai-auto/guidance-baseline.sha256
+  git add .
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed baseline fixture"
+
+  # Inherited-unchanged docs are excluded from the absolute total; only the
+  # project-authored 100 lines are budgeted.
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-baseline.out"
+  grep -q "AGENTS.md lines: inherited unchanged (skipped" "${tmp_dir}/budget-baseline.out"
+  grep -q "excluded 2 inherited-unchanged docs (501 lines)" "${tmp_dir}/budget-baseline.out"
+  grep -q "primary guidance markdown total lines: 100" "${tmp_dir}/budget-baseline.out"
+
+  # Editing the inherited doc breaks the hash: it re-enters the absolute budget
+  # (601 = edited INHERITED 501 + project 100; AGENTS.md stays excluded).
+  printf 'local edit\n' >> docs/INHERITED.md
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-baseline-edited.out"
+  grep -q "primary guidance markdown total lines: 601" "${tmp_dir}/budget-baseline-edited.out"
+  git checkout -q -- docs/INHERITED.md
+
+  # No baseline file -> nothing is excluded (current behavior preserved):
+  # AGENTS 1 + INHERITED 500 + project 100 = 601.
+  rm -f .ai-auto/guidance-baseline.sha256
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-baseline-absent.out"
+  grep -q "primary guidance markdown total lines: 601" "${tmp_dir}/budget-baseline-absent.out"
+  if grep -q "inherited-unchanged docs" "${tmp_dir}/budget-baseline-absent.out"; then
+    echo "[verify] doc-budget excluded docs without a baseline file"
+    exit 1
+  fi
 )
 
 grep -q "stage-2 duplicate report only when the user asks" scripts/doc-budget.sh
@@ -4899,6 +4955,35 @@ echo "[verify] testing automation template installer..."
   grep -q "scripts/doc-budget.sh" "${target_dir}/scripts/verify.sh"
   ! grep -q "guidance-duplicate-report.sh" "${target_dir}/scripts/verify.sh"
   cmp -s "templates/automation-base/AI_AUTO_TEMPLATE_VERSION" "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
+  # The install-time guidance baseline is written, tracked (not git-excluded), and
+  # records the copied guidance docs. A freshly installed project's guidance is
+  # byte-identical to the template, so doc-budget excludes all of it: the absolute
+  # primary total is 0 until the project customizes a doc.
+  test -f "${target_dir}/.ai-auto/guidance-baseline.sha256"
+  ! grep -Eq '^[.]ai-auto/?$' "${target_dir}/.git/info/exclude"
+  grep -q "  AGENTS.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
+  grep -q "  docs/WORKFLOW.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
+  # Commit the installed tree so the branch-cumulative lane sees it as base (the
+  # bulk install is not unreviewed new guidance); the absolute lane then excludes
+  # every inherited doc, so the primary total is 0 until the project customizes.
+  (
+    cd "${target_dir}"
+    git add -A
+    git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "install automation template"
+    ./scripts/doc-budget.sh > "${tmp_dir}/target-budget.out"
+  )
+  grep -q "inherited-unchanged docs" "${tmp_dir}/target-budget.out"
+  grep -q "primary guidance markdown total lines: 0" "${tmp_dir}/target-budget.out"
+  # Customizing a doc and refreshing the baseline drops it from the inherited set,
+  # so it re-enters the absolute budget (the template-update refresh path).
+  printf '\nproject custom guidance line\n' >> "${target_dir}/docs/WORKFLOW.md"
+  ./scripts/refresh-guidance-baseline.sh "${target_dir}" > "${tmp_dir}/baseline-refresh.out"
+  grep -q "customized/absent docs left budgeted: 1" "${tmp_dir}/baseline-refresh.out"
+  ! grep -q "  docs/WORKFLOW.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
+  ( cd "${target_dir}" && ./scripts/doc-budget.sh > "${tmp_dir}/target-budget-customized.out" || true )
+  grep -q "docs/WORKFLOW.md lines: " "${tmp_dir}/target-budget-customized.out"
+  git -C "${target_dir}" checkout -q -- docs/WORKFLOW.md
+  ./scripts/refresh-guidance-baseline.sh "${target_dir}" > /dev/null
   grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
   grep -q "Chrome CDP Access" "${target_dir}/docs/CHROME_CDP_ACCESS.md"
   grep -q "Agent Identity" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
