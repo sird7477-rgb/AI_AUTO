@@ -299,6 +299,9 @@ grep -q "project-owned wrapper scripts" docs/CHROME_CDP_ACCESS.md
 cmp -s docs/CHROME_CDP_ACCESS.md templates/automation-base/docs/CHROME_CDP_ACCESS.md
 cmp -s docs/OBSIDIAN_INTEGRATION.md templates/automation-base/docs/OBSIDIAN_INTEGRATION.md
 cmp -s docs/PLANNING_VISUALIZATION_GUIDE.md templates/automation-base/docs/PLANNING_VISUALIZATION_GUIDE.md
+cmp -s docs/AI_MODEL_ROUTING.md templates/automation-base/docs/AI_MODEL_ROUTING.md
+grep -q "Delegation Recording Protocol" AGENTS.md
+grep -q "Delegation Recording Protocol" templates/automation-base/AGENTS.md
 
 echo "[verify] checking guidance document budget..."
 ./scripts/doc-budget.sh

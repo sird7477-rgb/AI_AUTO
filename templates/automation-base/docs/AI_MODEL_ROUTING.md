@@ -125,6 +125,8 @@ this repo's review-gate). A unit may use `low_cost_impl` only when all hold:
 
 It never plans, decides architecture/security, owns verification, or carries
 completion authority. Gemini has no `low_cost_impl` (class-fixed via `agy`).
+Every delegation onto a class lane is recorded via the Delegation Recording
+Protocol (see `AGENTS.md`) into `.omx/model-routing/lane-decisions.tsv`.
 
 ### Evidence-driven tuning
 
@@ -132,9 +134,11 @@ A lane's default model-class selector is changed only after repeated
 `lane-decisions.tsv` evidence across several local runs shows a class is
 consistently better for that lane. Never change a default from a single
 provider announcement or a one-off failure, and never globally downgrade the
-standard implementation, planner, verifier, or reviewer lanes. With no
-accumulated evidence yet, no default change is warranted: the lanes stay at
-their current classes.
+standard implementation, planner, verifier, or reviewer lanes. Per-unit
+delegations are recorded as a normalized step (the Delegation Recording Protocol
+in `AGENTS.md`), so evidence accrues in `lane-decisions.tsv`; until enough
+accumulates to show a class is consistently better for a lane,
+no default change is warranted and the lanes stay at their current classes.
 
 ## Current Review Lanes
 

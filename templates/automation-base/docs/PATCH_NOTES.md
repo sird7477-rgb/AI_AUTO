@@ -25,6 +25,20 @@ which files are template-owned, hybrid, or project-owned.
 - `docs/NEW_PROJECT_GUIDE.md` / `docs/GLOBAL_TOOLS.md`: updated the stale
   `Project_JW/99. 개발개발` grouping example to the current Z-drive `99. odoo`.
 
+## 2026.06.12.5
+
+- `AGENTS.md` (+ template mirror): added a `## Delegation Recording Protocol`
+  rule. When the leader delegates a unit of code work onto a model-class lane
+  (`fast_scan`/`low_cost_impl`/`standard_impl`/`frontier_review`), recording the
+  decision via `scripts/record-lane-decision.py` into
+  `.omx/model-routing/lane-decisions.tsv` is a required, observability-only step
+  (no completion authority). Backed by a `delegation_recording_policy` contract
+  in `scripts/self_demo_contracts.py` with tests in
+  `tests/test_self_demo_contracts.py`. `docs/AI_MODEL_ROUTING.md` (+ mirror) drops
+  the "no caller / no accumulated evidence" framing in § Evidence-driven tuning,
+  and `scripts/verify-machinery.sh` locks the rule marker in both AGENTS copies
+  plus AI_MODEL_ROUTING parity. Normalizes ST-P1-22 Phase 1 recording.
+
 ## 2026.06.12.4
 
 - `docs/WORKFLOW.md` (+ template mirror) dev-loop step 13: added an intra-session
