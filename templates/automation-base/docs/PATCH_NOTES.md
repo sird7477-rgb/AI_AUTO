@@ -4,6 +4,27 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.15.1
+
+- `scripts/doc-budget.sh` (+ template mirror): in a project installed from the
+  template, guidance docs byte-identical to the install-time baseline
+  (`.ai-auto/guidance-baseline.sha256`) are now excluded from the absolute size
+  budget, so a derived project's budget measures only what it authored or
+  changed. The branch-cumulative diff lane is unchanged; the excluded count is
+  surfaced, not silently dropped. The AI_AUTO source repo has no baseline file
+  and keeps budgeting all guidance.
+- New `scripts/refresh-guidance-baseline.sh`: (re)generates that baseline from
+  the current template by recording guidance docs that match it. The installer
+  now calls it instead of an inline hash list, and `ai-auto-template-status`'s
+  update-available resolution tells the operator to run it after adopting a
+  newer template (so newly adopted but unchanged docs count as inherited again).
+- `docs/AUTOMATION_OPERATING_POLICY.md` + template `README.md`: document the
+  inherited-baseline exclusion and the refresh step.
+- `verify-machinery.sh`: added inherited-baseline exclusion tests and installer
+  assertions (baseline written, tracked, fresh-install primary total 0).
+- `docs/NEW_PROJECT_GUIDE.md` / `docs/GLOBAL_TOOLS.md`: updated the stale
+  `Project_JW/99. 개발개발` grouping example to the current Z-drive `99. odoo`.
+
 ## 2026.06.12.4
 
 - `docs/WORKFLOW.md` (+ template mirror) dev-loop step 13: added an intra-session
