@@ -37,6 +37,33 @@ clean static parse does **not** mean the change is installable. Cross-module and
 enterprise-view anchors are the common gap. Treat static checks as a fast
 pre-filter and a fallback only — never as installable-evidence.
 
+### Client Action-Shape Screen
+
+`validation-harness/check-action-shape.py` flags CHANGED `ir.actions.act_window`
+dicts that are `target: 'new'` (popup) with no `views` key — the Odoo 19 crash
+class where the web client's `_preprocessAction` runs `undefined.map` because a
+raw `doAction(dict)` (e.g. a JS field widget dispatching an RPC result) was never
+normalized. `view_mode` alone does not cover this raw-dispatch path.
+
+This is a SCREEN, not a judge: the same shape is safe when dispatched via a
+button/server round-trip, so it is diff-scoped (only new/edited actions) and
+advisory (the pre-push hook runs it without blocking). It over-approximates by
+design — **confirm each flagged popup at runtime, never on inspection alone**:
+
+```bash
+# serve the changed module locally (background), then open the flagged popup and
+# assert zero client errors:
+ODOO_BASE_URL=http://localhost:<port> \
+  node validation-harness/popup-smoke.mjs --recipe ./recipes/<popup>.mjs
+```
+
+`popup-smoke.mjs` is the runtime oracle: it logs in to the local serve build,
+runs a small per-popup recipe (`export async function run(page)` that opens the
+popup), and FAILS on any console error / uncaught promise (`exit 1`). PASS = the
+popup dispatched with no client crash. Fix a real failure by adding
+`'views': [(False, 'form')]` to the action dict. This is the cheap escaped-defect
+loop: the screen narrows, the local popup run decides.
+
 ## Module Install Or Update
 
 This is the **only complete detection** for view-inheritance/registry errors and

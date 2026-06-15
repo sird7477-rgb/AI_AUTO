@@ -40,7 +40,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   base="$(git merge-base "${BASE_REF}" HEAD 2>/dev/null || true)"
   head="$(git rev-parse HEAD 2>/dev/null || true)"
   if [ -n "${base}" ] && [ "${base}" != "${head}" ]; then
-    changed="$(git diff --name-only "${base}" -- templates/automation-base/ \
+    changed="$(git diff --name-only "${base}" -- templates/automation-base/ templates/domain-packs/ \
       ":(exclude)${VERSION_FILE}" ":(exclude)${PATCH_NOTES}" 2>/dev/null || true)"
     if [ -n "${changed}" ]; then
       base_version="$(git show "${base}:${VERSION_FILE}" 2>/dev/null | sed -n '1{s/\r$//; s/[[:space:]]*$//; p; q}' || true)"

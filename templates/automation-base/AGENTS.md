@@ -21,8 +21,8 @@ Before claiming a task is complete, the agent must:
    classify the result as aligned, updated, not applicable, or blocked; size the
    search using `docs/AUTOMATION_OPERATING_POLICY.md` and re-check if
    verification causes more edits
-4. for changes under `templates/automation-base/`, including template copies of
-   hybrid root files, update
+4. for changes under `templates/automation-base/` or `templates/domain-packs/`,
+   including template copies of hybrid root files, update
    `templates/automation-base/AI_AUTO_TEMPLATE_VERSION` and add a matching top
    entry in `templates/automation-base/docs/PATCH_NOTES.md`
 5. run `./scripts/verify.sh` for basic verification

@@ -16,9 +16,10 @@ Before claiming a task is complete, the agent must:
 3. compare edits against any applicable plan/spec/design artifact and classify
    as aligned, updated, not applicable, or blocked (size the search per
    `docs/AUTOMATION_OPERATING_POLICY.md`); re-check if verification adds edits
-4. for changes under `templates/automation-base/` (incl. template copies of
-   hybrid root files), bump `templates/automation-base/AI_AUTO_TEMPLATE_VERSION`
-   and add a matching top entry in `templates/automation-base/docs/PATCH_NOTES.md`
+4. for changes under `templates/automation-base/` or `templates/domain-packs/`
+   (incl. template copies of hybrid root files), bump
+   `templates/automation-base/AI_AUTO_TEMPLATE_VERSION` and add a matching top
+   entry in `templates/automation-base/docs/PATCH_NOTES.md`
 5. run `./scripts/verify.sh` for basic verification
 6. run `./scripts/review-gate.sh` before presenting a commit candidate
 7. report the verification, review, and spec/design alignment results

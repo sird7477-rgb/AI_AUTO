@@ -4,6 +4,23 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.15.2
+
+- Odoo domain pack: new **client action-shape screen** for the Odoo-19
+  raw-`doAction(dict)` crash class (a `target:'new'` `act_window` returned to the
+  web client without `views` → `_preprocessAction` runs `undefined.map`).
+  `validation-harness/check-action-shape.py` is a diff-scoped, advisory AST screen
+  (flags only changed `target:'new'` act_window dicts missing `views`; the same
+  shape is safe via button/server dispatch, so it over-approximates by design).
+  `validation-harness/popup-smoke.mjs` is the runtime oracle: it opens a flagged
+  popup on the local `serve.sh` build and fails on any console error / uncaught
+  promise. The `hooks/pre-push` gate runs the screen (advisory, no docker needed);
+  `AGENTS.patch.md` + `verify-patterns.md` make confirming each flagged popup via
+  the local smoke a required step (no static-read or AI self-certify pass).
+- `scripts/check-template-version.sh` (+ AGENTS.md commit-prep step 4) now also
+  gate `templates/domain-packs/` changes on a version bump + patch note, closing
+  the gap where shipped domain-pack changes were not version-governed.
+
 ## 2026.06.15.1
 
 - `scripts/doc-budget.sh` (+ template mirror): in a project installed from the

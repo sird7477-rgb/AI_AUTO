@@ -648,6 +648,26 @@ echo "[verify] testing template version bump-on-change gate..."
   ./scripts/check-template-version.sh > "${tmp_dir}/ctv-bumped.out"
   grep -q "OK" "${tmp_dir}/ctv-bumped.out"
 
+  # A domain-pack change (also shipped) must gate on a bump too. Branch fresh off
+  # main so the earlier automation-base bump does not mask it.
+  git checkout -q main
+  git checkout -q -b pack-feature
+  mkdir -p templates/domain-packs/demo
+  printf '# pack\n' > templates/domain-packs/demo/tool.sh
+  git add -A
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "change domain pack without bump"
+  if ./scripts/check-template-version.sh > "${tmp_dir}/ctv-pack-nobump.out" 2>&1; then
+    echo "[verify] template gate accepted a domain-pack change without a version bump"
+    exit 1
+  fi
+  grep -q "without a version bump" "${tmp_dir}/ctv-pack-nobump.out"
+  printf '1.0.1\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
+  printf '# AI_AUTO Patch Notes\n\n## 1.0.1\n\n- pack\n\n## 1.0.0\n\n- seed\n' > templates/automation-base/docs/PATCH_NOTES.md
+  git add -A
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "bump for domain pack"
+  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-pack-bumped.out"
+  grep -q "OK" "${tmp_dir}/ctv-pack-bumped.out"
+
   # Version file out of sync with the top patch-note heading must fail (consistency).
   printf '9.9.9\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
   if ./scripts/check-template-version.sh > "${tmp_dir}/ctv-inconsistent.out" 2>&1; then

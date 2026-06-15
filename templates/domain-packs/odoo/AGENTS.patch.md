@@ -92,6 +92,16 @@ Odoo changes are not complete until the project-specific verification command
 passes. At minimum, verification should cover syntax/import checks and one Odoo
 module install/update or test path when the runtime is available.
 
+When the pre-push action-shape screen (`check-action-shape.py`) lists popup
+actions to confirm, treat each as REQUIRED review, not advisory text. The same
+`act_window` dict shape is safe or fatal depending on the dispatch path, so a
+static read does not settle it: serve the module locally and run
+`validation-harness/popup-smoke.mjs` (console-error=0) on the flagged popup before
+push. Do NOT pass a flagged popup on inspection alone, and do not let an AI
+self-certify it safe — open it. If it is reached by a raw JS `doAction(dict)`, add
+`'views': [(False, 'form')]` to the returned action. This is the escaped-defect
+loop for the Odoo-19 raw-doAction crash class.
+
 Trigger "로컬띄워" (also "로컬 띄워" / "serve 띄워" / "UI 확인"): start the harness
 `serve.sh <project> [changed modules]` in the BACKGROUND (long-running HTTP server —
 never block the session), then report `http://localhost:<port>` and `admin / admin` so

@@ -26,6 +26,15 @@ if [ -z "$HARNESS" ]; then
   echo "[pre-push]     Enable: export ODOO_HARNESS_DIR=\"/path/to/00. DATA/harness\""
   exit 0
 fi
+
+# Static action-shape screen (no docker needed): flag CHANGED act_window popups
+# missing `views` — the Odoo 19 raw-doAction(dict) crash class. Advisory only: it
+# lists popups to CONFIRM on local serve (popup-smoke.mjs, console-error=0); it
+# never blocks the push. The confirm step is the runtime oracle, not this screen.
+if [ -x "$HARNESS/check-action-shape.py" ]; then
+  ( cd "$PROJECT" && python3 "$HARNESS/check-action-shape.py" ) || true
+fi
+
 if ! docker info >/dev/null 2>&1; then
   echo "[pre-push] ⚠️  docker unavailable — pushing WITHOUT Odoo validation (NOT VALIDATED)"; exit 0
 fi
