@@ -980,8 +980,10 @@ install_tmux_hooks() {
       ' "$conf"
     fi
     printf '%s\n' "$begin"
-    printf '%s\n' "set-hook -g after-new-session 'run-shell \"ai-tmux-worktree create #{window_id} #{pane_id} #{pane_current_path}\"'"
-    printf '%s\n' "set-hook -g after-new-window 'run-shell \"ai-tmux-worktree create #{window_id} #{pane_id} #{pane_current_path}\"'"
+    # #{q:pane_current_path} shell-quotes the path so directories with spaces
+    # (e.g. ".../99. odoo/01. A1/jw_dev") arrive as ONE argument, not split.
+    printf '%s\n' "set-hook -g after-new-session 'run-shell \"ai-tmux-worktree create #{window_id} #{pane_id} #{q:pane_current_path}\"'"
+    printf '%s\n' "set-hook -g after-new-window 'run-shell \"ai-tmux-worktree create #{window_id} #{pane_id} #{q:pane_current_path}\"'"
     printf '%s\n' "set-hook -g window-unlinked 'run-shell \"ai-tmux-worktree remove #{hook_window}\"'"
     printf '%s\n' "set-hook -g session-closed 'run-shell \"ai-tmux-worktree gc\"'"
     printf '%s\n' "$end"
