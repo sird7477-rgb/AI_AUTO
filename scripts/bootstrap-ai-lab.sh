@@ -171,7 +171,9 @@ ensure_link() {
 
 printf '[bootstrap] checking ai-lab checkout in %s\n\n' "$ROOT"
 
-if [ ! -d "${ROOT}/.git" ]; then
+if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  say_pass "git repository detected"
+else
   say_fail "ai-lab checkout is not a git repository: ${ROOT}"
   suggest "clone ai-lab with git"
 fi
