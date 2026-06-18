@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.3
+
+- transient reviewer-disable auto-recovery (`run-ai-reviews.sh`): when an external
+  reviewer (Claude/Gemini) is disabled for a transient reason (`usage_limit`,
+  `network_or_sandbox`, or connection/timeout/rate-limit details) it is recorded
+  `disable_class=transient` and auto-expires after
+  `REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS` (default 1800) on a later run, instead
+  of staying disabled until a manual `RESET_DISABLED_AI_REVIEWERS`. Persistent or
+  unclassified disables still require a manual reset. Stops a usage-limit/network
+  blip from leaving Codex self-substitution as the de-facto reviewer (7-day-audit
+  finding). `AI_REVIEWS_EXPIRE_ONLY=1` runs the expiry sweep then exits;
+  verify-machinery asserts transient-old expires while persistent and still-fresh
+  disables are retained.
+
 ## 2026.06.18.2
 
 - worktree-safe git hooks (new `templates/automation-base/hooks/pre-commit` +

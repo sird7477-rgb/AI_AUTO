@@ -4925,6 +4925,22 @@ echo "[verify] testing automation template installer..."
     exit 1
   fi
   grep -q "Not blocking the commit" "${hr_hooks}/pre-commit"
+  # P3: transient reviewer disables (usage_limit/network) auto-expire after the
+  # cooldown so the lane self-heals; persistent and still-fresh disables are kept.
+  rar="${PWD}/scripts/run-ai-reviews.sh"
+  rs_root="${tmp_dir}/revstate"
+  rs="${rs_root}/.omx/reviewer-state"
+  mkdir -p "${rs}"
+  rs_old="$(date -d '-2 hours' -Iseconds 2>/dev/null || date -Iseconds)"
+  rs_now="$(date -Iseconds)"
+  printf 'reviewer=claude\ndisabled_at=%s\nreason=usage_limit\ndisable_class=transient\n' "${rs_old}" > "${rs}/claude.disabled"
+  printf 'reviewer=gemini\ndisabled_at=%s\nreason=config_error\ndisable_class=persistent\n' "${rs_old}" > "${rs}/gemini.disabled"
+  ( cd "${rs_root}" && AI_REVIEWS_EXPIRE_ONLY=1 REVIEW_STATE_DIR=.omx/reviewer-state REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS=1800 bash "${rar}" >/dev/null 2>&1 )
+  ! test -f "${rs}/claude.disabled"
+  test -f "${rs}/gemini.disabled"
+  printf 'reviewer=claude\ndisabled_at=%s\nreason=usage_limit\ndisable_class=transient\n' "${rs_now}" > "${rs}/claude.disabled"
+  ( cd "${rs_root}" && AI_REVIEWS_EXPIRE_ONLY=1 REVIEW_STATE_DIR=.omx/reviewer-state REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS=1800 bash "${rar}" >/dev/null 2>&1 )
+  test -f "${rs}/claude.disabled"
   test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   test -f "${target_dir}/docs/CHROME_CDP_ACCESS.md"
   test -f "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"

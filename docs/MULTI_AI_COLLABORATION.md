@@ -261,7 +261,7 @@ Current handling:
 - reviewer timeouts use REVIEW_TIMEOUT_KILL_AFTER_SECONDS as a forced-kill grace period
 - session, weekly, quota, or rate-limit failures disable that reviewer immediately
 - other reviewer failures retry up to REVIEW_RETRY_LIMIT times before disabling that reviewer
-- disabled reviewer state is stored under .omx/reviewer-state and announced on every run until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
+- disabled reviewer state is stored under .omx/reviewer-state and announced on every run; transient disables (usage_limit / network_or_sandbox) auto-recover after REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS (default 1800), while persistent or unclassified disables stay until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
 - disabled reviewer markers include the source review run id, next action, and reset hint so recovery instructions remain explicit across later runs
 - disabled reviewer perspectives are not injected into the remaining external reviewer prompt
 - principal-subagent substitute reviews run as separate artifacts when expected reviewers are disabled; this substitute is degraded coverage (proceed_degraded / degraded trust), not independent external review, even with a usable verdict and direct file inspection evidence
