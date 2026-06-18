@@ -21,6 +21,47 @@ REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
 REVIEW_RETRY_LIMIT="${REVIEW_RETRY_LIMIT:-3}"
+# Transient reviewer disables (usage_limit / network_or_sandbox / connection
+# failures) auto-recover after this cooldown so a flaky external lane self-heals
+# instead of staying disabled until a manual RESET_DISABLED_AI_REVIEWERS (which
+# left Codex self-substitution as the de-facto reviewer). 0 disables auto-recovery.
+REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS="${REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS:-1800}"
+
+reviewer_disabled_file() {
+  echo "${REVIEW_STATE_DIR}/$1.disabled"
+}
+
+# Auto-recover transient reviewer disables once their cooldown has elapsed, so a
+# usage-limit / network blip does not keep an external reviewer (Claude/Gemini)
+# disabled until a manual reset. Persistent or unclassified disables are left for
+# explicit RESET_DISABLED_AI_REVIEWERS.
+expire_transient_disabled_reviewers() {
+  local cooldown="${REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS:-0}"
+  [ "${cooldown}" -gt 0 ] 2>/dev/null || return 0
+  local reviewer disabled_file disable_class disabled_at disabled_epoch now age
+  now="$(date +%s)"
+  for reviewer in claude gemini; do
+    disabled_file="$(reviewer_disabled_file "${reviewer}")"
+    [ -f "${disabled_file}" ] || continue
+    disable_class="$(sed -n 's/^disable_class=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+    [ "${disable_class}" = "transient" ] || continue
+    disabled_at="$(sed -n 's/^disabled_at=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
+    disabled_epoch="$(date -d "${disabled_at}" +%s 2>/dev/null || echo 0)"
+    [ "${disabled_epoch}" -gt 0 ] 2>/dev/null || continue
+    age=$(( now - disabled_epoch ))
+    if [ "${age}" -ge "${cooldown}" ]; then
+      rm -f "${disabled_file}"
+      echo "[review] ${reviewer} review auto re-enabled after ${age}s (transient disable cooldown expired)"
+    fi
+  done
+}
+
+# Fast path for tests/ops: expire stale transient disables, then exit before any
+# context collection or reviewer execution.
+if [ "${AI_REVIEWS_EXPIRE_ONLY:-0}" = "1" ]; then
+  expire_transient_disabled_reviewers
+  exit 0
+fi
 REVIEW_OUTPUT_MODE="${REVIEW_OUTPUT_MODE:-file}"
 SKIP_CONTEXT_GENERATION="${SKIP_CONTEXT_GENERATION:-0}"
 REVIEW_INCLUDE_UNTRACKED_CONTENT="${REVIEW_INCLUDE_UNTRACKED_CONTENT:-0}"
@@ -212,10 +253,6 @@ if [ ! -f "${SPLIT_CONTEXT_MANIFEST}" ]; then
   SPLIT_CONTEXT_MANIFEST="none"
 fi
 
-reviewer_disabled_file() {
-  echo "${REVIEW_STATE_DIR}/$1.disabled"
-}
-
 reset_disabled_reviewers() {
   case "${RESET_DISABLED_AI_REVIEWERS:-}" in
     all)
@@ -310,6 +347,7 @@ MANIFEST
 }
 
 reset_disabled_reviewers
+expire_transient_disabled_reviewers
 
 write_external_runner() {
   cat > "${EXTERNAL_RUNNER}" <<SCRIPT
@@ -535,20 +573,40 @@ disable_reviewer() {
   local reviewer="$1"
   local reason="$2"
   local details="$3"
-  local disabled_file
+  local disabled_file disable_class next_action
   disabled_file="$(reviewer_disabled_file "${reviewer}")"
+
+  # Classify: usage-limit / network-sandbox / connection-style failures are
+  # transient and auto-recover after the cooldown; anything else is persistent
+  # and waits for a manual reset.
+  case "${reason}" in
+    usage_limit|network_or_sandbox) disable_class="transient" ;;
+    *)
+      if printf '%s' "${details}" | grep -qiE 'connectionrefused|connection refused|network|timeout|timed out|rate.?limit|usage.?limit|temporarily'; then
+        disable_class="transient"
+      else
+        disable_class="persistent"
+      fi
+      ;;
+  esac
+  if [ "${disable_class}" = "transient" ] && [ "${REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+    next_action="auto_recover_after_cooldown_${REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS}s"
+  else
+    next_action="user_reset_required"
+  fi
 
   {
     echo "reviewer=${reviewer}"
     echo "disabled_at=$(date -Iseconds)"
     echo "reason=${reason}"
     echo "details=${details}"
+    echo "disable_class=${disable_class}"
     echo "source_run_id=${REVIEW_RUN_ID}"
-    echo "next_action=user_reset_required"
+    echo "next_action=${next_action}"
     echo "reset_hint=RESET_DISABLED_AI_REVIEWERS=${reviewer} ./scripts/review-gate.sh"
   } > "${disabled_file}"
 
-  echo "[review] ${reviewer} review disabled until user re-enables it: ${reason} (${details})"
+  echo "[review] ${reviewer} review disabled (${disable_class}): ${reason} (${details})"
 }
 
 failure_details() {
@@ -645,16 +703,19 @@ write_disabled_result() {
   local output_file="$2"
   local reason="$3"
 
-  echo "[review] ${reviewer} review skipped: disabled until user re-enables it (${reason})"
+  echo "[review] ${reviewer} review skipped: disabled (${reason})"
   cat > "${output_file}" <<MSG
 # ${reviewer^} Review
 
-Skipped: ${reviewer} review is disabled until the user re-enables it.
+Skipped: ${reviewer} review is disabled.
 
 Reason:
 ${reason}
 
-To re-enable:
+Recovery: a transient disable (disable_class=transient -- usage/session/weekly/
+quota/rate limit or network) auto-recovers after
+REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS on a later run. A persistent disable, or
+to re-enable immediately:
 - RESET_DISABLED_AI_REVIEWERS=${reviewer} ./scripts/run-ai-reviews.sh
 - RESET_DISABLED_AI_REVIEWERS=all ./scripts/run-ai-reviews.sh
 MSG
@@ -1583,8 +1644,9 @@ principal_subagent_substitute
 ## Independence Boundary
 
 When a reviewer is unavailable, the active principal's subagent covers that lane
-as a regular substitute reviewer. This is not degraded fallback coverage when
-the substitute review has a usable verdict and direct file inspection evidence.
+as a substitute reviewer. This is degraded coverage, not independent external
+review: even with a usable verdict and direct file inspection evidence the run is
+reported as proceed_degraded with degraded trust.
 
 ## Assigned Substitute Reviewers
 MSG
@@ -1631,8 +1693,9 @@ MSG
 
 ## Gate Policy
 
-Principal subagent substitute reviews are regular review coverage when they
-produce an approval verdict and direct file inspection evidence.
+Principal subagent substitute reviews are degraded coverage, not independent
+external review. Even with an approval verdict and direct file inspection
+evidence, the run is reported as proceed_degraded with degraded trust.
 MSG
     return 0
   fi
@@ -1695,9 +1758,9 @@ You are running as the active principal runtime's subagent substitute reviewer.
 Active principal: ${ACTIVE_PRINCIPAL}
 Unavailable reviewer lane: ${disabled_reviewer}
 
-This is regular principal-subagent substitute coverage for this review gate, not
-degraded fallback coverage, when you provide a usable verdict and direct file
-inspection evidence.
+This is principal-subagent substitute coverage for this review gate: degraded
+coverage, not independent external review. Even with a usable verdict and direct
+file inspection evidence, the run is reported as proceed_degraded with degraded trust.
 
 Focus:
 ${focus}

@@ -160,9 +160,10 @@ Gemini self-review is skipped and the expected reviewers are Claude plus Codex.
 Those Codex reviews are principal-rotation coverage, not degraded fallback.
 
 When an expected reviewer is unavailable, the active principal's subagent is the
-regular substitute reviewer for that lane. The substitute is accepted as normal
-coverage only with a usable verdict and direct file inspection evidence. Missing
-or unusable substitute output remains degraded or blocked coverage.
+substitute reviewer for that lane. Substitute coverage is degraded, not
+independent external review: even with a usable verdict and direct file
+inspection evidence the run is reported as proceed_degraded with degraded trust.
+Missing or unusable substitute output remains blocked coverage.
 
 Claude stays on provider default by default. Discovery records the suggested
 alias for the role when the installed CLI advertises one, but it does not pass a

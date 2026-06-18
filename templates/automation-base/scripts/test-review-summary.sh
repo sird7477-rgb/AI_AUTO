@@ -274,7 +274,7 @@ assert_summary() {
     exit 1
   fi
 
-  if [ "${decision}" = "proceed" ] && { { [ "${coverage}" != "multi_reviewer" ] && [ "${coverage}" != "principal_rotation" ] && [ "${coverage}" != "principal_subagent_substitute" ] && [ "${coverage}" != "principal_rotation_with_substitute" ]; } || [ "${trust}" != "normal" ]; }; then
+  if [ "${decision}" = "proceed" ] && { { [ "${coverage}" != "multi_reviewer" ] && [ "${coverage}" != "principal_rotation" ]; } || [ "${trust}" != "normal" ]; }; then
     echo "[summary-test] ${name}: proceed must require regular review coverage and normal trust"
     cat "${summary_file}"
     exit 1
@@ -365,7 +365,7 @@ case_principal_subagent_substitute() {
     "${dir}/missing-test.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  assert_summary "principal_subagent_substitute" "proceed" "principal_subagent_substitute" 0
+  assert_summary "principal_subagent_substitute" "proceed_degraded" "principal_subagent_substitute" 0
 }
 
 case_principal_subagent_two_substitutes() {
@@ -384,7 +384,7 @@ case_principal_subagent_two_substitutes() {
     "${dir}/codex-test-current.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  assert_summary "principal_subagent_two_substitutes" "proceed" "principal_subagent_substitute" 0
+  assert_summary "principal_subagent_two_substitutes" "proceed_degraded" "principal_subagent_substitute" 0
 }
 
 case_principal_inferred_from_run_summary() {
@@ -447,7 +447,7 @@ case_principal_rotation_with_substitute() {
     "${dir}/codex-test-current.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  AI_AUTO_PRINCIPAL=claude assert_summary "principal_rotation_with_substitute" "proceed" "principal_rotation_with_substitute" 0
+  AI_AUTO_PRINCIPAL=claude assert_summary "principal_rotation_with_substitute" "proceed_degraded" "principal_rotation_with_substitute" 0
 }
 
 case_gemini_principal_rotation_with_substitute() {
@@ -466,7 +466,7 @@ case_gemini_principal_rotation_with_substitute() {
     "${dir}/codex-test-current.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  AI_AUTO_PRINCIPAL=gemini assert_summary "gemini_principal_rotation_with_substitute" "proceed" "principal_rotation_with_substitute" 0
+  AI_AUTO_PRINCIPAL=gemini assert_summary "gemini_principal_rotation_with_substitute" "proceed_degraded" "principal_rotation_with_substitute" 0
 }
 
 case_failed_external_codex_only_degraded() {
@@ -1489,7 +1489,28 @@ case_review_revision_task_stops_at_cycle_limit() {
   echo "[summary-test] review_revision_task_stops_at_cycle_limit: pass"
 }
 
+case_verify_override() {
+  local dir="${TMP_ROOT}/verify_override"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  # A recorded verify-failure override must force what would be a clean
+  # proceed/multi_reviewer/normal into proceed_degraded with degraded trust.
+  AI_AUTO_VERIFY_FAILED_OVERRIDE=1 AI_AUTO_VERIFY_FAILED_OVERRIDE_BY=tester AI_AUTO_VERIFY_FAILED_OVERRIDE_REASON="known unrelated" \
+    assert_summary "verify_override" "proceed_degraded" "multi_reviewer" 0
+}
+
 case_multi_reviewer
+case_verify_override
 case_single_external_plus_codex
 case_codex_only_degraded
 case_principal_subagent_substitute

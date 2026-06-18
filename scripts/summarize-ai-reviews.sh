@@ -1156,7 +1156,7 @@ fi
 MISSING_REVIEWERS="$(missing_reviewers "${CLAUDE_VERDICT}" "${GEMINI_VERDICT}" "${CODEX_ARCHITECT_VERDICT}")"
 CODEX_FALLBACK_COVERAGE="none"
 if [ "${PRINCIPAL_SUBSTITUTE_REQUIRED}" -eq 1 ]; then
-  CODEX_FALLBACK_COVERAGE="principal_subagent_substitute_regular"
+  CODEX_FALLBACK_COVERAGE="principal_subagent_substitute_degraded"
 elif [ "${CODEX_PRINCIPAL_REVIEW_REQUIRED}" -eq 1 ] && is_usable_review "${CODEX_ARCHITECT_VERDICT}"; then
   CODEX_FALLBACK_COVERAGE="principal_rotation_not_fallback"
 elif is_usable_review "${CODEX_ARCHITECT_VERDICT}" || is_usable_review "${CODEX_TEST_VERDICT}"; then
@@ -1165,8 +1165,42 @@ elif [ "${CODEX_FALLBACK_REQUIRED}" -eq 1 ]; then
   CODEX_FALLBACK_COVERAGE="required_but_unusable"
 fi
 
+# Substitute-trust honesty: coverage that relies on the active principal's own
+# subagent substitute for a decision-relevant lane is NOT independent external
+# review (if both externals were usable, multi_reviewer fires first). Downgrade
+# proceed -> proceed_degraded so it is reported as degraded trust, never as normal
+# multi-reviewer trust.
+if [ "${FINAL_DECISION}" = "proceed" ] && { [ "${REVIEW_COVERAGE}" = "principal_subagent_substitute" ] || [ "${REVIEW_COVERAGE}" = "principal_rotation_with_substitute" ]; }; then
+  FINAL_DECISION="proceed_degraded"
+fi
+
+# Verify-failure override: review-gate proceeded past a failed verify.sh only with
+# a recorded reason + approver. The marker reaches us via env (inline gate) OR via
+# .omx/state/verify-override.env (the external-runner path, where exported env does
+# not cross the generated runner boundary). Either source: never a clean proceed.
+VERIFY_OVERRIDE_ACTIVE=0
+VERIFY_OVERRIDE_BY=""
+VERIFY_OVERRIDE_REASON=""
+if [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" = "1" ]; then
+  VERIFY_OVERRIDE_ACTIVE=1
+  VERIFY_OVERRIDE_BY="${AI_AUTO_VERIFY_FAILED_OVERRIDE_BY:-}"
+  VERIFY_OVERRIDE_REASON="${AI_AUTO_VERIFY_FAILED_OVERRIDE_REASON:-}"
+elif [ -f .omx/state/verify-override.env ]; then
+  VERIFY_OVERRIDE_ACTIVE=1
+  VERIFY_OVERRIDE_BY="$(sed -n 's/^approved_by=//p' .omx/state/verify-override.env 2>/dev/null | head -n 1)"
+  VERIFY_OVERRIDE_REASON="$(sed -n 's/^reason=//p' .omx/state/verify-override.env 2>/dev/null | head -n 1)"
+fi
+if [ "${VERIFY_OVERRIDE_ACTIVE}" = "1" ] && [ "${FINAL_DECISION}" = "proceed" ]; then
+  FINAL_DECISION="proceed_degraded"
+fi
+
+VERIFY_OVERRIDE_FIELD="none"
+if [ "${VERIFY_OVERRIDE_ACTIVE}" = "1" ]; then
+  VERIFY_OVERRIDE_FIELD="verify_failed; approved_by=${VERIFY_OVERRIDE_BY:-unknown}; reason=${VERIFY_OVERRIDE_REASON:-unspecified}"
+fi
+
 TRUST_LEVEL="degraded"
-if { [ "${REVIEW_COVERAGE}" = "multi_reviewer" ] || [ "${REVIEW_COVERAGE}" = "principal_rotation" ] || [ "${REVIEW_COVERAGE}" = "principal_subagent_substitute" ] || [ "${REVIEW_COVERAGE}" = "principal_rotation_with_substitute" ]; } && [ "${FINAL_DECISION}" = "proceed" ]; then
+if { [ "${REVIEW_COVERAGE}" = "multi_reviewer" ] || [ "${REVIEW_COVERAGE}" = "principal_rotation" ]; } && [ "${FINAL_DECISION}" = "proceed" ]; then
   TRUST_LEVEL="normal"
 elif [ "${FINAL_DECISION}" = "blocked" ] || [ "${FINAL_DECISION}" = "revise" ] || [ "${FINAL_DECISION}" = "review_manually" ]; then
   TRUST_LEVEL="blocked_or_needs_attention"
@@ -1189,6 +1223,7 @@ Generated at: $(date -Iseconds)
 - trust: ${TRUST_LEVEL}
 - active_principal: ${ACTIVE_PRINCIPAL}
 - missing_or_unusable_reviewers: ${MISSING_REVIEWERS}
+- verify_override: ${VERIFY_OVERRIDE_FIELD}
 - authority: ${FINAL_DECISION} is not commit approval unless normal verification and user commit approval are also satisfied.
 
 ## Final Decision
@@ -1222,8 +1257,9 @@ ${CODEX_FALLBACK_COVERAGE}
 When the active principal is not Codex, Codex coverage may be a normal
 principal-rotation reviewer lane instead of degraded fallback coverage.
 When a reviewer is unavailable, an approval from the active principal's
-subagent substitute counts as regular substitute coverage only when the summary
-status is principal_subagent_substitute and direct file inspection is present.
+subagent substitute is degraded coverage, not independent external review. It is
+reported as proceed_degraded with degraded trust even when direct file inspection
+is present.
 
 ## Split Context Manifest
 
@@ -1251,9 +1287,9 @@ ${REVISION_TASK_FILE}
 
 ## Disabled Reviewer Reporting
 
-Skipped external reviewers are either covered by regular principal-subagent
-substitute review or reported as degraded coverage when no valid substitute
-exists. A reviewer skipped by \`RUN_CLAUDE_REVIEW=0\` or \`RUN_GEMINI_REVIEW=0\`
+Skipped external reviewers are covered by the active principal's subagent
+substitute as degraded coverage (not independent external review), or reported as
+degraded coverage when no valid substitute exists. A reviewer skipped by \`RUN_CLAUDE_REVIEW=0\` or \`RUN_GEMINI_REVIEW=0\`
 is an intentional user opt-out, not an external reviewer failure. A reviewer
 skipped because of a persisted .omx/reviewer-state marker remains disabled until
 the reset hint is run.
@@ -1285,8 +1321,8 @@ the reset hint is run.
 - codex_only_degraded: no external reviewer produced a usable verdict; two degraded Codex substitute reviewers ran, but this is not independent external review.
 - multi_reviewer: both reviewers produced usable verdicts.
 - principal_rotation: the active principal was excluded from self-review and the remaining expected runtimes reviewed.
-- principal_subagent_substitute: unavailable reviewer lanes were covered by the active principal's subagent substitute with regular trust.
-- principal_rotation_with_substitute: a non-Codex principal used Codex as the normal reviewer lane and the principal subagent covered an unavailable external lane.
+- principal_subagent_substitute: unavailable reviewer lanes were covered by the active principal's subagent substitute; this is degraded coverage (proceed_degraded / degraded trust), not independent external review.
+- principal_rotation_with_substitute: a non-Codex principal used Codex as the normal reviewer lane and the principal subagent covered an unavailable external lane; the substitute lane makes this degraded coverage (proceed_degraded / degraded trust).
 
 ## Next Step
 

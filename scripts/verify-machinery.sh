@@ -453,6 +453,13 @@ echo "[verify] testing guidance document budget accounting..."
     exit 1
   fi
   grep -q "requires DOC_BUDGET_TEMPLATE_PATCH_REASON" "${tmp_dir}/budget-template-patch-noreason.out"
+  # A trivially short / placeholder reason must also fail closed (reject recycled
+  # boilerplate; require a substantive justification).
+  if env DOC_BUDGET_TEMPLATE_PATCH=1 DOC_BUDGET_TEMPLATE_PATCH_REASON='ok' ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-shortreason.out" 2>&1; then
+    echo "[verify] doc-budget accepted template patch mode with a too-short reason"
+    exit 1
+  fi
+  grep -q "too short" "${tmp_dir}/budget-template-patch-shortreason.out"
 )
 
 echo "[verify] testing guidance document budget cumulative-vs-base accounting..."
@@ -3775,6 +3782,52 @@ echo "[verify] testing review-gate captures failed verdict drafts before exiting
   grep -q "claude:request_changes" "${failed_draft}"
 )
 
+echo "[verify] testing review-gate blocks a failed verify.sh and allows a recorded override..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_rg_verifyfail_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_rg_verifyfail_tmp EXIT
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  mkdir -p scripts .omx/review-results
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
+  cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
+  printf '#!/usr/bin/env bash\necho "verify fixture FAILING"\nexit 1\n' > scripts/verify.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "summarize fixture ran"\n' > scripts/summarize-ai-reviews.sh
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+
+  # No override: a failed verify.sh must block, record a blocked verdict, and NOT
+  # run the AI panel (no silent red->proceed).
+  set +e
+  ./scripts/review-gate.sh > "${tmp_dir}/noovr.out" 2>&1
+  noovr_status=$?
+  set -e
+  [ "${noovr_status}" -ne 0 ]
+  ! grep -q "review fixture ran" "${tmp_dir}/noovr.out"
+  blocked_verdict="$(ls -t .omx/review-results/review-verdict-*.md 2>/dev/null | head -n1)"
+  test -n "${blocked_verdict}"
+  grep -q "decision: blocked" "${blocked_verdict}"
+  grep -q "verify_failed" "${blocked_verdict}"
+
+  # Recorded reason + approver: proceeds past verify (panel runs) with a loud warning.
+  rm -f .omx/review-results/review-verdict-*.md
+  set +e
+  AI_AUTO_VERIFY_OVERRIDE_REASON="known unrelated harness quirk" AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="tester" \
+    ./scripts/review-gate.sh > "${tmp_dir}/ovr.out" 2>&1
+  set -e
+  grep -q "being OVERRIDDEN" "${tmp_dir}/ovr.out"
+  grep -q "review fixture ran" "${tmp_dir}/ovr.out"
+  # The override is persisted to a marker file so it survives the external-runner
+  # path (where summarize runs in a separate process without the exported env).
+  test -f .omx/state/verify-override.env
+  grep -q "approved_by=tester" .omx/state/verify-override.env
+)
+
 echo "[verify] testing review-gate verify-only diff skip..."
 (
   tmp_dir="$(mktemp -d)"
@@ -5007,6 +5060,81 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/record-project-memory.sh"
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
+  test -x "${target_dir}/.git/hooks/pre-commit"
+  test -x "${target_dir}/.git/hooks/post-commit"
+  # worktree-safe: the installed pre-commit must clear inherited GIT_* so test
+  # git subprocesses cannot corrupt the shared common git dir across worktrees.
+  grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/pre-commit"
+  grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/post-commit"
+  # Linked-worktree shape: a worktree's .git is a FILE and hooks live in the
+  # shared common dir. The installer must accept it (rev-parse, not test -d .git)
+  # and land the worktree-safe hooks on the resolved hooks path.
+  wt_root="${tmp_dir}/wtrepo"
+  git -c init.defaultBranch=main init -q "${wt_root}"
+  git -C "${wt_root}" -c user.email=ai@auto.local -c user.name=ai commit -q --allow-empty -m init
+  wt_linked="${tmp_dir}/wtrepo-linked"
+  git -C "${wt_root}" worktree add -q "${wt_linked}"
+  test -f "${wt_linked}/.git"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${wt_linked}" >/dev/null
+  wt_hooks="$(git -C "${wt_linked}" rev-parse --git-path hooks)"
+  case "${wt_hooks}" in /*) : ;; *) wt_hooks="${wt_linked}/${wt_hooks}" ;; esac
+  test -x "${wt_hooks}/pre-commit"
+  grep -q "unset GIT_DIR" "${wt_hooks}/pre-commit"
+  # Fail-closed: a pre-existing non-AI_AUTO hook must be left untouched (never
+  # clobbered), while a hook slot with no pre-existing hook is still installed.
+  fc_dir="${tmp_dir}/failclosed"
+  git -c init.defaultBranch=main init -q "${fc_dir}"
+  fc_hooks="$(git -C "${fc_dir}" rev-parse --git-path hooks)"
+  case "${fc_hooks}" in /*) : ;; *) fc_hooks="${fc_dir}/${fc_hooks}" ;; esac
+  mkdir -p "${fc_hooks}"
+  printf '#!/usr/bin/env bash\n# project custom gate\nexit 0\n' > "${fc_hooks}/pre-commit"
+  chmod +x "${fc_hooks}/pre-commit"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${fc_dir}" >/dev/null 2>&1
+  grep -q "project custom gate" "${fc_hooks}/pre-commit"
+  ! grep -q "unset GIT_DIR" "${fc_hooks}/pre-commit"
+  test -x "${fc_hooks}/post-commit"
+  grep -q "unset GIT_DIR" "${fc_hooks}/post-commit"
+  # The pre-commit hook must FAIL CLOSED when a runner is present and tests fail
+  # (proves it actually runs the verification, not just that the file installed),
+  # and must keep a warn+defer branch for the genuine no-runner case rather than
+  # silently passing tests it never ran.
+  hr_dir="${tmp_dir}/hookrun"
+  git -c init.defaultBranch=main init -q "${hr_dir}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${hr_dir}" >/dev/null 2>&1
+  hr_hooks="$(git -C "${hr_dir}" rev-parse --git-path hooks)"
+  case "${hr_hooks}" in /*) : ;; *) hr_hooks="${hr_dir}/${hr_hooks}" ;; esac
+  fakebin="${tmp_dir}/fakebin"
+  mkdir -p "${fakebin}"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "${fakebin}/pytest"
+  chmod +x "${fakebin}/pytest"
+  if ( cd "${hr_dir}" && PATH="${fakebin}:${PATH}" "${hr_hooks}/pre-commit" ) >/dev/null 2>&1; then
+    echo "[verify] pre-commit hook did not fail closed when the test runner failed"
+    exit 1
+  fi
+  grep -q "Not blocking the commit" "${hr_hooks}/pre-commit"
+  # exit-5 fix: pytest exit 5 == "no tests collected" is NOT a failure; a test-less
+  # install/repo must commit. A fakebin pytest that exits 5 -> the hook succeeds.
+  printf '#!/usr/bin/env bash\nexit 5\n' > "${fakebin}/pytest"
+  if ! ( cd "${hr_dir}" && PATH="${fakebin}:${PATH}" "${hr_hooks}/pre-commit" ) >/dev/null 2>&1; then
+    echo "[verify] pre-commit hook blocked a test-less repo (pytest exit 5)"
+    exit 1
+  fi
+  # P3: transient reviewer disables (usage_limit/network) auto-expire after the
+  # cooldown so the lane self-heals; persistent and still-fresh disables are kept.
+  rar="${PWD}/scripts/run-ai-reviews.sh"
+  rs_root="${tmp_dir}/revstate"
+  rs="${rs_root}/.omx/reviewer-state"
+  mkdir -p "${rs}"
+  rs_old="$(date -d '-2 hours' -Iseconds 2>/dev/null || date -Iseconds)"
+  rs_now="$(date -Iseconds)"
+  printf 'reviewer=claude\ndisabled_at=%s\nreason=usage_limit\ndisable_class=transient\n' "${rs_old}" > "${rs}/claude.disabled"
+  printf 'reviewer=gemini\ndisabled_at=%s\nreason=config_error\ndisable_class=persistent\n' "${rs_old}" > "${rs}/gemini.disabled"
+  ( cd "${rs_root}" && AI_REVIEWS_EXPIRE_ONLY=1 REVIEW_STATE_DIR=.omx/reviewer-state REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS=1800 bash "${rar}" >/dev/null 2>&1 )
+  ! test -f "${rs}/claude.disabled"
+  test -f "${rs}/gemini.disabled"
+  printf 'reviewer=claude\ndisabled_at=%s\nreason=usage_limit\ndisable_class=transient\n' "${rs_now}" > "${rs}/claude.disabled"
+  ( cd "${rs_root}" && AI_REVIEWS_EXPIRE_ONLY=1 REVIEW_STATE_DIR=.omx/reviewer-state REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS=1800 bash "${rar}" >/dev/null 2>&1 )
+  test -f "${rs}/claude.disabled"
   test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   test -f "${target_dir}/docs/CHROME_CDP_ACCESS.md"
   test -f "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"

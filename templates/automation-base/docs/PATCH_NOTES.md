@@ -4,6 +4,93 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.6
+
+- worktree-safe pre-commit hook exit-5 fix (`hooks/pre-commit`): `pytest` exit 5
+  ("no tests were collected") is no longer treated as a commit-blocking failure.
+  A freshly installed template or a test-less repo collects no tests, and the
+  hook's `set -e` previously turned that exit 5 into a fail-closed block,
+  preventing the first commit in such a project (surfaced when the installer
+  self-test commits the freshly installed tree through the hook). The hook now
+  runs the suite via a helper that treats exit 5 as non-blocking while keeping a
+  real failing run (exit 1-4) fail-closed and the no-runner case warn+defer.
+  `verify-machinery.sh` (+ template mirror) adds an exit-5 non-blocking assertion
+  alongside the existing fail-closed and no-runner assertions.
+
+## 2026.06.18.5
+
+- DOC_BUDGET template-patch reason quality (`doc-budget.sh`): the
+  `DOC_BUDGET_TEMPLATE_PATCH=1` budget escape hatch now requires a SUBSTANTIVE
+  `DOC_BUDGET_TEMPLATE_PATCH_REASON` (>= 12 non-space chars), rejecting trivial or
+  recycled placeholder reasons in addition to the existing empty-reason check.
+  Addresses the 7-day-audit finding that the bypass sometimes carried recycled
+  boilerplate. verify-machinery asserts a too-short reason fails closed.
+
+## 2026.06.18.4
+
+- red-signal handling at the review gate (`review-gate.sh` + `summarize-ai-reviews.sh`):
+  a failed `verify.sh` no longer aborts the gate opaquely (the opaque `set -e`
+  crash gave no recorded verdict and pushed operators to `--no-verify`). The gate
+  now captures the real verify exit status (`PIPESTATUS`) and, on failure, records
+  an explicit `decision: blocked` / `reason: verify_failed` verdict without running
+  the AI panel. To proceed past a known-unrelated failure the gate requires BOTH
+  `AI_AUTO_VERIFY_OVERRIDE_REASON` and `AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY`; that
+  path warns loudly, still runs the panel, and `summarize-ai-reviews.sh` forces the
+  result to `proceed_degraded` with degraded trust plus a recorded `verify_override:`
+  field in the verdict — never a clean proceed. Closes the silent red->proceed /
+  `--no-verify` gap (7-day-audit finding); block-vs-recorded-override resolved by
+  AI council. verify-machinery and test-review-summary cover both paths.
+
+## 2026.06.18.3
+
+- transient reviewer-disable auto-recovery (`run-ai-reviews.sh`): when an external
+  reviewer (Claude/Gemini) is disabled for a transient reason (`usage_limit`,
+  `network_or_sandbox`, or connection/timeout/rate-limit details) it is recorded
+  `disable_class=transient` and auto-expires after
+  `REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS` (default 1800) on a later run, instead
+  of staying disabled until a manual `RESET_DISABLED_AI_REVIEWERS`. Persistent or
+  unclassified disables still require a manual reset. Stops a usage-limit/network
+  blip from leaving Codex self-substitution as the de-facto reviewer (7-day-audit
+  finding). `AI_REVIEWS_EXPIRE_ONLY=1` runs the expiry sweep then exits;
+  verify-machinery asserts transient-old expires while persistent and still-fresh
+  disables are retained.
+
+## 2026.06.18.2
+
+- worktree-safe git hooks (new `templates/automation-base/hooks/pre-commit` +
+  `post-commit`, installed by `install-automation-template.sh` into the target's
+  real hooks dir; a pre-existing non-AI_AUTO hook is left untouched with a loud
+  warning — fail-closed, never clobbered). The pre-commit hook `unset`s `GIT_DIR`/`GIT_INDEX_FILE`/
+  `GIT_WORK_TREE`/`GIT_PREFIX`/`GIT_COMMON_DIR`/`GIT_NAMESPACE` before running the
+  test suite, so test git subprocesses no longer inherit this repo's GIT_* and
+  corrupt the shared common git dir/index across linked worktrees -- the
+  corruption that pushed sessions to `git commit --no-verify` and left the full
+  suite ungated. When a pytest runner is present the pre-commit hook now runs the
+  suite worktree-safely as an early pre-filter (fail-closed on any test failure);
+  when no runner exists at all it warns and defers to `review-gate.sh`, which
+  remains the authoritative gate of record. The post-commit
+  hook (which still runs under `--no-verify`) warns loudly when no review-gate
+  `proceed`/`proceed_degraded` verdict exists in the last 30 min, making
+  gate-bypassing commits non-silent (it cannot block; git-design limit). Closes
+  the `--no-verify`/ungated-commit gap from the 7-day audit. verify-machinery
+  asserts the installed pre-commit is worktree-safe.
+
+## 2026.06.18.1
+
+- review-gate substitute-trust honesty fix (`summarize-ai-reviews.sh`): coverage
+  that relies on the active principal's own subagent substitute for a
+  decision-relevant lane (`principal_subagent_substitute`,
+  `principal_rotation_with_substitute`) is no longer reported as `proceed` with
+  `normal` trust. It is now downgraded to `proceed_degraded` with `degraded`
+  trust, because a principal reviewing via its own subagent is not independent
+  external review. The `Principal/Codex Review Coverage` field renames
+  `principal_subagent_substitute_regular` -> `principal_subagent_substitute_degraded`.
+  Normal trust now requires `multi_reviewer` or `principal_rotation` coverage
+  (no self-substituted lane). `test-review-summary.sh` updated to assert the
+  degraded outcome, and its `proceed` invariant guard no longer admits substitute
+  coverages. Closes the substitute-trust overstatement flagged by the 7-day audit
+  and by the Codex 2026-06-17 review-gate self-audit (rec #3). Docs:
+  `MULTI_AI_COLLABORATION.md`, `README.md`.
 ## 2026.06.15.2
 
 - Odoo domain pack: new **client action-shape screen** for the Odoo-19

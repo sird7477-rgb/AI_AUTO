@@ -151,10 +151,15 @@ line_count() {
   wc -l < "$path" | tr -d ' '
 }
 
-# The escape hatch must record why the budget is bypassed; it is not a silent
-# self-attestation.
-if [ "${TEMPLATE_PATCH_MODE}" = "1" ] && [ -z "${TEMPLATE_PATCH_REASON}" ]; then
-  fail "DOC_BUDGET_TEMPLATE_PATCH=1 requires DOC_BUDGET_TEMPLATE_PATCH_REASON to record why the budget is bypassed"
+# The escape hatch must record a SUBSTANTIVE reason; it is not a silent
+# self-attestation, and trivial / recycled placeholder reasons are rejected.
+if [ "${TEMPLATE_PATCH_MODE}" = "1" ]; then
+  template_patch_reason_trimmed="$(printf '%s' "${TEMPLATE_PATCH_REASON}" | tr -d '[:space:]')"
+  if [ -z "${TEMPLATE_PATCH_REASON}" ]; then
+    fail "DOC_BUDGET_TEMPLATE_PATCH=1 requires DOC_BUDGET_TEMPLATE_PATCH_REASON to record why the budget is bypassed"
+  elif [ "${#template_patch_reason_trimmed}" -lt 12 ]; then
+    fail "DOC_BUDGET_TEMPLATE_PATCH_REASON is too short (>=12 non-space chars required); placeholder/recycled reasons are not accepted"
+  fi
 fi
 
 echo "[budget] checking guidance document volume..."

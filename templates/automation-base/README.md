@@ -317,9 +317,10 @@ token/context hygiene.
 When a reviewer is disabled, the remaining reviewer prompt stays focused on its
 own role. The disabled lane is covered by the active principal's subagent
 substitute in a separate review artifact, such as
-`codex-architect-fallback-*.md` or `codex-test-fallback-*.md`. The substitute
-counts as regular coverage only with a usable verdict and direct file inspection
-evidence; otherwise the verdict remains degraded or blocked. Set
+`codex-architect-fallback-*.md` or `codex-test-fallback-*.md`. The substitute is
+always degraded coverage, not independent external review: with a usable verdict
+and direct file inspection evidence it is reported as proceed_degraded with
+degraded trust; otherwise the verdict remains blocked. Set
 `RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0` only for diagnostics.
 
 If the current agent context blocks reviewer network access or runtime writes, use:

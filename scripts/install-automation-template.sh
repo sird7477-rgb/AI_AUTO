@@ -35,7 +35,7 @@ if [ ! -d "${TARGET_DIR}" ]; then
   exit 1
 fi
 
-if [ ! -d "${TARGET_DIR}/.git" ]; then
+if ! git -C "${TARGET_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Target directory is not a git repository: ${TARGET_DIR}"
   exit 1
 fi
@@ -134,12 +134,48 @@ fi
 
 mkdir -p "${TARGET_DIR}/.omx/reviewer-state" "${TARGET_DIR}/docs/research" "${TARGET_DIR}/scripts"
 
-exclude_file="${TARGET_DIR}/.git/info/exclude"
+exclude_file="$(git -C "${TARGET_DIR}" rev-parse --git-path info/exclude 2>/dev/null || true)"
+case "${exclude_file}" in
+  "") exclude_file="${TARGET_DIR}/.git/info/exclude" ;;
+  /*) : ;;
+  *) exclude_file="${TARGET_DIR}/${exclude_file}" ;;
+esac
+mkdir -p "$(dirname "${exclude_file}")"
 if ! grep -Eq '^[.]omx/?$' "${exclude_file}" 2>/dev/null; then
   {
     echo
     echo ".omx/"
   } >> "${exclude_file}"
+fi
+
+# Install worktree-safe git hooks into the target's real hooks dir. Resolve via
+# rev-parse so linked worktrees land on the shared common-dir hooks path. These
+# hooks unset GIT_* before running tests (preventing the multi-worktree git-state
+# corruption that drove --no-verify) and warn on review-gate bypass; see
+# templates/automation-base/hooks.
+hooks_dir="$(git -C "${TARGET_DIR}" rev-parse --git-path hooks 2>/dev/null || true)"
+if [ -n "${hooks_dir}" ]; then
+  case "${hooks_dir}" in
+    /*) : ;;
+    *) hooks_dir="${TARGET_DIR}/${hooks_dir}" ;;
+  esac
+  mkdir -p "${hooks_dir}"
+  for hook in pre-commit post-commit; do
+    # Fail-closed on a pre-existing NON-AI_AUTO hook: never clobber a project's
+    # own commit gate (consistent with aiinit's preflight that refuses to
+    # overwrite existing project files). Leave it untouched, warn loudly, and
+    # tell the operator to merge manually. Only write when there is no hook or
+    # it is already an AI_AUTO hook (so re-install still updates our own).
+    if [ -e "${hooks_dir}/${hook}" ] && ! grep -q "AI_AUTO worktree-safe hook\|AI_AUTO post-commit guard" "${hooks_dir}/${hook}" 2>/dev/null; then
+      echo "[install] WARNING: existing custom ${hook} hook left untouched: ${hooks_dir}/${hook}" >&2
+      echo "[install] AI_AUTO worktree-safe ${hook} was NOT installed; merge it manually from" >&2
+      echo "[install]   ${TEMPLATE_DIR}/hooks/${hook}" >&2
+      echo "[install]   (it unsets GIT_* before tests to prevent multi-worktree git corruption)." >&2
+      continue
+    fi
+    cp "${TEMPLATE_DIR}/hooks/${hook}" "${hooks_dir}/${hook}"
+    chmod +x "${hooks_dir}/${hook}"
+  done
 fi
 
 cp "${TEMPLATE_DIR}/AGENTS.md" "${TARGET_DIR}/AGENTS.md"

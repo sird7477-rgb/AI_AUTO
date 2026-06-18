@@ -50,10 +50,10 @@ Reviewer rotation excludes the active principal:
 
 Codex reviewer coverage in a Claude/Gemini principal run is normal principal
 rotation, not degraded fallback coverage. If an expected reviewer is
-unavailable, the active principal's subagent covers that lane as the regular
-substitute reviewer. That substitute counts as normal coverage only with a
-usable verdict and direct file inspection evidence; otherwise the gate reports
-degraded or blocked coverage.
+unavailable, the active principal's subagent covers that lane as the substitute
+reviewer. That substitute is always degraded coverage, not independent external
+review: with a usable verdict and direct file inspection evidence it is reported
+as proceed_degraded with degraded trust; otherwise the gate reports blocked coverage.
 
 ## Current limitation
 
@@ -261,10 +261,10 @@ Current handling:
 - reviewer timeouts use REVIEW_TIMEOUT_KILL_AFTER_SECONDS as a forced-kill grace period
 - session, weekly, quota, or rate-limit failures disable that reviewer immediately
 - other reviewer failures retry up to REVIEW_RETRY_LIMIT times before disabling that reviewer
-- disabled reviewer state is stored under .omx/reviewer-state and announced on every run until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
+- disabled reviewer state is stored under .omx/reviewer-state and announced on every run; transient disables (usage_limit / network_or_sandbox) auto-recover after REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS (default 1800), while persistent or unclassified disables stay until RESET_DISABLED_AI_REVIEWERS=claude|gemini|all is used
 - disabled reviewer markers include the source review run id, next action, and reset hint so recovery instructions remain explicit across later runs
 - disabled reviewer perspectives are not injected into the remaining external reviewer prompt
-- principal-subagent substitute reviews run as separate artifacts when expected reviewers are disabled, and the summary reports regular substitute coverage only when a usable verdict and direct file inspection evidence are present
+- principal-subagent substitute reviews run as separate artifacts when expected reviewers are disabled; this substitute is degraded coverage (proceed_degraded / degraded trust), not independent external review, even with a usable verdict and direct file inspection evidence
 - principal-subagent substitute execution can be disabled for diagnostics with RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0
 - AI model routing is discovered at review-run start by `scripts/discover-ai-models.sh`; it writes `.omx/model-routing/latest.env` and `.omx/model-routing/latest.md`, then the runner applies provider-specific `--model` flags only for explicit overrides or opt-in auto routing when supported
 - model routing is role-first: choose the role/capability first, then resolve it against the current local CLI/runtime/account surface
@@ -332,10 +332,10 @@ substitute review artifacts:
 - Gemini disabled -> `principal-subagent-test-review`
 - both disabled -> both substitute reviews are required
 
-This substitute is regular coverage only when it produces a usable verdict and
-lists direct file inspection evidence. Summaries use
-`principal_subagent_substitute` or `principal_rotation_with_substitute` for that
-normal-trust path.
+This substitute is degraded coverage, not independent external review. Even with a
+usable verdict and direct file inspection evidence, summaries report
+`principal_subagent_substitute` or `principal_rotation_with_substitute` as
+`proceed_degraded` with degraded trust.
 
 If the substitute cannot run, its artifact is marked skipped or failed and the
 summary falls back to degraded or blocked coverage according to the remaining
@@ -427,7 +427,7 @@ Completed:
 - reviewer failures are classified and stored.
 - reviewer disagreement does not silently proceed.
 - disabled reviewer perspectives are no longer injected into the remaining reviewer prompt.
-- principal-subagent substitute reviews are regular coverage only with a usable verdict and direct file inspection evidence; otherwise they remain degraded or blocked evidence.
+- principal-subagent substitute reviews are degraded coverage (proceed_degraded / degraded trust), not independent external review; without a usable verdict and direct file inspection evidence they remain blocked evidence.
 
 ### Phase 3: Revision loop
 
