@@ -707,7 +707,7 @@ write_disabled_result() {
   cat > "${output_file}" <<MSG
 # ${reviewer^} Review
 
-Skipped: ${reviewer} review is currently disabled.
+Skipped: ${reviewer} review is disabled.
 
 Reason:
 ${reason}

@@ -1489,7 +1489,28 @@ case_review_revision_task_stops_at_cycle_limit() {
   echo "[summary-test] review_revision_task_stops_at_cycle_limit: pass"
 }
 
+case_verify_override() {
+  local dir="${TMP_ROOT}/verify_override"
+  mkdir -p "${dir}"
+
+  write_verdict "${dir}/claude-review-current.md" "approve"
+  write_verdict "${dir}/gemini-review-current.md" "approve_with_notes"
+  write_fallback_summary "${dir}/codex-fallback-summary-current.md" "none"
+  write_run_summary "${dir}" \
+    "${dir}/claude-review-current.md" \
+    "${dir}/gemini-review-current.md" \
+    "${dir}/missing-architect.md" \
+    "${dir}/missing-test.md" \
+    "${dir}/codex-fallback-summary-current.md"
+
+  # A recorded verify-failure override must force what would be a clean
+  # proceed/multi_reviewer/normal into proceed_degraded with degraded trust.
+  AI_AUTO_VERIFY_FAILED_OVERRIDE=1 AI_AUTO_VERIFY_FAILED_OVERRIDE_BY=tester AI_AUTO_VERIFY_FAILED_OVERRIDE_REASON="known unrelated" \
+    assert_summary "verify_override" "proceed_degraded" "multi_reviewer" 0
+}
+
 case_multi_reviewer
+case_verify_override
 case_single_external_plus_codex
 case_codex_only_degraded
 case_principal_subagent_substitute

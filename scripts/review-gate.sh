@@ -3,6 +3,10 @@ set -euo pipefail
 
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
+# Clear any stale verify-failure override marker at gate start so an override can
+# only ever apply to the run that explicitly sets it (written later, only on an
+# approved verify failure). Prevents a prior run's override leaking forward.
+rm -f .omx/state/verify-override.env
 
 # Concurrency guard: warn / soft-block when another live session shares this working tree
 # (prefer one git worktree per terminal — aiwt <name>). Released on every exit path.
@@ -216,6 +220,45 @@ verify_only_diff_scope_ready() {
   esac
 }
 
+write_verify_failed_blocked_verdict() {
+  local verify_status="$1"
+  local timestamp verdict_file
+  timestamp="$(date +%Y%m%dT%H%M%S)"
+  mkdir -p .omx/review-results
+  verdict_file=".omx/review-results/review-verdict-${timestamp}.md"
+
+  cat > "${verdict_file}" <<EOF
+# AI Review Verdict
+
+Generated at: $(date -Iseconds)
+
+## Short Summary
+
+- decision: blocked
+- reason: verify_failed (verify.sh exit ${verify_status})
+- coverage: none
+- trust: blocked_or_needs_attention
+- active_principal: ${ACTIVE_PRINCIPAL:-unknown}
+- missing_or_unusable_reviewers: not_evaluated
+- verify_override: none
+- authority: blocked is not commit approval. Fix verify.sh, or re-run with both AI_AUTO_VERIFY_OVERRIDE_REASON and AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY to proceed degraded.
+
+## Final Decision
+
+blocked
+
+## Decision Reason
+
+verify.sh failed with exit ${verify_status}; the AI review panel was not run. See ${VERIFY_OUTPUT_FILE} for the failing output.
+
+## Next Step
+
+Fix the verification failure and re-run ./scripts/review-gate.sh. To proceed past a known-unrelated failure, re-run with BOTH AI_AUTO_VERIFY_OVERRIDE_REASON="..." and AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="..."; the result is recorded as proceed_degraded with a verify_override note, never a clean proceed.
+EOF
+
+  echo "[gate] blocked verdict written (verify failed, exit ${verify_status}): ${verdict_file}"
+}
+
 write_verify_only_skip_verdict() {
   local timestamp verdict_file summary_file run_file scopes
   timestamp="$(date +%Y%m%dT%H%M%S)"
@@ -390,6 +433,7 @@ if [ "${REVIEW_DECISION_GATE:-0}" = "1" ]; then
 fi
 
 echo "[gate] running verification..."
+set +e
 env \
   -u RUN_CLAUDE_REVIEW \
   -u REVIEW_CONTEXT_DETAIL \
@@ -399,12 +443,51 @@ env \
   AI_AUTO_IN_REVIEW_GATE=1 \
   AI_AUTO_VERIFY_SCOPE=product \
   ./scripts/verify.sh 2>&1 | tee "$VERIFY_OUTPUT_FILE"
+verify_status="${PIPESTATUS[0]}"
+set -e
+
+# Red-signal handling: a failed verify.sh must never silently turn into a proceed.
+# Default: record an explicit `blocked` verdict (not an opaque set -e crash that
+# pushed operators to --no-verify). Override: proceed only when BOTH a recorded
+# reason and a separate approver token are supplied; that path is loud, recorded,
+# and forced to proceed_degraded by summarize-ai-reviews (never a clean proceed).
+if [ "${verify_status}" -ne 0 ]; then
+  verify_override_reason="${AI_AUTO_VERIFY_OVERRIDE_REASON:-}"
+  verify_override_by="${AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY:-}"
+  if [ -z "${verify_override_reason}" ] || [ -z "${verify_override_by}" ]; then
+    echo "[gate] verification FAILED (exit ${verify_status}); recording blocked verdict and stopping." >&2
+    write_verify_failed_blocked_verdict "${verify_status}"
+    review_gate_housekeeping 1
+    echo "[gate] complete"
+    exit 1
+  fi
+  echo "[gate] ===================================================================" >&2
+  echo "[gate] WARNING: verify.sh FAILED (exit ${verify_status}) and is being OVERRIDDEN." >&2
+  echo "[gate]   approved_by: ${verify_override_by}" >&2
+  echo "[gate]   reason: ${verify_override_reason}" >&2
+  echo "[gate]   The verdict will be recorded as proceed_degraded with a verify_override" >&2
+  echo "[gate]   note. This is NOT a clean pass." >&2
+  echo "[gate] ===================================================================" >&2
+  export AI_AUTO_VERIFY_FAILED_OVERRIDE=1
+  export AI_AUTO_VERIFY_FAILED_OVERRIDE_REASON="${verify_override_reason}"
+  export AI_AUTO_VERIFY_FAILED_OVERRIDE_BY="${verify_override_by}"
+  # Persist the override so it survives the REVIEW_EXECUTION_MODE=external path,
+  # where the generated runner invokes summarize-ai-reviews.sh in a separate
+  # process that does not inherit the exported env. A file keyed in .omx/state is
+  # read by summarize as the override source of truth. Cleared at gate start so a
+  # stale override can never apply to a later, unrelated run.
+  mkdir -p .omx/state
+  {
+    printf 'reason=%s\n' "${verify_override_reason}"
+    printf 'approved_by=%s\n' "${verify_override_by}"
+  } > .omx/state/verify-override.env
+fi
 
 echo "[gate] collecting review context for diff-scope policy..."
 ./scripts/collect-review-context.sh
 print_diff_scope_gate
 
-if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && verify_only_diff_scope_ready; then
+if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" != "1" ] && verify_only_diff_scope_ready; then
   echo "[gate] review skipped: docs-only"
   write_verify_only_skip_verdict
   review_gate_housekeeping 0
@@ -419,6 +502,7 @@ fi
 # R3: an integration-only pass is mandatory — it must NOT be short-circuited by an
 # exact-match skip, so the cross-task interaction review always runs.
 if [ "${REVIEW_INTEGRATION_ONLY:-0}" != "1" ] \
+   && [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" != "1" ] \
    && [ "${REVIEW_PROVENANCE_SKIP:-1}" = "1" ] \
    && [ "$(review_provenance_decision)" = "skip" ]; then
   echo "[gate] review skipped: provenance exact-match (carrying prior approval)"

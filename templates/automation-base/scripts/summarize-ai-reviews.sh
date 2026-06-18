@@ -1174,6 +1174,31 @@ if [ "${FINAL_DECISION}" = "proceed" ] && { [ "${REVIEW_COVERAGE}" = "principal_
   FINAL_DECISION="proceed_degraded"
 fi
 
+# Verify-failure override: review-gate proceeded past a failed verify.sh only with
+# a recorded reason + approver. The marker reaches us via env (inline gate) OR via
+# .omx/state/verify-override.env (the external-runner path, where exported env does
+# not cross the generated runner boundary). Either source: never a clean proceed.
+VERIFY_OVERRIDE_ACTIVE=0
+VERIFY_OVERRIDE_BY=""
+VERIFY_OVERRIDE_REASON=""
+if [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" = "1" ]; then
+  VERIFY_OVERRIDE_ACTIVE=1
+  VERIFY_OVERRIDE_BY="${AI_AUTO_VERIFY_FAILED_OVERRIDE_BY:-}"
+  VERIFY_OVERRIDE_REASON="${AI_AUTO_VERIFY_FAILED_OVERRIDE_REASON:-}"
+elif [ -f .omx/state/verify-override.env ]; then
+  VERIFY_OVERRIDE_ACTIVE=1
+  VERIFY_OVERRIDE_BY="$(sed -n 's/^approved_by=//p' .omx/state/verify-override.env 2>/dev/null | head -n 1)"
+  VERIFY_OVERRIDE_REASON="$(sed -n 's/^reason=//p' .omx/state/verify-override.env 2>/dev/null | head -n 1)"
+fi
+if [ "${VERIFY_OVERRIDE_ACTIVE}" = "1" ] && [ "${FINAL_DECISION}" = "proceed" ]; then
+  FINAL_DECISION="proceed_degraded"
+fi
+
+VERIFY_OVERRIDE_FIELD="none"
+if [ "${VERIFY_OVERRIDE_ACTIVE}" = "1" ]; then
+  VERIFY_OVERRIDE_FIELD="verify_failed; approved_by=${VERIFY_OVERRIDE_BY:-unknown}; reason=${VERIFY_OVERRIDE_REASON:-unspecified}"
+fi
+
 TRUST_LEVEL="degraded"
 if { [ "${REVIEW_COVERAGE}" = "multi_reviewer" ] || [ "${REVIEW_COVERAGE}" = "principal_rotation" ]; } && [ "${FINAL_DECISION}" = "proceed" ]; then
   TRUST_LEVEL="normal"
@@ -1198,6 +1223,7 @@ Generated at: $(date -Iseconds)
 - trust: ${TRUST_LEVEL}
 - active_principal: ${ACTIVE_PRINCIPAL}
 - missing_or_unusable_reviewers: ${MISSING_REVIEWERS}
+- verify_override: ${VERIFY_OVERRIDE_FIELD}
 - authority: ${FINAL_DECISION} is not commit approval unless normal verification and user commit approval are also satisfied.
 
 ## Final Decision

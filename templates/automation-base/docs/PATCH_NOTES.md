@@ -4,6 +4,21 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.4
+
+- red-signal handling at the review gate (`review-gate.sh` + `summarize-ai-reviews.sh`):
+  a failed `verify.sh` no longer aborts the gate opaquely (the opaque `set -e`
+  crash gave no recorded verdict and pushed operators to `--no-verify`). The gate
+  now captures the real verify exit status (`PIPESTATUS`) and, on failure, records
+  an explicit `decision: blocked` / `reason: verify_failed` verdict without running
+  the AI panel. To proceed past a known-unrelated failure the gate requires BOTH
+  `AI_AUTO_VERIFY_OVERRIDE_REASON` and `AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY`; that
+  path warns loudly, still runs the panel, and `summarize-ai-reviews.sh` forces the
+  result to `proceed_degraded` with degraded trust plus a recorded `verify_override:`
+  field in the verdict — never a clean proceed. Closes the silent red->proceed /
+  `--no-verify` gap (7-day-audit finding); block-vs-recorded-override resolved by
+  AI council. verify-machinery and test-review-summary cover both paths.
+
 ## 2026.06.18.3
 
 - transient reviewer-disable auto-recovery (`run-ai-reviews.sh`): when an external

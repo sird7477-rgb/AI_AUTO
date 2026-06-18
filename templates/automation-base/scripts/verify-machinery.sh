@@ -3641,6 +3641,52 @@ echo "[verify] testing review-gate captures failed verdict drafts before exiting
   grep -q "claude:request_changes" "${failed_draft}"
 )
 
+echo "[verify] testing review-gate blocks a failed verify.sh and allows a recorded override..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_rg_verifyfail_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_rg_verifyfail_tmp EXIT
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  mkdir -p scripts .omx/review-results
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
+  cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
+  printf '#!/usr/bin/env bash\necho "verify fixture FAILING"\nexit 1\n' > scripts/verify.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "summarize fixture ran"\n' > scripts/summarize-ai-reviews.sh
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+
+  # No override: a failed verify.sh must block, record a blocked verdict, and NOT
+  # run the AI panel (no silent red->proceed).
+  set +e
+  ./scripts/review-gate.sh > "${tmp_dir}/noovr.out" 2>&1
+  noovr_status=$?
+  set -e
+  [ "${noovr_status}" -ne 0 ]
+  ! grep -q "review fixture ran" "${tmp_dir}/noovr.out"
+  blocked_verdict="$(ls -t .omx/review-results/review-verdict-*.md 2>/dev/null | head -n1)"
+  test -n "${blocked_verdict}"
+  grep -q "decision: blocked" "${blocked_verdict}"
+  grep -q "verify_failed" "${blocked_verdict}"
+
+  # Recorded reason + approver: proceeds past verify (panel runs) with a loud warning.
+  rm -f .omx/review-results/review-verdict-*.md
+  set +e
+  AI_AUTO_VERIFY_OVERRIDE_REASON="known unrelated harness quirk" AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="tester" \
+    ./scripts/review-gate.sh > "${tmp_dir}/ovr.out" 2>&1
+  set -e
+  grep -q "being OVERRIDDEN" "${tmp_dir}/ovr.out"
+  grep -q "review fixture ran" "${tmp_dir}/ovr.out"
+  # The override is persisted to a marker file so it survives the external-runner
+  # path (where summarize runs in a separate process without the exported env).
+  test -f .omx/state/verify-override.env
+  grep -q "approved_by=tester" .omx/state/verify-override.env
+)
+
 echo "[verify] testing review-gate verify-only diff skip..."
 (
   tmp_dir="$(mktemp -d)"
