@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.5
+
+- DOC_BUDGET template-patch reason quality (`doc-budget.sh`): the
+  `DOC_BUDGET_TEMPLATE_PATCH=1` budget escape hatch now requires a SUBSTANTIVE
+  `DOC_BUDGET_TEMPLATE_PATCH_REASON` (>= 12 non-space chars), rejecting trivial or
+  recycled placeholder reasons in addition to the existing empty-reason check.
+  Addresses the 7-day-audit finding that the bypass sometimes carried recycled
+  boilerplate. verify-machinery asserts a too-short reason fails closed.
+
 ## 2026.06.18.4
 
 - red-signal handling at the review gate (`review-gate.sh` + `summarize-ai-reviews.sh`):

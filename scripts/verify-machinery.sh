@@ -457,6 +457,13 @@ echo "[verify] testing guidance document budget accounting..."
     exit 1
   fi
   grep -q "requires DOC_BUDGET_TEMPLATE_PATCH_REASON" "${tmp_dir}/budget-template-patch-noreason.out"
+  # A trivially short / placeholder reason must also fail closed (reject recycled
+  # boilerplate; require a substantive justification).
+  if env DOC_BUDGET_TEMPLATE_PATCH=1 DOC_BUDGET_TEMPLATE_PATCH_REASON='ok' ./scripts/doc-budget.sh > "${tmp_dir}/budget-template-patch-shortreason.out" 2>&1; then
+    echo "[verify] doc-budget accepted template patch mode with a too-short reason"
+    exit 1
+  fi
+  grep -q "too short" "${tmp_dir}/budget-template-patch-shortreason.out"
 )
 
 echo "[verify] testing guidance document budget cumulative-vs-base accounting..."
