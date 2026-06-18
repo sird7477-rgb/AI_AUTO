@@ -3865,7 +3865,12 @@ set -euo pipefail
 echo "summarize should not run for verify-only docs diffs" > ../called-summary
 exit 64
 SH
-  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  cat > scripts/verify-machinery.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "machinery ran" > ../called-machinery
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh scripts/verify-machinery.sh
   printf 'baseline\n' > docs/note.md
   git add .gitignore scripts docs
   git commit -q -m baseline
@@ -3877,6 +3882,10 @@ SH
   grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
   test ! -f "${tmp_dir}/called-reviewer"
   test ! -f "${tmp_dir}/called-summary"
+  # #3 negative: a docs-only change must NOT trigger machinery even though the
+  # harness is present -- proves the gate keys on the scripts/ diff, not mere
+  # harness presence.
+  test ! -f "${tmp_dir}/called-machinery"
   verdict="$(find .omx/review-results -maxdepth 1 -type f -name 'review-verdict-*.md' | head -1)"
   test -f "${verdict}"
   grep -q "verify_only_diff_scope" "${verdict}"
@@ -3920,7 +3929,12 @@ set -euo pipefail
 echo "summary ran" > ../called-summary
 exit 0
 SH
-  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  cat > scripts/verify-machinery.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "machinery ran" > ../called-machinery
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh scripts/verify-machinery.sh
   printf '#!/usr/bin/env bash\necho baseline\n' > scripts/changed.sh
   chmod +x scripts/changed.sh
   git add .gitignore scripts
@@ -3932,7 +3946,25 @@ SH
 
   test -f "${tmp_dir}/called-reviewer"
   test -f "${tmp_dir}/called-summary"
+  # #3: a scripts/ change must also trigger the machinery-scope verify in the gate
+  # (the harness stub writes the sentinel only when the gate actually invokes it).
+  test -f "${tmp_dir}/called-machinery"
   ! grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
+
+  # #3 (Codex review): a hook-only change (templates/automation-base/hooks/**) must
+  # ALSO trigger machinery -- hooks are machinery surface (verify-machinery has
+  # dedicated hook tests), so a hook-only regression must not bypass the harness.
+  # Revert the scripts change first so this scenario is genuinely hook-only.
+  git checkout -q -- scripts/changed.sh
+  mkdir -p templates/automation-base/hooks
+  printf '#!/usr/bin/env bash\necho baseline-hook\n' > templates/automation-base/hooks/pre-commit
+  git add templates/automation-base/hooks/pre-commit
+  git commit -q -m hook-baseline
+  rm -f "${tmp_dir}/called-machinery"
+  printf '#!/usr/bin/env bash\necho changed-hook\n' > templates/automation-base/hooks/pre-commit
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-hook.out"
+  test -f "${tmp_dir}/called-machinery"
 )
 
 echo "[verify] testing knowledge note helper..."
@@ -5119,6 +5151,28 @@ echo "[verify] testing automation template installer..."
     echo "[verify] pre-commit hook blocked a test-less repo (pytest exit 5)"
     exit 1
   fi
+  # #3: when a machinery harness is present AND a scripts/ change is staged, the
+  # pre-commit hook runs the harness (source-repo-only path; verify-machinery.sh is
+  # not installed into derived projects, so the guard skips it there). Stub the
+  # harness to a sentinel; staging a scripts/ change must invoke it.
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho machinery > "%s/hr-machinery-ran"\n' "${tmp_dir}" > "${hr_dir}/scripts/verify-machinery.sh"
+  chmod +x "${hr_dir}/scripts/verify-machinery.sh"
+  ( cd "${hr_dir}" && git add scripts/verify-machinery.sh && "${hr_hooks}/pre-commit" ) >/dev/null 2>&1
+  test -f "${tmp_dir}/hr-machinery-ran"
+  rm -f "${tmp_dir}/hr-machinery-ran"
+  # #3 (Codex review): a hook-only staged change (templates/automation-base/hooks/**)
+  # must ALSO run the harness -- the harness stub remains present from above.
+  ( cd "${hr_dir}" && git reset -q && mkdir -p templates/automation-base/hooks \
+      && printf '# changed hook\n' > templates/automation-base/hooks/pre-commit \
+      && git add templates/automation-base/hooks/pre-commit && "${hr_hooks}/pre-commit" ) >/dev/null 2>&1
+  test -f "${tmp_dir}/hr-machinery-ran"
+  rm -f "${tmp_dir}/hr-machinery-ran"
+  # negative: with the harness present but NO scripts/ change staged, the hook runs
+  # plain pytest (not the harness). Reset the index, stage a docs-only change.
+  ( cd "${hr_dir}" && git reset -q && mkdir -p docs && printf 'x\n' > docs/n.md && git add docs/n.md \
+      && PATH="${fakebin}:${PATH}" "${hr_hooks}/pre-commit" ) >/dev/null 2>&1 || true
+  test ! -f "${tmp_dir}/hr-machinery-ran"
+  ( cd "${hr_dir}" && git reset -q )
   # P3: transient reviewer disables (usage_limit/network) auto-expire after the
   # cooldown so the lane self-heals; persistent and still-fresh disables are kept.
   rar="${PWD}/scripts/run-ai-reviews.sh"

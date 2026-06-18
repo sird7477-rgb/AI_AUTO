@@ -4,6 +4,25 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.7
+
+- machinery-scope verify on automation-script changes (`review-gate.sh` +
+  `hooks/pre-commit`, + template mirrors): the product-scope gate verify and the
+  pre-commit pytest run never exercised the `verify-machinery.sh` harness, so a
+  regression in the automation scripts (the P3 reviewer-text-drift class) slipped
+  past BOTH the gate and the commit hook. When a change touches the automation
+  machinery surface -- `scripts/**`, `templates/automation-base/scripts/**`, or
+  `templates/automation-base/hooks/**` (the hooks are machinery the harness
+  dedicatedly tests) -- AND the harness is present (the AI_AUTO source repo only --
+  it is not installed into derived projects, so the guard makes this a no-op there),
+  the gate now runs the harness after a green product verify
+  and folds its status into the verify result (a machinery failure takes the same
+  recorded-`blocked` / override path as any other red verify), and the pre-commit
+  hook runs the harness in place of the plain pytest run (the harness runs pytest
+  as its first step, so it supersedes rather than doubles it). verify-machinery
+  asserts both the positive (scripts change -> harness runs) and negative
+  (docs-only -> harness skipped despite presence) cases for the gate and the hook.
+
 ## 2026.06.18.6
 
 - worktree-safe pre-commit hook exit-5 fix (`hooks/pre-commit`): `pytest` exit 5

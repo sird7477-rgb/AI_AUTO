@@ -446,6 +446,43 @@ env \
 verify_status="${PIPESTATUS[0]}"
 set -e
 
+# #3: the product-scope verify above (and the pre-commit pytest hook) never run the
+# machinery harness, so a regression in the automation scripts -- the P3
+# write_disabled_result text-drift class -- slips past both the gate and the hook.
+# When this change touches the automation scripts AND a machinery harness is present
+# (the AI_AUTO source repo only: verify-machinery.sh is not installed into derived
+# projects), run it too and fold its status into verify_status so a machinery
+# failure takes the same recorded-blocked / override path as any other red verify.
+if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ]; then
+  if { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
+       | grep -Eq '^(scripts/|templates/automation-base/scripts/|templates/automation-base/hooks/)'; then
+    echo "[gate] automation scripts changed; running machinery-scope verify..."
+    set +e
+    # Run the harness as a clean standalone: scrub the gate-context REVIEW_* vars
+    # (the REVIEW_DECISION_GATE block exports REVIEW_TARGETED_RECHECK=0 etc.) so they
+    # do NOT leak into verify-machinery's own env-sensitive review-gate sub-tests and
+    # flip their expected behavior. (verify-in-gate-flakes-under-leaked-env.)
+    env \
+      -u REVIEW_DECISION_GATE \
+      -u REVIEW_CONTEXT_DETAIL \
+      -u REVIEW_PROVENANCE_SKIP \
+      -u REVIEW_INTEGRATION_ONLY \
+      -u REVIEW_TARGETED_RECHECK \
+      -u REVIEW_INCLUDE_UNTRACKED_CONTENT \
+      -u REVIEW_UNTRACKED_ALLOWLIST \
+      -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
+      -u RUN_CLAUDE_REVIEW \
+      -u AI_AUTO_IN_REVIEW_GATE \
+      ./scripts/verify-machinery.sh 2>&1 | tee -a "$VERIFY_OUTPUT_FILE"
+    machinery_status="${PIPESTATUS[0]}"
+    set -e
+    if [ "${machinery_status}" -ne 0 ]; then
+      echo "[gate] machinery-scope verify FAILED (exit ${machinery_status})." >&2
+      verify_status="${machinery_status}"
+    fi
+  fi
+fi
+
 # Red-signal handling: a failed verify.sh must never silently turn into a proceed.
 # Default: record an explicit `blocked` verdict (not an opaque set -e crash that
 # pushed operators to --no-verify). Override: proceed only when BOTH a recorded

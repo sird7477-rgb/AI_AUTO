@@ -41,4 +41,19 @@ pre_commit_run_pytest() {
   fi
   return "${rc}"
 }
-pre_commit_run_pytest
+
+# #3: pytest does not reach the machinery harness (the bash verify-machinery.sh
+# suite), so a regression in the automation scripts slips past the commit gate.
+# When this commit's STAGED changes touch the automation scripts AND a machinery
+# harness is present (the AI_AUTO source repo only -- verify-machinery.sh is not
+# installed into derived projects), run the harness instead: it runs the pytest
+# suite as its first step (so it supersedes the plain run) and also covers the bash
+# machinery tests pytest cannot reach. Fail-closed via set -e.
+if [ -f scripts/verify-machinery.sh ] \
+   && git diff --cached --name-only 2>/dev/null \
+        | grep -Eq '^(scripts/|templates/automation-base/scripts/|templates/automation-base/hooks/)'; then
+  echo "[pre-commit] automation scripts staged; running machinery verify (includes pytest)..."
+  ./scripts/verify-machinery.sh
+else
+  pre_commit_run_pytest
+fi
