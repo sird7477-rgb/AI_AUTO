@@ -429,8 +429,8 @@ workflow:
   `--fail-on-active` if active TODO or policy-attention items remain.
 - `docker`: required for the final API/Postgres smoke check in `verify.sh`.
 - `claude` and `agy`: used by `review-gate`; if a reviewer is unavailable, the
-  active principal's subagent substitute covers that lane when it can produce a
-  usable verdict with direct file inspection evidence.
+  active principal's subagent substitute covers that lane as degraded coverage
+  (`proceed_degraded` / degraded trust), not independent external review.
 
 Benchmark evidence is observational. It does not replace `verify.sh` or
 `review-gate`.

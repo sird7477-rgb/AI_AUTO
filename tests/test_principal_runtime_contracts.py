@@ -309,7 +309,7 @@ def test_principal_rotation_request_changes_blocks_before_degraded(tmp_path: Pat
     assert "- coverage: principal_rotation" in result.stdout
 
 
-def test_codex_principal_subagent_substitute_is_regular_coverage(tmp_path: Path) -> None:
+def test_codex_principal_subagent_substitute_is_degraded_coverage(tmp_path: Path) -> None:
     out_dir = tmp_path / "review-results"
     out_dir.mkdir()
 
@@ -332,14 +332,14 @@ def test_codex_principal_subagent_substitute_is_regular_coverage(tmp_path: Path)
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "- decision: proceed" in result.stdout
+    assert "- decision: proceed_degraded" in result.stdout
     assert "- reason: principal_subagent_substitute_approval" in result.stdout
     assert "- coverage: principal_subagent_substitute" in result.stdout
-    assert "- trust: normal" in result.stdout
+    assert "- trust: degraded" in result.stdout
     assert "missing_or_unusable_reviewers: none" in result.stdout
 
 
-def test_codex_principal_two_substitutes_are_regular_coverage(tmp_path: Path) -> None:
+def test_codex_principal_two_substitutes_are_degraded_coverage(tmp_path: Path) -> None:
     out_dir = tmp_path / "review-results"
     out_dir.mkdir()
 
@@ -362,13 +362,13 @@ def test_codex_principal_two_substitutes_are_regular_coverage(tmp_path: Path) ->
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "- decision: proceed" in result.stdout
+    assert "- decision: proceed_degraded" in result.stdout
     assert "- coverage: principal_subagent_substitute" in result.stdout
-    assert "- trust: normal" in result.stdout
+    assert "- trust: degraded" in result.stdout
     assert "missing_or_unusable_reviewers: none" in result.stdout
 
 
-def test_claude_principal_substitute_keeps_rotation_regular(tmp_path: Path) -> None:
+def test_claude_principal_substitute_rotation_is_degraded(tmp_path: Path) -> None:
     out_dir = tmp_path / "review-results"
     out_dir.mkdir()
 
@@ -391,10 +391,10 @@ def test_claude_principal_substitute_keeps_rotation_regular(tmp_path: Path) -> N
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "- decision: proceed" in result.stdout
+    assert "- decision: proceed_degraded" in result.stdout
     assert "- reason: principal_rotation_with_substitute_approval" in result.stdout
     assert "- coverage: principal_rotation_with_substitute" in result.stdout
-    assert "- trust: normal" in result.stdout
+    assert "- trust: degraded" in result.stdout
     assert "missing_or_unusable_reviewers: none" in result.stdout
 
 
@@ -421,10 +421,10 @@ def test_gemini_principal_substitute_keeps_architect_lane_distinct(tmp_path: Pat
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "- decision: proceed" in result.stdout
+    assert "- decision: proceed_degraded" in result.stdout
     assert "- reason: principal_rotation_with_substitute_approval" in result.stdout
     assert "- coverage: principal_rotation_with_substitute" in result.stdout
-    assert "- trust: normal" in result.stdout
+    assert "- trust: degraded" in result.stdout
     assert "missing_or_unusable_reviewers: none" in result.stdout
 
 

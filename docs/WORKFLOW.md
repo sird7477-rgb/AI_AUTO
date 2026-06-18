@@ -164,9 +164,9 @@ Claude 또는 Gemini가 세션 제한, 주간 제한, quota/rate limit 등으로
 
 한 리뷰어가 disabled 상태이면 남은 리뷰어 프롬프트는 그대로 유지하고,
 disabled 역할은 활성 주관자의 subagent substitute가 담당한다. 이 대체
-리뷰는 usable verdict와 `Direct File Inspection` 증거가 있을 때 정규
-coverage로 인정된다. substitute가 실행되지 못하거나 직접 파일 확인이
-없으면 기존 degraded/blocked 경로로 보고하고, `proceed_degraded`인 경우
+리뷰는 정규 외부 리뷰가 아니라 항상 degraded coverage다. usable verdict와
+`Direct File Inspection` 증거가 있어도 `proceed_degraded`(degraded trust)로
+보고하고, 그것조차 없으면 blocked로 남긴다. `proceed_degraded`인 경우
 완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
 
 루프 내 역할 경계:
@@ -182,8 +182,9 @@ coverage로 인정된다. substitute가 실행되지 못하거나 직접 파일 
   나머지 외부 런타임과 Codex가 같은 산출물 경로에서 reviewer rotation을
   구성한다.
 - principal-subagent substitute 리뷰는 expected reviewer가 빠졌을 때 활성
-  주관자의 subagent가 맡는 정규 대체 lane이다. usable verdict와 직접 파일
-  확인이 없으면 정규 승인이 아니라 degraded/blocked 상태로 남긴다.
+  주관자의 subagent가 맡는 대체 lane이며, 정규 외부 리뷰가 아니라 항상
+  degraded coverage다(usable verdict·직접 파일 확인이 있어도 `proceed_degraded`,
+  없으면 blocked).
 
 Ralph/완료 루프는 요청 범위 안에서 발견한 미승격 규칙, 문서/도구 괴리,
 누락 도구, 계획만 있고 정규화되지 않은 항목을 가능한 한 같은 루프에서

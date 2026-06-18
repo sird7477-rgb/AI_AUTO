@@ -1583,8 +1583,9 @@ principal_subagent_substitute
 ## Independence Boundary
 
 When a reviewer is unavailable, the active principal's subagent covers that lane
-as a regular substitute reviewer. This is not degraded fallback coverage when
-the substitute review has a usable verdict and direct file inspection evidence.
+as a substitute reviewer. This is degraded coverage, not independent external
+review: even with a usable verdict and direct file inspection evidence the run is
+reported as proceed_degraded with degraded trust.
 
 ## Assigned Substitute Reviewers
 MSG
@@ -1631,8 +1632,9 @@ MSG
 
 ## Gate Policy
 
-Principal subagent substitute reviews are regular review coverage when they
-produce an approval verdict and direct file inspection evidence.
+Principal subagent substitute reviews are degraded coverage, not independent
+external review. Even with an approval verdict and direct file inspection
+evidence, the run is reported as proceed_degraded with degraded trust.
 MSG
     return 0
   fi
@@ -1695,9 +1697,9 @@ You are running as the active principal runtime's subagent substitute reviewer.
 Active principal: ${ACTIVE_PRINCIPAL}
 Unavailable reviewer lane: ${disabled_reviewer}
 
-This is regular principal-subagent substitute coverage for this review gate, not
-degraded fallback coverage, when you provide a usable verdict and direct file
-inspection evidence.
+This is principal-subagent substitute coverage for this review gate: degraded
+coverage, not independent external review. Even with a usable verdict and direct
+file inspection evidence, the run is reported as proceed_degraded with degraded trust.
 
 Focus:
 ${focus}

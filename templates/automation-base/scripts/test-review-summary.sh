@@ -274,7 +274,7 @@ assert_summary() {
     exit 1
   fi
 
-  if [ "${decision}" = "proceed" ] && { { [ "${coverage}" != "multi_reviewer" ] && [ "${coverage}" != "principal_rotation" ] && [ "${coverage}" != "principal_subagent_substitute" ] && [ "${coverage}" != "principal_rotation_with_substitute" ]; } || [ "${trust}" != "normal" ]; }; then
+  if [ "${decision}" = "proceed" ] && { { [ "${coverage}" != "multi_reviewer" ] && [ "${coverage}" != "principal_rotation" ]; } || [ "${trust}" != "normal" ]; }; then
     echo "[summary-test] ${name}: proceed must require regular review coverage and normal trust"
     cat "${summary_file}"
     exit 1
@@ -365,7 +365,7 @@ case_principal_subagent_substitute() {
     "${dir}/missing-test.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  assert_summary "principal_subagent_substitute" "proceed" "principal_subagent_substitute" 0
+  assert_summary "principal_subagent_substitute" "proceed_degraded" "principal_subagent_substitute" 0
 }
 
 case_principal_subagent_two_substitutes() {
@@ -384,7 +384,7 @@ case_principal_subagent_two_substitutes() {
     "${dir}/codex-test-current.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  assert_summary "principal_subagent_two_substitutes" "proceed" "principal_subagent_substitute" 0
+  assert_summary "principal_subagent_two_substitutes" "proceed_degraded" "principal_subagent_substitute" 0
 }
 
 case_principal_inferred_from_run_summary() {
@@ -447,7 +447,7 @@ case_principal_rotation_with_substitute() {
     "${dir}/codex-test-current.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  AI_AUTO_PRINCIPAL=claude assert_summary "principal_rotation_with_substitute" "proceed" "principal_rotation_with_substitute" 0
+  AI_AUTO_PRINCIPAL=claude assert_summary "principal_rotation_with_substitute" "proceed_degraded" "principal_rotation_with_substitute" 0
 }
 
 case_gemini_principal_rotation_with_substitute() {
@@ -466,7 +466,7 @@ case_gemini_principal_rotation_with_substitute() {
     "${dir}/codex-test-current.md" \
     "${dir}/codex-fallback-summary-current.md"
 
-  AI_AUTO_PRINCIPAL=gemini assert_summary "gemini_principal_rotation_with_substitute" "proceed" "principal_rotation_with_substitute" 0
+  AI_AUTO_PRINCIPAL=gemini assert_summary "gemini_principal_rotation_with_substitute" "proceed_degraded" "principal_rotation_with_substitute" 0
 }
 
 case_failed_external_codex_only_degraded() {

@@ -37,7 +37,8 @@ principal rotation, not degraded fallback coverage.
 ## Principal Subagent Substitute
 
 If an expected reviewer is unavailable, the active principal's subagent covers
-that reviewer lane as the regular substitute reviewer for the run:
+that reviewer lane as a degraded substitute reviewer for the run (reported as
+proceed_degraded with degraded trust, not independent external review):
 
 ```text
 codex + unavailable claude/gemini -> codex principal-subagent review
@@ -45,9 +46,9 @@ claude + unavailable gemini       -> claude substitute review plus codex reviewe
 gemini + unavailable claude       -> gemini substitute review plus codex reviewer
 ```
 
-Substitute coverage is normal only when the artifact has a usable verdict and a
-`Direct File Inspection` section. Otherwise the gate reports degraded or blocked
-coverage.
+Substitute coverage is always degraded, not independent external review. With a
+usable verdict and a `Direct File Inspection` section it is reported as
+proceed_degraded with degraded trust; otherwise the gate reports blocked coverage.
 
 ## Artifact Invariance
 

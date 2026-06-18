@@ -4,6 +4,23 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.1
+
+- review-gate substitute-trust honesty fix (`summarize-ai-reviews.sh`): coverage
+  that relies on the active principal's own subagent substitute for a
+  decision-relevant lane (`principal_subagent_substitute`,
+  `principal_rotation_with_substitute`) is no longer reported as `proceed` with
+  `normal` trust. It is now downgraded to `proceed_degraded` with `degraded`
+  trust, because a principal reviewing via its own subagent is not independent
+  external review. The `Principal/Codex Review Coverage` field renames
+  `principal_subagent_substitute_regular` -> `principal_subagent_substitute_degraded`.
+  Normal trust now requires `multi_reviewer` or `principal_rotation` coverage
+  (no self-substituted lane). `test-review-summary.sh` updated to assert the
+  degraded outcome, and its `proceed` invariant guard no longer admits substitute
+  coverages. Closes the substitute-trust overstatement flagged by the 7-day audit
+  and by the Codex 2026-06-17 review-gate self-audit (rec #3). Docs:
+  `MULTI_AI_COLLABORATION.md`, `README.md`.
+
 ## 2026.06.11.2
 
 - `automation-doctor.sh` now checks the `ai-tmux-worktree` global-helper link

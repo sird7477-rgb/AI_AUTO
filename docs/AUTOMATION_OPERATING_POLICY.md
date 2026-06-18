@@ -153,8 +153,9 @@ External reviewers such as Claude and Gemini do not directly control Codex
 native subagents. They may recommend subagent follow-ups, but the leader decides
 whether to spawn them, assigns a narrow task, and reports the result. When an
 expected reviewer is disabled, the active principal's subagent substitute may
-cover that lane as regular review coverage only with a usable verdict and direct
-file inspection evidence. Otherwise the gate reports degraded or blocked coverage.
+cover that lane as degraded coverage, not independent external review. With a
+usable verdict and direct file inspection evidence it is reported as
+proceed_degraded with degraded trust; otherwise the gate reports blocked coverage.
 
 ### Resource-Aware Parallelism
 
