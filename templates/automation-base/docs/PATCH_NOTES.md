@@ -4,6 +4,26 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.2
+
+- worktree-safe git hooks (new `templates/automation-base/hooks/pre-commit` +
+  `post-commit`, installed by `install-automation-template.sh` into the target's
+  real hooks dir; a pre-existing non-AI_AUTO hook is left untouched with a loud
+  warning — fail-closed, never clobbered). The pre-commit hook `unset`s `GIT_DIR`/`GIT_INDEX_FILE`/
+  `GIT_WORK_TREE`/`GIT_PREFIX`/`GIT_COMMON_DIR`/`GIT_NAMESPACE` before running the
+  test suite, so test git subprocesses no longer inherit this repo's GIT_* and
+  corrupt the shared common git dir/index across linked worktrees -- the
+  corruption that pushed sessions to `git commit --no-verify` and left the full
+  suite ungated. When a pytest runner is present the pre-commit hook now runs the
+  suite worktree-safely as an early pre-filter (fail-closed on any test failure);
+  when no runner exists at all it warns and defers to `review-gate.sh`, which
+  remains the authoritative gate of record. The post-commit
+  hook (which still runs under `--no-verify`) warns loudly when no review-gate
+  `proceed`/`proceed_degraded` verdict exists in the last 30 min, making
+  gate-bypassing commits non-silent (it cannot block; git-design limit). Closes
+  the `--no-verify`/ungated-commit gap from the 7-day audit. verify-machinery
+  asserts the installed pre-commit is worktree-safe.
+
 ## 2026.06.18.1
 
 - review-gate substitute-trust honesty fix (`summarize-ai-reviews.sh`): coverage

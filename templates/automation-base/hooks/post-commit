@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# AI_AUTO post-commit guard
+# Advisory post-commit gate-bypass guard.
+#
+# git skips pre-commit (and commit-msg) when a commit uses --no-verify, but
+# post-commit always runs. This makes a gate-bypassing commit non-silent: if no
+# recent review-gate proceed verdict is present, it warns loudly. It cannot block
+# (the commit already exists) -- that is a git-design limit; the goal is to close
+# the "silent --no-verify" gap the AI_AUTO audit flagged.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "${repo_root}" || exit 0
+
+results_dir=".omx/review-results"
+recent_proceed=""
+if [ -d "${results_dir}" ]; then
+  recent_proceed="$(find "${results_dir}" -name 'review-verdict-*.md' -mmin -30 -print0 2>/dev/null \
+    | xargs -0 grep -lE '^- decision: proceed(_degraded)?$' 2>/dev/null | head -n1 || true)"
+fi
+
+if [ -z "${recent_proceed}" ]; then
+  printf '\n\033[33m[post-commit] WARNING: no review-gate proceed verdict found in the last 30 minutes.\033[0m\n' >&2
+  printf '[post-commit] This commit may have bypassed review-gate (e.g. git commit --no-verify).\n' >&2
+  printf '[post-commit] Run ./scripts/review-gate.sh and confirm a proceed/proceed_degraded verdict before pushing.\n' >&2
+fi
+exit 0

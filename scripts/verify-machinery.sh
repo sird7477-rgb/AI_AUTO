@@ -4873,6 +4873,58 @@ echo "[verify] testing automation template installer..."
   test -x "${target_dir}/scripts/record-project-memory.sh"
   test -x "${target_dir}/scripts/run-ai-reviews.sh"
   test -x "${target_dir}/scripts/write-session-checkpoint.sh"
+  test -x "${target_dir}/.git/hooks/pre-commit"
+  test -x "${target_dir}/.git/hooks/post-commit"
+  # worktree-safe: the installed pre-commit must clear inherited GIT_* so test
+  # git subprocesses cannot corrupt the shared common git dir across worktrees.
+  grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/pre-commit"
+  grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/post-commit"
+  # Linked-worktree shape: a worktree's .git is a FILE and hooks live in the
+  # shared common dir. The installer must accept it (rev-parse, not test -d .git)
+  # and land the worktree-safe hooks on the resolved hooks path.
+  wt_root="${tmp_dir}/wtrepo"
+  git -c init.defaultBranch=main init -q "${wt_root}"
+  git -C "${wt_root}" -c user.email=ai@auto.local -c user.name=ai commit -q --allow-empty -m init
+  wt_linked="${tmp_dir}/wtrepo-linked"
+  git -C "${wt_root}" worktree add -q "${wt_linked}"
+  test -f "${wt_linked}/.git"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${wt_linked}" >/dev/null
+  wt_hooks="$(git -C "${wt_linked}" rev-parse --git-path hooks)"
+  case "${wt_hooks}" in /*) : ;; *) wt_hooks="${wt_linked}/${wt_hooks}" ;; esac
+  test -x "${wt_hooks}/pre-commit"
+  grep -q "unset GIT_DIR" "${wt_hooks}/pre-commit"
+  # Fail-closed: a pre-existing non-AI_AUTO hook must be left untouched (never
+  # clobbered), while a hook slot with no pre-existing hook is still installed.
+  fc_dir="${tmp_dir}/failclosed"
+  git -c init.defaultBranch=main init -q "${fc_dir}"
+  fc_hooks="$(git -C "${fc_dir}" rev-parse --git-path hooks)"
+  case "${fc_hooks}" in /*) : ;; *) fc_hooks="${fc_dir}/${fc_hooks}" ;; esac
+  mkdir -p "${fc_hooks}"
+  printf '#!/usr/bin/env bash\n# project custom gate\nexit 0\n' > "${fc_hooks}/pre-commit"
+  chmod +x "${fc_hooks}/pre-commit"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${fc_dir}" >/dev/null 2>&1
+  grep -q "project custom gate" "${fc_hooks}/pre-commit"
+  ! grep -q "unset GIT_DIR" "${fc_hooks}/pre-commit"
+  test -x "${fc_hooks}/post-commit"
+  grep -q "unset GIT_DIR" "${fc_hooks}/post-commit"
+  # The pre-commit hook must FAIL CLOSED when a runner is present and tests fail
+  # (proves it actually runs the verification, not just that the file installed),
+  # and must keep a warn+defer branch for the genuine no-runner case rather than
+  # silently passing tests it never ran.
+  hr_dir="${tmp_dir}/hookrun"
+  git -c init.defaultBranch=main init -q "${hr_dir}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${hr_dir}" >/dev/null 2>&1
+  hr_hooks="$(git -C "${hr_dir}" rev-parse --git-path hooks)"
+  case "${hr_hooks}" in /*) : ;; *) hr_hooks="${hr_dir}/${hr_hooks}" ;; esac
+  fakebin="${tmp_dir}/fakebin"
+  mkdir -p "${fakebin}"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "${fakebin}/pytest"
+  chmod +x "${fakebin}/pytest"
+  if ( cd "${hr_dir}" && PATH="${fakebin}:${PATH}" "${hr_hooks}/pre-commit" ) >/dev/null 2>&1; then
+    echo "[verify] pre-commit hook did not fail closed when the test runner failed"
+    exit 1
+  fi
+  grep -q "Not blocking the commit" "${hr_hooks}/pre-commit"
   test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   test -f "${target_dir}/docs/CHROME_CDP_ACCESS.md"
   test -f "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"

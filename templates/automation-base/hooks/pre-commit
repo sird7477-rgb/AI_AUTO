@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AI_AUTO worktree-safe hook
+# Worktree-safe pre-commit hook.
+#
+# git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE / GIT_PREFIX (and on some
+# versions GIT_COMMON_DIR / GIT_NAMESPACE) into hook processes. The test suite
+# below spawns git in throwaway repos; if those subprocesses inherit this repo's
+# GIT_* they operate on the shared common git dir + index, corrupting git state
+# across every linked worktree -- the documented multi-worktree corruption that
+# pushed sessions to commit with --no-verify and leave the full suite ungated.
+# Clearing them gives the tests a clean git environment so the full suite can
+# gate at commit time safely.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
+
+echo "[pre-commit] running tests before commit..."
+if [ -x ".venv/bin/python" ]; then
+  .venv/bin/python -m pytest -q
+elif command -v pytest >/dev/null 2>&1; then
+  pytest -q
+else
+  echo "[pre-commit] no pytest available (.venv missing and pytest not on PATH);" >&2
+  echo "[pre-commit] cannot gate the test suite at commit. Not blocking the commit," >&2
+  echo "[pre-commit] but run ./scripts/review-gate.sh + ./scripts/verify.sh before pushing." >&2
+fi
