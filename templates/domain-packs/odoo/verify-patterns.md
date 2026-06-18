@@ -64,6 +64,23 @@ popup dispatched with no client crash. Fix a real failure by adding
 `'views': [(False, 'form')]` to the action dict. This is the cheap escaped-defect
 loop: the screen narrows, the local popup run decides.
 
+### Manifest File-Reference Screen
+
+`validation-harness/check-manifest-files.py` checks every changed module's
+`__manifest__.py` and FAILS (`exit 1`) when a `data` / `demo` entry points to a
+file that does not exist in the module. That is a deterministic post-push build
+failure — `odoo -u <module>` and odoo.sh raise `FileNotFoundError` loading the data
+file — so unlike the action-shape screen this is a **fail-closed gate, not
+advisory**: the pre-push hook blocks the push. It needs no docker and is co-installed
+next to the pre-push hook (`.githooks/`, by `aiinit`), so -- unlike the docker
+warm-base validation -- it runs even when `ODOO_HARNESS_DIR` is unset, before the
+harness/docker skips. That closes the gap where a stale-path or never-committed data
+file reached odoo.sh because the warm-base validation was skipped.
+Only `data`/`demo` (exact module-relative paths) are checked; `assets` entries are
+addons-root-relative and may be globs, so the warm-base/web build stays their
+oracle. Run standalone with `python3 validation-harness/check-manifest-files.py
+--all` (or `--modules <mod> ...`).
+
 ## Module Install Or Update
 
 This is the **only complete detection** for view-inheritance/registry errors and

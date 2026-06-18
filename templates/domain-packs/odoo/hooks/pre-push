@@ -19,6 +19,53 @@ set -u
 PROJECT="$(git rev-parse --show-toplevel)"
 HARNESS="${ODOO_HARNESS_DIR:-}"
 
+# Read the push refs from stdin ONCE (git feeds "<lref> <lsha> <rref> <rsha>" lines)
+# and derive the changed custom-addons modules across the COMMITS being pushed. Both the
+# docker-free manifest screen (below) and the warm-base validation (later) consume this
+# one module list, so neither has to guess an integration base and stdin is read exactly
+# once. Commit-list based (not a worktree diff): a clean checkout's first push resolves.
+push_refs="$(cat)"
+zero=0000000000000000000000000000000000000000
+mods=""
+while read -r _lref lsha _rref rsha; do
+  # skip branch deletions (local sha all-zeros) and empty lines
+  case "${lsha:-}" in ""|"$zero") continue ;; esac
+  case "${rsha:-}" in
+    ""|"$zero") commits="$(git -C "$PROJECT" rev-list "$lsha" --not --remotes 2>/dev/null)" ;;  # new branch
+    *)          commits="$(git -C "$PROJECT" rev-list "$rsha..$lsha" 2>/dev/null)" ;;
+  esac
+  m="$(printf '%s\n' "$commits" | while read -r c; do
+        [ -n "$c" ] && git -C "$PROJECT" diff-tree -r --no-commit-id --name-only "$c" 2>/dev/null
+      done | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p')"
+  mods="$mods$m
+"
+done <<EOF
+${push_refs}
+EOF
+mods=$(printf '%s' "$mods" | sed '/^$/d' | sort -u | tr '\n' ' ')
+
+# Static manifest-integrity screen (no docker, no harness): a __manifest__.py listing a
+# data/demo file that does not exist fails `odoo -u <module>` and odoo.sh at load.
+# Deterministic (a listed path exists or not) -> fail-closed. It needs neither docker nor
+# the warm base and is found co-installed next to this hook (.githooks/) or in the
+# configured harness, so it runs FIRST -- before the harness/docker skips below -- on
+# exactly the pushed modules (no integration-base guess). This is the one validation that
+# still fires when ODOO_HARNESS_DIR is unset. SKIP_ODOO_VALIDATE=1 bypasses it (above).
+if [ -n "$mods" ]; then
+  mf_screen=""
+  for mf_cand in "$(dirname "$0")/check-manifest-files.py" "${HARNESS:+$HARNESS/check-manifest-files.py}"; do
+    if [ -n "$mf_cand" ] && [ -f "$mf_cand" ]; then mf_screen="$mf_cand"; break; fi
+  done
+  if [ -n "$mf_screen" ]; then
+    # shellcheck disable=SC2086  # $mods is an intentional space-separated module list
+    if ! ( cd "$PROJECT" && python3 "$mf_screen" --modules $mods ); then
+      echo "[pre-push] ❌ BLOCKED: a __manifest__.py references a missing file (see above)."
+      echo "[pre-push]     Fix the path/file, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
+      exit 1
+    fi
+  fi
+fi
+
 # The harness location is environment-specific (it sits next to your local Odoo source).
 # Require it explicitly; skip loudly until configured so a fresh clone can still push.
 if [ -z "$HARNESS" ]; then
@@ -42,26 +89,7 @@ if [ ! -x "$HARNESS/validate-warm.sh" ]; then
   echo "[pre-push] ⚠️  harness not found at: $HARNESS — pushing WITHOUT validation (NOT VALIDATED)"; exit 0
 fi
 
-# Collect changed custom-addons modules across the COMMITS being pushed (stdin). Use the
-# commit list (not a worktree diff): `git diff <sha>` would compare against the working
-# tree and miss everything on a clean checkout (e.g. a new-branch first push).
-mods=""
-zero=0000000000000000000000000000000000000000
-while read -r _lref lsha _rref rsha; do
-  # skip branch deletions (local sha all-zeros) and empty lines
-  case "${lsha:-}" in ""|"$zero") continue ;; esac
-  case "${rsha:-}" in
-    ""|"$zero") commits="$(git -C "$PROJECT" rev-list "$lsha" --not --remotes 2>/dev/null)" ;;  # new branch
-    *)          commits="$(git -C "$PROJECT" rev-list "$rsha..$lsha" 2>/dev/null)" ;;
-  esac
-  m="$(printf '%s\n' "$commits" | while read -r c; do
-        [ -n "$c" ] && git -C "$PROJECT" diff-tree -r --no-commit-id --name-only "$c" 2>/dev/null
-      done | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p')"
-  mods="$mods$m
-"
-done
-mods=$(printf '%s' "$mods" | sed '/^$/d' | sort -u | tr '\n' ' ')
-
+# Changed custom-addons modules were resolved from the push refs at the top of this hook.
 [ -n "$mods" ] || { echo "[pre-push] no custom-addons changes; skip Odoo validation"; exit 0; }
 echo "[pre-push] Odoo validating changed modules: $mods"
 

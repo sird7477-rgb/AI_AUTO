@@ -314,6 +314,20 @@ if [ -d "${odoo_hooks_dir}" ] && [ -d "${TARGET_DIR}/custom-addons" ]; then
       echo "Installed Odoo git hook: ${hook_dest}"
     fi
   done
+  # Co-install the docker-free static manifest screen next to the hook so the pre-push
+  # gate can run it even when ODOO_HARNESS_DIR is unset. The heavy docker warm-base
+  # harness still lives in ODOO_HARNESS_DIR; this one screen is tiny and dependency-free.
+  mf_screen_src="${domain_packs_dir}/odoo/validation-harness/check-manifest-files.py"
+  if [ -f "${mf_screen_src}" ]; then
+    mf_screen_dest="${TARGET_DIR}/.githooks/check-manifest-files.py"
+    if [ -e "${mf_screen_dest}" ]; then
+      echo "Preserving existing git hook helper: ${mf_screen_dest}"
+    else
+      cp "${mf_screen_src}" "${mf_screen_dest}"
+      chmod +x "${mf_screen_dest}"
+      echo "Installed Odoo manifest screen: ${mf_screen_dest}"
+    fi
+  fi
   if git -C "${TARGET_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
     if [ -z "$(git -C "${TARGET_DIR}" config --local core.hooksPath 2>/dev/null)" ]; then
       git -C "${TARGET_DIR}" config --local core.hooksPath .githooks \

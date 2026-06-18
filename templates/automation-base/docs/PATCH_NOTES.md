@@ -4,6 +4,22 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.18.8
+
+- Odoo domain pack: new static manifest-integrity screen
+  (`validation-harness/check-manifest-files.py`, wired into `hooks/pre-push`). It
+  fails closed when a changed module's `__manifest__.py` lists a `data`/`demo` file
+  that does not exist -- a deterministic post-push `odoo -u` / odoo.sh build failure
+  (`FileNotFoundError`) that the warm-base validation only catches when docker + the
+  harness are configured. The screen needs no docker and is co-installed next to the
+  pre-push hook (`.githooks/`, by the installer), so it runs before the harness/docker
+  skips and catches the missing-file class even when `ODOO_HARNESS_DIR` is unset --
+  closing the post-push manifest/missing-file gap named in the 7-day audit. Only
+  `data`/`demo` (exact
+  module-relative paths) are checked; `assets` entries (addons-root-relative,
+  possibly globs) stay the warm-base/web build's oracle. `verify-patterns.md`
+  documents it and verify-machinery covers the block / pass / report cases.
+
 ## 2026.06.18.7
 
 - machinery-scope verify on automation-script changes (`review-gate.sh` +

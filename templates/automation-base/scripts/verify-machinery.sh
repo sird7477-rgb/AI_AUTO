@@ -5484,6 +5484,88 @@ grep -q "private key content" "templates/domain-packs/odoo/WORKFLOW.md"
 grep -q "Project-Specific Rules" "templates/domain-packs/odoo/WORKFLOW.md"
 grep -q "localization baseline" "templates/domain-packs/odoo/verify-patterns.md"
 grep -Fq 'Path("custom_addons").rglob("*.xml")' "templates/domain-packs/odoo/verify-patterns.md"
+echo "[verify] testing odoo manifest file-reference screen..."
+# #2: the manifest file-reference screen blocks a __manifest__.py listing a missing
+# data/demo file (a deterministic post-push odoo.sh build failure) and passes once the
+# file exists. It is wired into the pre-push hook and documented in verify-patterns.
+python3 -m py_compile templates/domain-packs/odoo/validation-harness/check-manifest-files.py
+grep -q "Manifest File-Reference Screen" "templates/domain-packs/odoo/verify-patterns.md"
+grep -q "check-manifest-files.py" "templates/domain-packs/odoo/hooks/pre-push"
+(
+  mf_tmp="$(mktemp -d)"
+  trap 'rm -rf "${mf_tmp}"' EXIT
+  mf_screen="${PWD}/templates/domain-packs/odoo/validation-harness/check-manifest-files.py"
+  mkdir -p "${mf_tmp}/custom-addons/mod_a/data" "${mf_tmp}/custom-addons/mod_a/security"
+  cat > "${mf_tmp}/custom-addons/mod_a/__manifest__.py" <<'PY'
+# -*- coding: utf-8 -*-
+{
+    'name': 'Mod A',
+    'data': ['data/present.xml', 'security/ir.model.access.csv', 'data/missing.xml'],
+    'installable': True,
+}
+PY
+  : > "${mf_tmp}/custom-addons/mod_a/data/present.xml"
+  : > "${mf_tmp}/custom-addons/mod_a/security/ir.model.access.csv"
+  # missing data file -> fail-closed (exit 1), naming the missing path.
+  if ( cd "${mf_tmp}" && python3 "${mf_screen}" --modules mod_a > "${mf_tmp}/out" 2>&1 ); then
+    echo "[verify] manifest screen did not block a missing data file"; cat "${mf_tmp}/out"; exit 1
+  fi
+  grep -q "data/missing.xml" "${mf_tmp}/out"
+  # create the missing file -> passes (exit 0).
+  : > "${mf_tmp}/custom-addons/mod_a/data/missing.xml"
+  ( cd "${mf_tmp}" && python3 "${mf_screen}" --modules mod_a > "${mf_tmp}/out2" 2>&1 )
+  grep -q "references resolve" "${mf_tmp}/out2"
+  # --no-strict reports the problem but does not fail.
+  rm "${mf_tmp}/custom-addons/mod_a/data/missing.xml"
+  ( cd "${mf_tmp}" && python3 "${mf_screen}" --all --no-strict > "${mf_tmp}/out3" 2>&1 )
+  grep -q "MISSING file" "${mf_tmp}/out3"
+)
+echo "[verify] testing odoo pre-push runs the manifest screen with ODOO_HARNESS_DIR unset..."
+(
+  mfi_tmp="$(mktemp -d)"
+  trap 'rm -rf "${mfi_tmp}"' EXIT
+  target="${mfi_tmp}/proj"
+  git -c init.defaultBranch=main init -q "${target}"
+  mkdir -p "${target}/custom-addons/mod_a/data"
+  : > "${target}/custom-addons/mod_a/__manifest__.py"
+  # Install the template -> installs the odoo pre-push hook AND co-installs the
+  # docker-free manifest screen next to it (so it runs without ODOO_HARNESS_DIR).
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target}" >/dev/null 2>&1
+  test -x "${target}/.githooks/pre-push"
+  test -f "${target}/.githooks/check-manifest-files.py"
+  (
+    cd "${target}"
+    git add -A
+    git -c user.email=v@e.invalid -c user.name=V commit -q -m baseline
+    git checkout -q -b feature
+    cat > custom-addons/mod_a/__manifest__.py <<'PY'
+# -*- coding: utf-8 -*-
+{'name': 'Mod A', 'data': ['data/missing.xml'], 'installable': True}
+PY
+    git add -A
+    git -c user.email=v@e.invalid -c user.name=V commit -q -m "add manifest"
+    # Installed hook with ODOO_HARNESS_DIR explicitly UNSET: the co-installed manifest
+    # screen must STILL fire and block the missing data file -- the exact harness-unset
+    # gap Codex flagged. Feed a realistic pre-push ref line (git's stdin format) so the
+    # hook resolves the pushed module from the actual refs, not a guessed integration
+    # base (the no-local-main / branch=master|18.0 fragility Codex flagged).
+    mfi_zero=0000000000000000000000000000000000000000
+    mfi_push() { printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "${mfi_zero}"; }
+    if mfi_push | env -u ODOO_HARNESS_DIR ./.githooks/pre-push > "${mfi_tmp}/hook.out" 2>&1; then
+      echo "[verify] odoo pre-push did not block a missing manifest file with ODOO_HARNESS_DIR unset"
+      cat "${mfi_tmp}/hook.out"; exit 1
+    fi
+    grep -q "data/missing.xml" "${mfi_tmp}/hook.out"
+    grep -q "references a missing file" "${mfi_tmp}/hook.out"
+    # Create the file -> the screen passes; with the harness still unset the hook then
+    # skips loudly (NOT VALIDATED) and exits 0 (does not block on the screen).
+    : > custom-addons/mod_a/data/missing.xml
+    git add -A
+    git -c user.email=v@e.invalid -c user.name=V commit -q -m fix
+    mfi_push | env -u ODOO_HARNESS_DIR ./.githooks/pre-push > "${mfi_tmp}/hook2.out" 2>&1
+    grep -q "ODOO_HARNESS_DIR not set" "${mfi_tmp}/hook2.out"
+  )
+)
 grep -q "도메인팩" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "There is no generic domain pack" "templates/automation-base/docs/DOMAIN_PACKS.md"
 grep -q "Domain Pack Authoring Guide" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
