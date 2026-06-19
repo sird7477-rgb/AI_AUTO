@@ -5098,6 +5098,7 @@ echo "[verify] testing automation template installer..."
   # git subprocesses cannot corrupt the shared common git dir across worktrees.
   grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/pre-commit"
   grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/post-commit"
+  grep -q "knowledge-capture harvest --write" "${target_dir}/.git/hooks/post-commit"
   # Linked-worktree shape: a worktree's .git is a FILE and hooks live in the
   # shared common dir. The installer must accept it (rev-parse, not test -d .git)
   # and land the worktree-safe hooks on the resolved hooks path.
@@ -5429,6 +5430,42 @@ echo "[verify] testing automation template installer..."
   rm "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-missing-version.out"
   grep -q "status: missing_version" "${tmp_dir}/template-status-missing-version.out"
+)
+
+echo "[verify] testing post-commit auto-harvests Finding-trailered commits..."
+(
+  pc_tmp="$(mktemp -d)"
+  trap 'rm -rf "${pc_tmp}"' EXIT
+  pc_dir="${pc_tmp}/proj"
+  git -c init.defaultBranch=main init -q "${pc_dir}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${pc_dir}" >/dev/null 2>&1
+  pc_hooks="$(git -C "${pc_dir}" rev-parse --git-path hooks)"
+  case "${pc_hooks}" in /*) : ;; *) pc_hooks="${pc_dir}/${pc_hooks}" ;; esac
+  test -x "${pc_hooks}/post-commit"
+  (
+    cd "${pc_dir}"
+    git config user.email v@e.invalid
+    git config user.name V
+    git add -A
+    git commit -q --no-verify -m "feat: x
+
+Finding: normalize a trailing slash before matching a Windows path
+Finding-Evidence: verify-machinery post-commit fixture
+Finding-Scope: any WSL or Windows path comparison" 2>/dev/null
+    # explicit run with knowledge-capture on PATH harvests the trailered finding
+    PATH="${repo_root}/tools:${PATH}" "${pc_hooks}/post-commit" >/dev/null 2>&1 || true
+    grep -rqE "trailing slash" .omx/knowledge/drafts/ 2>/dev/null \
+      || { echo "[verify] post-commit did not harvest a Finding-trailered commit"; exit 1; }
+    # a commit WITHOUT a Finding: trailer harvests nothing new (no-op + dedup)
+    count_a="$(find .omx/knowledge/drafts -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+    printf 'x\n' > nf.txt
+    git add -A
+    git commit -q --no-verify -m "chore: no finding trailer here" 2>/dev/null
+    PATH="${repo_root}/tools:${PATH}" "${pc_hooks}/post-commit" >/dev/null 2>&1 || true
+    count_b="$(find .omx/knowledge/drafts -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+    test "${count_a}" = "${count_b}" \
+      || { echo "[verify] post-commit harvested a draft from a no-trailer commit"; exit 1; }
+  )
 )
 
 echo "[verify] testing automation template experimental source guard..."

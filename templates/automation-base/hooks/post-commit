@@ -12,6 +12,14 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPA
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "${repo_root}" || exit 0
 
+# Auto-harvest reusable findings from this commit's trailers into local knowledge drafts.
+# knowledge-capture is a global helper (absent in fresh/derived projects); GIT_* is already
+# unset above (worktree-safe). It no-ops on commits without Finding:/Finding-Evidence:/
+# Finding-Scope: trailers and dedups against existing drafts. Never block; stay quiet.
+if command -v knowledge-capture >/dev/null 2>&1; then
+  knowledge-capture harvest --write >/dev/null 2>&1 || true
+fi
+
 results_dir=".omx/review-results"
 recent_proceed=""
 if [ -d "${results_dir}" ]; then

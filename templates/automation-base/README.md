@@ -38,7 +38,7 @@ This template contains the base files for a CLI-based AI development workflow.
 - scripts/refresh-guidance-baseline.sh: (re)writes the install-time guidance baseline so doc-budget excludes inherited-unchanged docs; run after adopting a newer template
 - scripts/guidance-duplicate-report.sh: creates read-only Stage 2 guidance duplicate reports
 - scripts/discover-ai-models.sh: discovers local AI CLI model routing capabilities
-- scripts/capture-knowledge-drafts.py: captures sanitized local knowledge draft candidates
+- scripts/capture-knowledge-drafts.py: captures sanitized local knowledge draft candidates (review-gate verdicts); the `post-commit` hook additionally auto-harvests `Finding:`/`Finding-Evidence:`/`Finding-Scope:` commit trailers into local drafts when `knowledge-capture` is installed
 - scripts/knowledge-notes.py: creates and validates sanitized knowledge notes
 - scripts/make-review-prompts.sh: generates reviewer prompts
 - scripts/record-feedback.sh: appends sanitized failure/improvement feedback

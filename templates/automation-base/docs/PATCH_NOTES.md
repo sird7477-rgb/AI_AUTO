@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.19.1
+
+- Finding-trailer auto-harvest (`hooks/post-commit` + `docs/WORKFLOW.md` dev-loop step,
+  + template mirrors). Substantive-finding capture was manual-only: `knowledge-capture`
+  harvests `Finding:`/`Finding-Evidence:`/`Finding-Scope:` commit trailers into local
+  knowledge drafts, but nothing auto-ran it, so reusable rules were caught only by a manual
+  sweep (the review-gate auto-capture stores verdict-state notes only). The post-commit hook
+  now runs `knowledge-capture harvest --write` after its GIT_* unset (worktree-safe), guarded
+  by `command -v` (no-op where the global helper is absent), never blocking, and a no-op on
+  untrailered commits (dedup makes the re-scanned `@{u}..HEAD` range idempotent). The WORKFLOW
+  dev-loop adds the trailer convention (write the reusable rule + evidence + scope; relativize
+  paths -- absolute private paths are still not stored). verify-machinery asserts the installed
+  hook wires the harvest and that a trailered commit is captured while an untrailered one is not.
+
 ## 2026.06.18.8
 
 - Odoo domain pack: new static manifest-integrity screen

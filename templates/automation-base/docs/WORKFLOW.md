@@ -87,6 +87,11 @@
       꺼지고 context=full). 결정 지점에서는 어떤 축소도 적용하지 않는다.
 15. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
 16. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+17. 재사용 가능한 규칙을 발견하면 커밋 메시지에 `Finding:`(규칙) +
+    `Finding-Evidence:`(근거) + `Finding-Scope:`(적용 범위) trailer를 한 줄씩
+    단다(선택: `Finding-NotWhen:` / `Finding-Surface:` / `Finding-Share: shareable`).
+    셋이 모두 있어야 격납되며 post-commit이 자동으로 로컬 지식 draft로 수확한다
+    (trailer 없으면 무동작). 경로는 상대화한다 — 절대 private 경로는 저장 금지.
 
 ## Writer 격리
 
