@@ -4108,6 +4108,22 @@ echo "[verify] testing knowledge note helper..."
   grep -q "../Projects/ai-lab--fixture/" "${legacy_vault}/Surfaces/docker.md"
   "${repo_root}/scripts/knowledge-notes.py" validate "${legacy_vault}" >/dev/null
 
+  # Collision guard: two DISTINCT source notes mapping to one target must fail closed
+  # (the second shutil.move would otherwise silently clobber the first -- data loss),
+  # in dry-run too, with a greppable reason. A single note migrating is unaffected.
+  dup_vault="${tmp_dir}/dup-vault/AI_AUTO"
+  # Two copies outside Inbox/Projects so both resolve their project from frontmatter (same
+  # note -> same project -> same Projects/<project>/same.md target -> collision).
+  mkdir -p "${dup_vault}/dirA" "${dup_vault}/dirB"
+  dup_src="$(find "${notes_dir}" -maxdepth 1 -type f -name '*.md' ! -name 'AI_AUTO_INDEX.md' | head -n 1)"
+  cp "${dup_src}" "${dup_vault}/dirA/same.md"
+  cp "${dup_src}" "${dup_vault}/dirB/same.md"
+  if "${repo_root}/scripts/knowledge-notes.py" migrate-vault "${dup_vault}" --dry-run > "${tmp_dir}/dup-target.out" 2>&1; then
+    echo "[verify] migrate-vault did not block two notes migrating to the same target"
+    exit 1
+  fi
+  grep -q "multiple notes would migrate to the same target" "${tmp_dir}/dup-target.out"
+
   first_note="$(find "${notes_dir}" -maxdepth 1 -name '*.md' ! -name 'AI_AUTO_INDEX.md' | head -n 1)"
   cp "${first_note}" "${tmp_dir}/body-secret.md"
   printf '\napi_key=abc123\n' >> "${tmp_dir}/body-secret.md"

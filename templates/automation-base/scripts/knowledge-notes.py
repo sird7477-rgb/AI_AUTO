@@ -633,6 +633,20 @@ def migrate_vault(args: argparse.Namespace) -> None:
         else:
             moves.append((path, path, data))
 
+    # Collision guard: two DISTINCT source notes must not migrate onto the same target.
+    # The per-file check above only blocks overwriting an already-existing target; when
+    # both sources map to a not-yet-existing target each passes, and the second
+    # shutil.move would then silently clobber the first (data loss). Enforced here, before
+    # the dry-run return, so dry-run and real execution both fail closed.
+    seen_targets: dict[Path, Path] = {}
+    for source, target, _data in moves:
+        if source == target:
+            continue
+        resolved = target.resolve(strict=False)
+        if resolved in seen_targets:
+            fail(f"multiple notes would migrate to the same target: {target}")
+        seen_targets[resolved] = source
+
     move_count = sum(1 for source, target, _data in moves if source != target)
     if args.dry_run:
         for source, target, _data in moves:

@@ -4,6 +4,19 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.1
+
+- migrate-vault duplicate-target collision guard (`knowledge-notes.py` + template
+  mirror). `migrate_vault` only guarded against overwriting an already-existing target;
+  two DISTINCT source notes mapping to the same not-yet-existing target (e.g.
+  `Inbox/<proj>/x.md` and `Legacy/x.md` both -> `Projects/<proj>/x.md`) each passed, and
+  the second `shutil.move` then silently clobbered the first -- data loss, with no signal
+  even in `--dry-run`. A collision check now runs before the dry-run return (dry-run and
+  real execution both fail closed) with `multiple notes would migrate to the same target:
+  <target>`. verify-machinery asserts the dup-target case is blocked. Surfaced by a
+  downstream jw_dev gate failure; the canonical coverage lives in verify-machinery (the
+  drifted standalone test-knowledge-notes.sh is superseded on template re-sync).
+
 ## 2026.06.19.1
 
 - Finding-trailer auto-harvest (`hooks/post-commit` + `docs/WORKFLOW.md` dev-loop step,
