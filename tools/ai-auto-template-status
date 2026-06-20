@@ -20,11 +20,12 @@ AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
 TEMPLATE_DIR="${AI_LAB_ROOT}/templates/automation-base"
 VERSION_FILE="AI_AUTO_TEMPLATE_VERSION"
 RECORD_FEEDBACK=0
+JSON=0
 TARGET_DIR=""
 
 usage() {
   cat <<'USAGE'
-Usage: ai-auto-template-status [--record-feedback] [target-repo]
+Usage: ai-auto-template-status [--record-feedback] [--json] [target-repo]
 
 Compare a project against the current AI_AUTO automation template.
 
@@ -34,6 +35,8 @@ artifacts are intentionally outside the managed-file manifest.
 
 Options:
   --record-feedback   record a sanitized feedback queue item when drift exists
+  --json              emit machine-readable JSON (per-file state + ownership, counts,
+                      installed/current version) instead of the text report
   -h, --help          show this help
 
 Examples:
@@ -47,6 +50,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --record-feedback)
       RECORD_FEEDBACK=1
+      shift
+      ;;
+    --json)
+      JSON=1
       shift
       ;;
     -h|--help)
@@ -255,6 +262,55 @@ elif [ "$installed_version" != "$current_version" ] || [ "$different_count" -gt 
   overall_status="customized_or_outdated"
 else
   overall_status="current"
+fi
+
+if [ "$JSON" -eq 1 ]; then
+  # Machine-readable surface for the downstream staleness gate: per-file {state, ownership,
+  # patch_policy} so the gate can block on ownership==template-owned only. Serialized via
+  # python3 for correct escaping; rows arrive on stdin as STATE\tPATH\tTEMPLATE\tOWN\tPOLICY.
+  printf '%s' "${rows}" | \
+    AAS_TARGET="$target_abs" \
+    AAS_IV="${installed_version:-}" \
+    AAS_CV="${current_version:-}" \
+    AAS_STATUS="$overall_status" \
+    AAS_BRANCH="${template_source_branch:-}" \
+    AAS_CHANNEL="${template_source_channel:-}" \
+    AAS_PATCH_ENABLED="${template_patch_enabled:-}" \
+    AAS_PATCH_REASON="${template_patch_block_reason:-}" \
+    AAS_TOTAL="$total_count" AAS_SAME="$same_count" \
+    AAS_DIFF="$different_count" AAS_MISSING="$missing_count" \
+    python3 -c '
+import json, os, sys
+files = []
+for line in sys.stdin.read().splitlines():
+    if not line.strip():
+        continue
+    parts = line.split("\t")
+    if len(parts) < 5:
+        continue
+    st, path, tpath, own, pol = parts[:5]
+    files.append({"state": st, "path": path, "template_path": tpath,
+                  "ownership": own, "patch_policy": pol})
+out = {
+    "target": os.environ["AAS_TARGET"],
+    "installed_version": os.environ.get("AAS_IV") or None,
+    "current_version": os.environ.get("AAS_CV") or None,
+    "status": os.environ["AAS_STATUS"],
+    "template_source_branch": os.environ.get("AAS_BRANCH") or None,
+    "template_source_channel": os.environ.get("AAS_CHANNEL") or None,
+    "template_patch_enabled": os.environ.get("AAS_PATCH_ENABLED") or None,
+    "template_patch_block_reason": os.environ.get("AAS_PATCH_REASON") or None,
+    "counts": {
+        "managed_files": int(os.environ["AAS_TOTAL"]),
+        "same": int(os.environ["AAS_SAME"]),
+        "different": int(os.environ["AAS_DIFF"]),
+        "missing": int(os.environ["AAS_MISSING"]),
+    },
+    "files": files,
+}
+print(json.dumps(out, indent=2))
+'
+  exit 0
 fi
 
 cat <<REPORT

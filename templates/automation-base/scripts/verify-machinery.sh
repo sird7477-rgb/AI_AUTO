@@ -5393,6 +5393,32 @@ echo "[verify] testing automation template installer..."
 
   "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-current.out"
   grep -q "status: current" "${tmp_dir}/template-status-current.out"
+  # --json: machine-readable per-file ownership/state for the downstream staleness gate.
+  "${repo_root}/tools/ai-auto-template-status" --json "${target_dir}" > "${tmp_dir}/template-status.json"
+  python3 - "${tmp_dir}/template-status.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["status"] in ("current", "customized_or_outdated", "missing_version", "source_checkout"), d["status"]
+assert isinstance(d.get("files"), list) and d["files"], "no files array"
+sample = d["files"][0]
+assert {"state", "path", "ownership", "patch_policy"} <= set(sample), sample
+assert any(f["ownership"] == "template-owned" for f in d["files"]), "no template-owned file"
+assert any(f["ownership"] == "project-owned" for f in d["files"]), "no project-owned file"
+assert {"managed_files", "same", "different", "missing"} <= set(d["counts"]), d["counts"]
+assert "installed_version" in d and "current_version" in d
+PYEOF
+  # a template-owned edit is reported different with its ownership intact (gate keys on this)
+  printf '\n# tampered\n' >> "${target_dir}/scripts/review-gate.sh"
+  "${repo_root}/tools/ai-auto-template-status" --json "${target_dir}" > "${tmp_dir}/template-status-drift.json"
+  python3 - "${tmp_dir}/template-status-drift.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"]
+assert rg and rg[0]["state"] == "different" and rg[0]["ownership"] == "template-owned", rg
+assert d["status"] == "customized_or_outdated", d["status"]
+PYEOF
+  # exact restore (installed copy == template source) so the shared target_dir is unpolluted
+  cp "${repo_root}/templates/automation-base/scripts/review-gate.sh" "${target_dir}/scripts/review-gate.sh"
   grep -q "template_source_branch:" "${tmp_dir}/template-status-current.out"
   grep -q "template_source_channel:" "${tmp_dir}/template-status-current.out"
   grep -q "template_patch_enabled:" "${tmp_dir}/template-status-current.out"

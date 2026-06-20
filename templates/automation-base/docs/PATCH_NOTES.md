@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.3
+
+- `ai-auto-template-status --json` (single-source global helper): machine-readable
+  per-file `{state, path, template_path, ownership, patch_policy}` + installed/current
+  version + counts, mirroring `ai-domain-pack --json`. This is the data prerequisite for a
+  downstream template-staleness gate that must block on `ownership==template-owned` drift
+  only (warn on hybrid/project-owned) -- the human text table was unsafe to scrape.
+  verify-machinery asserts the JSON structure and that a template-owned edit is reported
+  `different` with ownership intact. (Phase 0 of the template-distribution redesign;
+  plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.2
 
 - knowledge harvest writes to the PRIMARY checkout (`tools/knowledge-capture`, a
