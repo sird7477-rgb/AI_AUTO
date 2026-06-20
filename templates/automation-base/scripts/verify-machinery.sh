@@ -5484,6 +5484,36 @@ Finding-Scope: any WSL or Windows path comparison" 2>/dev/null
   )
 )
 
+echo "[verify] testing knowledge harvest from a linked worktree lands in the primary checkout..."
+(
+  hw_tmp="$(mktemp -d)"
+  cleanup_harvest_worktree_tmp() {
+    git -C "${hw_tmp}/primary" worktree prune >/dev/null 2>&1 || true
+    rm -rf "${hw_tmp}"
+  }
+  trap cleanup_harvest_worktree_tmp EXIT
+  prim="${hw_tmp}/primary"
+  git -c init.defaultBranch=main init -q "${prim}"
+  ( cd "${prim}" && git config user.email v@e.invalid && git config user.name V \
+      && printf 'x\n' > a.txt && git add -A && git commit -q -m init )
+  wt="${hw_tmp}/wt"
+  git -C "${prim}" worktree add -q "${wt}" -b feat >/dev/null 2>&1
+  ( cd "${wt}" && printf 'y\n' > b.txt && git add -A && git commit -q -m "feat: x
+
+Finding: a harvest run in a linked worktree must write drafts to the primary checkout
+Finding-Evidence: knowledge-capture drafts_dir resolver via git rev-parse --git-common-dir
+Finding-Scope: any knowledge harvest invoked inside a linked git worktree" )
+  "${repo_root}/tools/knowledge-capture" harvest --repo "${wt}" --write >/dev/null
+  # Durability: the draft must land in the PRIMARY checkout (never auto-removed), NOT in the
+  # ephemeral worktree whose gitignored .omx ai-tmux-worktree silently destroys on close.
+  grep -rqE "must write drafts to the primary checkout" "${prim}/.omx/knowledge/drafts/" 2>/dev/null \
+    || { echo "[verify] worktree harvest did not write to the primary checkout"; exit 1; }
+  if [ -n "$(find "${wt}/.omx/knowledge/drafts" -name '*.md' 2>/dev/null)" ]; then
+    echo "[verify] worktree harvest wrote into the ephemeral worktree .omx instead of the primary"
+    exit 1
+  fi
+)
+
 echo "[verify] testing automation template experimental source guard..."
 (
   tmp_dir="$(mktemp -d)"

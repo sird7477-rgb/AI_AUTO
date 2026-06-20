@@ -4,6 +4,23 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.2
+
+- knowledge harvest writes to the PRIMARY checkout (`tools/knowledge-capture`, a
+  single-source global helper -- no template mirror). The post-commit auto-harvest wrote
+  finding drafts into the COMMITTING worktree's `.omx/knowledge/drafts`, but linked
+  worktrees are ephemeral: `ai-tmux-worktree` auto-removes a clean worktree (its
+  removability check ignores gitignored `.omx`), silently DESTROYING the orphaned draft,
+  and `obsidian-autopush` never collected them (HOME_ROOT + registry only). Harvest now
+  resolves the primary worktree via `git rev-parse --git-common-dir` (its parent --
+  resolving the relative result against the repo path) and writes+dedups there, so every
+  worktree feeds the durable primary `.omx` that autopush already collects (zero
+  collection change). `write_draft` is concurrency-safe (mkstemp in the dest dir + atomic
+  replace; deterministic content makes concurrent same-finding writes idempotent).
+  verify-machinery asserts a linked-worktree harvest lands in the primary, not the
+  worktree -- that test addition is the only template-mirrored change (the harvest fix is
+  single-source). Migration of existing live-worktree orphans is a one-time manual sweep.
+
 ## 2026.06.20.1
 
 - migrate-vault duplicate-target collision guard (`knowledge-notes.py` + template

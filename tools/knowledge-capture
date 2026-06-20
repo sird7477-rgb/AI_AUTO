@@ -38,6 +38,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -95,6 +96,29 @@ def repo_root(arg: str | None) -> str:
     except Exception:
         pass
     return os.getcwd()
+
+
+def primary_root(repo: str) -> str:
+    """Primary (non-ephemeral) worktree root for `repo`. Harvested drafts go to the
+    PRIMARY checkout's .omx so they survive: a linked worktree's .omx is gitignored and
+    is destroyed when ai-tmux-worktree auto-removes the worktree (its removability check
+    ignores gitignored files), silently losing the orphaned draft."""
+    try:
+        common = subprocess.run(["git", "-C", repo, "rev-parse", "--git-common-dir"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        if common:
+            # --git-common-dir is RELATIVE (".git") from the primary itself; resolve it
+            # against the REPO path, never the process cwd, or the wrong primary is picked.
+            if not os.path.isabs(common):
+                common = os.path.abspath(os.path.join(repo, common))
+            return os.path.dirname(common)
+    except Exception:
+        pass
+    return repo
+
+
+def drafts_dir(repo: str) -> str:
+    return os.path.join(primary_root(repo), DRAFTS_REL)
 
 
 def project_name(repo: str) -> str:
@@ -208,19 +232,29 @@ def build_draft(repo: str, source_id: str, fields: dict[str, str], severity: str
 
 
 def write_draft(repo: str, fname: str, markdown: str) -> str:
-    drafts = os.path.join(repo, DRAFTS_REL)
+    drafts = drafts_dir(repo)
     os.makedirs(drafts, exist_ok=True)
     path = os.path.join(drafts, fname)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(markdown)
-    os.replace(tmp, path)
+    # Unique temp in the SAME dir (same filesystem -> os.replace stays atomic). Concurrent
+    # harvests of the same finding write byte-identical content to the same deterministic
+    # path, so last-writer-wins is idempotent (no lock needed).
+    fd, tmp = tempfile.mkstemp(dir=drafts, prefix=".tmp-", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(markdown)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return path
 
 
 def existing_repeat_keys(repo: str) -> set[str]:
     keys = set()
-    drafts = Path(repo) / DRAFTS_REL
+    drafts = Path(drafts_dir(repo))
     if not drafts.is_dir():
         return keys
     for p in drafts.glob("*.md"):
