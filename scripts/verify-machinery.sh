@@ -2816,6 +2816,13 @@ esac
 STUB
   chmod +x "${tmp_dir}/bin/agy"
 
+  # Regression guard for the reviewer-inherits-caller-stdin hang: feed run-ai-reviews an
+  # OPEN stdin (a held-open FIFO that never reaches EOF). agy receives its prompt via flags,
+  # so the runtime adapter MUST redirect agy's stdin to /dev/null; without that fix agy's
+  # stdin read blocks until the review timeout (exit 124) and agy.calls stays < 3. The short
+  # timeout makes a regression fail fast instead of hanging for the full default window.
+  mkfifo "${tmp_dir}/open-stdin"
+  exec 8<>"${tmp_dir}/open-stdin"
   PATH="${tmp_dir}/bin:${PATH}" \
     AGY_CALL_LOG="${tmp_dir}/agy.calls" \
     AI_MODEL_DISCOVERY=0 \
@@ -2824,12 +2831,13 @@ STUB
     RUN_PRINCIPAL_SUBAGENT_SUBSTITUTE_REVIEW=0 \
     SKIP_CONTEXT_GENERATION=1 \
     REVIEW_RETRY_LIMIT=1 \
-    GEMINI_REVIEW_TIMEOUT_SECONDS=77 \
+    GEMINI_REVIEW_TIMEOUT_SECONDS=20 \
     OUT_DIR=.omx/review-results \
     CONTEXT_DIR=.omx/review-context \
     PROMPT_DIR=.omx/review-prompts \
     REVIEW_STATE_DIR=.omx/reviewer-state \
-    "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/run.out"
+    "${repo_root}/scripts/run-ai-reviews.sh" <&8 > "${tmp_dir}/run.out"
+  exec 8>&-
 
   gemini_result="$(find .omx/review-results -maxdepth 1 -type f -name 'gemini-review-*.md' -print | head -1)"
   test -f "${gemini_result}"

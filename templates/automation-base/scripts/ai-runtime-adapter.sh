@@ -317,7 +317,12 @@ run_readonly_agy() {
     if [ -n "${model}" ] && help_supports_flag "${help_text}" "--model"; then
       agy_args+=(--model "${model}")
     fi
-    run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" > "${output_file}"
+    # stdin from /dev/null: agy gets its prompt via --prompt/--prompt-file, so it must not
+    # inherit the caller's stdin. A reviewer CLI that reads stdin would otherwise block until
+    # the review timeout (exit 124) whenever run-ai-reviews is invoked with an open stdin
+    # (gate, pipe, harness) -- the historical split-review flake. codex/claude already
+    # redirect stdin from the prompt file; agy is the only path that left it inherited.
+    run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" < /dev/null > "${output_file}"
   elif help_supports_flag "${help_text}" "--prompt"; then
     if [ "${prompt_bytes}" -gt "${prompt_arg_max_bytes}" ]; then
       echo "runtime_unavailable: runtime=${command_name} reason=large_prompt_requires_prompt_file prompt_bytes=${prompt_bytes} prompt_arg_max_bytes=${prompt_arg_max_bytes}"
@@ -343,7 +348,12 @@ run_readonly_agy() {
     if [ -n "${model}" ] && help_supports_flag "${help_text}" "--model"; then
       agy_args+=(--model "${model}")
     fi
-    run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" > "${output_file}"
+    # stdin from /dev/null: agy gets its prompt via --prompt/--prompt-file, so it must not
+    # inherit the caller's stdin. A reviewer CLI that reads stdin would otherwise block until
+    # the review timeout (exit 124) whenever run-ai-reviews is invoked with an open stdin
+    # (gate, pipe, harness) -- the historical split-review flake. codex/claude already
+    # redirect stdin from the prompt file; agy is the only path that left it inherited.
+    run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" < /dev/null > "${output_file}"
   else
     echo "runtime_unavailable: runtime=${command_name} reason=missing_noninteractive_prompt_mode"
     return 4

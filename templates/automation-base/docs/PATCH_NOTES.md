@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.5
+
+- review reviewer invocation no longer inherits the caller's stdin (fixes a split-review
+  gate/verify flake). `scripts/ai-runtime-adapter.sh` invoked `agy` (Gemini) WITHOUT
+  redirecting stdin, so a reviewer CLI that reads stdin (and the verify stub that models
+  one) blocked until the review timeout (exit 124) whenever run-ai-reviews was called with
+  an open stdin -- a gate, a pipe, or a background harness. agy gets its prompt via
+  --prompt/--prompt-file, so its stdin is now /dev/null (codex/claude already redirect
+  stdin from the prompt file). verify-machinery's agy split test now feeds run-ai-reviews a
+  held-open FIFO stdin so a regression fails deterministically instead of flaking.
+
 ## 2026.06.20.4
 
 - base-file install manifest (`install-automation-template.sh` -> `.ai-auto/template-manifest.json`,
