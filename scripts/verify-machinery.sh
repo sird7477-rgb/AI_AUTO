@@ -5240,6 +5240,29 @@ echo "[verify] testing automation template installer..."
   ! grep -Eq '^[.]ai-auto/?$' "${target_dir}/.git/info/exclude"
   grep -q "  AGENTS.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
   grep -q "  docs/WORKFLOW.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
+  # Install-time base-file manifest: version + per-file sha of every managed file AS
+  # INSTALLED (the 3-way-diff baseline). Tracked under .ai-auto/.
+  test -f "${target_dir}/.ai-auto/template-manifest.json"
+  python3 - "${target_dir}/.ai-auto/template-manifest.json" "${target_dir}" <<'PYEOF'
+import json, sys, os, hashlib
+m = json.load(open(sys.argv[1]))
+tgt = sys.argv[2]
+assert m.get("template_version"), "no template_version"
+assert isinstance(m.get("files"), dict) and m["files"], "no files map"
+for key in ("AGENTS.md", "scripts/review-gate.sh", "scripts/verify.sh"):
+    assert key in m["files"], f"manifest missing {key}"
+bad = []
+for path, sha in m["files"].items():
+    p = os.path.join(tgt, path)
+    if not os.path.isfile(p):
+        bad.append(("missing", path)); continue
+    if hashlib.sha256(open(p, "rb").read()).hexdigest() != sha:
+        bad.append(("mismatch", path))
+assert not bad, f"baseline sha mismatches vs installed files: {bad}"
+PYEOF
+  # the recorded version equals the installed version file
+  grep -q "\"template_version\": \"$(sed -n '1p' "${target_dir}/AI_AUTO_TEMPLATE_VERSION")\"" \
+    "${target_dir}/.ai-auto/template-manifest.json"
   # Commit the installed tree so the branch-cumulative lane sees it as base (the
   # bulk install is not unreviewed new guidance); the absolute lane then excludes
   # every inherited doc, so the primary total is 0 until the project customizes.

@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.4
+
+- base-file install manifest (`install-automation-template.sh` -> `.ai-auto/template-manifest.json`,
+  tracked). aiinit now records the install-time baseline: `template_version` + sha256 of every
+  managed file AS INSTALLED (path set reused from the conflict-check `MANAGED_PATHS`, so it never
+  drifts from what was copied), modeling the domain-pack manifest. This is the load-bearing
+  prerequisite for the planned downstream staleness gate's 3-way diff (template source /
+  installed / install baseline) -- it distinguishes a project edit (installed != baseline) from
+  an upstream change (source != baseline, installed == baseline). Base files previously had no
+  per-file baseline (only AGENTS.md + docs via guidance-baseline). verify-machinery asserts the
+  manifest exists, is valid, covers managed files, and its baseline shas match the installed
+  files. (Phase 0b of the template-distribution redesign;
+  plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.3
 
 - `ai-auto-template-status --json` (single-source global helper): machine-readable

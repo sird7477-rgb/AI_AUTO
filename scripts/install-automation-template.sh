@@ -58,7 +58,7 @@ fi
 
 conflicts=()
 
-for path in \
+MANAGED_PATHS=(
   "AI_AUTO_TEMPLATE_VERSION" \
   "AGENTS.md" \
   "docs/CHROME_CDP_ACCESS.md" \
@@ -109,6 +109,8 @@ for path in \
   "scripts/review-gate.sh" \
   "scripts/write-session-checkpoint.sh" \
   "scripts/verify.sh"
+)
+for path in "${MANAGED_PATHS[@]}"
 do
   if [ -e "${TARGET_DIR}/${path}" ]; then
     conflicts+=("${path}")
@@ -353,6 +355,27 @@ if [ -x "${AI_LAB_ROOT}/tools/ai-project-profile" ]; then
     echo "Recorded project domain profile: ${TARGET_DIR}/.omx/project-profile.json"
   fi
 fi
+
+# Install-time baseline manifest: sha256 of every managed file AS INSTALLED + the version.
+# Enables a 3-way diff (template source / installed / this baseline) so drift detection can
+# distinguish a project edit (installed != baseline) from an upstream change (source !=
+# baseline, installed == baseline). Tracked under .ai-auto/, models the domain-pack manifest.
+# Reuses MANAGED_PATHS so the baseline never drifts from what was installed.
+manifest_file="${TARGET_DIR}/.ai-auto/template-manifest.json"
+mkdir -p "${TARGET_DIR}/.ai-auto"
+{
+  printf '{\n  "template_version": "%s",\n' "$(sed -n '1{s/\r$//;p;q}' "${TARGET_DIR}/AI_AUTO_TEMPLATE_VERSION")"
+  printf '  "generated_by": "install-automation-template.sh",\n  "files": {\n'
+  manifest_first=1
+  for path in "${MANAGED_PATHS[@]}"; do
+    [ -f "${TARGET_DIR}/${path}" ] || continue
+    manifest_sha="$(sha256sum "${TARGET_DIR}/${path}" | awk '{print $1}')"
+    if [ "${manifest_first}" -eq 1 ]; then manifest_first=0; else printf ',\n'; fi
+    printf '    "%s": "%s"' "${path}" "${manifest_sha}"
+  done
+  printf '\n  }\n}\n'
+} > "${manifest_file}"
+echo "Recorded template baseline manifest: ${manifest_file}"
 
 echo "Automation template installed into: ${TARGET_DIR}"
 echo "Local git exclude updated for .omx/ runtime artifacts."
