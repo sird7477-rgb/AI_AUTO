@@ -4,6 +4,18 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.10
+
+- upstream template-proposal channel (Phase 3, the deferred-but-now-shipped piece). Projects
+  should propose template changes instead of locally editing template-owned files: record
+  `record-feedback --type improvement --repeat-key template-proposal:<slug> --summary ...`,
+  and the home triages with `feedback-collect --proposals` (filters the aggregated queue to
+  items whose repeat_key starts with `template-proposal:`). Reuses the existing record-feedback
+  / feedback-collect transport -- only the reserved key prefix + filter are new. This is the
+  upstream end the off-manifest-shadow (Phase 2) and refresh-conflict messages point to.
+  verify-machinery asserts --proposals shows only template-proposal:* items. (Phase 3 of the
+  template-distribution redesign; plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.9
 
 - off-manifest shadow detection (Phase 2, the literal jw_dev trigger). The version-staleness

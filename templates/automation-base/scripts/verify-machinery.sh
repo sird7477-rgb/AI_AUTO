@@ -5198,6 +5198,48 @@ PY
     fi
   )
 
+echo "[verify] testing feedback-collect --proposals upstream-channel filter..."
+(
+  prop_tmp="$(mktemp -d)"
+  trap 'rm -rf "${prop_tmp}"' EXIT
+  prop_q="${prop_tmp}/queue.jsonl"
+  OMX_FEEDBACK_QUEUE_FILE="${prop_q}" "${repo_root}/scripts/record-feedback.sh" \
+    --type improvement --repeat-key template-proposal:add-foo \
+    --summary "propose: add foo to the template" >/dev/null
+  OMX_FEEDBACK_QUEUE_FILE="${prop_q}" "${repo_root}/scripts/record-feedback.sh" \
+    --type failure_pattern --repeat-key git:index-lock \
+    --summary "index lock flake" >/dev/null
+  # a workspace path WITH A SPACE containing a discoverable repo whose queue carries a
+  # template proposal -- guards the flag-extraction word-splitting regression
+  ws="${prop_tmp}/ws name"
+  disc="${ws}/disc-repo"
+  mkdir -p "${disc}"
+  git -c init.defaultBranch=main init -q "${disc}"
+  OMX_FEEDBACK_QUEUE_FILE="${disc}/.omx/feedback/queue.jsonl" \
+    "${repo_root}/scripts/record-feedback.sh" \
+    --type improvement --repeat-key template-proposal:from-discovered \
+    --summary "propose from a space-path workspace repo" >/dev/null
+  cd "${prop_tmp}"   # not a git repo -> no current-root pickup
+  fc() {
+    OMX_FEEDBACK_QUEUE_FILE="${prop_q}" \
+      AI_AUTO_PROJECT_REGISTRY_FILE="${prop_tmp}/no-registry" \
+      "${repo_root}/tools/feedback-collect" "${ws}" "$@" 2>/dev/null
+  }
+  # --proposals shows ONLY template-proposal:* items: the OMX-file one AND the one discovered
+  # under the SPACE-containing workspace (the space path must survive flag extraction)
+  proposals_out="$(fc --proposals)"
+  printf '%s\n' "${proposals_out}" | grep -q "template-proposal:add-foo" \
+    || { echo "[verify] feedback-collect --proposals dropped a template proposal"; exit 1; }
+  printf '%s\n' "${proposals_out}" | grep -q "template-proposal:from-discovered" \
+    || { echo "[verify] feedback-collect mishandled a space-containing workspace path"; exit 1; }
+  if printf '%s\n' "${proposals_out}" | grep -q "git:index-lock"; then
+    echo "[verify] feedback-collect --proposals leaked a non-proposal item"; exit 1
+  fi
+  # without the flag, regular items are still listed
+  printf '%s\n' "$(fc)" | grep -q "git:index-lock" \
+    || { echo "[verify] feedback-collect without --proposals dropped a regular item"; exit 1; }
+)
+
 echo "[verify] testing automation template installer..."
 (
   tmp_dir="$(mktemp -d)"

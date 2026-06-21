@@ -107,6 +107,7 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Lists local `.omx/feedback/queue.jsonl` items from `OMX_FEEDBACK_QUEUE_FILE`, the current git root, registered projects, and workspace-discovered repositories
   - Uses the same `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH` setting for workspace discovery
   - Treats missing item status as `open`
+  - `--proposals` shows only template-improvement proposals (items whose `repeat_key` starts with `template-proposal:`). This is the project->home upstream channel: instead of locally editing a template-owned file, a project records `record-feedback --type improvement --repeat-key template-proposal:<slug> --summary ...`, and the home triages them with `feedback-collect --proposals` (which scans registered projects + the workspace by default)
 
 - `feedback-resolve`
   - Resolves local feedback queue items by `repeat_key` across the same discovery surface as `feedback-collect`

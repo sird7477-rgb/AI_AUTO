@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Extract recognized flags from the positional args so the rest stays
+# [workspace-path] [repo-path...]. --proposals shows only template-improvement proposals
+# (items whose repeat_key starts with `template-proposal:`) for home-side triage.
+PROPOSAL_FILTER=0
+_fc_args=()
+for _fc_arg in "$@"; do
+  case "$_fc_arg" in
+    --proposals) PROPOSAL_FILTER=1 ;;
+    *) _fc_args+=("$_fc_arg") ;;
+  esac
+done
+set -- "${_fc_args[@]}"
+
 STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
 PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
 WORKSPACE="${1:-${HOME:-}/workspace}"
@@ -9,7 +22,7 @@ WORKSPACE_SCAN_MAX_DEPTH="${AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH:-2}"
 case "${1:-}" in
   -h|--help)
     cat <<'USAGE'
-Usage: feedback-collect [workspace-path] [repo-path...]
+Usage: feedback-collect [--proposals] [workspace-path] [repo-path...]
 
 Collect project-local AI_AUTO feedback queue items from:
   - OMX_FEEDBACK_QUEUE_FILE when set
@@ -20,6 +33,12 @@ Collect project-local AI_AUTO feedback queue items from:
 
 Set AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH to discover repositories nested deeper
 under the workspace path. The default is 2.
+
+With --proposals, show only template-improvement proposals: items whose repeat_key
+starts with `template-proposal:` (recorded downstream via
+  record-feedback --type improvement --repeat-key template-proposal:<slug> --summary ...).
+This is the project->home upstream channel for template changes; projects should propose
+instead of locally editing template-owned files.
 
 Output columns:
   STATUS CREATED SEVERITY TYPE REPEAT_KEY QUEUE_PATH SUMMARY
@@ -88,8 +107,9 @@ if [ "${#QUEUE_PATHS[@]}" -eq 0 ]; then
   exit 0
 fi
 
-python3 - "${!QUEUE_PATHS[@]}" <<'PY'
+PROPOSAL_FILTER="${PROPOSAL_FILTER}" python3 - "${!QUEUE_PATHS[@]}" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -117,6 +137,9 @@ for queue_path in sys.argv[1:]:
                 item.get("summary", ""),
             )
         )
+
+if os.environ.get("PROPOSAL_FILTER") == "1":
+    rows = [r for r in rows if str(r[4]).startswith("template-proposal:")]
 
 for row in sorted(rows, key=lambda value: (value[1], value[4], value[5])):
     print("\t".join(str(field).replace("\t", " ") for field in row))
