@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.9
+
+- off-manifest shadow detection (Phase 2, the literal jw_dev trigger). The version-staleness
+  gate (1c) is scoped to managed files, so it cannot see a project-PRIVATE hand-copy of a
+  home script the install never tracked -- exactly jw_dev's stale scripts/verify-machinery.sh.
+  `ai-auto-template-status --inventory` now lists the home script/tool basenames a project
+  could shadow, and automation-doctor (downstream only) WARNs about any project-local
+  scripts/ or tools/ file whose basename is in that inventory but is NOT in the install
+  manifest -- a likely stale hand-copy to remove or send upstream. Managed files (in the
+  manifest) and a project's own non-home scripts are not flagged; the source checkout and
+  an unreachable home both skip (fail-open). verify-machinery asserts the shadow is flagged,
+  a non-home script and a managed file are not, and the source checkout skips. (Phase 2 of
+  the template-distribution redesign; plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.8
 
 - downstream template-staleness gate in `review-gate.sh` (Phase 1c, the jw_dev-class fix).

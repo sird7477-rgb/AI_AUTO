@@ -3610,6 +3610,40 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   ! grep -q "UI_COMPLETION.md" "${tmp_dir}/doctor.out"
 )
 
+echo "[verify] testing automation-doctor off-manifest shadow detection..."
+(
+  shadow_tmp="$(mktemp -d)"
+  trap 'rm -rf "${shadow_tmp}"' EXIT
+  shadow_target="${shadow_tmp}/proj"
+  shadow_bin="${shadow_tmp}/bin"
+  mkdir -p "${shadow_bin}"
+  git -c init.defaultBranch=main init -q "${shadow_target}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
+    "${repo_root}/scripts/install-automation-template.sh" "${shadow_target}" >/dev/null 2>&1
+  ln -s "${repo_root}/tools/ai-auto-template-status" "${shadow_bin}/ai-auto-template-status"
+  # off-manifest shadow: a home script name (verify-machinery.sh is NOT installed) hand-copied
+  # in -> the literal jw_dev failure class the version gate cannot see
+  printf '#!/usr/bin/env bash\necho stale\n' > "${shadow_target}/scripts/verify-machinery.sh"
+  # a project's own script whose name is not a home name -> must NOT be flagged
+  printf '#!/usr/bin/env bash\necho mine\n' > "${shadow_target}/scripts/my-own-thing.sh"
+  doctor_out="$( cd "${shadow_target}" && PATH="${shadow_bin}:${PATH}" \
+    bash scripts/automation-doctor.sh 2>&1 || true )"
+  printf '%s\n' "${doctor_out}" | grep -q "off-manifest shadow.*scripts/verify-machinery.sh" \
+    || { echo "[verify] doctor did not flag an off-manifest shadow of a home script"; exit 1; }
+  if printf '%s\n' "${doctor_out}" | grep -q "off-manifest shadow.*my-own-thing.sh"; then
+    echo "[verify] doctor wrongly flagged a project's own non-home script"; exit 1
+  fi
+  if printf '%s\n' "${doctor_out}" | grep -q "off-manifest shadow.*scripts/review-gate.sh"; then
+    echo "[verify] doctor wrongly flagged a managed file as an off-manifest shadow"; exit 1
+  fi
+  # the AI_AUTO source checkout must skip the shadow check entirely (it legitimately has
+  # every home script)
+  src_out="$( cd "${repo_root}" && bash scripts/automation-doctor.sh 2>&1 || true )"
+  if printf '%s\n' "${src_out}" | grep -q "off-manifest shadow"; then
+    echo "[verify] doctor ran the off-manifest shadow check in the source checkout"; exit 1
+  fi
+)
+
 echo "[verify] testing automation-doctor legacy pointer target warning..."
 (
   tmp_dir="$(mktemp -d)"

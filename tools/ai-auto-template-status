@@ -21,11 +21,12 @@ TEMPLATE_DIR="${AI_LAB_ROOT}/templates/automation-base"
 VERSION_FILE="AI_AUTO_TEMPLATE_VERSION"
 RECORD_FEEDBACK=0
 JSON=0
+INVENTORY=0
 TARGET_DIR=""
 
 usage() {
   cat <<'USAGE'
-Usage: ai-auto-template-status [--record-feedback] [--json] [target-repo]
+Usage: ai-auto-template-status [--record-feedback] [--json] [--inventory] [target-repo]
 
 Compare a project against the current AI_AUTO automation template.
 
@@ -37,6 +38,8 @@ Options:
   --record-feedback   record a sanitized feedback queue item when drift exists
   --json              emit machine-readable JSON (per-file state + ownership, counts,
                       installed/current version) instead of the text report
+  --inventory         list the home script/tool basenames a project could shadow off-manifest
+                      (one per line); used by automation-doctor's stale-hand-copy check
   -h, --help          show this help
 
 Examples:
@@ -54,6 +57,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --json)
       JSON=1
+      shift
+      ;;
+    --inventory)
+      INVENTORY=1
       shift
       ;;
     -h|--help)
@@ -91,6 +98,16 @@ if [ "$#" -gt 0 ]; then
     exit 2
   fi
   TARGET_DIR="$1"
+fi
+
+if [ "${INVENTORY:-0}" -eq 1 ]; then
+  # Home-owned script/tool basenames a downstream project could shadow off-manifest.
+  # automation-doctor uses these to flag stale hand-copies (e.g. a project-local
+  # scripts/verify-machinery.sh) that the manifest-scoped version gate cannot see.
+  { find "${AI_LAB_ROOT}/scripts" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null
+    find "${AI_LAB_ROOT}/tools" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null; } \
+    | LC_ALL=C sort -u
+  exit 0
 fi
 
 TARGET_DIR="${TARGET_DIR:-$(pwd)}"

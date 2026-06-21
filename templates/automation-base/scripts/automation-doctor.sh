@@ -432,6 +432,49 @@ check_helper_link() {
   fi
 }
 
+check_offmanifest_shadows() {
+  # Downstream only: warn about project-local files whose basename shadows a home script/tool
+  # name but are absent from the install manifest -- likely stale hand-copies (e.g. a
+  # project-local scripts/verify-machinery.sh, the jw_dev failure class the manifest-scoped
+  # version gate cannot see). Skips the source checkout and any non-managed project, and
+  # fails open if the home status helper is unreachable.
+  [ "${IN_AI_LAB:-0}" -eq 1 ] && return 0
+  [ -f .ai-auto/template-manifest.json ] || return 0
+  command -v ai-auto-template-status >/dev/null 2>&1 || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  local inventory
+  inventory="$(ai-auto-template-status --inventory 2>/dev/null)" || return 0
+  [ -n "${inventory}" ] || return 0
+
+  local shadows
+  shadows="$(printf '%s\n' "${inventory}" | python3 -c '
+import json, os, sys
+inv = {l.strip() for l in sys.stdin if l.strip()}
+try:
+    managed = set(json.load(open(".ai-auto/template-manifest.json")).get("files") or {})
+except Exception:
+    sys.exit(0)
+for d in ("scripts", "tools"):
+    if not os.path.isdir(d):
+        continue
+    for name in sorted(os.listdir(d)):
+        rel = d + "/" + name
+        if os.path.isfile(rel) and name in inv and rel not in managed:
+            print(rel)
+' 2>/dev/null)" || return 0
+
+  if [ -n "${shadows}" ]; then
+    while IFS= read -r shadow; do
+      [ -n "${shadow}" ] || continue
+      say_warn "off-manifest shadow of a home tool/script: ${shadow} (stale hand-copy? remove it or propose the change upstream)"
+    done <<< "${shadows}"
+    suggest "remove off-manifest copies of home scripts, or send them upstream via record-feedback"
+  else
+    say_pass "no off-manifest shadow copies of home scripts detected"
+  fi
+}
+
 printf '[doctor] checking automation readiness in %s\n\n' "$ROOT"
 
 check_command git fail
@@ -726,6 +769,11 @@ elif [ "${IN_AI_LAB:-0}" -eq 1 ]; then
   say_warn "HOME is not set; ai-lab helper link checks skipped"
 else
   say_pass "not running inside ai-lab source checkout; helper link checks skipped"
+fi
+
+if [ "${IN_AI_LAB:-0}" -ne 1 ]; then
+  echo "[doctor] checking for off-manifest shadow copies..."
+  check_offmanifest_shadows
 fi
 
 echo
