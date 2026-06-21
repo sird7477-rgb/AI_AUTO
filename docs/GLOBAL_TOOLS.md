@@ -40,6 +40,11 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Never merges pack content into project `AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`
   - Advanced/test-only source overrides may set `AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE`; normal use should read source packs from the AI_AUTO checkout
 
+- `ai-template-refresh`
+  - Re-syncs a project's template-owned files to the current AI_AUTO template using the 3-way drift from `ai-auto-template-status`
+  - Refreshes only `outdated`/`missing` template-owned files; reports and never overwrites `locally_edited`/`conflict` files, `hybrid` guidance (manual review-merge), or `project-owned` files
+  - Dry-run by default; `--apply` is gated to the stable (main) channel and rewrites only the refreshed files' install baseline
+
 AI review context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked diffs
 use a lightweight diff-centered context; set `REVIEW_CONTEXT_DETAIL=full` for
 reviews that need planning artifacts or full workflow reference file excerpts.
@@ -228,6 +233,7 @@ Expected links:
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
     ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
     ~/bin/ai-domain-pack -> ~/workspace/ai-lab/tools/ai-domain-pack
+    ~/bin/ai-template-refresh -> ~/workspace/ai-lab/tools/ai-template-refresh
     ~/bin/ai-gstack-contract -> ~/workspace/ai-lab/tools/ai-gstack-contract
     ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
     ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
@@ -266,6 +272,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
     ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
     ln -sf ~/workspace/ai-lab/tools/ai-domain-pack ~/bin/ai-domain-pack
+    ln -sf ~/workspace/ai-lab/tools/ai-template-refresh ~/bin/ai-template-refresh
     ln -sf ~/workspace/ai-lab/tools/ai-gstack-contract ~/bin/ai-gstack-contract
     ln -sf ~/workspace/ai-lab/tools/ai-refactor-scan ~/bin/ai-refactor-scan
     ln -sf ~/workspace/ai-lab/tools/ai-rebuild-plan ~/bin/ai-rebuild-plan

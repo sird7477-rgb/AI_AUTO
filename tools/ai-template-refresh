@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ai-template-refresh — re-sync a project's template-owned files to the current AI_AUTO
+# template, using the 3-way drift classification from ai-auto-template-status.
+#
+# Safe by construction (models the ai-domain-pack refresh contract):
+#   - template-owned + outdated  (upstream moved on, no local edit) -> refreshed
+#   - template-owned + missing                                      -> restored
+#   - template-owned + locally_edited/conflict/no_baseline          -> CONFLICT, left alone
+#   - hybrid (AGENTS.md, docs/WORKFLOW.md)                          -> review-merge, left alone
+#   - project-owned (scripts/verify.sh)                             -> never touched
+# Dry-run by default; --apply writes the safe refreshes, re-stamps the version, regenerates
+# the guidance baseline, and rewrites the install manifest (.ai-auto/template-manifest.json).
+
+# Resolve through the ~/bin/ai-template-refresh symlink (the primary install path) so
+# TOOL_DIR is the real tools/ dir in the AI_AUTO checkout, not ~/bin. Mirrors the sibling
+# ai-auto-template-status resolver.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  case "$LINK_TARGET" in
+    /*) SOURCE="$LINK_TARGET" ;;
+    *) SOURCE="${SOURCE_DIR}/${LINK_TARGET}" ;;
+  esac
+done
+TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
+TEMPLATE_DIR="${AI_LAB_ROOT}/templates/automation-base"
+VERSION_FILE="AI_AUTO_TEMPLATE_VERSION"
+STATUS_TOOL="${TOOL_DIR}/ai-auto-template-status"
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-template-refresh [--apply] [--json] [target-repo]
+
+Re-sync template-owned files of a project to the current AI_AUTO template, using the
+3-way drift classification (source / installed / install-baseline).
+
+Without --apply this is a dry run: it prints the plan and changes nothing.
+
+Refreshes only template-owned files that are `outdated` (upstream moved on with no local
+edit) or `missing`. Files that the project legitimately diverged on are reported, never
+overwritten: template-owned `locally_edited`/`conflict`/`no_baseline`, every `hybrid` file
+(AGENTS.md, docs/WORKFLOW.md -> review-merge by hand), and every `project-owned` file
+(scripts/verify.sh -> left alone).
+
+Options:
+  --apply   write the safe refreshes (default is a dry run)
+  --json    emit the plan as JSON instead of text
+  -h, --help
+
+Apply is gated to the stable (main) template channel; override for an experimental source
+with AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1.
+USAGE
+}
+
+APPLY=0
+JSON=0
+TARGET_DIR=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --apply) APPLY=1; shift ;;
+    --json) JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) echo "Unknown option: $1"; echo; usage; exit 2 ;;
+    *)
+      if [ -n "$TARGET_DIR" ]; then echo "Unexpected extra argument: $1"; echo; usage; exit 2; fi
+      TARGET_DIR="$1"; shift ;;
+  esac
+done
+[ "$#" -gt 0 ] && [ -z "$TARGET_DIR" ] && TARGET_DIR="$1"
+TARGET_DIR="${TARGET_DIR:-$(pwd)}"
+
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Target directory does not exist: ${TARGET_DIR}"; exit 1
+fi
+if [ ! -x "$STATUS_TOOL" ]; then
+  echo "ai-auto-template-status not found next to ai-template-refresh: ${STATUS_TOOL}"; exit 1
+fi
+
+# The status tool is the single source of truth for per-file drift + channel + version.
+if ! status_json="$("${STATUS_TOOL}" --json "${TARGET_DIR}" 2>/dev/null)"; then
+  echo "Failed to read template status for ${TARGET_DIR} (home template unreachable?)"; exit 1
+fi
+
+APPLY="${APPLY}" JSON="${JSON}" TEMPLATE_DIR="${TEMPLATE_DIR}" VERSION_FILE="${VERSION_FILE}" \
+ALLOW_EXP="${AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE:-0}" STATUS_JSON="${status_json}" \
+python3 - <<'PYEOF'
+import json, os, sys, hashlib, shutil
+
+apply = os.environ["APPLY"] == "1"
+as_json = os.environ["JSON"] == "1"
+template_dir = os.environ["TEMPLATE_DIR"]
+version_file = os.environ["VERSION_FILE"]
+allow_exp = os.environ.get("ALLOW_EXP", "0") == "1"
+
+d = json.loads(os.environ["STATUS_JSON"])
+target = d["target"]
+current_version = d.get("current_version")
+patch_enabled = d.get("template_patch_enabled")
+channel = d.get("template_source_channel")
+files = d.get("files") or []
+
+
+def decide(ownership, drift):
+    if ownership == "project-owned":
+        return "skip-project-owned"
+    if drift == "in_sync":
+        return "in-sync"
+    if ownership == "hybrid":
+        return "review-merge"          # AGENTS.md / WORKFLOW.md: never blind-overwrite
+    # template-owned below
+    if drift in ("outdated", "missing"):
+        return "refresh"               # upstream moved on, no local edit -> safe
+    if drift in ("locally_edited", "conflict", "no_baseline"):
+        return "conflict"              # project diverged -> manual reconcile
+    return "review-merge"
+
+
+plan = []
+for f in files:
+    action = decide(f.get("ownership"), f.get("drift"))
+    plan.append({**f, "action": action})
+
+refreshable = [f for f in plan if f["action"] == "refresh"]
+conflicts = [f for f in plan if f["action"] == "conflict"]
+review = [f for f in plan if f["action"] == "review-merge" and f["drift"] != "in_sync"]
+
+# Apply is gated to the stable channel (mirrors install / ai-domain-pack).
+blocked = apply and patch_enabled != "yes" and not allow_exp
+
+applied = []
+if apply and not blocked:
+    for f in refreshable:
+        src = os.path.join(template_dir, f["template_path"])
+        dst = os.path.join(target, f["path"])
+        if not os.path.isfile(src):
+            continue
+        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+        shutil.copy2(src, dst)
+        applied.append(f["path"])
+
+    if applied:
+        # Re-stamp the version (the version file itself is managed and may have been one of
+        # the refreshes; this is belt-and-suspenders) and rewrite the install baseline so
+        # future drift checks compare against the new installed state.
+        if current_version:
+            with open(os.path.join(target, version_file), "w", encoding="utf-8") as fh:
+                fh.write(current_version + "\n")
+        # Re-baseline ONLY the files we refreshed (now == source). Leave every other file's
+        # baseline untouched, so a locally_edited/conflict file keeps that classification --
+        # rewriting the whole manifest from the current tree would re-baseline a local edit
+        # as if it were the install state, and the NEXT refresh would then clobber it.
+        manifest_path = os.path.join(target, ".ai-auto", "template-manifest.json")
+        try:
+            manifest = json.load(open(manifest_path))
+            if not isinstance(manifest.get("files"), dict):
+                raise ValueError
+        except Exception:
+            manifest = {"files": {}}
+        manifest["template_version"] = current_version
+        manifest["generated_by"] = "ai-template-refresh"
+        for path in applied:
+            p = os.path.join(target, path)
+            if os.path.isfile(p):
+                manifest["files"][path] = hashlib.sha256(open(p, "rb").read()).hexdigest()
+        os.makedirs(os.path.join(target, ".ai-auto"), exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, indent=2)
+            fh.write("\n")
+
+if as_json:
+    print(json.dumps({
+        "target": target,
+        "current_version": current_version,
+        "template_source_channel": channel,
+        "apply": apply,
+        "blocked_experimental_source": blocked,
+        "refreshed": applied if apply else [f["path"] for f in refreshable],
+        "would_refresh": [f["path"] for f in refreshable],
+        "conflicts": [f["path"] for f in conflicts],
+        "review_merge": [f["path"] for f in review],
+        "plan": plan,
+    }, indent=2))
+    # Mirror the text path's gate contract for machine callers: a refused --apply (blocked by
+    # the experimental-source gate) is a non-zero exit even in --json mode.
+    sys.exit(5 if blocked else 0)
+
+print(f"ai-template-refresh — target: {target}")
+print(f"current_version: {current_version}  channel: {channel}  mode: "
+      f"{'apply' if apply else 'dry-run'}")
+if blocked:
+    print("REFUSED: --apply is gated to the stable (main) template channel; set "
+          "AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 to override.")
+    sys.exit(5)
+
+verb = "refreshed" if apply else "would refresh"
+if refreshable:
+    print(f"\n{verb} (template-owned, upstream moved on / restored):")
+    for f in refreshable:
+        print(f"  {f['drift']:>14}  {f['path']}")
+else:
+    print("\nnothing to refresh (no template-owned outdated/missing files).")
+
+if conflicts:
+    print("\nCONFLICT — project diverged on a template-owned file; reconcile by hand "
+          "(not overwritten):")
+    for f in conflicts:
+        print(f"  {f['drift']:>14}  {f['path']}")
+
+if review:
+    print("\nreview-merge — hybrid guidance changed upstream; merge by hand "
+          "(not overwritten):")
+    for f in review:
+        print(f"  {f['drift']:>14}  {f['path']}  ({f['ownership']})")
+
+if apply:
+    print(f"\napplied {len(applied)} refresh(es); re-stamped version + manifest."
+          if applied else "\nno changes applied.")
+else:
+    print("\n(dry run — re-run with --apply to write the refreshes.)")
+PYEOF
+status=$?
+
+# After applying, regenerate the guidance baseline so doc-budget keeps excluding inherited
+# docs (the same step install runs). Best-effort; never fail the refresh on it.
+if [ "${APPLY}" = "1" ] && [ "${status}" = "0" ] && [ -x "${AI_LAB_ROOT}/scripts/refresh-guidance-baseline.sh" ]; then
+  "${AI_LAB_ROOT}/scripts/refresh-guidance-baseline.sh" "${TARGET_DIR}" >/dev/null 2>&1 || true
+fi
+
+exit "${status}"

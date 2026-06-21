@@ -4,6 +4,22 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.7
+
+- `ai-template-refresh` -- one-command project re-sync to the current template (new
+  single-source global helper `tools/ai-template-refresh`, registered in install-global-files
+  / bootstrap / automation-doctor). Consumes the 3-way drift from ai-auto-template-status
+  and, modeling the ai-domain-pack refresh contract, refreshes ONLY template-owned files
+  that are `outdated` (upstream moved on, no local edit) or `missing`; it reports and never
+  overwrites template-owned `locally_edited`/`conflict`/`no_baseline`, every `hybrid` file
+  (AGENTS.md, docs/WORKFLOW.md -> manual review-merge), and every `project-owned` file
+  (scripts/verify.sh). Dry-run by default; `--apply` is gated to the stable (main) channel,
+  re-stamps the version, regenerates the guidance baseline, and re-baselines ONLY the
+  refreshed files in the install manifest (so a local edit keeps its classification and a
+  later refresh cannot clobber it). verify-machinery asserts the refresh/preserve/channel-
+  gate contract incl. local edits surviving repeated refreshes. (Phase 1b of the template-
+  distribution redesign; plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.6
 
 - `ai-auto-template-status` 3-way drift classification. Now reads the install baseline

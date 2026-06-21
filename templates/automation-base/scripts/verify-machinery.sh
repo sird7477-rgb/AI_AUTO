@@ -5920,6 +5920,81 @@ echo "[verify] testing domain pack status and refresh helper..."
   test ! -e "${guarded_dir}/.omx/domain-packs/.manifest/../odoo.json"
 )
 
+echo "[verify] testing ai-template-refresh re-sync contract..."
+(
+  rt_tmp="$(mktemp -d)"
+  trap 'rm -rf "${rt_tmp}"' EXIT
+  rt_target="${rt_tmp}/proj"
+  git -c init.defaultBranch=main init -q "${rt_target}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
+    "${repo_root}/scripts/install-automation-template.sh" "${rt_target}" >/dev/null 2>&1
+
+  # Primary install path: invoked through the ~/bin symlink, the tool must resolve its own
+  # location THROUGH the symlink so TEMPLATE_DIR points at the checkout, not ~/templates. A
+  # naive dirname(BASH_SOURCE) would make it silently find no source and exit 0 with nothing
+  # applied. Run the link from an unrelated cwd against the fresh install (all in_sync).
+  ln -s "${repo_root}/tools/ai-template-refresh" "${rt_tmp}/ai-template-refresh-link"
+  if ! ( cd "${rt_tmp}" && AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+      "${rt_tmp}/ai-template-refresh-link" "${rt_target}" > "${rt_tmp}/symlink.out" ); then
+    echo "[verify] ai-template-refresh errored when invoked via a symlink (template unresolved)"; exit 1
+  fi
+  grep -q "nothing to refresh" "${rt_tmp}/symlink.out" \
+    || { echo "[verify] ai-template-refresh via symlink did not resolve the template"; exit 1; }
+
+  # outdated: installed == baseline but != source (upstream moved on, no local edit)
+  printf '\n# OLD\n' >> "${rt_target}/scripts/review-gate.sh"
+  python3 - "${rt_target}/.ai-auto/template-manifest.json" \
+    "$(sha256sum "${rt_target}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["files"]["scripts/review-gate.sh"] = sys.argv[2]
+json.dump(m, open(sys.argv[1], "w"))
+PYEOF
+  # locally_edited: project edited a template-owned file, baseline left untouched
+  printf '\n# LOCAL\n' >> "${rt_target}/scripts/automation-doctor.sh"
+
+  # dry run classifies but writes nothing
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+    "${repo_root}/tools/ai-template-refresh" "${rt_target}" > "${rt_tmp}/dry.out"
+  grep -q "outdated  scripts/review-gate.sh" "${rt_tmp}/dry.out"
+  grep -q "locally_edited  scripts/automation-doctor.sh" "${rt_tmp}/dry.out"
+  grep -q "# OLD" "${rt_target}/scripts/review-gate.sh"   # dry run did not refresh
+
+  # --apply is gated to the stable channel (text and --json paths share the exit contract)
+  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/x \
+      "${repo_root}/tools/ai-template-refresh" --apply "${rt_target}" >/dev/null 2>&1; then
+    echo "[verify] ai-template-refresh --apply did not refuse an experimental source"; exit 1
+  fi
+  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/x \
+      "${repo_root}/tools/ai-template-refresh" --apply --json "${rt_target}" >/dev/null 2>&1; then
+    echo "[verify] ai-template-refresh --apply --json returned success for a refused apply"; exit 1
+  fi
+
+  # apply on stable: refresh outdated, preserve locally_edited
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+    "${repo_root}/tools/ai-template-refresh" --apply "${rt_target}" > "${rt_tmp}/apply.out"
+  cmp -s "${rt_target}/scripts/review-gate.sh" \
+    "${repo_root}/templates/automation-base/scripts/review-gate.sh" \
+    || { echo "[verify] ai-template-refresh did not refresh an outdated template-owned file"; exit 1; }
+  grep -q "# LOCAL" "${rt_target}/scripts/automation-doctor.sh" \
+    || { echo "[verify] ai-template-refresh overwrote a locally_edited file"; exit 1; }
+
+  # the refreshed file is now in_sync; the local edit stays locally_edited (its baseline was
+  # NOT rewritten) so a second refresh cannot reclassify it as outdated and clobber it
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+    "${repo_root}/tools/ai-auto-template-status" --json "${rt_target}" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+def drift(p): return [f for f in d["files"] if f["path"] == p][0]["drift"]
+assert drift("scripts/review-gate.sh") == "in_sync", drift("scripts/review-gate.sh")
+assert drift("scripts/automation-doctor.sh") == "locally_edited", drift("scripts/automation-doctor.sh")
+'
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+    "${repo_root}/tools/ai-template-refresh" --apply "${rt_target}" >/dev/null
+  grep -q "# LOCAL" "${rt_target}/scripts/automation-doctor.sh" \
+    || { echo "[verify] ai-template-refresh clobbered a local edit on a second refresh"; exit 1; }
+)
+
 echo "[verify] testing automation template conflict guidance..."
 (
   tmp_dir="$(mktemp -d)"
