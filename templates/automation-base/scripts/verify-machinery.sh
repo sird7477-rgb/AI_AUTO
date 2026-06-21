@@ -5446,10 +5446,35 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"]
 assert rg and rg[0]["state"] == "different" and rg[0]["ownership"] == "template-owned", rg
+# 3-way: a project edit (installed != baseline, source == baseline) is locally_edited, NOT
+# a stale-behind ("outdated"). The gate must warn on this, not block.
+assert rg[0]["drift"] == "locally_edited", rg[0]
 assert d["status"] == "customized_or_outdated", d["status"]
 PYEOF
-  # exact restore (installed copy == template source) so the shared target_dir is unpolluted
+  # 3-way "outdated" (home moved on, no local edit): rebaseline the manifest to the installed
+  # file's current sha so installed == baseline while source != installed -> drift=outdated.
+  python3 - "${target_dir}/.ai-auto/template-manifest.json" \
+    "$(sha256sum "${target_dir}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["files"]["scripts/review-gate.sh"] = sys.argv[2]
+json.dump(m, open(sys.argv[1], "w"))
+PYEOF
+  "${repo_root}/tools/ai-auto-template-status" --json "${target_dir}" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"][0]
+assert rg["drift"] == "outdated", rg
+'
+  # exact restore of file AND baseline manifest so the shared target_dir is unpolluted
   cp "${repo_root}/templates/automation-base/scripts/review-gate.sh" "${target_dir}/scripts/review-gate.sh"
+  python3 - "${target_dir}/.ai-auto/template-manifest.json" \
+    "$(sha256sum "${target_dir}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["files"]["scripts/review-gate.sh"] = sys.argv[2]
+json.dump(m, open(sys.argv[1], "w"))
+PYEOF
   grep -q "template_source_branch:" "${tmp_dir}/template-status-current.out"
   grep -q "template_source_channel:" "${tmp_dir}/template-status-current.out"
   grep -q "template_patch_enabled:" "${tmp_dir}/template-status-current.out"

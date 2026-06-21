@@ -130,6 +130,25 @@ missing_count=0
 total_count=0
 rows=""
 
+# Install-time baseline (.ai-auto/template-manifest.json, written by aiinit): sha of each
+# managed file AS INSTALLED. Enables the 3-way drift classification below (source / installed
+# / baseline) so a project edit is distinguished from an upstream change.
+declare -A BASELINE_SHA
+manifest_json="${target_abs}/.ai-auto/template-manifest.json"
+if [ -f "$manifest_json" ]; then
+  while IFS=$'\t' read -r _bpath _bsha; do
+    [ -n "$_bpath" ] && BASELINE_SHA["$_bpath"]="$_bsha"
+  done < <(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for p, sh in (d.get("files") or {}).items():
+    print(f"{p}\t{sh}")
+' "$manifest_json" 2>/dev/null)
+fi
+
 source_branch() {
   if [ -n "${AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE:-}" ]; then
     printf '%s\n' "${AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE}"
@@ -234,21 +253,35 @@ while IFS='|' read -r target_path template_path ownership patch_policy; do
     exit 1
   fi
 
+  source_sha="$(hash_file "$source_path")"
+  baseline_sha="${BASELINE_SHA[$target_path]:-}"
   if source_checkout_target_only "$target_path"; then
-    state="source-only"
+    state="source-only"; drift="in_sync"
     same_count=$((same_count + 1))
   elif [ ! -f "$project_path" ]; then
-    state="missing"
+    state="missing"; drift="missing"
     missing_count=$((missing_count + 1))
-  elif [ "$(hash_file "$source_path")" = "$(hash_file "$project_path")" ]; then
-    state="same"
-    same_count=$((same_count + 1))
   else
-    state="different"
-    different_count=$((different_count + 1))
+    installed_sha="$(hash_file "$project_path")"
+    if [ "$source_sha" = "$installed_sha" ]; then
+      state="same"; drift="in_sync"
+      same_count=$((same_count + 1))
+    else
+      state="different"
+      different_count=$((different_count + 1))
+      if [ -z "$baseline_sha" ]; then
+        drift="no_baseline"        # pre-manifest install: cannot tell edit from upstream
+      elif [ "$installed_sha" = "$baseline_sha" ]; then
+        drift="outdated"           # home moved on, no local edit -> safe to refresh
+      elif [ "$source_sha" = "$baseline_sha" ]; then
+        drift="locally_edited"     # project edited, upstream unchanged
+      else
+        drift="conflict"           # both changed since install
+      fi
+    fi
   fi
 
-  rows="${rows}${state}	${target_path}	${template_path}	${ownership}	${patch_policy}
+  rows="${rows}${state}	${target_path}	${template_path}	${ownership}	${patch_policy}	${drift}
 "
 done <<EOF
 $(managed_files)
@@ -286,11 +319,11 @@ for line in sys.stdin.read().splitlines():
     if not line.strip():
         continue
     parts = line.split("\t")
-    if len(parts) < 5:
+    if len(parts) < 6:
         continue
-    st, path, tpath, own, pol = parts[:5]
+    st, path, tpath, own, pol, drift = parts[:6]
     files.append({"state": st, "path": path, "template_path": tpath,
-                  "ownership": own, "patch_policy": pol})
+                  "ownership": own, "patch_policy": pol, "drift": drift})
 out = {
     "target": os.environ["AAS_TARGET"],
     "installed_version": os.environ.get("AAS_IV") or None,
@@ -328,7 +361,7 @@ same: ${same_count}
 different: ${different_count}
 missing: ${missing_count}
 
-STATE	PATH	TEMPLATE_PATH	OWNERSHIP	PATCH_POLICY
+STATE	PATH	TEMPLATE_PATH	OWNERSHIP	PATCH_POLICY	DRIFT
 ${rows}
 REPORT
 

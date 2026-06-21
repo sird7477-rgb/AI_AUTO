@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.6
+
+- `ai-auto-template-status` 3-way drift classification. Now reads the install baseline
+  (`.ai-auto/template-manifest.json`) and emits a per-file `drift` (text DRIFT column +
+  `--json` field): `in_sync`, `outdated` (upstream moved on, no local edit -> safe to
+  refresh), `locally_edited` (project edited, upstream unchanged), `conflict` (both
+  changed), `missing`, `no_baseline` (pre-manifest install). This is the shared comparison
+  authority the planned re-sync (`ai-template-refresh`) and downstream gate consume: the
+  gate must BLOCK on template-owned `outdated`/`missing` (behind) but only WARN on
+  `locally_edited` (legitimate customization). verify-machinery asserts a project edit
+  classifies as locally_edited and an upstream change as outdated. single-source helper;
+  the bump is for the verify-machinery test. (Phase 1a of the template-distribution
+  redesign; plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.5
 
 - review reviewer invocation no longer inherits the caller's stdin (fixes a split-review
