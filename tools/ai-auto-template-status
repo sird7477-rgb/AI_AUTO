@@ -222,6 +222,10 @@ scripts/automation-doctor.sh|scripts/automation-doctor.sh|template-owned|update
 scripts/benchmark-command.py|scripts/benchmark-command.py|template-owned|update
 scripts/capture-knowledge-drafts.py|scripts/capture-knowledge-drafts.py|template-owned|update
 scripts/collect-review-context.sh|scripts/collect-review-context.sh|template-owned|update
+scripts/audit-obsidian-vault.py|scripts/audit-obsidian-vault.py|template-owned|update
+scripts/collect-odoo-docs-kb.py|scripts/collect-odoo-docs-kb.py|template-owned|update
+scripts/doc-budget.sh|scripts/doc-budget.sh|template-owned|update
+scripts/guidance-duplicate-report.sh|scripts/guidance-duplicate-report.sh|template-owned|update
 scripts/docker-config-guard.sh|scripts/docker-config-guard.sh|template-owned|update
 scripts/discover-ai-models.sh|scripts/discover-ai-models.sh|template-owned|update
 scripts/knowledge-notes.py|scripts/knowledge-notes.py|template-owned|update

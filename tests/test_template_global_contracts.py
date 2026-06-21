@@ -146,3 +146,25 @@ def test_codex_startup_notices_are_explicit_and_bounded() -> None:
     # The notice surfaces the on-demand publish command but never auto-executes it.
     assert "publish shareable drafts: scripts/obsidian-autopush.sh" in text
     assert "AI_AUTO_OBSIDIAN_AUTOPUSH_TIMEOUT" not in text
+
+
+def test_install_manifest_matches_status_managed_files() -> None:
+    # The installer's MANAGED_PATHS (what aiinit copies and records in the install manifest)
+    # must equal ai-auto-template-status's managed_files() (what drift/refresh/the staleness
+    # gate actually track). If they diverge, an installed-but-untracked file drifts silently
+    # past the gate AND a baseline that uses the smaller set false-flags it as an off-manifest
+    # shadow. (Surfaced by the jw_dev convergence dogfood: 4 installed scripts were untracked.)
+    install = _read("scripts/install-automation-template.sh")
+    m = re.search(r"MANAGED_PATHS=\(\n(?P<body>.*?)\n\)\nfor path", install, re.DOTALL)
+    assert m is not None, "could not locate MANAGED_PATHS array in installer"
+    install_paths = set(re.findall(r'"([^"]+)"', m.group("body")))
+
+    status = _read("tools/ai-auto-template-status")
+    mf = re.search(r"managed_files\(\) \{\n  cat <<'FILES'\n(?P<body>.*?)\nFILES", status, re.DOTALL)
+    assert mf is not None, "could not locate managed_files() table in ai-auto-template-status"
+    status_paths = {line.split("|")[0] for line in mf.group("body").strip().splitlines()}
+
+    assert install_paths == status_paths, {
+        "installed_not_tracked": sorted(install_paths - status_paths),
+        "tracked_not_installed": sorted(status_paths - install_paths),
+    }
