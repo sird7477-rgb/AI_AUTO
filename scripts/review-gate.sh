@@ -259,6 +259,106 @@ EOF
   echo "[gate] blocked verdict written (verify failed, exit ${verify_status}): ${verdict_file}"
 }
 
+write_template_staleness_blocked_verdict() {
+  local behind="$1"
+  local timestamp verdict_file
+  timestamp="$(date +%Y%m%dT%H%M%S)"
+  mkdir -p .omx/review-results
+  verdict_file=".omx/review-results/review-verdict-${timestamp}.md"
+
+  cat > "${verdict_file}" <<EOF
+# AI Review Verdict
+
+Generated at: $(date -Iseconds)
+
+## Short Summary
+
+- decision: blocked
+- reason: template_staleness (template-owned files behind the AI_AUTO template)
+- coverage: none
+- trust: blocked_or_needs_attention
+- active_principal: ${ACTIVE_PRINCIPAL:-unknown}
+- missing_or_unusable_reviewers: not_evaluated
+- verify_override: none
+- authority: blocked is not commit approval. Re-sync the template, or set AI_AUTO_TEMPLATE_STALENESS=warn (warn only) or =off to bypass the staleness gate.
+
+## Final Decision
+
+blocked
+
+## Decision Reason
+
+Template-owned files are behind the current AI_AUTO template (drift outdated/missing): ${behind}. The AI review panel was not run.
+
+## Next Step
+
+Run \`ai-template-refresh --apply\` to re-sync, then re-run ./scripts/review-gate.sh. To bypass, set AI_AUTO_TEMPLATE_STALENESS=warn or =off.
+EOF
+
+  echo "[gate] blocked verdict written (template staleness): ${verdict_file}"
+}
+
+# Downstream staleness gate: surface (warn, default) or enforce (block) when this project's
+# template-OWNED files are behind the home AI_AUTO template (drift outdated/missing). hybrid /
+# project-owned drift and template-owned local divergence (locally_edited/conflict) are
+# reported but never gate -- those are legitimate project changes, not "behind". Fails OPEN:
+# if the global status helper is absent, the home template is unreachable, or this is the
+# AI_AUTO source checkout, it skips without blocking (never block on inability to determine).
+check_template_staleness() {
+  local mode="${AI_AUTO_TEMPLATE_STALENESS:-warn}"
+  [ "${mode}" = "off" ] && return 0
+  command -v ai-auto-template-status >/dev/null 2>&1 || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  local status_json
+  if ! status_json="$(ai-auto-template-status --json . 2>/dev/null)"; then
+    echo "[gate] template staleness: home template unreachable; skipping (fail-open)"
+    return 0
+  fi
+
+  local report
+  report="$(printf '%s' "${status_json}" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if d.get("status") == "source_checkout":
+    print("SKIP"); sys.exit(0)
+files = d.get("files") or []
+def paths(owns, drifts):
+    return [f["path"] for f in files
+            if f.get("ownership") in owns and f.get("drift") in drifts]
+print("BEHIND\t"   + ",".join(paths({"template-owned"}, {"outdated", "missing"})))
+print("DIVERGED\t" + ",".join(paths({"template-owned"}, {"locally_edited", "conflict"})))
+print("ADVISORY\t" + ",".join(paths({"hybrid", "project-owned"},
+                                     {"outdated", "missing", "locally_edited", "conflict"})))
+' 2>/dev/null)" || return 0
+
+  [ "${report%%$'\n'*}" = "SKIP" ] && return 0
+
+  local behind diverged advisory
+  behind="$(printf '%s\n' "${report}" | sed -n 's/^BEHIND\t//p')"
+  diverged="$(printf '%s\n' "${report}" | sed -n 's/^DIVERGED\t//p')"
+  advisory="$(printf '%s\n' "${report}" | sed -n 's/^ADVISORY\t//p')"
+
+  [ -n "${diverged}" ] && echo "[gate] template note: locally-diverged template-owned files (reconcile by hand, not gated): ${diverged}"
+  [ -n "${advisory}" ] && echo "[gate] template note: hybrid/project-owned files differ from template (review-merge as needed): ${advisory}"
+
+  [ -z "${behind}" ] && return 0
+
+  echo ""
+  echo "[gate] TEMPLATE STALENESS: template-owned files are behind the current AI_AUTO template:"
+  echo "         ${behind}"
+  echo "       remediate: ai-template-refresh --apply   (then re-run the gate)"
+  if [ "${mode}" = "block" ]; then
+    write_template_staleness_blocked_verdict "${behind}"
+    exit 6
+  fi
+  echo "[gate] (warning only; set AI_AUTO_TEMPLATE_STALENESS=block to enforce, =off to silence)"
+  return 0
+}
+
 write_verify_only_skip_verdict() {
   local timestamp verdict_file summary_file run_file scopes
   timestamp="$(date +%Y%m%dT%H%M%S)"
@@ -431,6 +531,10 @@ if [ "${REVIEW_DECISION_GATE:-0}" = "1" ]; then
   export REVIEW_TARGETED_RECHECK="0"
   echo "[gate] decision gate: full unanimous panel (provenance skip / targeted recheck / integration-only OFF, context=full)"
 fi
+
+# Downstream staleness gate (before verify): surface or enforce template-owned drift, with a
+# one-command remediation. Warn by default; AI_AUTO_TEMPLATE_STALENESS=block enforces.
+check_template_staleness
 
 echo "[gate] running verification..."
 set +e

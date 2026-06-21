@@ -3836,6 +3836,83 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   grep -q "approved_by=tester" .omx/state/verify-override.env
 )
 
+echo "[verify] testing review-gate downstream template-staleness gate..."
+(
+  stale_tmp="$(mktemp -d)"
+  cleanup_stale_tmp() { rm -rf "${stale_tmp}"; }
+  trap cleanup_stale_tmp EXIT
+  stale_target="${stale_tmp}/proj"
+  stale_bin="${stale_tmp}/bin"
+  mkdir -p "${stale_bin}"
+  git -c init.defaultBranch=main init -q "${stale_target}"
+  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
+    "${repo_root}/scripts/install-automation-template.sh" "${stale_target}" >/dev/null 2>&1
+  # the global status helper resolves (through its own symlink) to THIS checkout's template
+  ln -s "${repo_root}/tools/ai-auto-template-status" "${stale_bin}/ai-auto-template-status"
+  # make one template-owned file outdated: installed == baseline != source (upstream moved on)
+  printf '\n# OLD\n' >> "${stale_target}/scripts/review-gate.sh"
+  python3 - "${stale_target}/.ai-auto/template-manifest.json" \
+    "$(sha256sum "${stale_target}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["files"]["scripts/review-gate.sh"] = sys.argv[2]
+json.dump(m, open(sys.argv[1], "w"))
+PYEOF
+
+  run_stale_gate() {  # $1 = AI_AUTO_TEMPLATE_STALENESS value
+    rm -f "${stale_target}"/.omx/review-results/review-verdict-*.md
+    ( cd "${stale_target}" && set +e
+      PATH="${stale_bin}:${PATH}" AI_AUTO_TEMPLATE_STALENESS="$1" \
+        AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+        bash scripts/review-gate.sh > "${stale_tmp}/gate.out" 2>&1
+      echo "$?" > "${stale_tmp}/gate.exit" )
+  }
+  stale_verdict_reason() {
+    local v
+    v="$(ls -t "${stale_target}"/.omx/review-results/review-verdict-*.md 2>/dev/null | head -1)"
+    [ -n "${v}" ] && sed -n 's/^- reason: //p' "${v}" | head -1
+  }
+
+  # block: enforce -> exit 6 and a template_staleness blocked verdict (verify/panel not reached)
+  run_stale_gate block
+  [ "$(cat "${stale_tmp}/gate.exit")" = "6" ] \
+    || { echo "[verify] staleness block did not exit 6"; exit 1; }
+  stale_verdict_reason | grep -q "template_staleness" \
+    || { echo "[verify] staleness block did not write a template_staleness verdict"; exit 1; }
+
+  # warn (default): surface but do NOT block; the gate proceeds and then blocks on the
+  # placeholder verify.sh (verify_failed), proving staleness itself did not gate
+  run_stale_gate warn
+  grep -q "TEMPLATE STALENESS" "${stale_tmp}/gate.out" \
+    || { echo "[verify] staleness warn did not surface the warning"; exit 1; }
+  if stale_verdict_reason | grep -q "template_staleness"; then
+    echo "[verify] staleness warn wrongly blocked the gate"; exit 1
+  fi
+
+  # off: silent, no staleness output at all
+  run_stale_gate off
+  if grep -q "TEMPLATE STALENESS" "${stale_tmp}/gate.out"; then
+    echo "[verify] staleness off was not silent"; exit 1
+  fi
+
+  # fail-open: the status helper is present but the home template is unreachable (exits
+  # non-zero) -> skip without blocking, even in block mode
+  fail_bin="${stale_tmp}/failbin"
+  mkdir -p "${fail_bin}"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "${fail_bin}/ai-auto-template-status"
+  chmod +x "${fail_bin}/ai-auto-template-status"
+  ( cd "${stale_target}" && set +e
+    rm -f .omx/review-results/review-verdict-*.md
+    PATH="${fail_bin}:${PATH}" AI_AUTO_TEMPLATE_STALENESS=block \
+      bash scripts/review-gate.sh > "${stale_tmp}/failopen.out" 2>&1
+    true )
+  grep -q "fail-open" "${stale_tmp}/failopen.out" \
+    || { echo "[verify] staleness did not fail open when the home template was unreachable"; exit 1; }
+  if stale_verdict_reason | grep -q "template_staleness"; then
+    echo "[verify] staleness blocked despite an unreachable home (should fail open)"; exit 1
+  fi
+)
+
 echo "[verify] testing review-gate verify-only diff skip..."
 (
   tmp_dir="$(mktemp -d)"

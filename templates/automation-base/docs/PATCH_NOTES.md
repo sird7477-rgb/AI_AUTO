@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.8
+
+- downstream template-staleness gate in `review-gate.sh` (Phase 1c, the jw_dev-class fix).
+  Before verification, the gate calls the global `ai-auto-template-status --json` and surfaces
+  template-OWNED drift that means "behind" the home template (drift outdated/missing): WARN by
+  default (loud, with the `ai-template-refresh --apply` remediation) and ENFORCE (blocked
+  verdict, exit 6) under AI_AUTO_TEMPLATE_STALENESS=block; =off silences it. hybrid /
+  project-owned drift and template-owned local divergence (locally_edited/conflict) are
+  reported but never gate. Fails OPEN: an absent status helper, an unreachable home template,
+  or the AI_AUTO source checkout skips without blocking. Warn-by-default honors the migration
+  order (re-sync shipped in 1b; flip to block per project once converged). verify-machinery
+  asserts block/warn/off/fail-open end-to-end through the installed gate. (Phase 1c of the
+  template-distribution redesign; plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.7
 
 - `ai-template-refresh` -- one-command project re-sync to the current template (new
