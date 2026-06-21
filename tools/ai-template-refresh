@@ -33,7 +33,7 @@ STATUS_TOOL="${TOOL_DIR}/ai-auto-template-status"
 
 usage() {
   cat <<'USAGE'
-Usage: ai-template-refresh [--apply] [--json] [target-repo]
+Usage: ai-template-refresh [--apply] [--json] [--adopt-baseline] [target-repo]
 
 Re-sync template-owned files of a project to the current AI_AUTO template, using the
 3-way drift classification (source / installed / install-baseline).
@@ -49,6 +49,9 @@ overwritten: template-owned `locally_edited`/`conflict`/`no_baseline`, every `hy
 Options:
   --apply   write the safe refreshes (default is a dry run)
   --json    emit the plan as JSON instead of text
+  --adopt-baseline  write a missing install baseline (.ai-auto/template-manifest.json) for a
+            pre-manifest project, reconstructed from the template at the project's installed
+            version so local edits are protected; then exit (run a normal refresh after)
   -h, --help
 
 Apply is gated to the stable (main) template channel; override for an experimental source
@@ -58,11 +61,13 @@ USAGE
 
 APPLY=0
 JSON=0
+ADOPT=0
 TARGET_DIR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1; shift ;;
     --json) JSON=1; shift ;;
+    --adopt-baseline) ADOPT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     -*) echo "Unknown option: $1"; echo; usage; exit 2 ;;
@@ -84,6 +89,67 @@ fi
 # The status tool is the single source of truth for per-file drift + channel + version.
 if ! status_json="$("${STATUS_TOOL}" --json "${TARGET_DIR}" 2>/dev/null)"; then
   echo "Failed to read template status for ${TARGET_DIR} (home template unreachable?)"; exit 1
+fi
+
+if [ "${ADOPT}" = "1" ]; then
+  manifest_file="${TARGET_DIR}/.ai-auto/template-manifest.json"
+  if [ -f "${manifest_file}" ]; then
+    echo "Refusing to adopt: ${manifest_file} already exists (project already has an install baseline). Remove it first to re-adopt."
+    exit 2
+  fi
+  installed_version="$(sed -n '1{s/\r$//;p;q}' "${TARGET_DIR}/${VERSION_FILE}" 2>/dev/null || true)"
+  if [ -z "${installed_version}" ]; then
+    echo "Cannot adopt a baseline: ${TARGET_DIR}/${VERSION_FILE} is missing or empty (not a template-managed project?)."
+    exit 1
+  fi
+  # Resolve the home commit that PUBLISHED the project's installed version. The baseline is
+  # reconstructed from THAT commit's template files (not the project's current files), so a
+  # local edit reads as locally_edited (protected) instead of being mistaken for an upstream
+  # change and clobbered on the next refresh.
+  adopt_commit=""
+  while IFS= read -r _c; do
+    [ -n "${_c}" ] || continue
+    _v="$(git -C "${AI_LAB_ROOT}" show "${_c}:templates/automation-base/${VERSION_FILE}" 2>/dev/null | sed -n '1{s/\r$//;p;q}')"
+    if [ "${_v}" = "${installed_version}" ]; then adopt_commit="${_c}"; break; fi
+  done < <(git -C "${AI_LAB_ROOT}" log --format='%H' -- "templates/automation-base/${VERSION_FILE}" 2>/dev/null)
+  if [ -z "${adopt_commit}" ]; then
+    echo "Cannot adopt a baseline: no AI_AUTO history commit publishes template version ${installed_version} (it predates tracked history or was never published from this checkout)."
+    exit 1
+  fi
+  ADOPT_COMMIT="${adopt_commit}" INSTALLED_VERSION="${installed_version}" AI_LAB_ROOT="${AI_LAB_ROOT}" \
+    TARGET="${TARGET_DIR}" STATUS_JSON="${status_json}" python3 - <<'ADOPTEOF'
+import json, os, subprocess, hashlib
+d = json.loads(os.environ["STATUS_JSON"])
+ai_lab = os.environ["AI_LAB_ROOT"]
+commit = os.environ["ADOPT_COMMIT"]
+target = os.environ["TARGET"]
+manifest = {
+    "template_version": os.environ["INSTALLED_VERSION"],
+    "generated_by": "ai-template-refresh --adopt-baseline (reconstructed from %s)" % commit[:12],
+    "files": {},
+}
+missing = []
+for f in d.get("files", []):
+    tp = f.get("template_path")
+    path = f.get("path")
+    try:
+        blob = subprocess.run(
+            ["git", "-C", ai_lab, "show", "%s:templates/automation-base/%s" % (commit, tp)],
+            capture_output=True, check=True).stdout
+        manifest["files"][path] = hashlib.sha256(blob).hexdigest()
+    except subprocess.CalledProcessError:
+        missing.append(path)
+os.makedirs(os.path.join(target, ".ai-auto"), exist_ok=True)
+with open(os.path.join(target, ".ai-auto", "template-manifest.json"), "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, indent=2)
+    fh.write("\n")
+print("adopted baseline: %d files from template@%s (%s)"
+      % (len(manifest["files"]), os.environ["INSTALLED_VERSION"], commit[:12]))
+if missing:
+    print("  not present at that version (left unbaselined): %s" % ", ".join(missing))
+ADOPTEOF
+  echo "Baseline adopted. Run 'ai-template-refresh ${TARGET_DIR}' (dry-run) to see what is safely refreshable; locally-edited files are now protected."
+  exit 0
 fi
 
 APPLY="${APPLY}" JSON="${JSON}" TEMPLATE_DIR="${TEMPLATE_DIR}" VERSION_FILE="${VERSION_FILE}" \

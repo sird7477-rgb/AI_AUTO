@@ -6148,6 +6148,57 @@ assert drift("scripts/automation-doctor.sh") == "locally_edited", drift("scripts
     || { echo "[verify] ai-template-refresh clobbered a local edit on a second refresh"; exit 1; }
 )
 
+echo "[verify] testing ai-template-refresh --adopt-baseline (pre-0b convergence)..."
+(
+  ab_tmp="$(mktemp -d)"
+  trap 'rm -rf "${ab_tmp}"' EXIT
+  ab_target="${ab_tmp}/proj"
+  mkdir -p "${ab_target}"
+  # simulate a clean PRE-0b install: lay down the committed HEAD template with NO .ai-auto
+  # manifest (the state every project installed before the install-manifest shipped)
+  git -C "${repo_root}" archive HEAD templates/automation-base \
+    | tar -x -C "${ab_target}" --strip-components=2
+  mv "${ab_target}/scripts/verify.example.sh" "${ab_target}/scripts/verify.sh" 2>/dev/null || true
+  test ! -f "${ab_target}/.ai-auto/template-manifest.json"
+
+  # adopt reconstructs the baseline from the template at the project's installed version
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+    "${repo_root}/tools/ai-template-refresh" --adopt-baseline "${ab_target}" >/dev/null 2>&1
+  test -f "${ab_target}/.ai-auto/template-manifest.json" \
+    || { echo "[verify] --adopt-baseline did not write a manifest"; exit 1; }
+  python3 - "${ab_target}/.ai-auto/template-manifest.json" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m.get("template_version"), "no template_version"
+assert isinstance(m.get("files"), dict) and m["files"], "no files"
+assert "adopt" in str(m.get("generated_by", "")), m.get("generated_by")
+PYEOF
+
+  # CRUX: a local edit after adoption is locally_edited (protected), NOT outdated -- so the
+  # next refresh cannot clobber it (the jw_dev doc-budget.sh failure this whole feature fixes)
+  printf '\n# local edit\n' >> "${ab_target}/scripts/review-gate.sh"
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+    "${repo_root}/tools/ai-auto-template-status" --json "${ab_target}" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"][0]
+assert rg["drift"] == "locally_edited", rg
+'
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+    "${repo_root}/tools/ai-template-refresh" --json "${ab_target}" 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert "scripts/review-gate.sh" in d["conflicts"], d["conflicts"]
+assert "scripts/review-gate.sh" not in d["would_refresh"], d["would_refresh"]
+'
+
+  # adoption refuses to clobber an already-present baseline
+  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
+      "${repo_root}/tools/ai-template-refresh" --adopt-baseline "${ab_target}" >/dev/null 2>&1; then
+    echo "[verify] --adopt-baseline overwrote an existing manifest"; exit 1
+  fi
+)
+
 echo "[verify] testing automation template conflict guidance..."
 (
   tmp_dir="$(mktemp -d)"

@@ -4,6 +4,21 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.11
+
+- `ai-template-refresh --adopt-baseline` -- establish a missing install baseline for a
+  PRE-manifest (pre-0b) project so it can converge safely. Projects installed before the
+  install-manifest shipped have no `.ai-auto/template-manifest.json`, so every drift is
+  `no_baseline` and refresh refuses everything. --adopt-baseline reconstructs the baseline from
+  the home template AT THE PROJECT'S INSTALLED VERSION (resolved from git history), NOT from the
+  project's current files -- so a local edit reads as `locally_edited` (protected) instead of
+  being mistaken for an upstream change and clobbered on the next refresh. Refuses if a baseline
+  already exists; errors if the installed version is not in tracked history. (Surfaced by the
+  jw_dev convergence dogfood, where a current-files baseline clobbered a real edit to
+  doc-budget.sh.) verify-machinery asserts adoption writes a manifest and that a post-adoption
+  local edit is protected from refresh. (Template-distribution redesign follow-up;
+  plans/AI_AUTO_TEMPLATE_DISTRIBUTION_REDESIGN_PLAN_2026-06-20.md.)
+
 ## 2026.06.20.10
 
 - upstream template-proposal channel (Phase 3, the deferred-but-now-shipped piece). Projects
