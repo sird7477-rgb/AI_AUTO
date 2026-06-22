@@ -298,6 +298,38 @@ EOF
   echo "[gate] blocked verdict written (template staleness): ${verdict_file}"
 }
 
+# Persistent disabled-reviewer staleness warning (warn-only). A transient disable
+# (network/sandbox/usage) auto-recovers after a cooldown, so it is skipped here; this surfaces
+# a NON-transient marker that has sat for more than N days and is silently keeping every gate
+# degraded. The end-of-run trust report already flags degradation -- this front-loads it at
+# gate start so a stuck reviewer does not quietly become the steady state. Never blocks.
+warn_stale_disabled_reviewers() {
+  local state_dir="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
+  local stale_days="${AI_AUTO_DISABLED_REVIEWER_STALE_DAYS:-7}"
+  [ -d "${state_dir}" ] || return 0
+  command -v date >/dev/null 2>&1 || return 0
+  local now_s marker reviewer cls when when_s age_days hint
+  now_s="$(date +%s)"
+  for marker in "${state_dir}"/*.disabled; do
+    [ -e "${marker}" ] || continue
+    cls="$(sed -n 's/^disable_class=//p' "${marker}" | head -1)"
+    [ "${cls}" = "transient" ] && continue   # auto-recovery (cooldown) owns transient disables
+    when="$(sed -n 's/^disabled_at=//p' "${marker}" | head -1)"
+    [ -n "${when}" ] || continue
+    when_s="$(date -d "${when}" +%s 2>/dev/null || echo 0)"
+    [ "${when_s}" -gt 0 ] || continue
+    age_days=$(( (now_s - when_s) / 86400 ))
+    [ "${age_days}" -lt "${stale_days}" ] && continue
+    reviewer="$(basename "${marker}" .disabled)"
+    hint="$(sed -n 's/^reset_hint=//p' "${marker}" | head -1)"
+    echo ""
+    echo "[gate] EXTERNAL REVIEW PERSISTENTLY DEGRADED: reviewer '${reviewer}' disabled ${age_days}d ago (> ${stale_days}d) and not auto-recovering;"
+    echo "       gates keep passing as proceed_degraded with reduced trust."
+    [ -n "${hint}" ] && echo "       re-enable: ${hint}"
+  done
+  return 0
+}
+
 # Downstream staleness gate: surface (warn, default) or enforce (block) when this project's
 # template-OWNED files are behind the home AI_AUTO template (drift outdated/missing). hybrid /
 # project-owned drift and template-owned local divergence (locally_edited/conflict) are
@@ -535,6 +567,7 @@ fi
 # Downstream staleness gate (before verify): surface or enforce template-owned drift, with a
 # one-command remediation. Warn by default; AI_AUTO_TEMPLATE_STALENESS=block enforces.
 check_template_staleness
+warn_stale_disabled_reviewers
 
 echo "[gate] running verification..."
 set +e

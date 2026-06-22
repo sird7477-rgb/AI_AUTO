@@ -3947,6 +3947,55 @@ PYEOF
   fi
 )
 
+echo "[verify] testing review-gate stale-disabled-reviewer warning..."
+(
+  dr_tmp="$(mktemp -d)"
+  cleanup_dr_tmp() { rm -rf "${dr_tmp}"; }
+  trap cleanup_dr_tmp EXIT
+  dr_target="${dr_tmp}/target"
+  git -c init.defaultBranch=main init -q "${dr_target}"
+  cd "${dr_target}"
+  mkdir -p scripts .omx/review-results .omx/reviewer-state
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
+  cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
+  printf '#!/usr/bin/env bash\necho "verify fixture FAILING"\nexit 1\n' > scripts/verify.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "summarize fixture ran"\n' > scripts/summarize-ai-reviews.sh
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+
+  old_ts="$(date -d '10 days ago' +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)"
+  fresh_ts="$(date +%Y-%m-%dT%H:%M:%S%z)"
+
+  # (1) persistent (non-transient) marker aged past the threshold -> warns at gate start. The
+  # gate still blocks afterwards on the failing verify.sh, but the warning must have printed.
+  printf 'reason=manual_user_request\ndisabled_at=%s\nnext_action=user_reset_required\nreset_hint=RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh\n' \
+    "${old_ts}" > .omx/reviewer-state/gemini.disabled
+  set +e; bash scripts/review-gate.sh > "${dr_tmp}/p.out" 2>&1; set -e
+  grep -q "PERSISTENTLY DEGRADED.*gemini" "${dr_tmp}/p.out" \
+    || { echo "[verify] gate did not warn about a stale persistent disabled reviewer"; exit 1; }
+  grep -q "RESET_DISABLED_AI_REVIEWERS=gemini" "${dr_tmp}/p.out" \
+    || { echo "[verify] stale-disabled warning omitted the reset hint"; exit 1; }
+
+  # (2) transient disable (even if old) is auto-recovery's job -> must NOT warn here
+  printf 'reason=network\ndisable_class=transient\ndisabled_at=%s\n' \
+    "${old_ts}" > .omx/reviewer-state/gemini.disabled
+  set +e; bash scripts/review-gate.sh > "${dr_tmp}/t.out" 2>&1; set -e
+  if grep -q "PERSISTENTLY DEGRADED" "${dr_tmp}/t.out"; then
+    echo "[verify] gate warned about a transient disable (auto-recovery owns it)"; exit 1
+  fi
+
+  # (3) fresh persistent disable (below threshold) -> must NOT warn
+  printf 'reason=manual_user_request\ndisabled_at=%s\n' \
+    "${fresh_ts}" > .omx/reviewer-state/gemini.disabled
+  set +e; bash scripts/review-gate.sh > "${dr_tmp}/f.out" 2>&1; set -e
+  if grep -q "PERSISTENTLY DEGRADED" "${dr_tmp}/f.out"; then
+    echo "[verify] gate warned about a fresh (below-threshold) disable"; exit 1
+  fi
+)
+
 echo "[verify] testing review-gate verify-only diff skip..."
 (
   tmp_dir="$(mktemp -d)"
@@ -6182,7 +6231,10 @@ PYEOF
 import json, sys
 d = json.load(sys.stdin)
 rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"][0]
-assert rg["drift"] == "locally_edited", rg
+# Diverged from the adopted baseline -> protected. locally_edited (source still == baseline) OR
+# conflict (when the live template source ALSO moved vs the adopted version, e.g. a commit that
+# itself edits review-gate.sh). Both land in the not-refreshed/conflict bucket; both are safe.
+assert rg["drift"] in ("locally_edited", "conflict"), rg
 '
   AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
     "${repo_root}/tools/ai-template-refresh" --json "${ab_target}" 2>/dev/null | python3 -c '

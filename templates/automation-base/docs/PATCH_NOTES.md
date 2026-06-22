@@ -4,6 +4,17 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.20.12
+
+- review-gate surfaces a persistently-disabled external reviewer AT GATE START (warn-only).
+  A transient disable (network/sandbox/usage) auto-recovers after a cooldown; a NON-transient
+  (e.g. manual) `.omx/reviewer-state/<r>.disabled` marker does not, so it could silently keep
+  every gate at proceed_degraded/reduced-trust. `warn_stale_disabled_reviewers` prints a
+  prominent banner + the reset hint when a non-transient marker is older than
+  AI_AUTO_DISABLED_REVIEWER_STALE_DAYS (default 7); transient and fresh markers are skipped,
+  and it never blocks. verify-machinery asserts warn-on-stale-persistent, no-warn-on-transient,
+  no-warn-on-fresh. (jw_dev proposal triage survivor; probe-retry variant dropped as flap-prone.)
+
 ## 2026.06.20.11
 
 - `ai-template-refresh --adopt-baseline` -- establish a missing install baseline for a
