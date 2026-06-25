@@ -1206,6 +1206,52 @@ elif [ "${FINAL_DECISION}" = "blocked" ] || [ "${FINAL_DECISION}" = "revise" ] |
   TRUST_LEVEL="blocked_or_needs_attention"
 fi
 
+# U1 fail-closed self-check (audit AI_AUTO_OVERENGINEERING_AUDIT_2026-06-05 lever U1).
+# The review_gate_short_summary contract is the single validated spec for this
+# summary's shape; run it against the record we are about to emit so an internally
+# inconsistent verdict (field drift / future bug) blocks instead of being published.
+# In normal operation the contract mirrors this script's own invariants, so it never
+# false-blocks. Fail OPEN only when python3 or the contract file is missing (minimal
+# test fixtures) -- never on an actual rejection.
+SELF_DEMO_CONTRACTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/self_demo_contracts.py"
+if command -v python3 >/dev/null 2>&1 && [ -f "${SELF_DEMO_CONTRACTS}" ]; then
+  SUMMARY_CONTRACT_DEGRADED=""
+  [ "${FINAL_DECISION}" = "proceed_degraded" ] && SUMMARY_CONTRACT_DEGRADED="1"
+  SUMMARY_RECORD_JSON="$(
+    SUM_FD="${FINAL_DECISION}" \
+    SUM_DR="${DECISION_REASON}" \
+    SUM_RC="${REVIEW_COVERAGE}" \
+    SUM_TL="${TRUST_LEVEL}" \
+    SUM_MR="${MISSING_REVIEWERS}" \
+    SUM_DEGRADED="${SUMMARY_CONTRACT_DEGRADED}" \
+    python3 - <<'PY'
+import json, os
+d = {
+    "final_decision": os.environ["SUM_FD"],
+    "decision_reason": os.environ["SUM_DR"],
+    "review_coverage": os.environ["SUM_RC"],
+    "trust_level": os.environ["SUM_TL"],
+    "missing_or_unusable_reviewers": os.environ["SUM_MR"],
+    "authority_statement": os.environ["SUM_FD"]
+    + " is not commit approval unless normal verification and user commit approval are also satisfied.",
+}
+if os.environ.get("SUM_DEGRADED"):
+    d["degraded_trust_reported"] = True
+    d["missing_reviewers_reported"] = True
+print(json.dumps(d))
+PY
+  )"
+  set +e
+  SUMMARY_CONTRACT_ERR="$(printf '%s' "${SUMMARY_RECORD_JSON}" | python3 "${SELF_DEMO_CONTRACTS}" review_gate_short_summary 2>&1 1>/dev/null)"
+  SUMMARY_CONTRACT_RC=$?
+  set -e
+  if [ "${SUMMARY_CONTRACT_RC}" -eq 1 ]; then
+    FINAL_DECISION="review_manually"
+    DECISION_REASON="summary_contract_violation:${SUMMARY_CONTRACT_ERR}"
+    TRUST_LEVEL="blocked_or_needs_attention"
+  fi
+fi
+
 TIMESTAMP="$(date +%Y%m%dT%H%M%S)"
 SUMMARY_FILE="${OUT_DIR}/review-verdict-${TIMESTAMP}.md"
 REVISION_TASK_FILE="$(write_review_revision_task "${TIMESTAMP}")"

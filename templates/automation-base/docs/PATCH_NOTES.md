@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.25.1
+
+- review gate U1 (over-engineering audit, top lever): the self_demo_contracts layer was
+  38 advisory contracts with zero runtime callers. Added a CLI entry point
+  (`self_demo_contracts.py <contract>`, JSON record on stdin; accepted=exit0,
+  rejected=exit1+reason on stderr, bad usage/unknown=exit2) so a shell gate can invoke
+  one named contract fail-closed. Wired `review_gate_short_summary` into
+  summarize-ai-reviews.sh as a fail-closed self-check of the verdict record it emits:
+  an internally inconsistent summary (field drift / future bug) now downgrades to
+  review_manually instead of being published; fails OPEN only when python3/the contract
+  file is absent. Reconciled the contract's normal-trust rule to also allow
+  `principal_rotation` coverage (matching the shell's actual policy — collapses a U2
+  Python<->shell drift) so it never false-blocks a legitimate rotation proceed.
+
 ## 2026.06.20.12
 
 - review-gate surfaces a persistently-disabled external reviewer AT GATE START (warn-only).

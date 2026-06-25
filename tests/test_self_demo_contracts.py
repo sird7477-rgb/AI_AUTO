@@ -688,6 +688,25 @@ def test_review_gate_short_summary_blocks_overstated_authority() -> None:
     )
 
 
+def test_review_gate_short_summary_allows_normal_trust_on_principal_rotation() -> None:
+    # summarize-ai-reviews.sh grants normal trust to principal_rotation coverage,
+    # not only multi_reviewer; the contract must accept it or it would false-block
+    # a legitimate cross-role-rotation proceed once wired fail-closed.
+    rotation = {
+        "final_decision": "proceed",
+        "decision_reason": "principal_rotation_unanimous_approval",
+        "review_coverage": "principal_rotation",
+        "trust_level": "normal",
+        "missing_or_unusable_reviewers": "none",
+        "authority_statement": "cross-role rotation approval",
+    }
+    assert review_gate_short_summary(rotation).accepted
+    # a non-independent coverage still cannot claim normal trust
+    assert review_gate_short_summary({**rotation, "review_coverage": "single_external"}).reason == (
+        "normal_trust_requires_multi_reviewer"
+    )
+
+
 def test_untracked_artifact_review_guard_requires_context_or_manual_review() -> None:
     valid = {
         "guard_status": "clear",

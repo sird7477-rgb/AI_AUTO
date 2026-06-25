@@ -272,7 +272,10 @@ def review_gate_short_summary(record: dict[str, Any]) -> ContractResult:
         missing_degraded = [field for field in degraded_required if not record.get(field)]
         if missing_degraded:
             return ContractResult(False, "degraded_summary_missing_disclosure", {"missing": missing_degraded})
-    if record["trust_level"] == "normal" and record["review_coverage"] != "multi_reviewer":
+    if record["trust_level"] == "normal" and record["review_coverage"] not in {"multi_reviewer", "principal_rotation"}:
+        # principal_rotation is independent cross-role coverage (codex<->claude<->gemini),
+        # so summarize-ai-reviews.sh grants it normal trust too. Matched here to keep this
+        # contract the single validated spec for the summary the gate actually emits.
         return ContractResult(False, "normal_trust_requires_multi_reviewer", {})
     authority = str(record["authority_statement"]).lower()
     if "unanimous" in authority and record["review_coverage"] != "multi_reviewer":
@@ -1373,3 +1376,67 @@ def completion_pack_routing_policy(record: dict[str, Any]) -> ContractResult:
     if not trigger:
         return ContractResult(True, "completion_pack_no_trigger", {})
     return ContractResult(True, "completion_pack_trigger_ready", {"trigger": trigger})
+
+
+def _contract_registry() -> dict[str, Any]:
+    """Public contract functions defined in this module, keyed by name.
+
+    Built by reflection so a fail-closed runtime caller can invoke one named
+    contract without importing or running the whole surface.
+    """
+    import inspect
+
+    return {
+        name: obj
+        for name, obj in globals().items()
+        if not name.startswith("_")
+        and inspect.isfunction(obj)
+        and getattr(obj, "__module__", "") == __name__
+    }
+
+
+def _main(argv: list[str]) -> int:
+    """CLI: `self_demo_contracts.py <contract_name>`, JSON record on stdin.
+
+    accepted -> exit 0; rejected -> exit 1 (reason+data on stderr);
+    unknown contract / bad usage / invalid JSON -> exit 2. Contracts return a
+    ContractResult (never raise), so this wrapper is what turns a rejection into
+    a nonzero exit a shell gate can act on.
+    """
+    import inspect
+    import json
+    import sys
+
+    if len(argv) != 2:
+        print("usage: self_demo_contracts.py <contract_name>  (JSON record on stdin)", file=sys.stderr)
+        return 2
+    func = _contract_registry().get(argv[1])
+    if func is None:
+        print(f"unknown contract: {argv[1]}", file=sys.stderr)
+        return 2
+    try:
+        payload = json.load(sys.stdin)
+    except json.JSONDecodeError as exc:
+        print(f"invalid JSON on stdin: {exc}", file=sys.stderr)
+        return 2
+
+    params = inspect.signature(func).parameters.values()
+    required = [p for p in params if p.default is p.empty and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)]
+    if len(required) > 1:
+        if not isinstance(payload, dict):
+            print(f"contract {argv[1]} needs an object record, got {type(payload).__name__}", file=sys.stderr)
+            return 2
+        result = func(**payload)
+    else:
+        result = func(payload)
+
+    if result.accepted:
+        return 0
+    print(f"{result.reason}: {json.dumps(result.data, sort_keys=True)}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    import sys
+
+    raise SystemExit(_main(sys.argv))
