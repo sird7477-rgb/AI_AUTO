@@ -35,8 +35,29 @@ U1 세션에서 사용자가 **속도(pytest 병목 축소)** 목표로 B(U2)를
   persona_lens, phase_scope_guard. (delegation_recording은 fold.) **tree_churn / micro_work /
   model_routing = Bash-only(Python 없음) → 이중구현 아님, de-dup 대상 밖.**
 
-## Phase 1 — 속도 (저위험, 먼저): `*_context.py` subprocess 배칭
-"B 선택"이 원한 속도는 이중구현 제거가 아니라 이걸로 얻는다.
+## Phase 1 — 재측정으로 기각됨 (2026-06-26)
+**착수 전 측정 결과 "배칭"은 무익으로 판명.** bash 1회 실행 = ~0.12~0.22s, 그 비용은
+스크립트 전반의 **~75개 fork**(command-subst/git/python)에 분산. git init은 0.017s(무시 가능).
+결정적으로 각 `_run_context`는 **서로 다른 입력 시나리오**(예: spec 파일만 ~10가지 patch_size/rows)라
+스크립트(1회=1시나리오)를 1회로 배칭 불가 — 시나리오 수만큼 실행이 필요. 따라서 module-scoped
+fixture로 setup을 공유해도 절감은 git-init 몇 회분(~0.05s)뿐. **per-test subprocess가 아니라
+per-scenario full-script 실행이 비용이고, 그건 테스트-only로 못 줄인다.**
+
+### 교정된 속도 옵션 (스크립트/인프라를 건드려야 함)
+- **(A) per-run 비용 축소 = section-mode:** `collect-review-context.sh`에 "한 섹션만 생성" 모드를
+  추가해 테스트가 16섹션 대신 자기 섹션만 생성 → fork↓. 단 게이트-임계 스크립트 + 템플릿 미러+범프,
+  Phase 2(de-dup)와 영역 중첩.
+- **(B) pytest 병렬화(xdist `-n auto`, 12코어):** 순수 인프라 win이나 (1) 의존성 추가 필요,
+  (2) 감사 U3/U5b가 지목한 **동시성 취약**(docker/포트/.omx/session-lock)과 충돌 — suite 전체
+  병렬은 플레이크 악화 위험. context 테스트만 tmp_path 격리라 안전하나 부분 병렬은 그룹핑 필요.
+- **(C) 수용:** suite 31s 중 ~9s는 U2 밖 단일 테스트 2개(odoo_kb 4.8s + model_routing 4.1s).
+  context 스크립트 fork 비용(~3s 수준)은 통제 안 하는 게 합리적. 속도가 진짜 목표면 그 2개를 별도 처리.
+
+**판단:** 테스트-only 무익 측정으로 원래의 "저위험 속도 win"은 존재하지 않음. 남은 건 (A)=Phase 2와
+중첩, (B)=동시성 위험, (C)=수용. → 아래 Phase 2(드리프트 방지 목적)로만 진행하거나 (C) 수용 권장.
+
+## (참고) Phase 1 원안 — `*_context.py` subprocess 배칭 [기각]
+"B 선택"이 원한 속도는 이중구현 제거가 아니라 이걸로 얻는다 [측정으로 기각, 위 참조].
 - **메커니즘:** 각 `tests/test_*_context.py`의 `_run_context(...)`를 per-test 호출에서
   **module(또는 session)-scoped fixture**로 전환 — `collect-review-context.sh`를 필요한 env
   superset로 **1회** 실행, `latest-review-context.md` 캐시, 각 테스트는 자기 `## … Audit` 섹션을
