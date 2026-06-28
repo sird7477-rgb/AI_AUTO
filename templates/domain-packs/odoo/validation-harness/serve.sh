@@ -16,6 +16,23 @@
 #   ODOO_SERVE_FRESH=1           drop + re-clone the serve DB (discard prior interactions)
 #   ODOO_SERVE_DEV=xml           odoo --dev value (xml = live-reload views without restart;
 #                                =all also reloads python via auto-restart)
+#   Resource watchdogs (serve is manual UI verification, not a perf/resource test, so the
+#   container odoo.conf stock limits — 120s time, ~2.5GB hard mem — only cause a restart loop
+#   here: the first all-module + enterprise registry load + /web asset compile overruns 120s
+#   on WSL2 and Odoo force-restarts every ~2-3min, leaving /web stuck "loading"). Each knob is
+#   a pass-through; set a stock value to re-enable a limit:
+#   ODOO_SERVE_LIMIT_TIME_REAL   request wall-clock watchdog seconds  (default 0 = off; e.g. 120 restores stock)
+#   ODOO_SERVE_LIMIT_TIME_CPU    request CPU-time watchdog seconds    (default 0 = off)
+#   ODOO_SERVE_LIMIT_MEMORY_SOFT graceful worker-recycle bytes        (default 6 GiB)
+#   ODOO_SERVE_LIMIT_MEMORY_HARD hard restart bytes                   (default 8 GiB, kept < the
+#                                WSL VM ceiling — the compose stack sets no mem_limit, so 0/
+#                                unlimited would hand a runaway straight to the host OOM killer;
+#                                0 = unlimited only on a box that can afford it. NB serve runs
+#                                threaded (workers=0): Odoo's memory cap triggers a reload via
+#                                its watchdog, and the .wslconfig VM ceiling is the ultimate
+#                                backstop — so keep this bounded rather than relying on either)
+#   ODOO_SERVE_MAX_CRON_THREADS  background cron threads              (default 0 = off during
+#                                verify; set 1+ to verify a cron-driven flow)
 # Login: admin / admin
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -81,12 +98,28 @@ fi
 
 echo "[serve] starting Odoo — open http://localhost:${PORT}   (login: admin / admin)"
 echo "[serve] updating: ${MODCOMMA:-<none>}   db=${SERVE_DB}   --dev=${DEV}   (Ctrl-C to stop)"
+echo "[serve] first load of all modules + enterprise can take several minutes on WSL2 (drvfs);"
+echo "[serve]   /web may 503 until Odoo logs 'HTTP service (werkzeug) running' — don't interrupt."
+# Resource watchdogs threaded host-side into the container via -e (the odoo-bin call below is
+# in a single-quoted block, so ${ODOO_SERVE_*} must be expanded HERE, not inside the quotes —
+# inside, those vars are unset in the container and the override would silently die). Time
+# watchdogs default OFF (the slow first load is legit); memory stays high-but-CAPPED, never 0
+# by default, because the compose stack has no mem_limit so unlimited would reach the WSL OOM.
 exec docker compose -f docker-compose.validate.yml run --rm -p "${PORT}:8069" \
-  -e VDB="$SERVE_DB" -e MODS="$MODCOMMA" -e DEVOPT="$DEV" odoo bash -c '
+  -e VDB="$SERVE_DB" -e MODS="$MODCOMMA" -e DEVOPT="$DEV" \
+  -e LTR="${ODOO_SERVE_LIMIT_TIME_REAL:-0}" \
+  -e LTC="${ODOO_SERVE_LIMIT_TIME_CPU:-0}" \
+  -e LMS="${ODOO_SERVE_LIMIT_MEMORY_SOFT:-6442450944}" \
+  -e LMH="${ODOO_SERVE_LIMIT_MEMORY_HARD:-8589934592}" \
+  -e CRON="${ODOO_SERVE_MAX_CRON_THREADS:-0}" \
+  odoo bash -c '
 set -e
 python3 /mnt/community/odoo-bin -d "$VDB" \
   --addons-path=/mnt/community/addons,/mnt/enterprise,/mnt/extra-addons \
   --db_host=db --db_user=odoo --db_password=odoo \
   --http-interface=0.0.0.0 --http-port=8069 \
+  --limit-time-real="$LTR" --limit-time-cpu="$LTC" \
+  --limit-memory-soft="$LMS" --limit-memory-hard="$LMH" \
+  --max-cron-threads="$CRON" \
   ${MODS:+-u $MODS} --dev="$DEVOPT"
 '

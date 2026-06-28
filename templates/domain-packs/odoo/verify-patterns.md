@@ -64,6 +64,13 @@ popup dispatched with no client crash. Fix a real failure by adding
 `'views': [(False, 'form')]` to the action dict. This is the cheap escaped-defect
 loop: the screen narrows, the local popup run decides.
 
+> WSL2 note: the local serve build's first all-module + enterprise load overruns
+> Odoo's stock 120s request watchdog and restart-loops (`/web` stuck "loading"),
+> which would make this oracle hang/flake. `serve.sh` disables the time watchdogs
+> by default (`ODOO_SERVE_LIMIT_TIME_REAL=0`/`_TIME_CPU=0`, cron off) and keeps
+> memory high-but-capped (`≈6/8 GiB`, never `0` — no compose `mem_limit`). Wait for
+> Odoo's `HTTP service (werkzeug) running` line before running the oracle.
+
 ### Inherited-Field Overlap Screen
 
 `validation-harness/check-inherited-field-overlap.py` flags a

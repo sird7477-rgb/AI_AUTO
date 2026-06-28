@@ -4,6 +4,27 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.28.5
+
+- odoo domain-pack serve.sh resource-watchdog flags (ST-P1-71): the local UI
+  `validation-harness/serve.sh` now passes Odoo request/memory watchdog flags so
+  the first all-module + enterprise registry load + /web asset compile no longer
+  overruns the container's stock 120s watchdog and restart-loops on WSL2 (which
+  left /web permanently "loading"). Defaults: `--limit-time-real=0
+  --limit-time-cpu=0` (time watchdog OFF — the slow first load is legitimate and
+  serve has no SLA) and `--max-cron-threads=0` (background cron off during manual
+  verify); memory stays HIGH-BUT-CAPPED, NOT 0: `--limit-memory-soft≈6 GiB
+  --limit-memory-hard≈8 GiB`. Memory is deliberately bounded because the compose
+  stack sets no `mem_limit`, so `=0`/unlimited would hand a runaway straight to the
+  host OOM killer (the `.wslconfig` VM ceiling is the ultimate backstop). All five
+  are `ODOO_SERVE_LIMIT_*` / `ODOO_SERVE_MAX_CRON_THREADS` numeric pass-throughs
+  (set a stock value e.g. `=120` to re-enable a limit, or `=0` for an explicit
+  unlimited escape hatch on a box that can afford it). Flags are threaded host-side
+  via `-e` (the odoo-bin call is in a single-quoted block). serve-only — the batch
+  `validate-*` / `prepare-base-db` tiers (`--stop-after-init`) are untouched.
+  Note: a domain-pack change still requires this version bump
+  (`scripts/check-template-version.sh` bump-on-change covers `templates/domain-packs/`).
+
 ## 2026.06.28.4
 
 - session-lock contention sentinel (ST-P1-69): when a different LIVE session holds

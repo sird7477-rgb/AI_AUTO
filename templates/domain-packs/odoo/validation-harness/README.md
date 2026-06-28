@@ -59,6 +59,14 @@ serve.sh <project_repo> [module ...]      # then open http://localhost:8069  (ad
   `ODOO_SERVE_SOURCE=base_demo` clone source (demo data to click; use `base` for empty) ·
   `ODOO_SERVE_FRESH=1` drop+re-clone · `ODOO_SERVE_DEV=xml` live-reloads view XML without a
   restart. Ctrl-C to stop. Uses the per-project compose stack, so it is concurrency-safe.
+- WSL2/first-load: the all-module + enterprise registry load + first `/web` asset compile
+  overruns Odoo's stock 120s request watchdog and triggers a restart loop (`/web` stuck
+  "loading"). serve.sh therefore disables the **time** watchdogs by default
+  (`ODOO_SERVE_LIMIT_TIME_REAL=0`, `_TIME_CPU=0`) and runs cron off
+  (`ODOO_SERVE_MAX_CRON_THREADS=0`); memory stays **high-but-capped**
+  (`_LIMIT_MEMORY_SOFT≈6 GiB`, `_LIMIT_MEMORY_HARD≈8 GiB`), **not** unlimited — the compose
+  stack sets no `mem_limit`, so `=0` would hand a runaway to the host OOM killer. Each is a
+  pass-through (set a stock value, e.g. `ODOO_SERVE_LIMIT_TIME_REAL=120`, to re-enable).
 - Scope boundary: local serve still does NOT reproduce prod asset bundling/minification,
   real-data volume, or prod infra (workers/cron/mail/CDN) — those remain an odoo.sh/staging
   concern. It DOES let you verify form layout and per-field interactive behavior locally.
