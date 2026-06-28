@@ -549,7 +549,18 @@ print_diff_scope_gate() {
 }
 
 if command -v session_lock_acquire >/dev/null 2>&1; then
-  session_lock_acquire review-gate || exit 1
+  # The gate's own acquire happens BEFORE verify. A live sibling holding this tree returns
+  # 75 (retryable contention) — surface it as a clear "deferred, use aiwt" and exit 75
+  # WITHOUT recording a verdict, instead of the old opaque `exit 1` an operator misread as
+  # a verification failure (then reached for --no-verify). Any other nonzero is propagated.
+  _gate_lock_rc=0
+  session_lock_acquire review-gate || _gate_lock_rc=$?   # `|| ` so set -e does not exit before capture
+  if [ "${_gate_lock_rc}" -eq 75 ]; then
+    echo "[gate] deferred (retryable): another live session holds this working tree. Re-run after it finishes, or use a separate worktree (aiwt). No verdict recorded — this is lock contention, not a verification failure." >&2
+    exit 75
+  elif [ "${_gate_lock_rc}" -ne 0 ]; then
+    exit "${_gate_lock_rc}"
+  fi
 fi
 
 # R4: a decision gate (PR / pre-merge, set by the agent) forces the full unanimous
@@ -621,6 +632,11 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ]; then
 fi
 
 # Red-signal handling: a failed verify.sh must never silently turn into a proceed.
+# (No special-casing of a 75 from verify here: under the gate, nested verify is re-entrant
+# or shared-tree, so it never legitimately exits 75 from lock contention — any 75 reaching
+# this point is a genuine tool failure and MUST block. Real contention is handled at the
+# gate's own acquire above, before verify runs. Standalone verify exits 75 to its operator
+# directly and never reaches this branch.)
 # Default: record an explicit `blocked` verdict (not an opaque set -e crash that
 # pushed operators to --no-verify). Override: proceed only when BOTH a recorded
 # reason and a separate approver token are supplied; that path is loud, recorded,

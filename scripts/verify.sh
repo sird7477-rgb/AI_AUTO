@@ -27,7 +27,13 @@ cleanup() {
 trap cleanup EXIT
 
 if command -v session_lock_acquire >/dev/null 2>&1; then
-  session_lock_acquire validate || exit 1
+  # Propagate the acquire code (do NOT collapse to 1): a live sibling holding the tree
+  # returns 75 (retryable contention), which a caller must distinguish from a real
+  # verification failure. Standalone verify exits 75; under review-gate this is re-entrant
+  # (returns 0) so the gate never sees 75 from here.
+  _lock_rc=0
+  session_lock_acquire validate || _lock_rc=$?   # `|| ` so set -e does not exit before capture
+  [ "${_lock_rc}" -eq 0 ] || exit "${_lock_rc}"
 fi
 
 run_product_pytest() {

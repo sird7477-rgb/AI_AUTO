@@ -725,6 +725,42 @@ sys.exit(0 if o.get("state") == "outdated_clean" and o.get("needs_attention") is
     || { echo "[verify] template-status JSON did not mark outdated odoo pack needs_attention=true"; exit 1; }
 )
 
+echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
+(
+  tmp_dir="$(mktemp -d)"
+  held_pid=""
+  cleanup_session_lock_tmp() { [ -n "${held_pid}" ] && kill "${held_pid}" 2>/dev/null; rm -rf "${tmp_dir}"; }
+  trap cleanup_session_lock_tmp EXIT
+  cp "${repo_root}/scripts/session-lock.sh" "${tmp_dir}/session-lock.sh"
+  cd "${tmp_dir}"
+  mkdir -p .omx/state
+  export SESSION_LOCK_FILE=".omx/state/session.lock"
+  # shellcheck source=/dev/null
+  . ./session-lock.sh
+  sleep 300 & held_pid=$!
+
+  # A different LIVE session holding the tree -> sentinel 75 (retryable contention),
+  # which callers must NOT misread as a verification failure.
+  printf 'holder_pid=%s\nholder_session=other-session@host\nholder_op=x\n' "${held_pid}" > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 75 ] || { echo "[verify] session-lock: live foreign holder did not return 75 (got ${_rc})"; exit 1; }
+
+  # Our own session (re-entrant, e.g. review-gate -> nested verify) -> 0.
+  printf 'holder_pid=%s\nholder_session=self@host\nholder_op=x\n' "${held_pid}" > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: own session did not return 0 (got ${_rc})"; exit 1; }
+
+  # Stale holder (dead pid) -> reclaim, 0.
+  printf 'holder_pid=999999\nholder_session=ghost@host\nholder_op=x\n' > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: stale lock not reclaimed (got ${_rc})"; exit 1; }
+
+  # Shared-tree override on a live foreign holder -> 0 (explicit opt-in).
+  printf 'holder_pid=%s\nholder_session=other-session@host\nholder_op=x\n' "${held_pid}" > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_ALLOW_SHARED_TREE=1 AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: shared-tree override did not return 0 (got ${_rc})"; exit 1; }
+)
+
 echo "[verify] testing guidance document budget missing-file tolerance..."
 (
   tmp_dir="$(mktemp -d)"

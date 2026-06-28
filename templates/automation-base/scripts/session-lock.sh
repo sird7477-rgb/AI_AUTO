@@ -5,9 +5,13 @@
 # sharing ONE working tree are warned and soft-blocked instead of silently racing the
 # review/validation state. Prefer one worktree per terminal:  aiwt <name>.
 #
-# Provides: session_lock_acquire <op>  (0 = proceed, 1 = blocked)
+# Provides: session_lock_acquire <op>  (0 = proceed; 75 = a different LIVE session holds
+#             this tree — EX_TEMPFAIL/retryable contention, NOT a verification failure)
 #           session_lock_release
 # Override: AI_AUTO_ALLOW_SHARED_TREE=1 proceeds on a shared tree (state races possible).
+# 75 is emitted ONLY from the live-foreign-holder branch below; stale-reclaim and our own
+# re-entrant session both return 0, so callers can treat 75 as "deferred, re-run / use
+# aiwt" without ever masking a real failure (which never produces 75 here).
 
 SESSION_LOCK_FILE="${SESSION_LOCK_FILE:-.omx/state/session.lock}"
 SESSION_LOCK_HELD=0
@@ -46,8 +50,8 @@ session_lock_acquire() {
       printf '%s\n' "[lock] WARNING: this working tree is already in use by a live session (pid=${held_pid} op=${held_op})." >&2
       printf '%s\n' "[lock]   Prefer a separate worktree per terminal:  aiwt <name>" >&2
       if [ "${AI_AUTO_ALLOW_SHARED_TREE:-0}" != "1" ]; then
-        printf '%s\n' "[lock]   Blocked. Set AI_AUTO_ALLOW_SHARED_TREE=1 to share this tree anyway (state races possible)." >&2
-        return 1
+        printf '%s\n' "[lock]   Deferred (retryable): re-run after that session finishes, or use a separate worktree (aiwt). Set AI_AUTO_ALLOW_SHARED_TREE=1 to share anyway (state races possible)." >&2
+        return 75   # EX_TEMPFAIL: live-foreign-holder contention, NOT a failure
       fi
       printf '%s\n' "[lock]   AI_AUTO_ALLOW_SHARED_TREE=1: proceeding on a SHARED tree." >&2
       SESSION_LOCK_HELD=0          # do not disturb the live holder's lock

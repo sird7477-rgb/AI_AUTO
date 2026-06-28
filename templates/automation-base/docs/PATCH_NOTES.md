@@ -4,6 +4,24 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.28.4
+
+- session-lock contention sentinel (ST-P1-69): when a different LIVE session holds
+  this working tree's lock, `session_lock_acquire` now returns **75** (EX_TEMPFAIL,
+  retryable) instead of 1; stale-reclaim / own re-entrant session / shared-tree
+  override all still return 0. `review-gate.sh`'s own acquire (before verify) and
+  standalone `verify.sh` propagate 75 as a clear non-blocking "deferred — re-run or
+  use `aiwt`", instead of the old opaque `exit 1` that operators misread as a
+  verification failure (then reached for `--no-verify`). A 75 is NEVER turned into
+  a `proceed`/`proceed_degraded` (verification is never skipped) and NEVER recorded
+  as a `verify_failed`/blocked verdict; a genuine verify failure still blocks. Both
+  scripts are `set -euo pipefail`, so the acquire uses `|| rc=$?` to capture the
+  code. Adversarial panel removed a corroboration guard that could have false-
+  deferred a real failure under `AI_AUTO_ALLOW_SHARED_TREE=1`. Mirrored to the
+  template (`session-lock.sh`, `review-gate.sh`); `verify.sh` is source-only (the
+  template ships `verify.example.sh` without the lock block). verify-machinery
+  fixture: live foreign holder → 75, own → 0, stale → 0, shared-override → 0.
+
 ## 2026.06.28.3
 
 - doc-budget completion-baseline guidance (prevent stale hardcoded anchors): a
