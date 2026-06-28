@@ -4,6 +4,37 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.28.1
+
+- doc-budget completion-base auto-wiring (ST-P1-64): a code-only run on a long-lived
+  shared branch was hard-failed by the completion-scoped guidance budget because the
+  327-line overage was OTHER runs' doc debt, not this run's. The fix
+  (`DOC_BUDGET_COMPLETION_BASE_REF`) already existed but had to be set by hand. Now
+  `ai-principal-runtime.sh record-launch` also records `launch_base_commit` (HEAD at
+  run start) and a new `ai-principal-runtime.sh completion-base` prints it back ONLY
+  after the same launcher-evidence guard the review gate uses (execution_mode/source/
+  workspace match, non-symlink) AND confirming it is still an ancestor of HEAD.
+  `verify-machinery.sh` injects it one-shot into the doc-budget call (never exported →
+  no leak into the verify pytest); an explicit env override wins, and no/invalid
+  evidence falls back to today's branch-cumulative measurement. The split-to-evade
+  defense is untouched: bloat THIS run commits after launch still hard-fails
+  (regression fixture added).
+- Odoo inherited-field overlap advisory (ST-P1-62): new
+  `domain-packs/odoo/validation-harness/check-inherited-field-overlap.py` flags a
+  `(inherited model, field name)` pair written by 2+ CHANGED addons — the cross-addon
+  behavioral collision class warm registry-load stays green on (queue
+  `odoo:post-install-gap-field-semantic-collision`). It is diff-scoped, advisory
+  (pre-push runs it with `|| true`, always exit 0), and NOT a duplicate-field lint:
+  the single-addon legal override is never flagged. Documented in `verify-patterns.md`
+  / `review-checklist.md`; `validate-full.sh` (post-install tier) stays the oracle.
+  Regression-fixtured in `verify-machinery.sh` (same-field/two-addon flags at rc0,
+  `--strict` → rc1, distinct field names stay silent).
+- Pre-push validation liveness note (ST-P1-63): `validation-harness/README.md` and the
+  `validate-warm.sh` start banner now state the `--log-level=warn` run is quiet for
+  ~tens of seconds to ~2 min (do not interrupt) and that a mid-validation `git fetch`
+  may show a stale `origin` — confirm the push outcome via `git rev-list`, not the
+  interim fetch.
+
 ## 2026.06.25.1
 
 - review gate U1 (over-engineering audit, top lever): the self_demo_contracts layer was

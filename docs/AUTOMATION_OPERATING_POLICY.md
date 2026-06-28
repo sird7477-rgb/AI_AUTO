@@ -341,7 +341,11 @@ set `DOC_BUDGET_COMPLETION_BASE_REF` to the task or Ralph-run starting commit.
 `scripts/doc-budget.sh` still reports the branch-cumulative diff against
 `main`, but the hard failure applies to the completion-scoped diff from that
 baseline. Report both numbers so implementation completion is not confused with
-branch-integration guidance debt.
+branch-integration guidance debt. The verify launcher auto-derives this baseline
+from validated launcher evidence (`ai-principal-runtime.sh completion-base`, the
+recorded launch-time HEAD that is still an ancestor of the current HEAD), so the
+env var is only needed to override; with no or invalid evidence the measurement
+safely falls back to branch-cumulative.
 
 In a project installed from the AI_AUTO template, `scripts/doc-budget.sh`
 excludes guidance docs that are byte-identical to the install-time baseline

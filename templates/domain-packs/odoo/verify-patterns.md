@@ -64,6 +64,26 @@ popup dispatched with no client crash. Fix a real failure by adding
 `'views': [(False, 'form')]` to the action dict. This is the cheap escaped-defect
 loop: the screen narrows, the local popup run decides.
 
+### Inherited-Field Overlap Screen
+
+`validation-harness/check-inherited-field-overlap.py` flags a
+`(inherited model, field name)` pair written by **two or more CHANGED addons**
+(e.g. `account.move.jw_billing_type_code` defined by both a sale and a purchase
+addon) — the cross-addon BEHAVIORAL collision class (queue
+`odoo:post-install-gap-field-semantic-collision`). Warm registry-load stays
+GREEN because both modules install; only the post-install tests see which
+addon's `compute`/`related`/`store`/override order wins.
+
+This is NOT a duplicate-field lint (forbidden by `commit-tier/README.md`
+Article 1.1) and it NEVER flags the legal single-addon override: the signature
+is the rare, high-precision case of the SAME field name on the SAME inherited
+model from **≥2 distinct changed addons**. It is diff-scoped and advisory (the
+pre-push hook runs it without blocking). Confirm each flagged pair with
+`validate-full.sh` (the post-install test tier) before push/PR — that is the
+oracle; the screen only nominates. Prefer module-prefixed field names
+(`jw_sale_billing_type_code` vs `jw_purchase_billing_type_code`) to avoid the
+collision at the source.
+
 ### Manifest File-Reference Screen
 
 `validation-harness/check-manifest-files.py` checks every changed module's

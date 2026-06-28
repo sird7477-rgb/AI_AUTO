@@ -47,6 +47,11 @@ changes.
   view-inheritance (T2) and renamed/removed schema (bulk of T1) are uncaught, so
   changed addon view/model XML still requires the `validation-harness/` registry
   load (push tier) or build-blocking-risk alternative evidence.
+- When 2+ changed addons write the **same field name** on the same `_inherit`
+  target (the `check-inherited-field-overlap.py` advisory), warm registry-load is
+  green but does not exercise the behavioral interaction (compute/related/store,
+  override order) — require `validate-full.sh` (post-install test tier) before PR;
+  if skipped, record it as at-risk per the harness honesty rule.
 
 ## Completion Evidence
 

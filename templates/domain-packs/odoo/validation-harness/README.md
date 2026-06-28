@@ -131,6 +131,14 @@ on failure**; allow `SKIP_ODOO_VALIDATE=1` for an explicit emergency override.
 > commit), so a pre-push hook should pass the exact pushed range explicitly or use
 > this default with a tracking upstream set.
 
+> Liveness: the warm validation runs Odoo at `--log-level=warn`, so a clean
+> install is quiet for ~tens of seconds to ~2 min between the `[warm] modules:`
+> start line and the `[warm] PASS/FAIL` result line — this is normal, **do not
+> interrupt it**; an interrupted clone DB is a throwaway and self-heals on the
+> next run. A `git fetch` issued mid-validation can show `origin` in a stale
+> state; confirm the true push outcome by comparing revisions
+> (`git rev-list --left-right --count @{u}...HEAD`), not by the interim fetch.
+
 When docker / warm base / harness is unavailable the hook does **not** certify the
 change: it must report that validation was **not performed** and that changed
 addon view XML therefore carries **build-blocking risk** (per `../verify-patterns.md`

@@ -304,7 +304,21 @@ grep -q "Delegation Recording Protocol" AGENTS.md
 grep -q "Delegation Recording Protocol" templates/automation-base/AGENTS.md
 
 echo "[verify] checking guidance document budget..."
-./scripts/doc-budget.sh
+# ST-P1-64: auto-derive the completion-scope baseline from validated launcher
+# evidence so a code-only run on a long-lived shared branch is not hard-failed by
+# guidance debt OTHER runs accumulated. Injected one-shot for this call only
+# (never exported -> no leak into the verify pytest). An explicit env override
+# wins; no/invalid evidence -> bare call = today's branch-cumulative measurement
+# (the safe default; the split-to-evade defense is untouched).
+if [ -n "${DOC_BUDGET_COMPLETION_BASE_REF:-}" ]; then
+  ./scripts/doc-budget.sh
+elif _lb="$(./scripts/ai-principal-runtime.sh completion-base 2>/dev/null)" && [ -n "${_lb}" ]; then
+  echo "[verify] doc-budget completion base from launcher evidence: ${_lb}"
+  DOC_BUDGET_COMPLETION_BASE_REF="${_lb}" ./scripts/doc-budget.sh
+else
+  ./scripts/doc-budget.sh
+fi
+unset _lb 2>/dev/null || true
 
 echo "[verify] checking Codex native goal mode boundary guidance..."
 (
@@ -522,6 +536,152 @@ echo "[verify] testing guidance document budget cumulative-vs-base accounting...
     exit 1
   fi
   grep -q "completion-scoped guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-completion-scope-fail.out"
+)
+
+echo "[verify] testing doc-budget completion base auto-derivation from launcher evidence (ST-P1-64)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_completion_evidence_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_completion_evidence_tmp EXIT
+
+  git -c init.defaultBranch=main init -q "${tmp_dir}"
+  cd "${tmp_dir}"
+  mkdir -p docs scripts .omx/state/principal-runtime
+  printf '# Agents\n' > AGENTS.md
+  printf '# Workflow\n' > docs/WORKFLOW.md
+  cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
+  cp "${repo_root}/scripts/ai-principal-runtime.sh" scripts/ai-principal-runtime.sh
+  chmod +x scripts/doc-budget.sh scripts/ai-principal-runtime.sh
+  git add .
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed evidence fixture"
+
+  # Simulate a long-lived shared branch: PRIOR runs already committed guidance
+  # debt BEFORE this run launched.
+  git checkout -q -b shared-branch
+  : > docs/BLOAT.md
+  for i in $(seq 1 310); do printf 'prior-run guidance line %s\n' "$i" >> docs/BLOAT.md; done
+  git add docs/BLOAT.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "prior-run guidance debt"
+  # THIS run launches here (HEAD already contains the prior debt), then makes a
+  # tiny guidance change.
+  launch_base="$(git rev-parse HEAD)"
+  printf 'small current-work guidance line\n' >> docs/WORKFLOW.md
+
+  evidence=".omx/state/principal-runtime/current.env"
+  {
+    printf 'principal_runtime=claude\n'
+    printf 'execution_mode=principal\n'
+    printf 'source=ai-auto-principal-launcher\n'
+    printf 'workspace=%s\n' "$(git rev-parse --show-toplevel)"
+    printf 'launch_base_commit=%s\n' "${launch_base}"
+    printf 'created_at=2026-01-01T00:00:00+00:00\n'
+  } > "${evidence}"
+
+  # Valid evidence -> completion-base resolves to the launch baseline, so the
+  # PRIOR-run debt stays a branch-cumulative WARNING and only this run's small
+  # change is hard-checked -> passes (the ST-P1-64 false-fail fix).
+  got="$(./scripts/ai-principal-runtime.sh completion-base)"
+  [ "${got}" = "${launch_base}" ] || { echo "[verify] completion-base did not resolve launch baseline"; exit 1; }
+  DOC_BUDGET_COMPLETION_BASE_REF="${got}" ./scripts/doc-budget.sh > "${tmp_dir}/evidence-pass.out"
+  grep -q "branch-cumulative guidance diff net added lines: 311" "${tmp_dir}/evidence-pass.out"
+  grep -q "completion-scoped guidance diff net added lines: 1" "${tmp_dir}/evidence-pass.out"
+
+  # Anti-evasion: if THIS run itself adds >300 guidance lines AFTER launch, the
+  # completion-scoped check still hard-fails (split-to-evade stays closed).
+  : > docs/TASK_BLOAT.md
+  for i in $(seq 1 310); do printf 'this-run guidance line %s\n' "$i" >> docs/TASK_BLOAT.md; done
+  if DOC_BUDGET_COMPLETION_BASE_REF="${got}" ./scripts/doc-budget.sh > "${tmp_dir}/evidence-fail.out" 2>&1; then
+    echo "[verify] completion base let this-run guidance bloat through"; exit 1
+  fi
+  grep -q "completion-scoped guidance diff net added lines exceeds hard limit" "${tmp_dir}/evidence-fail.out"
+  rm -f docs/TASK_BLOAT.md
+
+  # Tampered / wrong-state evidence must fail closed (no base -> branch-cumulative).
+  cp "${evidence}" "${evidence}.bak"
+  grep -v '^launch_base_commit=' "${evidence}.bak" > "${evidence}"
+  ! ./scripts/ai-principal-runtime.sh completion-base >/dev/null 2>&1 || { echo "[verify] completion-base accepted evidence without launch_base"; exit 1; }
+  orphan="$(git commit-tree "$(git rev-parse 'HEAD^{tree}')" -m orphan)"
+  sed "s/^launch_base_commit=.*/launch_base_commit=${orphan}/" "${evidence}.bak" > "${evidence}"
+  ! ./scripts/ai-principal-runtime.sh completion-base >/dev/null 2>&1 || { echo "[verify] completion-base accepted a non-ancestor base"; exit 1; }
+  sed "s|^workspace=.*|workspace=/nonexistent/elsewhere|" "${evidence}.bak" > "${evidence}"
+  ! ./scripts/ai-principal-runtime.sh completion-base >/dev/null 2>&1 || { echo "[verify] completion-base accepted mismatched workspace"; exit 1; }
+  rm -f "${evidence}" "${evidence}.bak"
+  ! ./scripts/ai-principal-runtime.sh completion-base >/dev/null 2>&1 || { echo "[verify] completion-base accepted missing evidence"; exit 1; }
+)
+
+echo "[verify] testing odoo inherited-field overlap advisory screen (ST-P1-62)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_inherit_overlap_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_inherit_overlap_tmp EXIT
+
+  check="${repo_root}/templates/domain-packs/odoo/validation-harness/check-inherited-field-overlap.py"
+  git -c init.defaultBranch=main init -q "${tmp_dir}"
+  cd "${tmp_dir}"
+  mkdir -p custom-addons/jw_sale/models custom-addons/jw_purchase/models custom-addons/jw_only/models
+  for a in jw_sale jw_purchase jw_only; do
+    printf 'from odoo import models, fields\n' > "custom-addons/${a}/models/m.py"
+  done
+  git add .
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed addons"
+
+  # Positive: two changed addons write the SAME field on the SAME inherited model.
+  cat > custom-addons/jw_sale/models/m.py <<'PY'
+from odoo import models, fields
+class SaleMove(models.Model):
+    _inherit = "account.move"
+    jw_billing_type_code = fields.Char()
+PY
+  cat > custom-addons/jw_purchase/models/m.py <<'PY'
+from odoo import models, fields
+class PurchaseMove(models.Model):
+    _inherit = "account.move"
+    jw_billing_type_code = fields.Char()
+PY
+  # Single-addon override (must never contribute to a flag).
+  cat > custom-addons/jw_only/models/m.py <<'PY'
+from odoo import models, fields
+class Partner(models.Model):
+    _inherit = "res.partner"
+    credit_limit = fields.Monetary()
+PY
+  python3 "${check}" --root custom-addons > "${tmp_dir}/pos.out"
+  rc=$?
+  [ "${rc}" = "0" ] || { echo "[verify] inherit-overlap advisory must exit 0, got ${rc}"; exit 1; }
+  grep -q "account.move.jw_billing_type_code: jw_purchase, jw_sale" "${tmp_dir}/pos.out" \
+    || { echo "[verify] inherit-overlap did not flag the same-field/two-addon case"; exit 1; }
+  # --strict makes the same case exit 1 (opt-in blocking).
+  if python3 "${check}" --root custom-addons --strict > /dev/null 2>&1; then
+    echo "[verify] inherit-overlap --strict did not exit 1 on a flagged pair"; exit 1
+  fi
+
+  # Negative: different field names on the same model -> no flag.
+  sed -i 's/jw_billing_type_code/jw_sale_code/' custom-addons/jw_sale/models/m.py
+  python3 "${check}" --root custom-addons > "${tmp_dir}/neg.out"
+  grep -q "OK: no inherited-model field name written by 2+ changed addons" "${tmp_dir}/neg.out" \
+    || { echo "[verify] inherit-overlap false-flagged distinct field names"; exit 1; }
+)
+
+echo "[verify] testing inherited-field overlap ignores deletion-only diffs..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_inherit_del_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_inherit_del_tmp EXIT
+
+  check="${repo_root}/templates/domain-packs/odoo/validation-harness/check-inherited-field-overlap.py"
+  git -c init.defaultBranch=main init -q "${tmp_dir}"
+  cd "${tmp_dir}"
+  mkdir -p custom-addons/jw_sale/models custom-addons/jw_purchase/models
+  # Both addons ALREADY share the same inherited field pair, plus a deletable line.
+  printf 'from odoo import models, fields\nclass S(models.Model):\n    _inherit = "account.move"\n    # deletable line\n    jw_billing_type_code = fields.Char()\n' > custom-addons/jw_sale/models/m.py
+  printf 'from odoo import models, fields\nclass P(models.Model):\n    _inherit = "account.move"\n    # deletable line\n    jw_billing_type_code = fields.Char()\n' > custom-addons/jw_purchase/models/m.py
+  git add .
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "baseline shared pair"
+  # Deletion-only change to BOTH files (remove the comment; no added lines).
+  sed -i '/# deletable line/d' custom-addons/jw_sale/models/m.py custom-addons/jw_purchase/models/m.py
+  python3 "${check}" --root custom-addons > "${tmp_dir}/del.out"
+  grep -q "OK: no inherited-model field name written by 2+ changed addons" "${tmp_dir}/del.out" \
+    || { echo "[verify] inherit-overlap false-flagged a deletion-only diff of a pre-existing pair"; exit 1; }
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."

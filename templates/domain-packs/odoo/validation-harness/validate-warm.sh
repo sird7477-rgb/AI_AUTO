@@ -38,6 +38,7 @@ else
 fi
 [ -n "$MODCOMMA" ] || { echo "[warm] no changed custom modules; skip"; exit 0; }
 echo "[warm] modules: $MODCOMMA  (-u on a clone of '$BASE_DB')"
+echo "[warm] validating at --log-level=warn (~tens of seconds to ~2 min, quiet is normal — do not interrupt); a PASS/FAIL line follows."
 
 dc up -d db >/dev/null
 dc exec -T db sh -c 'until pg_isready -U odoo -q; do sleep 1; done'

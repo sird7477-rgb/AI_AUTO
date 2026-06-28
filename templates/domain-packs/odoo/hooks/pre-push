@@ -82,6 +82,15 @@ if [ -x "$HARNESS/check-action-shape.py" ]; then
   ( cd "$PROJECT" && python3 "$HARNESS/check-action-shape.py" ) || true
 fi
 
+# Static inherited-field overlap screen (no docker): flag a (inherited model,
+# field name) pair written by 2+ CHANGED addons — the cross-addon BEHAVIORAL
+# collision class warm registry-load stays green on (queue odoo:post-install-gap-
+# field-semantic-collision). Advisory only: it nominates pairs to CONFIRM via
+# validate-full.sh (post-install test tier); it never blocks the push.
+if [ -x "$HARNESS/check-inherited-field-overlap.py" ]; then
+  ( cd "$PROJECT" && python3 "$HARNESS/check-inherited-field-overlap.py" ) || true
+fi
+
 if ! docker info >/dev/null 2>&1; then
   echo "[pre-push] ⚠️  docker unavailable — pushing WITHOUT Odoo validation (NOT VALIDATED)"; exit 0
 fi
