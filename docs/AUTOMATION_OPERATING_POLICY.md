@@ -345,7 +345,10 @@ branch-integration guidance debt. The verify launcher auto-derives this baseline
 from validated launcher evidence (`ai-principal-runtime.sh completion-base`, the
 recorded launch-time HEAD that is still an ancestor of the current HEAD), so the
 env var is only needed to override; with no or invalid evidence the measurement
-safely falls back to branch-cumulative.
+safely falls back to branch-cumulative. A project that sets the baseline in its
+OWN `scripts/verify.sh` must use the auto-deriving form, never a hardcoded commit
+(a pinned anchor goes stale and then hard-fails unrelated work on a long-lived
+branch): `DOC_BUDGET_COMPLETION_BASE_REF="${DOC_BUDGET_COMPLETION_BASE_REF:-$(./scripts/ai-principal-runtime.sh completion-base 2>/dev/null)}"`.
 
 In a project installed from the AI_AUTO template, `scripts/doc-budget.sh`
 excludes guidance docs that are byte-identical to the install-time baseline

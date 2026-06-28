@@ -4,6 +4,20 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.28.3
+
+- doc-budget completion-baseline guidance (prevent stale hardcoded anchors): a
+  project that writes its own `scripts/verify.sh` and sets a doc-budget
+  completion baseline should use the auto-deriving form
+  `DOC_BUDGET_COMPLETION_BASE_REF="${DOC_BUDGET_COMPLETION_BASE_REF:-$(./scripts/ai-principal-runtime.sh completion-base 2>/dev/null)}"`,
+  never a hardcoded commit. A pinned anchor goes stale and then hard-fails
+  unrelated work on a long-lived branch (observed downstream: an anchor that was
+  never advanced accumulated ~336 net guidance lines and blocked the review gate
+  on every push). Documented in `docs/AUTOMATION_OPERATING_POLICY.md` and the
+  `install-automation-template.sh` verify.sh customization note. No source-repo
+  code change — the mainline enforcement path (`verify-machinery.sh`) already
+  auto-derives via ST-P1-64.
+
 ## 2026.06.28.2
 
 - update-keyword workflow gap fixes (`AGENTS.md`): the `AI_AUTO 최신 패치 적용해줘`

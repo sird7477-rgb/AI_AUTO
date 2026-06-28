@@ -394,7 +394,7 @@ echo "7. Use ${TARGET_DIR}/docs/DOMAIN_PACKS.md to check ${TARGET_DIR}/.omx/doma
 echo "8. Use ${TARGET_DIR}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md only when creating or changing reusable domain packs."
 echo "9. Use ${TARGET_DIR}/docs/OBSIDIAN_INTEGRATION.md and ${TARGET_DIR}/scripts/knowledge-notes.py for sanitized debugging notes, work-review notes, and technical references."
 echo "10. Update ${TARGET_DIR}/AGENTS.md and ${TARGET_DIR}/docs/WORKFLOW.md for the target project."
-echo "11. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards such as ${TARGET_DIR}/scripts/doc-budget.sh and ${TARGET_DIR}/scripts/guidance-duplicate-report.sh."
+echo "11. Customize ${TARGET_DIR}/scripts/verify.sh with project-specific checks while preserving useful template safeguards such as ${TARGET_DIR}/scripts/doc-budget.sh and ${TARGET_DIR}/scripts/guidance-duplicate-report.sh. If verify.sh sets a doc-budget completion baseline, use the auto-deriving form (DOC_BUDGET_COMPLETION_BASE_REF=\${DOC_BUDGET_COMPLETION_BASE_REF:-\$(./scripts/ai-principal-runtime.sh completion-base 2>/dev/null)}) — never a hardcoded commit, which goes stale and hard-fails unrelated work on a long-lived branch."
 echo "12. Run:"
 echo "   cd ${TARGET_DIR}"
 echo "   ./scripts/automation-doctor.sh"
