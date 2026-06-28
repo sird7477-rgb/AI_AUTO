@@ -55,7 +55,11 @@ When the user asks to preview the project in a browser — trigger phrases
 
 - Run `serve.sh <project_repo> [changed modules]` in the BACKGROUND. It is a long-running
   foreground HTTP server, so never run it blocking in the session — background it, poll
-  until the port answers, then report the URL.
+  until the port answers, then report the URL. On WSL2 the FIRST all-module + enterprise
+  load can take several minutes (the registry build + first `/web` asset compile); poll
+  patiently (wait for Odoo's `HTTP service (werkzeug) running`) before concluding failure.
+  serve.sh disables Odoo's time watchdog by default so this slow first load no longer
+  restart-loops (`ODOO_SERVE_LIMIT_*` to tune; memory stays capped, not unlimited).
 - Report `http://localhost:<port>` (default 8069, `ODOO_SERVE_PORT`) and the login
   `admin / admin`. The user clicks through the actual forms; you do not drive the UI.
 - No module argument updates the git-diff changed modules; pass a module name explicitly

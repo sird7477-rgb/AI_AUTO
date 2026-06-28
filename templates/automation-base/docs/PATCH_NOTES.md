@@ -4,6 +4,15 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.28.6
+
+- odoo domain-pack WORKFLOW.md serve guidance (ST-P1-71 follow-up): the agent-facing
+  "로컬 띄워 / serve" section now tells the agent that on WSL2 the first all-module +
+  enterprise load can take several minutes, to poll patiently for Odoo's `HTTP service
+  (werkzeug) running` before concluding failure, and that serve.sh disables the time
+  watchdog by default so the slow first load no longer restart-loops (memory stays
+  capped). Doc-only completeness pass over the ST-P1-71 serve change.
+
 ## 2026.06.28.5
 
 - odoo domain-pack serve.sh resource-watchdog flags (ST-P1-71): the local UI
