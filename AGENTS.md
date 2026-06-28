@@ -134,6 +134,7 @@ When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as the AI_AUT
 check path/git status, run `ai-auto-template-status`, read current AI_AUTO patch notes,
 inspect managed-file differences, preserve hybrid project rules, apply only template-owned
 or review-merge updates, then run `./scripts/verify.sh` and `./scripts/review-gate.sh`.
+First confirm the AI_AUTO source checkout is current (`git -C ~/workspace/ai-lab pull`, or via `ai-home`) so the refresh targets the latest mainline, not a stale local copy. Domain-pack changes ship on a SEPARATE channel: also run `ai-domain-pack` to refresh installed packs (advisory; fail-closed on locally-edited/dirty packs) — `ai-template-refresh`/template-owned updates do NOT touch `domain-packs/`.
 For hybrid `review-merge` files, report template changes as absorbed, rejected, or deferred; for project-owned `inspect-only` files, report drift only.
 If a legitimate template-owned guide addition trips only doc-budget current-diff hard limit, rerun with `DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
 If `ai-auto-template-status` reports `template_patch_enabled: no`, stop before patching and report the source branch/channel as review-only.

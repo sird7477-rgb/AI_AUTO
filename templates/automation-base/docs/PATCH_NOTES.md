@@ -4,6 +4,21 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.28.2
+
+- update-keyword workflow gap fixes (`AGENTS.md`): the `AI_AUTO 최신 패치 적용해줘`
+  template-patch workflow now (1) tells the agent to FIRST confirm the AI_AUTO
+  source checkout is current (`git -C ~/workspace/ai-lab pull` / `ai-home`) so a
+  refresh targets the latest mainline rather than a stale local copy, and (2)
+  adds the separate domain-pack channel — also run `ai-domain-pack` to refresh
+  installed packs, because `ai-template-refresh`/template-owned updates do NOT
+  touch `domain-packs/` (so odoo-pack changes like the inherited-field overlap
+  screen would otherwise be missed by the keyword workflow).
+- odoo domain pack: `AGENTS.patch.md` now documents the pre-push
+  `check-inherited-field-overlap.py` advisory (run `validate-full.sh` on a flagged
+  `(model, field)` pair before push; a clean warm pass does not settle it) —
+  the guidance counterpart that the 2026.06.28.1 screen addition had omitted.
+
 ## 2026.06.28.1
 
 - doc-budget completion-base auto-wiring (ST-P1-64): a code-only run on a long-lived

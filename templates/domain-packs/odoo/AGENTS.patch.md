@@ -102,6 +102,15 @@ self-certify it safe — open it. If it is reached by a raw JS `doAction(dict)`,
 `'views': [(False, 'form')]` to the returned action. This is the escaped-defect
 loop for the Odoo-19 raw-doAction crash class.
 
+When the pre-push inherited-field overlap screen
+(`check-inherited-field-overlap.py`) lists a `(model, field)` pair written by 2+
+changed addons, treat it as a coordination-risk advisory, not a verdict: warm
+registry-load stays green, so run `validation-harness/validate-full.sh`
+(post-install test tier) on the affected modules before push to confirm the
+behavioral interaction (compute/related/store, override order). Prefer
+module-prefixed field names to remove the collision at the source. Do NOT treat
+a clean warm pass as settling a flagged pair.
+
 Trigger "로컬띄워" (also "로컬 띄워" / "serve 띄워" / "UI 확인"): start the harness
 `serve.sh <project> [changed modules]` in the BACKGROUND (long-running HTTP server —
 never block the session), then report `http://localhost:<port>` and `admin / admin` so
