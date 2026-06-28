@@ -27,6 +27,7 @@ This repository keeps source copies of helper commands that are linked into `~/b
 - `ai-auto-template-status`
   - Compares a project against the current AI_AUTO automation template
   - Reports installed template version, current template version, overall status, per-managed-file states, ownership, and patch policy
+  - Also reports `domain_packs` drift for packs the project ACTUALLY installed (via `ai-domain-pack status`), so the keyword update workflow surfaces an outdated odoo/other pack even though `ai-template-refresh` never touches `domain-packs/`; a project with no installed packs reports `none installed` and is unaffected
   - Excludes generated/runtime project files such as `.omx/` artifacts from the managed-file manifest
   - Use template `docs/PATCH_NOTES.md` first to review version-level changes before patching a project
   - Does not merge or patch files

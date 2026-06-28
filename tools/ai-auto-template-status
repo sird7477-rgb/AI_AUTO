@@ -318,6 +318,44 @@ else
   overall_status="current"
 fi
 
+# Domain-pack drift surfacing. The `AI_AUTO 최신 패치 적용해줘` keyword workflow runs
+# THIS tool, but `ai-template-refresh` only covers template-owned files and never
+# touches `domain-packs/`; without this, an installed odoo pack could silently fall
+# behind. Scoped to packs the project ACTUALLY installed (manifest/target present):
+# a non-Odoo project installed nothing -> every pack is `new_source_pack` -> this
+# reports "none installed" and changes nothing. Read-only; fails graceful.
+domain_pack_raw=""
+if [ -f "${AI_LAB_ROOT}/tools/ai-domain-pack" ]; then
+  domain_pack_raw="$(python3 "${AI_LAB_ROOT}/tools/ai-domain-pack" --target "${target_abs}" status --json 2>/dev/null || true)"
+fi
+domain_pack_summary="$(printf '%s' "${domain_pack_raw}" | python3 -c '
+import json, sys
+raw = sys.stdin.read().strip()
+if not raw:
+    print("domain_packs: unknown (ai-domain-pack unavailable)"); sys.exit(0)
+try:
+    d = json.loads(raw)
+except Exception:
+    print("domain_packs: unknown (unparseable)"); sys.exit(0)
+ATT = {
+    "outdated_clean": "outdated -> ai-domain-pack refresh --apply",
+    "conflict": "local edits + upstream changed -> review-merge by hand",
+    "adoptable": "legacy, no manifest -> ai-domain-pack refresh --apply to adopt",
+    "unmanaged": "legacy modified, no manifest -> review-merge by hand",
+}
+installed = [p for p in d.get("packs", []) if p.get("state") != "new_source_pack"]
+if not installed:
+    print("domain_packs: none installed"); sys.exit(0)
+parts = []
+for p in installed:
+    s, n = p.get("state"), p.get("pack")
+    parts.append(f"{n}={s} ({ATT[s]})" if s in ATT else f"{n}={s}")
+print("domain_packs: " + "; ".join(parts))
+att = sorted(p.get("pack") for p in installed if p.get("state") in ATT)
+if att:
+    print("domain_pack_action: " + ", ".join(att) + " need ai-domain-pack refresh/merge (template-owned refresh does not touch domain-packs/)")
+')"
+
 if [ "$JSON" -eq 1 ]; then
   # Machine-readable surface for the downstream staleness gate: per-file {state, ownership,
   # patch_policy} so the gate can block on ownership==template-owned only. Serialized via
@@ -333,6 +371,7 @@ if [ "$JSON" -eq 1 ]; then
     AAS_PATCH_REASON="${template_patch_block_reason:-}" \
     AAS_TOTAL="$total_count" AAS_SAME="$same_count" \
     AAS_DIFF="$different_count" AAS_MISSING="$missing_count" \
+    AAS_DOMAIN_PACK_RAW="${domain_pack_raw}" \
     python3 -c '
 import json, os, sys
 files = []
@@ -345,6 +384,18 @@ for line in sys.stdin.read().splitlines():
     st, path, tpath, own, pol, drift = parts[:6]
     files.append({"state": st, "path": path, "template_path": tpath,
                   "ownership": own, "patch_policy": pol, "drift": drift})
+ATT = {"outdated_clean", "conflict", "adoptable", "unmanaged"}
+domain_packs = []
+_raw = os.environ.get("AAS_DOMAIN_PACK_RAW", "").strip()
+if _raw:
+    try:
+        for p in json.loads(_raw).get("packs", []):
+            if p.get("state") == "new_source_pack":
+                continue  # not installed in this project (e.g. a non-Odoo repo)
+            domain_packs.append({"pack": p.get("pack"), "state": p.get("state"),
+                                 "needs_attention": p.get("state") in ATT})
+    except Exception:
+        domain_packs = None
 out = {
     "target": os.environ["AAS_TARGET"],
     "installed_version": os.environ.get("AAS_IV") or None,
@@ -360,6 +411,7 @@ out = {
         "different": int(os.environ["AAS_DIFF"]),
         "missing": int(os.environ["AAS_MISSING"]),
     },
+    "domain_packs": domain_packs,
     "files": files,
 }
 print(json.dumps(out, indent=2))
@@ -381,6 +433,7 @@ managed_files: ${total_count}
 same: ${same_count}
 different: ${different_count}
 missing: ${missing_count}
+${domain_pack_summary}
 
 STATE	PATH	TEMPLATE_PATH	OWNERSHIP	PATCH_POLICY	DRIFT
 ${rows}

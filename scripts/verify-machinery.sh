@@ -684,6 +684,47 @@ echo "[verify] testing inherited-field overlap ignores deletion-only diffs..."
     || { echo "[verify] inherit-overlap false-flagged a deletion-only diff of a pre-existing pair"; exit 1; }
 )
 
+echo "[verify] testing ai-auto-template-status domain-pack drift surfacing..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_dp_status_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_dp_status_tmp EXIT
+  status_tool="${repo_root}/tools/ai-auto-template-status"
+  pack_tool="${repo_root}/tools/ai-domain-pack"
+
+  # A project with NO installed packs (the non-Odoo case) -> "none installed", empty JSON.
+  "${status_tool}" "${tmp_dir}" 2>/dev/null | grep -q "^domain_packs: none installed" \
+    || { echo "[verify] template-status did not report 'none installed' for a pack-less project"; exit 1; }
+  "${status_tool}" --json "${tmp_dir}" 2>/dev/null \
+    | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("domain_packs")==[] else 1)' \
+    || { echo "[verify] template-status JSON domain_packs not empty for a pack-less project"; exit 1; }
+
+  # Install the odoo pack -> reported current, needs_attention false.
+  python3 "${pack_tool}" --target "${tmp_dir}" --pack odoo refresh --apply >/dev/null 2>&1
+  "${status_tool}" "${tmp_dir}" 2>/dev/null | grep -q "domain_packs:.*odoo=current" \
+    || { echo "[verify] template-status did not report installed odoo pack as current"; exit 1; }
+  "${status_tool}" --json "${tmp_dir}" 2>/dev/null | python3 -c '
+import json, sys
+ps = {p["pack"]: p for p in (json.load(sys.stdin).get("domain_packs") or [])}
+sys.exit(0 if ps.get("odoo", {}).get("needs_attention") is False else 1)' \
+    || { echo "[verify] template-status JSON did not mark current odoo pack needs_attention=false"; exit 1; }
+
+  # Simulate upstream-moved-on (outdated_clean): drop one file from BOTH the
+  # installed pack and its manifest, so source now has an extra file the install lacks.
+  man="${tmp_dir}/.omx/domain-packs/.manifest/odoo.json"
+  victim="$(python3 -c 'import json,sys; print(sorted(json.load(open(sys.argv[1]))["files"])[0])' "${man}")"
+  rm -f "${tmp_dir}/.omx/domain-packs/odoo/${victim}"
+  python3 -c 'import json,sys; p,v=sys.argv[1],sys.argv[2]; d=json.load(open(p)); d["files"].pop(v,None); json.dump(d,open(p,"w"))' "${man}" "${victim}"
+  "${status_tool}" "${tmp_dir}" 2>/dev/null | grep -q "^domain_pack_action:.*odoo" \
+    || { echo "[verify] template-status did not flag an outdated odoo pack for action"; exit 1; }
+  "${status_tool}" --json "${tmp_dir}" 2>/dev/null | python3 -c '
+import json, sys
+ps = {p["pack"]: p for p in (json.load(sys.stdin).get("domain_packs") or [])}
+o = ps.get("odoo", {})
+sys.exit(0 if o.get("state") == "outdated_clean" and o.get("needs_attention") is True else 1)' \
+    || { echo "[verify] template-status JSON did not mark outdated odoo pack needs_attention=true"; exit 1; }
+)
+
 echo "[verify] testing guidance document budget missing-file tolerance..."
 (
   tmp_dir="$(mktemp -d)"
