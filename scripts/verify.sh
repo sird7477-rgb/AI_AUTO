@@ -60,6 +60,9 @@ run_product() {
   if [ -x ./scripts/verify-project.sh ]; then
     echo "[verify] delegating to project verification: ./scripts/verify-project.sh"
     ./scripts/verify-project.sh
+  elif [ -e ./scripts/verify-project.sh ]; then
+    echo "[verify] scripts/verify-project.sh present but NOT executable — running via bash (lost exec bit)" >&2
+    bash ./scripts/verify-project.sh
   else
     echo "[verify] no project verification: scripts/verify-project.sh is absent — NOTHING was verified" >&2
     exit 1

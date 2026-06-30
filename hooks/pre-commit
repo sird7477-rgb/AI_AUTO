@@ -72,7 +72,9 @@ else
   # when present it runs it and gates (fail-closed via set -e). The explicit `ai-auto verify` query
   # KEEPS its fail-closed exit 1 on absence (verify.sh product scope, unchanged) — a deliberate
   # query, not a commit gate.
-  if [ -x ./scripts/verify-project.sh ]; then
+  if [ -e ./scripts/verify-project.sh ]; then
+    [ -x ./scripts/verify-project.sh ] \
+      || echo "[pre-commit] scripts/verify-project.sh present but NOT executable — gating via bash." >&2
     echo "[pre-commit] running project verification (ai-auto verify, product scope)..."
     AI_AUTO_VERIFY_SCOPE=product "$AI_AUTO_HOME/scripts/verify.sh"
   else

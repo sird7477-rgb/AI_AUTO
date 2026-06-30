@@ -38,6 +38,7 @@ FRAMEWORK_PATHS=(
   "scripts/audit-obsidian-vault.py" "scripts/benchmark-command.py"
   "scripts/capture-knowledge-drafts.py" "scripts/collect-odoo-docs-kb.py"
   "scripts/collect-review-context.sh" "scripts/docker-config-guard.sh"
+  "scripts/git-harden.sh"
   "scripts/doc-budget.sh" "scripts/guidance-duplicate-report.sh"
   "scripts/discover-ai-models.sh" "scripts/knowledge-notes.py"
   "scripts/make-review-prompts.sh" "scripts/record-feedback.sh"

@@ -113,7 +113,7 @@ passes. Update its verify-machinery tests in lockstep (folded into §2).
 `ai-auto setup` (run in a project, `pwd`=project), ONE idempotent command folding init+migrate:
 0. **C2 SELF-HOST GUARD (FIRST, before any hashing or `git rm`):** ABORT with a clear message if
    `git rev-parse --show-toplevel` resolves to `$AI_AUTO_HOME`, OR the target tree carries the
-   ENGINE-ONLY markers (`scripts/verify-machinery.sh` AND an executable `tools/ai-auto`) that are
+   ENGINE-ONLY markers (`scripts/verify-machinery.sh` AND an existing `tools/ai-auto`) that are
    never vendored into a project. (F4 fix: the earlier `scripts/review-gate.sh` + `templates/
    domain-packs/` sentinel false-aborted a legitimate project that vendored review-gate.sh and
    authored its OWN domain pack; both halves overlap real project content, so they cannot identify

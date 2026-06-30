@@ -7175,6 +7175,49 @@ echo "[verify] testing git-exec-env scrub SINGLE-SOURCE (F1: one list, no four-c
     || { echo "[verify] F1: GIT_TRACE*/GIT_TEMPLATE_DIR not scrubbed by git-scrub.sh (got '${out}')"; exit 1; }
 )
 
+echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/config core.fsmonitor INERT for EVERY worktree-scanning git call — e.g. collect-review-context.sh:17 'git status' at module load, run BEFORE git-harden/review_git is even sourced)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  scrub="${repo_root}/hooks/git-scrub.sh"
+  collector="${repo_root}/scripts/collect-review-context.sh"
+  test -s "${scrub}" || { echo "[verify] R7-F1: git-scrub.sh not found"; exit 1; }
+  # the defensive override must pin BOTH config-exec keys (env GIT_CONFIG_* overrides repo config).
+  grep -q 'core.fsmonitor' "${scrub}" && grep -q 'diff.external' "${scrub}" \
+    || { echo "[verify] R7-F1: git-scrub.sh missing the defensive core.fsmonitor/diff.external override"; exit 1; }
+  mk_poisoned() {  # repo whose IN-REPO .git/config core.fsmonitor execs on ANY worktree scan
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; printf 'hello\n' > b.txt; git add a.txt b.txt; git commit -qm init
+      printf '#!/bin/sh\ntouch "%s/FSM"\n' "${tmp_dir}" > "${p}/.git/evil.sh"; chmod +x "${p}/.git/evil.sh"
+      git config core.fsmonitor "${p}/.git/evil.sh"               # fires on git status / ls-files / diff scan
+      git config diff.evil.command   "touch ${tmp_dir}/EXT"       # prior external-diff driver (belt-and-suspenders)
+      git config diff.evilt.textconv "touch ${tmp_dir}/TXT; cat"  # prior textconv driver
+      printf 'a.txt diff=evil\nb.txt diff=evilt\n' > .gitattributes
+      printf 'changed\n' >> a.txt; printf 'changed\n' >> b.txt )  # unstaged edits -> worktree scan + patch diff
+  }
+  # (1) HARDENED: source git-scrub.sh exactly as the engine launcher/hooks do BEFORE the
+  # collector runs. The env GIT_CONFIG_* override pins core.fsmonitor empty (higher precedence
+  # than repo-local .git/config), so the module-load `git status --porcelain` (line 17, plain
+  # git, before git-harden is sourced) and every later worktree scan are inert.
+  proj="${tmp_dir}/proj"; mk_poisoned "${proj}"
+  # shellcheck disable=SC1090  # dynamic source of the engine git-scrub.sh under test
+  ( cd "${proj}"; . "${scrub}"; OUT_DIR="${tmp_dir}/rc" bash "${collector}" >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/FSM" \
+    || { echo "[verify] R7-F1: in-repo core.fsmonitor EXECUTED despite the git-scrub chokepoint (RCE)"; exit 1; }
+  # Positive control: source git-scrub with the defensive override REMOVED (the pre-fix process —
+  # env UNSET alone CANNOT reach an in-repo .git/config). The SAME poisoned repo MUST now fire
+  # core.fsmonitor at the module-load git status, proving the negative above is non-vacuous AND
+  # that the config-override export (not the env unset) is the load-bearing defense.
+  ctl_scrub="${tmp_dir}/git-scrub-noexport.sh"
+  sed '/R7-F1 defensive config override (BEGIN)/,/R7-F1 defensive config override (END)/d' "${scrub}" > "${ctl_scrub}"
+  proj2="${tmp_dir}/proj2"; mk_poisoned "${proj2}"
+  # shellcheck disable=SC1090  # dynamic source of the override-stripped control scrub
+  ( cd "${proj2}"; . "${ctl_scrub}"; OUT_DIR="${tmp_dir}/rcctl" bash "${collector}" >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/FSM" \
+    || { echo "[verify] R7-F1: control (override stripped) inert — fixture would not catch a regression"; exit 1; }
+)
+
 echo "[verify] testing pre-commit D2/H1 (DERIVED hook: absent verify-project.sh -> warn+ALLOW the onboarding commit; present -> gates)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -7219,6 +7262,24 @@ echo "[verify] testing pre-commit D2/H1 (DERIVED hook: absent verify-project.sh 
   frc=0; ( cd "${proj}"; bash .git/hooks/pre-commit ) >/dev/null 2>&1 || frc=$?
   test "${frc}" -ne 0 \
     || { echo "[verify] D2: derived pre-commit did not block on a FAILING verify-project.sh"; exit 1; }
+  # (d) R7-F2: a PRESENT-but-NON-EXECUTABLE verify-project.sh (exec bit lost via zip/Windows/
+  # core.fileMode) must NOT be mislabeled "absent" and ungated — the hook RUNS it via bash and
+  # GATES on it. A passing non-exec one runs; a failing non-exec one blocks (non-vacuous control).
+  printf '#!/usr/bin/env bash\ntouch "%s/NONEXEC_VERIFY_RAN"\nexit 0\n' "${tmp_dir}" > "${proj}/scripts/verify-project.sh"
+  chmod -x "${proj}/scripts/verify-project.sh"
+  nrc=0; nout="$( cd "${proj}"; bash .git/hooks/pre-commit 2>&1 )" || nrc=$?
+  test -e "${tmp_dir}/NONEXEC_VERIFY_RAN" \
+    || { echo "[verify] R7-F2: present-non-exec verify-project.sh was NOT run (treated as absent -> ungated)"; exit 1; }
+  test "${nrc}" -eq 0 \
+    || { echo "[verify] R7-F2: passing present-non-exec verify-project.sh wrongly blocked (rc=${nrc})"; exit 1; }
+  echo "${nout}" | grep -q "present but NOT executable" \
+    || { echo "[verify] R7-F2: hook did not disclose the present-but-non-executable state"; exit 1; }
+  ! echo "${nout}" | grep -q "absent" \
+    || { echo "[verify] R7-F2: hook still mislabels the present-non-exec file as absent"; exit 1; }
+  printf '#!/usr/bin/env bash\nexit 1\n' > "${proj}/scripts/verify-project.sh"; chmod -x "${proj}/scripts/verify-project.sh"
+  brc=0; ( cd "${proj}"; bash .git/hooks/pre-commit ) >/dev/null 2>&1 || brc=$?
+  test "${brc}" -ne 0 \
+    || { echo "[verify] R7-F2: failing present-non-exec verify-project.sh did NOT block (vacuous gate)"; exit 1; }
 )
 
 echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed by aiinit' claim)..."
