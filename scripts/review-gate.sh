@@ -30,23 +30,33 @@ REVIEW_STATE_DIR="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
 REVIEW_PROVENANCE_ENV="${REVIEW_STATE_DIR}/approved-provenance.env"
 REVIEW_PROVENANCE_LOG="${REVIEW_STATE_DIR}/approved-provenance.log"
 
+# R5-1: every provenance diff/hash MUST stay inert to a PROJECT-LOCAL `.gitattributes` +
+# `.git/config` diff/filter driver — git's standard code-exec surface (an external-diff
+# `command`, a `textconv`, or a `clean` filter) that env scrubbing CANNOT touch because it
+# lives IN the repo. Neutralize at the call site: --no-ext-diff/--no-textconv on every
+# patch-producing diff, --no-filters on hash-object, plus -c overrides defeating any
+# global/attr/config-driven exec. The red team verified these flags close the RCE.
+review_git() {
+  git -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null --no-pager "$@"
+}
+
 # Working-tree-inclusive provenance hash: HEAD commit + staged + unstaged + untracked
 # content. Corrects DR1 (a committed-tree SHA would false-skip unstaged edits). Never
 # uses `git write-tree`, which would mutate the index.
 review_provenance_hash() {
   {
     git rev-parse HEAD 2>/dev/null || printf 'NO_HEAD\n'
-    printf '\037diff\037\n'; git diff 2>/dev/null
-    printf '\037cached\037\n'; git diff --cached 2>/dev/null
+    printf '\037diff\037\n';   review_git diff --no-ext-diff --no-textconv 2>/dev/null
+    printf '\037cached\037\n'; review_git diff --cached --no-ext-diff --no-textconv 2>/dev/null
     printf '\037untracked\037\n'
     # Include each untracked file's PATH next to its blob hash so a same-content
     # rename / path swap changes the hash (content-only would false-match).
     git ls-files --others --exclude-standard -z 2>/dev/null \
       | while IFS= read -r -d '' provenance_file; do
           printf '%s\t' "${provenance_file}"
-          git hash-object "${provenance_file}" 2>/dev/null
+          review_git hash-object --no-filters "${provenance_file}" 2>/dev/null
         done
-  } | git hash-object --stdin
+  } | review_git hash-object --stdin
 }
 
 review_provenance_head() {

@@ -6536,6 +6536,8 @@ globalize_mk_engine() {  # $1 = engine dir; populates a minimal AI_AUTO engine
   local e="$1" s
   mkdir -p "${e}/tools" "${e}/hooks" "${e}/scripts" "${e}/templates/domain-packs" "${e}/docs"
   cp "${repo_root}/tools/ai-auto" "${e}/tools/ai-auto"; chmod +x "${e}/tools/ai-auto"
+  # F1: the launcher + hooks + baked shim all source the ONE canonical git-exec-env scrub.
+  cp "${repo_root}/hooks/git-scrub.sh" "${e}/hooks/git-scrub.sh"
   printf '#!/usr/bin/env bash\necho PRE_COMMIT_ENGINE_REACHED\n'  > "${e}/hooks/pre-commit"
   printf '#!/usr/bin/env bash\necho POST_COMMIT_ENGINE_REACHED\n' > "${e}/hooks/post-commit"
   for s in review-gate verify automation-doctor; do
@@ -7038,6 +7040,114 @@ echo "[verify] testing ai-auto LAUNCHER dispatch + usage exit codes..."
   # (no hardwired --project) so the engine self-check is reachable via the launcher.
   "${aa}" doctor --home 2>&1 | grep -q "automation-doctor_DISPATCH --home"
   ! "${aa}" doctor --home 2>&1 | grep -q -- "--project"
+)
+
+echo "[verify] testing review-gate R5-1 (provenance git calls INERT to project-local .gitattributes diff/textconv/clean RCE)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # The local-config RCE: a project-local `.gitattributes` + `.git/config` external-diff
+  # `command` / `textconv` / clean `filter` driver executes attacker code through the gate's
+  # patch-producing `git diff` and `git hash-object` — env scrubbing CANNOT touch it because it
+  # lives IN the repo. Extract the REAL provenance block from the live review-gate.sh and call
+  # review_provenance_hash in a poisoned repo; the call-site flags (--no-ext-diff/--no-textconv/
+  # --no-filters) must keep every payload marker UN-created.
+  prov="${tmp_dir}/prov.sh"
+  sed -n '/# >>> review-provenance-shared/,/# <<< review-provenance-shared/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${prov}"
+  test -s "${prov}" || { echo "[verify] R5-1: could not extract provenance block"; exit 1; }
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'hello\n' > a.txt; printf 'hello\n' > b.txt; git add a.txt b.txt; git commit -qm init
+    git config diff.evil.command   "touch ${tmp_dir}/EXT"          # external-diff driver
+    git config diff.evilt.textconv "touch ${tmp_dir}/TXT; cat"     # textconv driver
+    git config filter.evilf.clean  "touch ${tmp_dir}/CLEAN; cat"   # clean filter driver
+    printf 'a.txt diff=evil\nb.txt diff=evilt\nuntr.txt filter=evilf\n' > .gitattributes
+    printf 'changed\n' >> a.txt; printf 'changed\n' >> b.txt       # unstaged edits -> patch diff
+    printf 'secret\n' > untr.txt )                                 # untracked -> hash-object
+  # shellcheck source=/dev/null
+  ( cd "${proj}"; . "${prov}"; review_provenance_hash >/dev/null 2>&1 || true )
+  for marker in EXT TXT CLEAN; do
+    test ! -e "${tmp_dir}/${marker}" \
+      || { echo "[verify] R5-1: project-local driver EXECUTED (${marker}) through gate provenance (RCE)"; exit 1; }
+  done
+  # Control: the SAME repo + a bare `git diff` / `git hash-object` (no hardening flags) DOES
+  # fire the external-diff + clean drivers, proving the negatives above are not vacuously green.
+  ( cd "${proj}"; git diff >/dev/null 2>&1 || true
+    git hash-object untr.txt >/dev/null 2>&1 || true )
+  { test -e "${tmp_dir}/EXT" && test -e "${tmp_dir}/CLEAN"; } \
+    || { echo "[verify] R5-1: control vectors inert — fixture would not catch a regression"; exit 1; }
+)
+
+echo "[verify] testing git-exec-env scrub SINGLE-SOURCE (F1: one list, no four-copy drift; GIT_TRACE/GIT_TEMPLATE_DIR scrubbed)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # (a) the literal unset list must live in EXACTLY ONE place: hooks/git-scrub.sh. The
+  # launcher + both engine hooks must SOURCE it, never inline a copy.
+  hits="$(grep -rl 'unset GIT_DIR GIT_WORK_TREE' \
+            "${repo_root}/tools/ai-auto" "${repo_root}/hooks/pre-commit" \
+            "${repo_root}/hooks/post-commit" "${repo_root}/hooks/git-scrub.sh" || true)"
+  test "${hits}" = "${repo_root}/hooks/git-scrub.sh" \
+    || { echo "[verify] F1: scrub list is not single-sourced (found in: ${hits})"; exit 1; }
+  for src in tools/ai-auto hooks/pre-commit hooks/post-commit; do
+    grep -q 'hooks/git-scrub.sh"' "${repo_root}/${src}" \
+      || { echo "[verify] F1: ${src} does not source hooks/git-scrub.sh"; exit 1; }
+  done
+  # (b) a freshly-generated shim must source git-scrub.sh too (no inline copy baked).
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  grep -q 'hooks/git-scrub.sh"' "${proj}/.git/hooks/pre-commit" \
+    || { echo "[verify] F1: generated shim does not source git-scrub.sh"; exit 1; }
+  grep -q 'unset GIT_DIR GIT_WORK_TREE' "${proj}/.git/hooks/pre-commit" \
+    && { echo "[verify] F1: generated shim still bakes an INLINE scrub copy"; exit 1; }
+  # (c) behavioral: sourcing the single list scrubs the round-5 LOW vars (R5-2/R5-3).
+  out="$(GIT_TRACE=/x GIT_TRACE2=/y GIT_TEMPLATE_DIR=/z bash -c \
+    '. "'"${repo_root}/hooks/git-scrub.sh"'"; printf "%s|%s|%s" "${GIT_TRACE-UNSET}" "${GIT_TRACE2-UNSET}" "${GIT_TEMPLATE_DIR-UNSET}"')"
+  test "${out}" = "UNSET|UNSET|UNSET" \
+    || { echo "[verify] F1: GIT_TRACE*/GIT_TEMPLATE_DIR not scrubbed by git-scrub.sh (got '${out}')"; exit 1; }
+)
+
+echo "[verify] testing pre-commit D2 (DERIVED project gates via verify-project.sh seam, not a pytest no-op)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # use the REAL engine pre-commit + verify.sh + session-lock.sh so the derived seam is
+  # actually exercised (verify.sh sources session-lock.sh for its cleanup trap, as in prod).
+  cp "${repo_root}/hooks/pre-commit" "${tmp_dir}/eng/hooks/pre-commit"; chmod +x "${tmp_dir}/eng/hooks/pre-commit"
+  cp "${repo_root}/scripts/verify.sh" "${tmp_dir}/eng/scripts/verify.sh"; chmod +x "${tmp_dir}/eng/scripts/verify.sh"
+  cp "${repo_root}/scripts/session-lock.sh" "${tmp_dir}/eng/scripts/session-lock.sh"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  # (a) WITHOUT scripts/verify-project.sh: pre-commit must FAIL-CLOSED (not a silent pytest no-op).
+  rc=0; out="$( cd "${proj}"; bash .git/hooks/pre-commit 2>&1 )" || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] D2: derived pre-commit PASSED with no verification (silent no-op)"; exit 1; }
+  echo "${out}" | grep -q "NOTHING was verified" \
+    || { echo "[verify] D2: derived pre-commit did not fail-closed via the verify-project.sh seam"; exit 1; }
+  # (b) WITH an executable verify-project.sh: pre-commit must RUN it (not pytest).
+  printf '#!/usr/bin/env bash\ntouch "%s/PROJECT_VERIFY_RAN"\n' "${tmp_dir}" > "${proj}/scripts/verify-project.sh"
+  chmod +x "${proj}/scripts/verify-project.sh"
+  ( cd "${proj}"; bash .git/hooks/pre-commit ) >/dev/null 2>&1
+  test -e "${tmp_dir}/PROJECT_VERIFY_RAN" \
+    || { echo "[verify] D2: derived pre-commit did NOT invoke scripts/verify-project.sh"; exit 1; }
+)
+
+echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed by aiinit' claim)..."
+(
+  pp="${repo_root}/templates/domain-packs/odoo/hooks/pre-push"
+  ! grep -q 'auto-installed into Odoo projects by aiinit' "${pp}" \
+    || { echo "[verify] D1: stale 'auto-installed by aiinit' claim still present"; exit 1; }
+  grep -q 'ai-domain-pack refresh --apply' "${pp}" \
+    || { echo "[verify] D1: header does not describe the real ai-domain-pack install path"; exit 1; }
 )
 
 echo "[verify] running ai-lab bootstrap check..."

@@ -12,21 +12,11 @@ export AI_AUTO_HOME PATH
 
 # R4-1/R3-2: scrub the git env at the TOP of the launcher so EVERY dispatch (gate/verify/
 # doctor/setup) resolves the cwd project, never a repo an inherited GIT_DIR points at, and so
-# NO inherited git-exec-env var can run arbitrary commands through a git call below. git reads
-# GIT_DIR/GIT_WORK_TREE/... from the env and they OVERRIDE `git -C` discovery; the
-# config-injection family (GIT_CONFIG_COUNT + indexed GIT_CONFIG_KEY_n/VALUE_n, plus
-# GIT_CONFIG_GLOBAL/SYSTEM/NOSYSTEM) can inject core.hooksPath/fsmonitor; and the dedicated
-# command-exec vars (GIT_EXTERNAL_DIFF via `git diff`, GIT_PAGER/EDITOR/SSH/PROXY/ASKPASS, the
-# object-dir overrides) are each an arbitrary-command / wrong-store vector. This is the ONE
-# CANONICAL git-exec-env denylist — kept BYTE-IDENTICAL in hooks/{pre,post}-commit and the
-# baked shim below; do not let the four copies drift. (Not `local`: top scope.)
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
-      GIT_EXTERNAL_DIFF GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_SSH GIT_SSH_COMMAND \
-      GIT_PROXY_COMMAND GIT_ASKPASS GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
-      GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
-for _gcv in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
-  [ -n "$_gcv" ] && unset "$_gcv" || true
-done
+# NO inherited git-exec-env var can run arbitrary commands through a git call below. The
+# canonical denylist is single-sourced (F1) in hooks/git-scrub.sh and ALSO sourced by the
+# engine hooks + the baked shim — one list, no four-copy drift.
+# shellcheck source=hooks/git-scrub.sh
+. "$AI_AUTO_HOME/hooks/git-scrub.sh"
 
 # Framework files the OLD copy model used to vendor (MANAGED_PATHS from the deleted
 # install-automation-template.sh, minus scripts/verify.sh [special] and the retired
@@ -167,16 +157,12 @@ ai_auto_setup() {
 # AI_AUTO shim — baked engine path (do not edit; re-run 'ai-auto setup' to refresh).
 # R4-1/R3-3: scrub the CANONICAL git-exec-env denylist before running the engine hook — an
 # inherited GIT_EXTERNAL_DIFF / core.fsmonitor / core.hooksPath (via GIT_CONFIG_KEY_*/VALUE_*)
-# or any command-exec git var is arbitrary-command execution through a shimmed commit. This
-# list is kept BYTE-IDENTICAL with the launcher + engine hooks; do not let it drift.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \\
-      GIT_EXTERNAL_DIFF GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_SSH GIT_SSH_COMMAND \\
-      GIT_PROXY_COMMAND GIT_ASKPASS GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \\
-      GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
-for _gcv in "\${!GIT_CONFIG_KEY_@}" "\${!GIT_CONFIG_VALUE_@}"; do
-  [ -n "\$_gcv" ] && unset "\$_gcv" || true
-done
+# or any command-exec git var is arbitrary-command execution through a shimmed commit. F1: the
+# list is single-sourced from the baked engine's hooks/git-scrub.sh — NO inline copy here.
 AI_AUTO_HOME="$baked"
+if [ -f "\$AI_AUTO_HOME/hooks/git-scrub.sh" ]; then
+  . "\$AI_AUTO_HOME/hooks/git-scrub.sh"
+fi
 # F1/R2-1: if the baked engine hook was moved/renamed/reinstalled elsewhere — or the path
 # now exists but is a DIRECTORY (or any non-regular-file) — DO NOT exec it (bash would say
 # "Is a directory" / exit 126-127 and ABORT the user's commit). Require a regular,
@@ -193,8 +179,17 @@ EOF
   fi
 
   # (e) domain detect (advisory machine-local; no-op if not applicable).
+  # R5-4: the setup lock fd was opened non-CLOEXEC (`exec {_lockfd}>`), so a long-lived
+  # grandchild (e.g. a daemon this advisory helper spawns) would inherit it and hold the
+  # advisory lock after setup exits — blocking the next `ai-auto setup`. Close the lock fd
+  # in THIS child so it cannot leak past setup. (Other post-lock children are short-lived
+  # git calls with core.fsmonitor scrubbed, so they spawn no daemon.)
   if command -v ai-project-profile >/dev/null 2>&1; then
-    ai-project-profile write "$top" >/dev/null 2>&1 || true
+    if [ -n "${_lockfd:-}" ]; then
+      ai-project-profile write "$top" >/dev/null 2>&1 {_lockfd}>&- || true
+    else
+      ai-project-profile write "$top" >/dev/null 2>&1 || true
+    fi
   fi
 
   # (b) CONTENT-AWARE de-pollution (LAST — the only destructive step; see F5): pristine

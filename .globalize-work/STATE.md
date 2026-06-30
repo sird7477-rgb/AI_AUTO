@@ -50,3 +50,6 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - R3 red: safety HIGH 1+MED 2; holistic HIGH 1 (ai-auto verify crash); minimality 0. NOT dry.
 - R3 blue 58bcb42: engine-aware verify scope, existence guard, launcher+hooks+shim GIT_CONFIG scrub (RCE), common-dir lock, doctor --home + fixtures (237/1 green). R3-4 fd-CLOEXEC skipped (justified).
 - R4 red dispatched (safety / holistic / portability-env). dry-count=0; need 2 consecutive.
+- R4 red: safety HIGH 1 (GIT_EXTERNAL_DIFF RCE)+MED 1+LOW; portability MED 2(tools PATH, readlink)+LOW (flock/readlink CONFIRMED work on real /mnt/z 9p); holistic 2 LOW. NOT dry.
+- R4 blue 775a081: comprehensive canonical git-exec-env scrub (4 places), toplevel engine-detect, tools/ PATH, advisory text, legacy-hook upgrade + fixtures (237/1). M2/R4-3/4 + portab LOW skipped (justified).
+- R5 red dispatched (scrub-bypass+new-vectors / holistic / minimality+denylist-drift). dry-count=0; need 2 consecutive.

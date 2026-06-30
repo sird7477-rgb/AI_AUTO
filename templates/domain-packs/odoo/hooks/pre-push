@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Odoo registry-load validation gate (pre-push tier) — shipped by the AI_AUTO odoo domain
-# pack, auto-installed into Odoo projects by aiinit.
+# pack. In GLOBAL mode this hook is NOT auto-wired: `ai-domain-pack refresh --apply`
+# materializes the pack as a REFERENCE under .omx/domain-packs/odoo/ (gitignored), and
+# `ai-auto setup` installs only the framework pre-commit/post-commit shims. To activate this
+# gate, wire it yourself once: copy or symlink this file to .git/hooks/pre-push (or point
+# core.hooksPath at the pack's hooks dir). Until wired, it is a dormant reference and never fires.
 # Blocks push when changed custom-addons modules fail to install/update on the
 # parity-pinned warm base (catches view-inheritance/field/registry errors that odoo.sh
 # would otherwise fail on). ~95s via warm base.

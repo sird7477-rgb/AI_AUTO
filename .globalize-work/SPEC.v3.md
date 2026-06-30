@@ -49,7 +49,10 @@ Their tests (SAME change — resolves D1): the `verify-machinery.sh` blocks + th
   line so resolution never depends solely on a profile a given process may not have sourced:
 
       : "${AI_AUTO_HOME:=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
-      case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$PATH";; esac
+      case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$AI_AUTO_HOME/tools:$PATH";; esac
+
+  (M1: BOTH `scripts/` and `tools/` are prepended — helpers like `ai-project-profile` /
+  `knowledge-capture` live under `tools/`.)
 
   This makes bare-name siblings resolve in ANY context (IDE/GUI git, cron, CI, un-sourced shell).
   Non-entrypoint helpers are only ever reached THROUGH an entrypoint, so they inherit the fixed
@@ -133,10 +136,19 @@ Idempotent (no marker file; keys off git state + hash). Fail-closed on a dirty t
   PATH / `$AI_AUTO_HOME` being set in the git-hook env:
 
       #!/usr/bin/env bash
-      unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE   # worktree safety (v2, unchanged)
       AI_AUTO_HOME="<readlink -f baked absolute engine root>"
-      PATH="$AI_AUTO_HOME/scripts:$PATH"
+      . "$AI_AUTO_HOME/hooks/git-scrub.sh"   # canonical git-exec-env scrub (single source, F1)
+      PATH="$AI_AUTO_HOME/scripts:$AI_AUTO_HOME/tools:$PATH"
       exec "$AI_AUTO_HOME/hooks/<hook>" "$@"
+
+  The shim, the launcher `tools/ai-auto`, and both engine `hooks/{pre,post}-commit` ALL source
+  the ONE canonical git-exec-env scrub list — `hooks/git-scrub.sh` (R5 single-source fix, F1):
+  the GIT_DIR family, the GIT_CONFIG_* injection family, the command-exec vars
+  (GIT_EXTERNAL_DIFF/PAGER/EDITOR/SSH/PROXY/ASKPASS + object-dir overrides), plus GIT_TRACE*
+  (loop-unset via `${!GIT_TRACE@}`) and GIT_TEMPLATE_DIR/GIT_ATTR_NOSYSTEM/GIT_CEILING_DIRECTORIES.
+  No four-copy denylist to drift. (The project-local `.gitattributes`/`.git/config` diff/filter
+  RCE — which env scrubbing cannot reach — is closed at the call site in `review-gate.sh`
+  provenance: `--no-ext-diff --no-textconv` on diffs, `--no-filters` on `git hash-object`.)
 
 - The global `hooks/pre-commit` and `hooks/post-commit` ARE the framework bodies directly (the
   worktree-safe commit-test bodies relocated from the deleted `templates/automation-base/hooks/`).
