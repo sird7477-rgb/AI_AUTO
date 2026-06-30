@@ -26,6 +26,7 @@ export HARNESS_SLUG="$COMPOSE_PROJECT_NAME"
 harness_lock read
 
 if [ "$#" -gt 0 ]; then
+  EXPLICIT_MODS=1
   MODCOMMA="$(echo "$*" | tr ' ' ',')"
 else
   # Detect changed custom modules from BOTH uncommitted changes and committed-but-
@@ -37,6 +38,48 @@ else
     | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
 fi
 [ -n "$MODCOMMA" ] || { echo "[warm] no changed custom modules; skip"; exit 0; }
+
+# (F) Asset-only no-op skip: a diff touching ONLY static assets (custom-addons/<mod>/
+# static/**) and/or a __manifest__.py version-line bump cannot change registry/install
+# state, so the `-u` warm load is pure cost — skip it (the change is installable as-is).
+# FAIL-SAFE by construction: an explicit module request, WARM_NO_ASSET_SKIP=1, or ANY
+# changed custom-addons file not positively classified as install-irrelevant forces the
+# full validation. (Server views live in <mod>/views/**, NOT static/**, so they are never
+# treated as assets.) WARM_CLASSIFY_ONLY=1 prints the decision and exits before docker.
+manifest_version_only_change() {  # $1=path ; 0 iff the only changed content lines are the version line
+  local f="$1" d
+  d="$( { git -C "$PROJECT" diff HEAD -- "$f" 2>/dev/null;
+          [ -n "${up:-}" ] && git -C "$PROJECT" diff "${up}...HEAD" -- "$f" 2>/dev/null; } \
+        | grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' || true )"
+  [ -n "$d" ] || return 1   # no detectable content change -> be safe, validate
+  printf '%s\n' "$d" | grep -vqE "^[+-][[:space:]]*[\"']version[\"'][[:space:]]*:" && return 1
+  return 0
+}
+asset_only_noop() {
+  [ "${WARM_NO_ASSET_SKIP:-0}" = "1" ] && return 1
+  [ "${EXPLICIT_MODS:-0}" = "1" ] && return 1
+  local ca f
+  ca="$({ git -C "$PROJECT" diff --name-only HEAD 2>/dev/null;
+          [ -n "${up:-}" ] && git -C "$PROJECT" diff --name-only "${up}...HEAD" 2>/dev/null; } \
+        | sort -u | sed -n 's#^custom-addons/.*#&#p' || true)"
+  [ -n "$ca" ] || return 1   # nothing under custom-addons -> let the normal flow run
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      custom-addons/*/static/*) : ;;                                        # asset -> irrelevant
+      custom-addons/*/__manifest__.py) manifest_version_only_change "$f" || return 1 ;;
+      *) return 1 ;;                                                        # anything else -> relevant
+    esac
+  done <<< "$ca"
+  return 0
+}
+if asset_only_noop; then
+  [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: skip"; exit 0; }
+  echo "[warm] SKIP (no-op): changed custom-addons files are static assets and/or a __manifest__.py version-line bump only; the -u registry/install load cannot change and is not run. Installable as-is. (override: WARM_NO_ASSET_SKIP=1)"
+  exit 0
+fi
+[ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: validate"; exit 0; }
+
 echo "[warm] modules: $MODCOMMA  (-u on a clone of '$BASE_DB')"
 echo "[warm] validating at --log-level=warn (~tens of seconds to ~2 min, quiet is normal — do not interrupt); a PASS/FAIL line follows."
 

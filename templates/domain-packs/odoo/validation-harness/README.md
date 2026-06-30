@@ -139,6 +139,16 @@ on failure**; allow `SKIP_ODOO_VALIDATE=1` for an explicit emergency override.
 > commit), so a pre-push hook should pass the exact pushed range explicitly or use
 > this default with a tracking upstream set.
 
+> Asset-only no-op skip: when the changed `custom-addons` files are ALL static
+> assets (`<mod>/static/**`) and/or a `__manifest__.py` **version-line** bump, the
+> `-u` registry/install load cannot change, so `validate-warm.sh` skips it (`[warm]
+> SKIP (no-op)`, exit 0 — installable as-is) instead of paying the full build. This
+> is FAIL-SAFE: an explicit module argument, `WARM_NO_ASSET_SKIP=1`, or ANY other
+> changed file (models, **`views/**`** — server views are registry-validated and are
+> NOT under `static/`, data, security, i18n, a non-version manifest line, …) forces
+> the full validation. `WARM_CLASSIFY_ONLY=1` prints the `skip`/`validate` decision
+> and exits before touching Docker.
+
 > Liveness: the warm validation runs Odoo at `--log-level=warn`, so a clean
 > install is quiet for ~tens of seconds to ~2 min between the `[warm] modules:`
 > start line and the `[warm] PASS/FAIL` result line — this is normal, **do not

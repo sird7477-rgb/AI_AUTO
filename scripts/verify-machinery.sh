@@ -684,6 +684,57 @@ echo "[verify] testing inherited-field overlap ignores deletion-only diffs..."
     || { echo "[verify] inherit-overlap false-flagged a deletion-only diff of a pre-existing pair"; exit 1; }
 )
 
+echo "[verify] testing validate-warm asset-only no-op skip classification (ST-P1-73(F))..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_warm_skip_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_warm_skip_tmp EXIT
+  hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
+  mkdir -p "${tmp_dir}/harness"
+  cp "${hp}/validate-warm.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
+  git -c init.defaultBranch=main init -q --bare "${tmp_dir}/origin.git"
+  proj="${tmp_dir}/proj"
+  git -c init.defaultBranch=main clone -q "${tmp_dir}/origin.git" "${proj}" 2>/dev/null
+  cd "${proj}"
+  git config user.email verify@example.invalid; git config user.name Verify
+  mkdir -p custom-addons/mod_a/static/src/js custom-addons/mod_a/views custom-addons/mod_a/models
+  printf "{\n 'name': 'A',\n 'version': '1.0.0',\n 'depends': ['base'],\n}\n" > custom-addons/mod_a/__manifest__.py
+  printf "console.log(1)\n" > custom-addons/mod_a/static/src/js/a.js
+  printf "<odoo></odoo>\n" > custom-addons/mod_a/views/a_views.xml
+  printf "class A: pass\n" > custom-addons/mod_a/models/a.py
+  git add -A; git commit -q -m base; git push -q -u origin main 2>/dev/null
+
+  cl() { WARM_CLASSIFY_ONLY=1 bash "${tmp_dir}/harness/validate-warm.sh" "${proj}" "$@" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p'; }
+  reset_proj() { git -C "${proj}" checkout -q -- . ; git -C "${proj}" clean -qfdx custom-addons >/dev/null 2>&1 || true; mkdir -p "${proj}/custom-addons/mod_a/static/src/js"; }
+  want() {  # $1 expected $2 name ; runs nothing — caller passes the captured value as $3
+    [ "$3" = "$1" ] || { echo "[verify] validate-warm asset-skip: ${2} -> got '${3}', expected '${1}'"; exit 1; }
+  }
+
+  printf "console.log(2)\n" > custom-addons/mod_a/static/src/js/a.js
+  want skip "static-only" "$(cl)"; reset_proj
+  sed -i 's/1\.0\.0/1.0.1/' custom-addons/mod_a/__manifest__.py
+  want skip "manifest version-line-only" "$(cl)"; reset_proj
+  printf "console.log(3)\n" > custom-addons/mod_a/static/src/js/a.js; sed -i 's/1\.0\.0/1.0.2/' custom-addons/mod_a/__manifest__.py
+  want skip "static + version-line" "$(cl)"; reset_proj
+  printf "class A:\n    x = 1\n" > custom-addons/mod_a/models/a.py
+  want validate "models .py (registry-relevant)" "$(cl)"; reset_proj
+  printf "<odoo><data/></odoo>\n" > custom-addons/mod_a/views/a_views.xml
+  want validate "views .xml (registry-relevant, NOT under static/)" "$(cl)"; reset_proj
+  sed -i "s/\['base'\]/['base','mail']/" custom-addons/mod_a/__manifest__.py
+  want validate "manifest non-version line (depends)" "$(cl)"; reset_proj
+  printf "console.log(4)\n" > custom-addons/mod_a/static/src/js/a.js; printf "class A:\n    y = 2\n" > custom-addons/mod_a/models/a.py
+  want validate "mixed static + models" "$(cl)"; reset_proj
+  printf "console.log(5)\n" > custom-addons/mod_a/static/src/js/a.js
+  want validate "explicit module arg never auto-skips" "$(cl mod_a)"; reset_proj
+  printf "console.log(6)\n" > custom-addons/mod_a/static/src/js/a.js
+  want validate "WARM_NO_ASSET_SKIP=1 override" "$(WARM_NO_ASSET_SKIP=1 cl)"; reset_proj
+  # committed-but-unpushed (exercises the up...HEAD scope)
+  printf "console.log(7)\n" > custom-addons/mod_a/static/src/js/a.js; git add -A; git commit -q -m "asset bump"
+  want skip "committed-unpushed static (up...HEAD)" "$(cl)"
+  printf "class A:\n    z = 3\n" > custom-addons/mod_a/models/a.py; git add -A; git commit -q -m "model change"
+  want validate "committed-unpushed models (up...HEAD)" "$(cl)"
+)
+
 echo "[verify] testing ai-auto-template-status domain-pack drift surfacing..."
 (
   tmp_dir="$(mktemp -d)"

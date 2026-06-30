@@ -4,6 +4,27 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.30.3
+
+- odoo validate-warm asset-only no-op skip (ST-P1-73(F)): `validation-harness/
+  validate-warm.sh` now skips the `-u` warm registry/install load when the changed
+  `custom-addons` files are ALL static assets (`<mod>/static/**`) and/or a
+  `__manifest__.py` **version-line** bump — neither can change registry/install state,
+  so the full build was pure cost (and, on a slow/contended box, the very thing that
+  timed out and orphaned containers). On a positive classification it prints `[warm]
+  SKIP (no-op)` and exits 0 (installable as-is). FAIL-SAFE by construction: an explicit
+  module argument, `WARM_NO_ASSET_SKIP=1`, or ANY changed custom-addons file not
+  positively classified as install-irrelevant (models, `views/**` server views — which
+  are registry-validated and live OUTSIDE `static/` — data, security, i18n, a
+  non-version manifest line, a brand-new/whole-file manifest, …) forces the full
+  validation. The manifest check inspects only the scoped +/- diff lines and requires
+  every one to be the `version` key. `WARM_CLASSIFY_ONLY=1` prints the `skip`/`validate`
+  decision and exits before Docker (also how it is fixtured). Scope detection covers
+  both uncommitted and committed-but-unpushed (`@{u}...HEAD`) changes; the `ca=` scope
+  capture was hardened with `|| true` so an absent upstream cannot trip `set -o
+  pipefail`. verify-machinery fixture covers 11 skip/validate scenarios across both
+  scopes. Third slice of ST-P1-73 (A/B remain).
+
 ## 2026.06.30.2
 
 - odoo validate-warm orphan-container trap (ST-P1-73(E)): `validation-harness/
