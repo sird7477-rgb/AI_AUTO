@@ -184,6 +184,16 @@ write_markdown_file() {
 
 collect_review_reference_files() {
   local file
+  # D6/C1: feed the GLOBAL base AGENTS.md (engine operating rules) alongside the
+  # project overlay so reviewers see full guidance in global mode. C7 dedup
+  # (F9): in the source repo the project AGENTS.md IS the global base (same
+  # inode) -> emit it once. A missing project AGENTS.md degrades to base-only.
+  local ah base_agents
+  ah="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+  base_agents="${ah}/AGENTS.md"
+  if [ -f "$base_agents" ] && { [ ! -e AGENTS.md ] || ! [ "$base_agents" -ef AGENTS.md ]; }; then
+    printf '%s\n' "$base_agents"
+  fi
   for file in AGENTS.md docs/WORKFLOW.md docs/AI_ROLES.md; do
     if [ -f "$file" ]; then
       printf '%s\n' "$file"

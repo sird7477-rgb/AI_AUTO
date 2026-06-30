@@ -10,11 +10,17 @@ SKIP_DIRTY_CHECK="${DOCTOR_SKIP_DIRTY_CHECK:-0}"
 OMX_ARTIFACT_WARN_COUNT="${OMX_ARTIFACT_WARN_COUNT:-120}"
 OMX_KNOWLEDGE_DRAFT_WARN_COUNT="${OMX_KNOWLEDGE_DRAFT_WARN_COUNT:-50}"
 
+MODE=""  # ""=auto (engine sentinel) | home=engine self-check | project=globalized project
+
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/automation-doctor.sh [--fix]
+Usage: ./scripts/automation-doctor.sh [--home|--project] [--fix]
 
-Diagnose whether this repository is ready for the Codex/OMX automation loop.
+Diagnose automation readiness. Two modes:
+  --home     engine self-check (full framework inventory; default in the engine repo)
+  --project  GLOBALIZED project check (zero framework files is correct; confirms hook
+             shims + .omx gitignore; WARNS when scripts/verify-project.sh is absent)
+  (no mode)  auto-detect: engine sentinel present -> home, else project
 
 Default mode prints status and suggested repair commands without changing files.
 With --fix, the doctor may apply safe non-overwriting automation setup fixes.
@@ -28,28 +34,35 @@ Environment:
 USAGE
 }
 
-case "${1:-}" in
-  "")
-    ;;
-  --fix)
-    # Fix-mode invariants:
-    # - never install external tools
-    # - never overwrite existing project files
-    # - never run destructive git operations
-    # - only repair automation setup files, directories, executable bits, and helper links
-    FIX=1
-    ;;
-  -h|--help)
-    usage
-    exit 0
-    ;;
-  *)
-    echo "Unknown option: $1"
-    echo
-    usage
-    exit 2
-    ;;
-esac
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --fix)
+      # Fix-mode invariants:
+      # - never install external tools
+      # - never overwrite existing project files
+      # - never run destructive git operations
+      # - only repair automation setup files, directories, executable bits, and helper links
+      FIX=1
+      ;;
+    --home)
+      MODE=home
+      ;;
+    --project)
+      MODE=project
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo
+      usage
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 PASS_COUNT=0
 WARN_COUNT=0
@@ -69,6 +82,18 @@ fi
 
 if [ -f "${ROOT}/scripts/review-gate.sh" ] && [ -d "${ROOT}/templates/domain-packs" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-gstack-contract" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/feedback-resolve" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ] && [ -x "${ROOT}/tools/micro-work" ]; then
   IN_AI_LAB=1
+fi
+
+# Resolve the two-mode behaviour. Explicit --home/--project win; otherwise the engine
+# sentinel decides. --home grades the full engine inventory; --project NEVER requires
+# framework files (a globalized project ships zero of them — that is correct).
+if [ -z "$MODE" ]; then
+  if [ "$IN_AI_LAB" -eq 1 ]; then MODE=home; else MODE=project; fi
+fi
+if [ "$MODE" = "home" ]; then
+  IN_AI_LAB=1
+else
+  IN_AI_LAB=0
 fi
 
 say_pass() {
@@ -408,6 +433,41 @@ check_helper_link() {
   fi
 }
 
+check_project_globalization() {
+  # --project: a globalized project carries ZERO framework files. Confirm the baked
+  # hook shims are installed and point at a valid engine path, and that .omx/ is
+  # gitignored. Everything here is WARN-not-fail (an un-migrated dir is not "broken").
+  local hooks_dir hook shim baked
+  if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null || true)"
+    case "$hooks_dir" in /*) : ;; *) hooks_dir="${ROOT}/${hooks_dir}" ;; esac
+    for hook in pre-commit post-commit; do
+      shim="${hooks_dir}/${hook}"
+      if [ ! -f "$shim" ] || ! grep -q 'AI_AUTO shim' "$shim" 2>/dev/null; then
+        say_warn "AI_AUTO ${hook} hook shim not installed: ${shim}"
+        suggest "ai-auto setup"
+        continue
+      fi
+      baked="$(sed -n 's/^AI_AUTO_HOME="\(.*\)"$/\1/p' "$shim" | head -n 1)"
+      if [ -n "$baked" ] && [ -x "${baked}/hooks/${hook}" ]; then
+        say_pass "AI_AUTO ${hook} hook shim points at a valid engine: ${baked}"
+      else
+        say_fail "AI_AUTO ${hook} hook shim points at an invalid engine path: ${baked:-<unset>}"
+        suggest "ai-auto setup"
+      fi
+    done
+
+    if git check-ignore -q .omx/ 2>/dev/null; then
+      say_pass ".omx/ is gitignored"
+    else
+      say_warn ".omx/ is not gitignored"
+      suggest "ai-auto setup"
+    fi
+  else
+    say_warn "not a git repository; cannot verify hook shims or .omx gitignore"
+  fi
+}
+
 printf '[doctor] checking automation readiness in %s\n\n' "$ROOT"
 
 check_command git fail
@@ -508,7 +568,16 @@ if [ "${IN_AI_LAB:-0}" -eq 1 ]; then
   check_required_file "docs/AI_ROLES.md"
 fi
 
-if [ -f "scripts/verify.sh" ]; then
+if [ "$MODE" = "project" ]; then
+  # A globalized project owns NO framework verify.sh (it is global now). Its OPTIONAL
+  # real test is scripts/verify-project.sh; absence is a loud WARN (C4/F4), never a fail.
+  if [ -f "scripts/verify-project.sh" ]; then
+    say_pass "project verification present: scripts/verify-project.sh"
+  else
+    say_warn "scripts/verify-project.sh absent: project defines no verification"
+    suggest "add scripts/verify-project.sh so the gate runs real project tests"
+  fi
+elif [ -f "scripts/verify.sh" ]; then
   say_pass "required file exists: scripts/verify.sh"
   if grep -q "VERIFY_TEMPLATE_UNCONFIGURED=1" "scripts/verify.sh"; then
     say_warn "scripts/verify.sh is still the generic onboarding placeholder"
@@ -527,6 +596,12 @@ for path in scripts/*.sh scripts/*.py; do
 done
 
 check_legacy_pointer_targets
+
+if [ "$MODE" = "project" ]; then
+  echo
+  echo "[doctor] checking globalized project (hook shims + .omx gitignore)"
+  check_project_globalization
+fi
 
 echo
 echo "[doctor] checking optional runtime tools"
