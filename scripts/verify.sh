@@ -10,8 +10,12 @@ AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # mirror the gate's machinery-fold guard (review-gate.sh:506): the engine's own
 # verify-machinery.sh is present AND the engine root ($AH/..) is the current repo.
 # OTHERWISE default to `product` (the fail-closed verify-project.sh seam). Explicit env wins.
+# R4-2: anchor "this IS the engine self-host" on the git TOPLEVEL of the cwd, not on cwd
+# being EXACTLY the engine root — so ANY cwd inside the engine repo (a subdir, a secondary
+# worktree path that resolves to the same root) still folds machinery, while a derived
+# project (whose toplevel != the engine root) still gets product.
 if [ -z "${AI_AUTO_VERIFY_SCOPE:-}" ]; then
-  if [ -f "$AH/verify-machinery.sh" ] && [ "$(dirname "$AH")" -ef "$(pwd)" ]; then
+  if [ -f "$AH/verify-machinery.sh" ] && [ "$(git rev-parse --show-toplevel 2>/dev/null)" -ef "$(dirname "$AH")" ]; then
     AI_AUTO_VERIFY_SCOPE=full
   else
     AI_AUTO_VERIFY_SCOPE=product

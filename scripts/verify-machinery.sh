@@ -6470,9 +6470,12 @@ echo "[verify] testing verify.sh H1 engine-aware default scope (self-host -> fol
   cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"; chmod +x "${tmp_dir}/scripts/verify.sh"
   printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
     > "${tmp_dir}/scripts/session-lock.sh"
-  # Engine self-host shape: a verify-machinery.sh SIBLING is present AND the engine root
-  # ($AH/..) IS the cwd. The engine-aware default must therefore pick `full` and FOLD the
-  # machinery harness (then product) — the standalone `ai-auto verify` stays whole on the engine.
+  # R4-2: self-host detection now anchors on the cwd's git TOPLEVEL == engine root, so the
+  # engine self-host shape must be a git repo whose toplevel is the engine root.
+  ( cd "${tmp_dir}" && git init -q )
+  # Engine self-host shape: a verify-machinery.sh SIBLING is present AND the cwd is inside the
+  # engine repo (toplevel == engine root). The engine-aware default must therefore pick `full`
+  # and FOLD the machinery harness (then product) — `ai-auto verify` stays whole on the engine.
   printf '#!/usr/bin/env bash\necho MACHINERY_RAN\n'      > "${tmp_dir}/scripts/verify-machinery.sh"
   printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\n' > "${tmp_dir}/scripts/verify-project.sh"
   chmod +x "${tmp_dir}/scripts/verify-machinery.sh" "${tmp_dir}/scripts/verify-project.sh"
@@ -6481,6 +6484,45 @@ echo "[verify] testing verify.sh H1 engine-aware default scope (self-host -> fol
     || { echo "[verify] H1: engine self-host default scope did not fold machinery"; exit 1; }
   echo "${out}" | grep -q "PROJECT_VERIFY_RAN" \
     || { echo "[verify] H1: engine self-host default scope did not run product"; exit 1; }
+)
+
+echo "[verify] testing verify.sh R4-2 engine-SUBDIR default scope (still folds machinery)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  mkdir -p "${tmp_dir}/scripts" "${tmp_dir}/sub/scripts"
+  cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"; chmod +x "${tmp_dir}/scripts/verify.sh"
+  printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
+    > "${tmp_dir}/scripts/session-lock.sh"
+  printf '#!/usr/bin/env bash\necho MACHINERY_RAN\n'      > "${tmp_dir}/scripts/verify-machinery.sh"
+  chmod +x "${tmp_dir}/scripts/verify-machinery.sh"
+  # product hook reachable from the SUBDIR cwd (verify.sh runs ./scripts/verify-project.sh
+  # relative to pwd), so full scope = machinery + product both pass.
+  printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\n' > "${tmp_dir}/sub/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/sub/scripts/verify-project.sh"
+  ( cd "${tmp_dir}" && git init -q )
+  # Run from an engine SUBDIR (cwd != engine root, but toplevel == engine root). The OLD
+  # `dirname($AH) -ef pwd` guard resolved product here (machinery silently skipped); the R4-2
+  # toplevel anchor must still pick `full` and FOLD the machinery harness.
+  out="$(cd "${tmp_dir}/sub" && bash "${tmp_dir}/scripts/verify.sh" 2>&1)"
+  echo "${out}" | grep -q "MACHINERY_RAN" \
+    || { echo "[verify] R4-2: engine-subdir default scope did NOT fold machinery (product downgrade)"; exit 1; }
+  echo "${out}" | grep -q "PROJECT_VERIFY_RAN" \
+    || { echo "[verify] R4-2: engine-subdir default scope did not run product"; exit 1; }
+  # Control: a DERIVED project (no verify-machinery.sh sibling next to verify.sh) still gets
+  # product even though its cwd has a git toplevel -> the `-f` sibling test short-circuits.
+  mkdir -p "${tmp_dir}/derived/scripts"
+  cp scripts/verify.sh "${tmp_dir}/derived/scripts/verify.sh"; chmod +x "${tmp_dir}/derived/scripts/verify.sh"
+  printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
+    > "${tmp_dir}/derived/scripts/session-lock.sh"
+  printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\n' > "${tmp_dir}/derived/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/derived/scripts/verify-project.sh"
+  ( cd "${tmp_dir}/derived" && git init -q )
+  dout="$(cd "${tmp_dir}/derived" && bash scripts/verify.sh 2>&1)"
+  ! echo "${dout}" | grep -q "MACHINERY_RAN" \
+    || { echo "[verify] R4-2: derived project wrongly folded machinery"; exit 1; }
+  echo "${dout}" | grep -q "PROJECT_VERIFY_RAN" \
+    || { echo "[verify] R4-2: derived project product seam not reached"; exit 1; }
 )
 
 # ---------------------------------------------------------------------------
@@ -6886,6 +6928,92 @@ echo "[verify] testing ai-auto setup R3-5 (lock on the COMMON git dir, shared ac
     || { echo "[verify] R3-5: lock not on the common git dir (.git/ai-auto-setup.lock)"; exit 1; }
   ! ls "${main}/.git/worktrees/"*/ai-auto-setup.lock >/dev/null 2>&1 \
     || { echo "[verify] R3-5: lock landed in a per-worktree dir (no cross-worktree mutual excl.)"; exit 1; }
+)
+
+echo "[verify] testing ai-auto R4-1 (GIT_EXTERNAL_DIFF scrubbed -> no RCE via gate diff + shimmed commit)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # The gate computes a working-tree provenance hash via PATCH-PRODUCING `git diff`, which
+  # invokes GIT_EXTERNAL_DIFF as a command. Make the engine gate exercise that exact call.
+  printf '#!/usr/bin/env bash\nset -e\ngit diff >/dev/null\ngit diff --cached >/dev/null\necho GATE_REACHED\n' \
+    > "${tmp_dir}/eng/scripts/review-gate.sh"; chmod +x "${tmp_dir}/eng/scripts/review-gate.sh"
+  # Likewise make the engine pre-commit run a patch-producing diff so a shimmed commit would
+  # fire GIT_EXTERNAL_DIFF if the shim did not scrub it.
+  printf '#!/usr/bin/env bash\nset -e\ngit diff --cached >/dev/null\necho PRE_COMMIT_ENGINE_REACHED\n' \
+    > "${tmp_dir}/eng/hooks/pre-commit"; chmod +x "${tmp_dir}/eng/hooks/pre-commit"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'one\n' > tracked.txt; git add -A; git commit -qm base )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  # (a) GATE: an unstaged edit makes `git diff` produce a patch; an inherited GIT_EXTERNAL_DIFF
+  # would then execute. The launcher's top-of-file scrub must unset it BEFORE the gate diff.
+  ( cd "${proj}"; printf 'two\n' >> tracked.txt
+    GIT_EXTERNAL_DIFF="touch ${tmp_dir}/GATE_PWNED" \
+      "${tmp_dir}/eng/tools/ai-auto" gate ) >/dev/null 2>&1 || true
+  test ! -e "${tmp_dir}/GATE_PWNED" \
+    || { echo "[verify] R4-1: GIT_EXTERNAL_DIFF EXECUTED through ai-auto gate (RCE)"; exit 1; }
+  # (b) SHIMMED COMMIT: stage a change and invoke the installed shim exactly as git would, with
+  # GIT_EXTERNAL_DIFF inherited. The shim must scrub it before exec'ing the engine hook.
+  ( cd "${proj}"; printf 'three\n' >> tracked.txt; git add tracked.txt
+    GIT_EXTERNAL_DIFF="touch ${tmp_dir}/HOOK_PWNED" \
+      bash .git/hooks/pre-commit ) >/dev/null 2>&1 || true
+  test ! -e "${tmp_dir}/HOOK_PWNED" \
+    || { echo "[verify] R4-1: GIT_EXTERNAL_DIFF EXECUTED through the pre-commit shim (RCE)"; exit 1; }
+  # Control: the SAME env straight into the SAME patch-producing git call DOES fire, proving the
+  # vector is live so the negative assertions above are not vacuously green.
+  ( cd "${proj}"
+    GIT_EXTERNAL_DIFF="touch ${tmp_dir}/CTRL_XDIFF" git diff --cached >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/CTRL_XDIFF" \
+    || { echo "[verify] R4-1: control vector inert — test would not catch a regression"; exit 1; }
+)
+
+echo "[verify] testing ai-auto M1 (tools/ helper reachable from the shim under a minimal PATH)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # a tools/ helper invoked by BARE NAME from the post-commit body (knowledge-capture).
+  printf '#!/usr/bin/env bash\ntouch "%s/TOOLS_HELPER_FOUND"\n' "${tmp_dir}" \
+    > "${tmp_dir}/eng/tools/knowledge-capture"; chmod +x "${tmp_dir}/eng/tools/knowledge-capture"
+  # the REAL engine post-commit body (so it actually does `command -v knowledge-capture`).
+  cp "${repo_root}/hooks/post-commit" "${tmp_dir}/eng/hooks/post-commit"; chmod +x "${tmp_dir}/eng/hooks/post-commit"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  # Minimal PATH: git+coreutils dirs only, engine tools/ NOT present. The shim+hook must
+  # self-prepend $AI_AUTO_HOME/tools so the bare-name helper resolves.
+  min_path="$(dirname "$(command -v git)"):$(dirname "$(command -v bash)"):/usr/bin:/bin"
+  ( cd "${proj}"; PATH="${min_path}" bash .git/hooks/post-commit ) >/dev/null 2>&1 || true
+  test -e "${tmp_dir}/TOOLS_HELPER_FOUND" \
+    || { echo "[verify] M1: tools/ helper NOT found from post-commit shim under minimal PATH"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup R4-5 (legacy copy-model hook UPGRADED to shim; true-custom kept)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  hd="${proj}/.git/hooks"; mkdir -p "${hd}"
+  # OLD copy-model pre-commit: the FULL engine body (carries 'AI_AUTO worktree-safe hook', NO
+  # 'AI_AUTO shim' marker) — pre-globalize projects had this copied into .git/hooks.
+  cp "${repo_root}/hooks/pre-commit" "${hd}/pre-commit"; chmod +x "${hd}/pre-commit"
+  grep -q 'AI_AUTO shim' "${hd}/pre-commit" && { echo "[verify] R4-5: legacy fixture is already a shim"; exit 1; }
+  # A genuinely custom post-commit (no AI_AUTO markers) must be LEFT untouched.
+  printf '#!/usr/bin/env bash\n# my own hook\necho custom\n' > "${hd}/post-commit"; chmod +x "${hd}/post-commit"
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null 2>&1
+  grep -q 'AI_AUTO shim' "${hd}/pre-commit" \
+    || { echo "[verify] R4-5: legacy copy-model pre-commit was NOT upgraded to the shim"; exit 1; }
+  grep -q 'my own hook' "${hd}/post-commit" \
+    || { echo "[verify] R4-5: a genuinely custom post-commit was wrongly overwritten"; exit 1; }
 )
 
 echo "[verify] testing ai-auto LAUNCHER dispatch + usage exit codes..."

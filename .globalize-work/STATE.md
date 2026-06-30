@@ -47,3 +47,6 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - R2 red: safety HIGH 1+MED 3+LOW 2; engine CLEAN; minimality 1 LOW. NOT dry.
 - R2 blue c3b4781: dir-guard, atomic git rm + flock, GIT_CONFIG scrub, marker align + fixtures (237/1 green).
 - R3 red dispatched (3 hunters). dry-count=0; need 2 consecutive dry.
+- R3 red: safety HIGH 1+MED 2; holistic HIGH 1 (ai-auto verify crash); minimality 0. NOT dry.
+- R3 blue 58bcb42: engine-aware verify scope, existence guard, launcher+hooks+shim GIT_CONFIG scrub (RCE), common-dir lock, doctor --home + fixtures (237/1 green). R3-4 fd-CLOEXEC skipped (justified).
+- R4 red dispatched (safety / holistic / portability-env). dry-count=0; need 2 consecutive.

@@ -5,16 +5,20 @@ set -euo pipefail
 # thin pre-commit shim (which bakes AI_AUTO_HOME, unsets GIT_*, and execs us). The
 # §4 self-heal guard below makes bare-name siblings resolve in ANY context.
 : "${AI_AUTO_HOME:=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
-case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$PATH";; esac
+# M1: prepend BOTH scripts/ and tools/ so bare-name tools/ helpers resolve in a minimal env.
+case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$AI_AUTO_HOME/tools:$PATH";; esac
 
 # git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE / GIT_PREFIX (and on some
 # versions GIT_COMMON_DIR / GIT_NAMESPACE) into hook processes. The test suite below
 # spawns git in throwaway repos; inheriting this repo's GIT_* would corrupt git state
 # across every linked worktree. Clearing them gives the tests a clean git environment.
-# R3-3: also scrub the GIT_CONFIG_* injection family — an inherited core.fsmonitor/
-# core.hooksPath via GIT_CONFIG_COUNT + GIT_CONFIG_KEY_n/VALUE_n is arbitrary command
-# execution that would otherwise run through every git call this hook makes.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
+# R4-1/R3-3: also scrub the GIT_CONFIG_* injection family AND the dedicated git-exec-env
+# vars (GIT_EXTERNAL_DIFF via `git diff`, GIT_PAGER/EDITOR/SSH/PROXY/ASKPASS, object-dir
+# overrides) — each is arbitrary command execution / wrong-store through a git call here.
+# CANONICAL git-exec-env denylist — kept BYTE-IDENTICAL with the launcher + shim + post-commit.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
+      GIT_EXTERNAL_DIFF GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_SSH GIT_SSH_COMMAND \
+      GIT_PROXY_COMMAND GIT_ASKPASS GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
       GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
 for _gcv in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
   [ -n "$_gcv" ] && unset "$_gcv" || true

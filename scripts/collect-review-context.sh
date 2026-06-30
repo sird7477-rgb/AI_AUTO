@@ -266,7 +266,7 @@ review_intensity_for_scopes() {
 
 required_checks_for_scopes() {
   local scopes="$1"
-  local checks=("./scripts/verify.sh")
+  local checks=("ai-auto verify")
 
   case "${scopes}" in
     *scripts*|*tools*|*tests*)
@@ -1411,7 +1411,7 @@ fi
     fi
   echo "## Workflow Rule"
   echo
-  echo "- Before completion, run ./scripts/verify.sh"
+  echo "- Before completion, run ai-auto verify"
   echo "- If verification fails, the task is not complete."
   echo "- After code edits, compare the final diff with any applicable plan/spec/design artifact and report aligned, updated, not applicable, or blocked."
   echo "- User-facing reports should explain results in plain Korean before using internal technical identifiers."

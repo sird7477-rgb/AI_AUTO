@@ -239,13 +239,13 @@ Generated at: $(date -Iseconds)
 ## Short Summary
 
 - decision: blocked
-- reason: verify_failed (verify.sh exit ${verify_status})
+- reason: verify_failed (ai-auto verify exit ${verify_status})
 - coverage: none
 - trust: blocked_or_needs_attention
 - active_principal: ${ACTIVE_PRINCIPAL:-unknown}
 - missing_or_unusable_reviewers: not_evaluated
 - verify_override: none
-- authority: blocked is not commit approval. Fix verify.sh, or re-run with both AI_AUTO_VERIFY_OVERRIDE_REASON and AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY to proceed degraded.
+- authority: blocked is not commit approval. Fix the failing ai-auto verify, or re-run with both AI_AUTO_VERIFY_OVERRIDE_REASON and AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY to proceed degraded.
 
 ## Final Decision
 
@@ -253,11 +253,11 @@ blocked
 
 ## Decision Reason
 
-verify.sh failed with exit ${verify_status}; the AI review panel was not run. See ${VERIFY_OUTPUT_FILE} for the failing output.
+ai-auto verify failed with exit ${verify_status}; the AI review panel was not run. See ${VERIFY_OUTPUT_FILE} for the failing output.
 
 ## Next Step
 
-Fix the verification failure and re-run ./scripts/review-gate.sh. To proceed past a known-unrelated failure, re-run with BOTH AI_AUTO_VERIFY_OVERRIDE_REASON="..." and AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="..."; the result is recorded as proceed_degraded with a verify_override note, never a clean proceed.
+Fix the verification failure and re-run ai-auto gate. To proceed past a known-unrelated failure, re-run with BOTH AI_AUTO_VERIFY_OVERRIDE_REASON="..." and AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="..."; the result is recorded as proceed_degraded with a verify_override note, never a clean proceed.
 EOF
 
   echo "[gate] blocked verdict written (verify failed, exit ${verify_status}): ${verdict_file}"
@@ -503,7 +503,8 @@ set -e
 # projects), run it too and fold its status into verify_status so a machinery
 # failure takes the same recorded-blocked / override path as any other red verify.
 if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
-   && [ -f "$AH/verify-machinery.sh" ] && [ "$(dirname "$AH")" -ef "." ]; then
+   && [ -f "$AH/verify-machinery.sh" ] \
+   && [ "$(git rev-parse --show-toplevel 2>/dev/null)" -ef "$(dirname "$AH")" ]; then
   if { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
        | grep -Eq '^(scripts/|hooks/)'; then
     echo "[gate] automation scripts changed; running machinery-scope verify..."
