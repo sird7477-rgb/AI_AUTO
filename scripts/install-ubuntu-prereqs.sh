@@ -169,7 +169,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 
 echo "[install] installing repo global helper links"
-./scripts/install-global-files.sh
+"${ROOT}/scripts/install-global-files.sh"
 
 if [ "$INSTALL_AI_CLI" -eq 1 ]; then
   install_ai_cli_tools

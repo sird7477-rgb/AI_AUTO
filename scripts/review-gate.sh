@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Framework sibling scripts live next to this one. Resolve our own dir (following
+# symlinks) so siblings are reachable from ANY cwd / PATH / temp-sandbox fixture.
+AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
 # Clear any stale verify-failure override marker at gate start so an override can
@@ -10,9 +14,9 @@ rm -f .omx/state/verify-override.env
 
 # Concurrency guard: warn / soft-block when another live session shares this working tree
 # (prefer one git worktree per terminal — aiwt <name>). Released on every exit path.
-if [ -f "$(dirname "$0")/session-lock.sh" ]; then
+if [ -f "$AH/session-lock.sh" ]; then
   # shellcheck source=scripts/session-lock.sh
-  . "$(dirname "$0")/session-lock.sh"
+  . "$AH/session-lock.sh"
   trap 'session_lock_release' EXIT
 fi
 
@@ -168,19 +172,19 @@ diff_scope_field() {
 review_gate_housekeeping() {
   local summary_status="$1"
 
-  if [ "${OMX_AUTO_ARCHIVE:-1}" != "0" ] && [ -x "./scripts/archive-omx-artifacts.sh" ]; then
+  if [ "${OMX_AUTO_ARCHIVE:-1}" != "0" ] && [ -x "$AH/archive-omx-artifacts.sh" ]; then
     echo "[gate] archiving old review artifacts when retention thresholds are exceeded..."
-    ./scripts/archive-omx-artifacts.sh
+    "$AH/archive-omx-artifacts.sh"
   fi
 
-  if [ "${OMX_AUTO_CHECKPOINT:-1}" != "0" ] && [ -x "./scripts/write-session-checkpoint.sh" ]; then
+  if [ "${OMX_AUTO_CHECKPOINT:-1}" != "0" ] && [ -x "$AH/write-session-checkpoint.sh" ]; then
     echo "[gate] writing session checkpoint..."
-    ./scripts/write-session-checkpoint.sh
+    "$AH/write-session-checkpoint.sh"
   fi
 
-  if [ "${OMX_AUTO_KNOWLEDGE_DRAFTS:-1}" != "0" ] && [ -x "./scripts/capture-knowledge-drafts.py" ]; then
+  if [ "${OMX_AUTO_KNOWLEDGE_DRAFTS:-1}" != "0" ] && [ -x "$AH/capture-knowledge-drafts.py" ]; then
     echo "[gate] capturing local knowledge drafts..."
-    if ! ./scripts/capture-knowledge-drafts.py --source review-gate --write; then
+    if ! "$AH/capture-knowledge-drafts.py" --source review-gate --write; then
       echo "[gate] warning: knowledge draft capture failed; review gate result is unchanged"
     fi
   fi
@@ -487,7 +491,7 @@ env \
   -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
   AI_AUTO_IN_REVIEW_GATE=1 \
   AI_AUTO_VERIFY_SCOPE=product \
-  ./scripts/verify.sh 2>&1 | tee "$VERIFY_OUTPUT_FILE"
+  "$AH/verify.sh" 2>&1 | tee "$VERIFY_OUTPUT_FILE"
 verify_status="${PIPESTATUS[0]}"
 set -e
 
@@ -518,7 +522,7 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ]; then
       -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
       -u RUN_CLAUDE_REVIEW \
       -u AI_AUTO_IN_REVIEW_GATE \
-      ./scripts/verify-machinery.sh 2>&1 | tee -a "$VERIFY_OUTPUT_FILE"
+      "$AH/verify-machinery.sh" 2>&1 | tee -a "$VERIFY_OUTPUT_FILE"
     machinery_status="${PIPESTATUS[0]}"
     set -e
     if [ "${machinery_status}" -ne 0 ]; then
@@ -589,7 +593,7 @@ if [ "${verify_status}" -ne 0 ]; then
 fi
 
 echo "[gate] collecting review context for diff-scope policy..."
-./scripts/collect-review-context.sh
+"$AH/collect-review-context.sh"
 print_diff_scope_gate
 
 if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" != "1" ] && verify_only_diff_scope_ready; then
@@ -631,7 +635,7 @@ fi
 
 echo "[gate] running AI reviews..."
 set +e
-./scripts/run-ai-reviews.sh
+"$AH/run-ai-reviews.sh"
 review_status=$?
 set -e
 
@@ -644,7 +648,7 @@ fi
 
 echo "[gate] summarizing AI review verdicts..."
 summary_status=0
-if ! ./scripts/summarize-ai-reviews.sh; then
+if ! "$AH/summarize-ai-reviews.sh"; then
   echo "[gate] review gate did not proceed"
   summary_status=1
 fi

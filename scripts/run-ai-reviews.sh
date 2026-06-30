@@ -219,10 +219,10 @@ if [ "${SKIP_CONTEXT_GENERATION}" = "1" ]; then
   CONTEXT_FILE="${CONTEXT_FILE:-existing context in ${CONTEXT_DIR}}"
 else
   echo "[review] collecting review context..."
-  CONTEXT_FILE="$(OUT_DIR="${CONTEXT_DIR}" INCLUDE_UNTRACKED_CONTENT="${REVIEW_INCLUDE_UNTRACKED_CONTENT}" REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL}" REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES}" REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES}" ./scripts/collect-review-context.sh)"
+  CONTEXT_FILE="$(OUT_DIR="${CONTEXT_DIR}" INCLUDE_UNTRACKED_CONTENT="${REVIEW_INCLUDE_UNTRACKED_CONTENT}" REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL}" REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES}" REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES}" "${RUN_AI_REVIEWS_SCRIPT_DIR}/collect-review-context.sh")"
 
   echo "[review] generating review prompts..."
-  OUT_DIR="${PROMPT_DIR}" REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES}" ./scripts/make-review-prompts.sh "${CONTEXT_FILE}" >/dev/null
+  OUT_DIR="${PROMPT_DIR}" REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES}" "${RUN_AI_REVIEWS_SCRIPT_DIR}/make-review-prompts.sh" "${CONTEXT_FILE}" >/dev/null
 fi
 
 CLAUDE_PROMPT="${PROMPT_DIR}/claude-review.md"
@@ -497,7 +497,7 @@ load_model_routing() {
     return 0
   fi
 
-  if [ ! -x "./scripts/discover-ai-models.sh" ]; then
+  if [ ! -x "${RUN_AI_REVIEWS_SCRIPT_DIR}/discover-ai-models.sh" ]; then
     echo "[review] AI model discovery script missing; using provider defaults"
     return 0
   fi
@@ -506,7 +506,7 @@ load_model_routing() {
   if AI_MODEL_DISCOVERY_DIR="${AI_MODEL_DISCOVERY_DIR}" \
     AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV}" \
     AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT}" \
-    ./scripts/discover-ai-models.sh >/dev/null; then
+    "${RUN_AI_REVIEWS_SCRIPT_DIR}/discover-ai-models.sh" >/dev/null; then
     # shellcheck disable=SC1090
     . "${AI_MODEL_ROUTING_ENV}"
     echo "[review] model routing report: ${AI_MODEL_ROUTING_REPORT}"

@@ -50,7 +50,7 @@ def test_verify_script_keeps_structural_audit_markers() -> None:
         "full)",
         "product)",
         "machinery)",
-        "./scripts/verify-machinery.sh",
+        "$AH/verify-machinery.sh",
         ".venv/bin/python -m pytest -q tests/test_app.py",
     ]
     for marker in required_scope_markers:

@@ -383,9 +383,18 @@ EOF
     : > "$tmp_path"
   fi
 
-  cat >> "$tmp_path" <<'EOF'
+  # Bake the resolved engine root so the `ai-auto` launcher + framework tools are on
+  # PATH in interactive shells. $ROOT is expanded at install time; $AI_AUTO_HOME/$PATH/$HOME
+  # stay runtime-literal. The PATH prepend is guarded so re-sourcing never duplicates entries.
+  cat >> "$tmp_path" <<EOF
 # >>> AI_AUTO shell integration >>>
-[ -f "$HOME/.config/ai-lab/AI_AUTO.sh" ] && . "$HOME/.config/ai-lab/AI_AUTO.sh"
+export AI_AUTO_HOME="${ROOT}"
+case ":\$PATH:" in
+  *":\$AI_AUTO_HOME/scripts:"*) ;;
+  *) PATH="\$AI_AUTO_HOME/scripts:\$AI_AUTO_HOME/tools:\$PATH" ;;
+esac
+export PATH
+[ -f "\$HOME/.config/ai-lab/AI_AUTO.sh" ] && . "\$HOME/.config/ai-lab/AI_AUTO.sh"
 # <<< AI_AUTO shell integration <<<
 EOF
 

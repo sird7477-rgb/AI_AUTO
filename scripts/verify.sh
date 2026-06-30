@@ -3,20 +3,22 @@ set -euo pipefail
 
 API_PORT="${API_PORT:-5001}"
 BASE_URL="http://localhost:${API_PORT}"
-repo_root="$(pwd)"
+# Framework siblings resolve via our own dir (symlink-followed) so they are reachable
+# from ANY cwd / PATH / temp-sandbox fixture; project context stays $(pwd).
+AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 AI_AUTO_VERIFY_SCOPE="${AI_AUTO_VERIFY_SCOPE:-full}"
 
-if [ -f "${repo_root}/scripts/docker-config-guard.sh" ]; then
+if [ -f "$AH/docker-config-guard.sh" ]; then
   # shellcheck source=scripts/docker-config-guard.sh
-  . "${repo_root}/scripts/docker-config-guard.sh"
+  . "$AH/docker-config-guard.sh"
   ai_auto_configure_docker_config
 fi
 
 # Concurrency guard: a standalone verify in a second terminal on the SAME tree warns /
 # soft-blocks; nested under review-gate it is re-entrant (shared AI_AUTO_SESSION_ID).
-if [ -f "${repo_root}/scripts/session-lock.sh" ]; then
+if [ -f "$AH/session-lock.sh" ]; then
   # shellcheck source=scripts/session-lock.sh
-  . "${repo_root}/scripts/session-lock.sh"
+  . "$AH/session-lock.sh"
 fi
 
 cleanup() {
@@ -77,7 +79,7 @@ run_product_smoke() {
 
 case "${AI_AUTO_VERIFY_SCOPE}" in
   full)
-    ./scripts/verify-machinery.sh
+    "$AH/verify-machinery.sh"
     run_product_smoke
     ;;
   product)
@@ -85,7 +87,7 @@ case "${AI_AUTO_VERIFY_SCOPE}" in
     run_product_smoke
     ;;
   machinery)
-    ./scripts/verify-machinery.sh
+    "$AH/verify-machinery.sh"
     ;;
   *)
     echo "[verify] unknown AI_AUTO_VERIFY_SCOPE=${AI_AUTO_VERIFY_SCOPE}; expected full, product, or machinery" >&2

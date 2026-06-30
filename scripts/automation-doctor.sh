@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Framework siblings resolve via our own dir (symlink-followed) so they run from ANY
+# cwd; project artifacts/.omx stay relative to $(pwd).
+AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
 FIX=0
 SKIP_DIRTY_CHECK="${DOCTOR_SKIP_DIRTY_CHECK:-0}"
 OMX_ARTIFACT_WARN_COUNT="${OMX_ARTIFACT_WARN_COUNT:-120}"
@@ -609,8 +613,8 @@ if [ -d ".omx" ]; then
 
     artifact_count="$(find "$artifact_dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
     if [ "$artifact_count" -gt "$OMX_ARTIFACT_WARN_COUNT" ]; then
-      if [ "$FIX" -eq 1 ] && [ "$artifact_dir" = ".omx/review-results" ] && [ -x "scripts/archive-omx-artifacts.sh" ]; then
-        if OMX_REVIEW_ARCHIVE_THRESHOLD="$OMX_ARTIFACT_WARN_COUNT" ./scripts/archive-omx-artifacts.sh; then
+      if [ "$FIX" -eq 1 ] && [ "$artifact_dir" = ".omx/review-results" ] && [ -x "$AH/archive-omx-artifacts.sh" ]; then
+        if OMX_REVIEW_ARCHIVE_THRESHOLD="$OMX_ARTIFACT_WARN_COUNT" "$AH/archive-omx-artifacts.sh"; then
           say_fix "archived old review artifacts from ${artifact_dir}"
         else
           say_warn "review artifact archive failed for ${artifact_dir}"
