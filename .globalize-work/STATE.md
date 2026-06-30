@@ -64,3 +64,6 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - R7 red: safety HIGH 1 (core.fsmonitor RCE on all worktree git calls)+LOW; holistic LOW 1; minimality LOW 1. NOT dry.
 - R7 blue b581bf5: process-level config chokepoint (git-scrub exports GIT_CONFIG core.fsmonitor=/diff.external=) + review_git 2-layer defense; non-exec verify-project; git-harden in FRAMEWORK_PATHS; SPEC word + positive-control fixtures (237/1 green).
 - git-exec class closed 2-layer (config chokepoint + attribute call-site). R8 red dispatched. dry-count=0; need 2 consecutive clean.
+- R8 red: safety HIGH 1 (--no-filters drift @1400); holistic HIGH 1 (R7 diff.external='' REGRESSION breaks plain git diff, victims engine+odoo QC); minimality CLEAN. NOT dry.
+- R8 blue 1ae7dd7: diff.external removed from chokepoint -> call-site --no-ext-diff (incl 2 odoo validators); --no-filters@1400; sourced-chokepoint INTEGRATION fixture (closes the gap that hid H8-1) + structural drift-guard. ( . git-scrub && verify-machinery ) before=1 after=0; 237/1 green.
+- git-defense mechanism corrected + integration-tested + drift-guarded. R9 red dispatched. dry-count=0; need 2 consecutive clean.

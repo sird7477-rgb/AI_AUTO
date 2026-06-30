@@ -7258,49 +7258,168 @@ echo "[verify] testing R8-H8-1 (SOURCED-chokepoint integration: a plain patch-pr
   if cout="$( cd "${proj}"; . "${scrub}"; GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0='' git diff -- a.txt 2>&1 )"; then crc=0; else crc=$?; fi
   { test "${crc}" -ne 0 && printf '%s' "${cout}" | grep -q 'external diff died'; } \
     || { echo "[verify] R8-H8-1: control (diff.external='') did NOT break plain git diff — fixture would not catch the regression"; exit 1; }
-  # (3) the machinery's own inherit-overlap self-host case (the loud victim) runs THROUGH a sourced
-  # git-scrub via the shipped validator's `git diff --no-ext-diff -U0` path: build the two-addon
-  # same-field repo and assert the validator (called with git-scrub sourced) FLAGS it.
-  val="${repo_root}/templates/domain-packs/odoo/validation-harness/check-inherited-field-overlap.py"
-  if [ -f "${val}" ]; then
-    grep -q 'no-ext-diff' "${val}" \
-      || { echo "[verify] R8-H8-1: check-inherited-field-overlap.py missing --no-ext-diff at its git diff -U0 site"; exit 1; }
-    # shellcheck disable=SC1090  # dynamic source of the engine git-scrub.sh under test
-    o2="$( cd "${proj}"; . "${scrub}"; git diff --no-ext-diff -U0 -- a.txt 2>&1 )"; r2=$?
-    { test "${r2}" -eq 0 && printf '%s' "${o2}" | grep -q '^@@'; } \
-      || { echo "[verify] R8-H8-1: odoo validator 'git diff --no-ext-diff -U0' path broken under sourced git-scrub (rc=${r2})"; exit 1; }
-  fi
 )
 
-echo "[verify] testing R8-DRIFT (structural: every patch/--no-index diff in the trust path carries the documented git-harden flags — no --no-filters/--no-ext-diff/--no-textconv omission like collect-review-context.sh:1400)..."
+echo "[verify] testing R9-VALIDATOR-RCE (LIVE 3-vector: the shipped odoo QC validators, run over an attacker-influenced project under a SOURCED git-scrub, must NOT exec the in-repo clean-filter / textconv / external-diff drivers — and must still FLAG)..."
 (
-  fail=0
-  for src in scripts/collect-review-context.sh scripts/review-gate.sh \
-             scripts/summarize-ai-reviews.sh scripts/run-ai-reviews.sh; do
-    f="${repo_root}/${src}"
-    test -f "${f}" || { echo "[verify] R8-DRIFT: ${src} not found"; exit 1; }
-    # (a) every `--no-index` content read must carry --no-filters AND --no-ext-diff --no-textconv.
-    while IFS= read -r line; do
-      case "${line}" in *--no-index*) ;; *) continue;; esac
-      case "${line}" in *--no-filters*--no-index*|*--no-index*--no-filters*) ;; *)
-        echo "[verify] R8-DRIFT: ${src}: --no-index content read MISSING --no-filters: ${line}"; fail=1;; esac
-      case "${line}" in *--no-ext-diff*) ;; *)
-        echo "[verify] R8-DRIFT: ${src}: --no-index content read MISSING --no-ext-diff: ${line}"; fail=1;; esac
-      case "${line}" in *--no-textconv*) ;; *)
-        echo "[verify] R8-DRIFT: ${src}: --no-index content read MISSING --no-textconv: ${line}"; fail=1;; esac
-    done < <(grep -nE '(review_git|git) +diff' "${f}")
-    # (b) every patch-producing `review_git diff` (NOT --name-only/--stat/--numstat/--quiet)
-    # must carry --no-ext-diff --no-textconv (the per-attr-driver call-site defense).
-    while IFS= read -r line; do
-      case "${line}" in *--name-only*|*--stat*|*--numstat*|*--quiet*) continue;; esac
-      case "${line}" in *review_git*diff*) ;; *) continue;; esac
-      case "${line}" in *--no-ext-diff*) ;; *)
-        echo "[verify] R8-DRIFT: ${src}: patch-producing review_git diff MISSING --no-ext-diff: ${line}"; fail=1;; esac
-      case "${line}" in *--no-textconv*) ;; *)
-        echo "[verify] R8-DRIFT: ${src}: patch-producing review_git diff MISSING --no-textconv: ${line}"; fail=1;; esac
-    done < <(grep -nE 'review_git +diff' "${f}")
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  scrub="${repo_root}/hooks/git-scrub.sh"
+  harn="${repo_root}/templates/domain-packs/odoo/validation-harness"
+  test -s "${scrub}" || { echo "[verify] R9-VALIDATOR-RCE: git-scrub.sh not found"; exit 1; }
+  mk_poison() {  # $1=dir ; odoo-shaped repo arming clean-filter + textconv + external-diff on the changed .py
+    local p="$1"; mkdir -p "${p}/custom-addons/m"
+    ( cd "${p}"; git init -q; git branch -m main; git config user.email t@e.x; git config user.name T
+      printf 'X = 1\n' > custom-addons/m/m.py; git add -A; git commit -qm init
+      git config filter.evil.clean   "touch ${tmp_dir}/PWNED_CLEAN; cat"
+      git config diff.evilt.textconv "touch ${tmp_dir}/PWNED_TC; cat"
+      git config diff.external       "${tmp_dir}/ext.sh"
+      printf '{\n        "type": "ir.actions.act_window",\n        "target": "new",\n        "res_model": "res.partner",\n}\n' > /dev/null
+      printf 'X = 1\ndef act(self):\n    return {"type": "ir.actions.act_window", "target": "new", "res_model": "res.partner"}\n' > custom-addons/m/m.py
+      printf 'custom-addons/m/m.py filter=evil diff=evilt\n' > .gitattributes )
+  }
+  printf '#!/bin/sh\ntouch %s/PWNED_EXT\n' "${tmp_dir}" > "${tmp_dir}/ext.sh"; chmod +x "${tmp_dir}/ext.sh"
+  # HARDENED: every shipped validator over the poisoned project leaves ALL THREE markers un-created,
+  # and check-action-shape STILL flags the planted act_window (proving the diff actually ran).
+  proj="${tmp_dir}/p"; mk_poison "${proj}"
+  rm -f "${tmp_dir}"/PWNED_*
+  # shellcheck disable=SC1090
+  flag="$( cd "${proj}"; . "${scrub}"; python3 "${harn}/check-action-shape.py" --base main --root custom-addons 2>&1 )"
+  # shellcheck disable=SC1090
+  ( cd "${proj}"; . "${scrub}"; python3 "${harn}/check-inherited-field-overlap.py" --base main --root custom-addons >/dev/null 2>&1 || true )
+  # shellcheck disable=SC1090
+  ( cd "${proj}"; . "${scrub}"; python3 "${harn}/check-manifest-files.py" --base main --root custom-addons --no-strict >/dev/null 2>&1 || true )
+  for marker in PWNED_CLEAN PWNED_TC PWNED_EXT; do
+    test ! -e "${tmp_dir}/${marker}" \
+      || { echo "[verify] R9-VALIDATOR-RCE: ${marker} EXECUTED via a shipped odoo validator over an untrusted project (RCE)"; exit 1; }
   done
-  test "${fail}" -eq 0 || exit 1
+  printf '%s' "${flag}" | grep -q 'act_window popup action' \
+    || { echo "[verify] R9-VALIDATOR-RCE: check-action-shape did NOT flag the planted act_window — diff path may be inert (vacuous)"; exit 1; }
+  # Positive control: strip --attr-source= from a copy of check-action-shape.py (the pre-fix form).
+  # The SAME poisoned project MUST then fire the clean filter, proving the negative is non-vacuous.
+  ctl="${tmp_dir}/check-action-shape-ctl.py"
+  sed -E 's/"--attr-source=" \+ _EMPTY_TREE, //g' "${harn}/check-action-shape.py" > "${ctl}"
+  proj2="${tmp_dir}/p2"; mk_poison "${proj2}"
+  rm -f "${tmp_dir}"/PWNED_*
+  # shellcheck disable=SC1090
+  ( cd "${proj2}"; . "${scrub}"; python3 "${ctl}" --base main --root custom-addons >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_CLEAN" \
+    || { echo "[verify] R9-VALIDATOR-RCE: control (no --attr-source) inert — fixture would not catch the clean-filter drift"; exit 1; }
+)
+
+echo "[verify] testing R9-DRIFT (COMPREHENSIVE: EVERY patch/content-producing git-diff site across the shipped tree — scripts/ hooks/ tools/ templates/domain-packs/** (bash AND python) — carries its git-exec-RCE defense; fails on a newly-introduced un-hardened site anywhere)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  guard="${tmp_dir}/git-harden-drift.py"
+  # The guard lives in a TEMP file (not the shipped tree) so it never scans itself: it contains the
+  # very git-diff pattern strings it hunts for, which would otherwise self-false-positive.
+  cat > "${guard}" <<'PYEOF'
+import os, re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+# EXCLUDE the test harness verify-machinery.sh: it is not shipped engine/validator logic and
+# deliberately contains adversarial BARE `git diff` negative-control fixtures; scanning it would
+# flag those intentional controls.
+SELF = (root / "scripts" / "verify-machinery.sh").resolve()
+targets = []
+for d in ("scripts", "hooks", "tools"):
+    p = root / d
+    if p.is_dir():
+        targets += [f for f in p.rglob("*") if f.is_file()]
+dp = root / "templates" / "domain-packs"
+if dp.is_dir():
+    targets += [f for f in dp.rglob("*") if f.is_file()]
+HOOK_NAMES = {"pre-commit", "post-commit", "pre-push", "commit-msg", "post-merge", "prepare-commit-msg"}
+def is_text(f):
+    return f.suffix in (".sh", ".py") or f.name in HOOK_NAMES
+# A git diff/show/log/blame INVOCATION on ONE physical line: bash `git [opts] diff` (or review_git),
+# or python list `"git", ... "diff"`. Comments are skipped by the caller. `diff` inside `--no-ext-diff`
+# or `diff.external` is NOT matched (the subcommand must be a standalone space/comma-bounded token).
+# bash: a COMMAND-POSITION `git`/`review_git` (after start, `;`, `|`, `&`, `(`, `{`, or backtick)
+# followed by opts then a STANDALONE `diff|show|log|blame` subcommand. The trailing `(?![\w.=-])`
+# rejects `diff.external` (config key), `diff-tree`/`diff-index` (tree-only subcommands), and
+# `--no-ext-diff`; the command-position prefix rejects prose mentions like "such as git diff".
+# python: a `"git", ... "diff"` argv list.
+INVOKE = re.compile(
+    r'(?:(?:^|[;&|(){`])\s*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(diff|show|log|blame)(?![\w.=-]))'
+    r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(diff|show|log|blame)"\s*,?)'
+)
+NONPATCH = ("--name-only", "--name-status", "--stat", "--shortstat", "--numstat", "--quiet", "--no-patch", "--check")
+violations = []
+scanned = 0
+for f in sorted(targets):
+    if not is_text(f) or f.resolve() == SELF:
+        continue
+    rel = f.relative_to(root).as_posix()
+    is_dp = rel.startswith("templates/domain-packs/")
+    try:
+        text = f.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        m = INVOKE.search(line)
+        if not m:
+            continue
+        sub = m.group(1) or m.group(2)
+        scanned += 1
+        loc = "%s:%d" % (rel, i)
+        s = line.strip()
+        nonpatch = any(fl in line for fl in NONPATCH)
+        noindex = "--no-index" in line
+        # `git show <rev>:<path>` is a raw blob read (not a patch); exempt from the patch-flag rule.
+        showblob = (sub == "show" and re.search(r'[\w}\"]:[\w./$%{}-]', line) and not nonpatch)
+        # rule 1: --no-index content read -> --no-filters + --no-ext-diff + --no-textconv.
+        if noindex:
+            for need in ("--no-filters", "--no-ext-diff", "--no-textconv"):
+                if need not in line:
+                    violations.append("%s: --no-index content read MISSING %s: %s" % (loc, need, s))
+        # rule 2: patch/content-producing diff / show(non-blob) / log -p / blame -> --no-ext-diff --no-textconv.
+        patch = (not nonpatch) and (not noindex) and (
+            sub in ("diff", "blame")
+            or (sub == "show" and not showblob)
+            or (sub == "log" and ("-p" in line or "--patch" in line)))
+        if patch:
+            for need in ("--no-ext-diff", "--no-textconv"):
+                if need not in line:
+                    violations.append("%s: patch-producing `git %s` MISSING %s: %s" % (loc, sub, need, s))
+        # rule 3: clean-filter on a WORKTREE `git diff` in a DOMAIN-PACK validator (the untrusted-
+        # project-facing layer). git runs the in-repo clean filter to DETECT a change even for
+        # --name-only, so name-only worktree diffs are NOT exempt here. A worktree diff = `git diff`
+        # that is not --cached/--staged, not --no-index, and not a `..`/`...` range (tree-vs-tree).
+        if is_dp and sub == "diff" and not noindex \
+                and "--cached" not in line and "--staged" not in line and ".." not in line:
+            if "--attr-source=" not in line:
+                violations.append("%s: worktree `git diff` (clean-filter RCE vector) MISSING --attr-source=<empty-tree>: %s" % (loc, s))
+if violations:
+    sys.stderr.write("R9-DRIFT VIOLATIONS:\n")
+    for v in violations:
+        sys.stderr.write("  " + v + "\n")
+    sys.exit(1)
+print("R9-DRIFT OK: %d git diff/show/log/blame site(s) scanned, all hardened" % scanned)
+PYEOF
+  # (a) the real shipped tree MUST pass.
+  out="$( python3 "${guard}" "${repo_root}" 2>&1 )" \
+    || { echo "[verify] R9-DRIFT: shipped tree has an un-hardened git-diff site:"; echo "${out}"; exit 1; }
+  echo "[verify]   ${out}"
+  # (b) Positive controls: a planted un-hardened DOMAIN-PACK worktree diff MUST be caught (engine vs
+  # domain-pack scoping AND patch-flag scoping both proven non-vacuous).
+  mkdir -p "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness" "${tmp_dir}/fake/scripts"
+  # b1: domain-pack worktree name-only diff with NO --attr-source -> rule 3 must fire.
+  printf 'git -C "$P" diff --name-only HEAD\n' > "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness/bad.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b1 (un-hardened domain-pack worktree name-only diff) NOT caught — guard is vacuous"; exit 1; }
+  # b2: a patch-producing diff missing --no-textconv -> rule 2 must fire (engine scope, scripts/).
+  printf 'review_git diff --no-ext-diff base\n' > "${tmp_dir}/fake/scripts/bad.sh"
+  rm -f "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness/bad.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b2 (patch diff missing --no-textconv) NOT caught — guard is vacuous"; exit 1; }
+  # b3: a HARDENED equivalent MUST pass (no false-positive).
+  rm -f "${tmp_dir}/fake/scripts/bad.sh"
+  printf 'git -C "$P" --attr-source="$ET" diff --name-only HEAD\n' > "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness/ok.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b3 (correctly hardened diff) FALSE-POSITIVED — guard is too strict"; exit 1; }
 )
 
 echo "[verify] testing R8-safety (filter-clean RCE on the untracked-content path: in-repo .gitattributes filter + .git/config clean must NOT execute via collect-review-context.sh:1400 --no-index content read)..."

@@ -42,6 +42,16 @@ def run(args):
         return ""
 
 
+# Empty-tree OID fed to `git --attr-source=` so the project's in-repo `.gitattributes` is
+# IGNORED on the worktree `--name-only` diff below. git runs the clean filter to decide whether
+# a worktree file changed even for `--name-only`, so that diff is a clean-filter RCE vector over
+# an untrusted project; --attr-source neutralizes the attribute-driven clean/smudge/textconv/diff
+# drivers. (No --no-ext-diff/--no-textconv needed: --name-only emits no patch, so textconv/
+# external-diff never run; only the clean filter, which --attr-source disarms.)
+_EMPTY_TREE = run(["git", "hash-object", "-t", "tree", os.devnull]).strip() \
+    or "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
 def manifest_refs(manifest_path):
     """Return [(key, relpath)] for data/demo string entries in a manifest dict."""
     try:
@@ -66,7 +76,7 @@ def manifest_refs(manifest_path):
 
 
 def changed_modules(base, root):
-    files = run(["git", "diff", "--name-only", base, "--"]).splitlines()
+    files = run(["git", "--attr-source=" + _EMPTY_TREE, "diff", "--name-only", base, "--"]).splitlines()
     files += run(["git", "ls-files", "--others", "--exclude-standard", "--"]).splitlines()
     prefix = root.rstrip("/") + "/"
     mods = set()

@@ -12,6 +12,12 @@ export HARNESS_DIR="$HERE"
 PROJECT="${1:?usage: validate-warm.sh <project_repo> [module ...]}"; shift || true
 export PROJECT_ADDONS="$PROJECT/custom-addons"
 BASE_DB="${ODOO_BASE_DB:-base}"
+# Empty-tree OID (in $PROJECT's hash algo) for `git --attr-source=`: makes every WORKTREE-touching
+# git diff over the (untrusted) project IGNORE its in-repo .gitattributes, so an attacker's
+# attribute-driven clean/smudge/textconv/diff driver cannot exec. NOTE: git runs the clean filter
+# to detect a content change even on a `--name-only` worktree diff, so name-only is NOT exempt from
+# the clean-filter RCE vector — every worktree `git diff` below carries --attr-source.
+PROJ_ATTR_NONE="$(git -C "$PROJECT" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
 cd "$HERE"   # so `docker compose -f docker-compose.validate.yml` avoids spaces in $HERE
 dc() { docker compose -f docker-compose.validate.yml "$@"; }
 # Per-project isolation: COMPOSE_PROJECT_NAME namespaces this project's container/network/
@@ -33,7 +39,7 @@ else
   # not-yet-pushed changes (@{u}...HEAD). After commit the working tree is clean, so
   # `git diff HEAD` alone would skip the very commits being pushed in a pre-push hook.
   up="$(git -C "$PROJECT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
-  MODCOMMA="$({ git -C "$PROJECT" diff --name-only HEAD 2>/dev/null;
+  MODCOMMA="$({ git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" diff --name-only HEAD 2>/dev/null;
                 [ -n "$up" ] && git -C "$PROJECT" diff --name-only "$up...HEAD" 2>/dev/null; } \
     | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
 fi
@@ -48,8 +54,15 @@ fi
 # treated as assets.) WARM_CLASSIFY_ONLY=1 prints the decision and exits before docker.
 manifest_version_only_change() {  # $1=path ; 0 iff the only changed content lines are the version line
   local f="$1" d
-  d="$( { git -C "$PROJECT" diff HEAD -- "$f" 2>/dev/null;
-          [ -n "${up:-}" ] && git -C "$PROJECT" diff "${up}...HEAD" -- "$f" 2>/dev/null; } \
+  # Harden BOTH diffs against the project's in-repo git-exec vectors: --no-ext-diff/--no-textconv
+  # close the .git/config diff.external + textconv vectors; --attr-source=$PROJ_ATTR_NONE makes the
+  # worktree-vs-HEAD diff IGNORE the in-repo .gitattributes so an attacker's attribute-driven
+  # clean/smudge/textconv/diff driver cannot exec on the worktree blob (a bare `git diff HEAD -- f`
+  # is worktree-vs-tree and STILL runs the clean filter even with --no-ext-diff --no-textconv).
+  # The up...HEAD diff is tree-vs-tree (committed blobs, no worktree-blob conversion) so the flags
+  # alone suffice there.
+  d="$( { git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" diff --no-ext-diff --no-textconv HEAD -- "$f" 2>/dev/null;
+          [ -n "${up:-}" ] && git -C "$PROJECT" diff --no-ext-diff --no-textconv "${up}...HEAD" -- "$f" 2>/dev/null; } \
         | grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' || true )"
   [ -n "$d" ] || return 1   # no detectable content change -> be safe, validate
   # The whole changed line must be the version key AND NOTHING ELSE (key, quoted value,
@@ -62,7 +75,7 @@ asset_only_noop() {
   [ "${WARM_NO_ASSET_SKIP:-0}" = "1" ] && return 1
   [ "${EXPLICIT_MODS:-0}" = "1" ] && return 1
   local ca f
-  ca="$({ git -C "$PROJECT" diff --name-only HEAD 2>/dev/null;
+  ca="$({ git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" diff --name-only HEAD 2>/dev/null;
           [ -n "${up:-}" ] && git -C "$PROJECT" diff --name-only "${up}...HEAD" 2>/dev/null; } \
         | sort -u | sed -n 's#^custom-addons/.*#&#p' || true)"
   [ -n "$ca" ] || return 1   # nothing under custom-addons -> let the normal flow run

@@ -18,9 +18,16 @@
 # GIT_CONFIG_* re-export below (env-config overrides repo-local config). The repo-local
 # `diff.external` exec vector and the `.gitattributes` ATTRIBUTE-driven diff/textconv/filter
 # drivers — which an EMPTY config override cannot neutralize (diff.external='' = run the
-# empty program = `fatal: external diff died`) — stay closed at the call site (review_git:
-# -c diff.external= --no-ext-diff / --no-textconv / --no-filters; odoo QC validators:
-# --no-ext-diff).
+# empty program = `fatal: external diff died`) — stay closed at the call site. Note the
+# clean/smudge FILTER is NOT closed by `--no-ext-diff`/`--no-textconv` alone: a worktree-vs-tree
+# `git diff <base> -- <path>` still runs the in-repo `.gitattributes` clean filter through both
+# flags. So the call-site defense is:
+#   - engine review_git:       `-c diff.external= --no-ext-diff --no-textconv`, plus `--no-filters`
+#                              on the `--no-index` content read (the only filter-reachable form there);
+#   - odoo QC python validators + validate-warm worktree diffs: `--attr-source=<empty-tree>
+#                              --no-ext-diff --no-textconv` (attr-source ignores the in-repo
+#                              `.gitattributes` so clean/smudge/textconv/diff attribute drivers
+#                              cannot bind; tree-vs-tree `up...HEAD` diffs need only the two flags).
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
       GIT_EXTERNAL_DIFF GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_SSH GIT_SSH_COMMAND \
       GIT_PROXY_COMMAND GIT_ASKPASS GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
@@ -46,8 +53,9 @@ unset _gcv 2>/dev/null || true
 # and EVERY plain patch-producing `git diff` dies with `fatal: external diff died` (exit
 # 128, empty patch) — a process-wide DoS, not a defense. There is no env-config equivalent
 # of `--no-ext-diff`. The config-level external-diff RCE is therefore closed at the CALL
-# SITE instead: review_git() passes `-c diff.external= --no-ext-diff` on every
-# patch-producing diff, and the shipped odoo QC validators pass `--no-ext-diff` directly.
+# SITE instead: review_git() passes `-c diff.external= --no-ext-diff --no-textconv` on every
+# patch-producing diff, and the shipped odoo QC validators pass `--attr-source=<empty-tree>
+# --no-ext-diff --no-textconv` (the clean filter needs the attr-source, not just the two flags).
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0='core.fsmonitor' GIT_CONFIG_VALUE_0=''
 # --- R7-F1 defensive config override (END) ----------------------------------

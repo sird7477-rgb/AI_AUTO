@@ -38,7 +38,11 @@ else
   # yet-pushed changes (after commit the working tree is clean, so `git diff HEAD`
   # alone would miss the commits being pushed).
   up="$(git -C "$PROJECT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
-  MODCOMMA="$({ git -C "$PROJECT" diff --name-only HEAD 2>/dev/null;
+  # --attr-source=<empty-tree>: the worktree `--name-only` diff runs the in-repo clean filter to
+  # detect changes (RCE vector over an untrusted project), so ignore the project's .gitattributes.
+  # The up...HEAD diff is tree-vs-tree (no worktree blob) and needs no attr-source.
+  _attr_none="$(git -C "$PROJECT" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+  MODCOMMA="$({ git -C "$PROJECT" --attr-source="$_attr_none" diff --name-only HEAD 2>/dev/null;
                 [ -n "$up" ] && git -C "$PROJECT" diff --name-only "$up...HEAD" 2>/dev/null; } \
     | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
 fi

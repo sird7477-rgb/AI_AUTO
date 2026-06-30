@@ -48,6 +48,16 @@ def run(args):
         return ""
 
 
+# Empty-tree OID (in the repo's hash algo) fed to `git --attr-source=` so the project's
+# in-repo `.gitattributes` is IGNORED during the diff below: an attacker's attribute-driven
+# clean/smudge/textconv/diff driver therefore cannot exec. `--no-ext-diff`/`--no-textconv`
+# additionally close the `.git/config` `diff.external` / textconv vectors. NOTE: a bare
+# `git diff <base> -- <path>` is worktree-vs-tree and DOES run the clean filter even WITH
+# `--no-ext-diff --no-textconv` (verified); `--attr-source=<empty-tree>` is what neutralizes it.
+_EMPTY_TREE = run(["git", "hash-object", "-t", "tree", os.devnull]).strip() \
+    or "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
 def _inherit_targets(class_node):
     """Literal _inherit model name(s) for a class, or [] when none/dynamic."""
     targets = []
@@ -109,7 +119,9 @@ def addon_of(path, root):
 
 def changed_files(base, root):
     files = set()
-    out = run(["git", "diff", "--name-only", base, "--", "*.py"])
+    # --attr-source even here: git runs the in-repo clean filter to decide whether a worktree
+    # file changed, so a `--name-only` worktree diff is ALSO a clean-filter RCE vector.
+    out = run(["git", "--attr-source=" + _EMPTY_TREE, "diff", "--name-only", base, "--", "*.py"])
     files.update(line for line in out.splitlines() if line.endswith(".py"))
     out = run(["git", "ls-files", "--others", "--exclude-standard", "--", "*.py"])
     files.update(line for line in out.splitlines() if line.endswith(".py"))
@@ -124,7 +136,7 @@ def added_lines(base, path, untracked):
         except OSError:
             return set()
         return set(range(1, n + 1))
-    out = run(["git", "diff", "--no-ext-diff", "-U0", base, "--", path])
+    out = run(["git", "--attr-source=" + _EMPTY_TREE, "diff", "--no-ext-diff", "--no-textconv", "-U0", base, "--", path])
     lines = set()
     for line in out.splitlines():
         if line.startswith("@@"):
