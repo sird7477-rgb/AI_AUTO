@@ -13,16 +13,17 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Executable helper used by `AI_AUTO`
   - Prints the AI_AUTO checkout path, cd command, or git status
 
-- `aiinit`
-  - Short alias for `ai-auto-init`
-  - Sets up the AI_AUTO workflow in the current git repository by default; no framework files are vendored into the project
-  - Accepts an optional target repository path: `aiinit /path/to/repo`
-  - Creates `.omx/reviewer-state`
-  - Runs `automation-doctor` after setup with the install-time dirty-tree check skipped
-
-- `ai-auto-init`
-  - Resolves the ai-lab checkout from the helper symlink target
-  - Sets up the AI_AUTO workflow against the current directory or provided target path
+- `ai-auto`
+  - The GLOBAL launcher; operates on the project in the current directory
+  - `ai-auto setup [dir]` adopts global AI_AUTO mode: installs baked-path
+    `pre-commit`/`post-commit` hook shims, adds `.omx/` to the project's local
+    git exclude, detects the project domain, and de-pollutes any byte-identical
+    leftover vendored framework files (`git rm`, staged; modified/symlinked files
+    are kept and reported). It never vendors files and never auto-commits
+  - `ai-auto gate` / `verify` / `doctor` run `review-gate.sh` / `verify.sh` /
+    `automation-doctor.sh --project` from the global engine against `$PWD`
+  - `aiinit` is a legacy symlink kept pointing at this launcher; prefer
+    `ai-auto setup`
 
 - `ai-domain-pack`
   - Reports or refreshes optional domain-pack references under `.omx/domain-packs/`
@@ -139,9 +140,10 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Detects a repo's domain from repo signals (Odoo = `custom-addons/` with module
     `__manifest__.py`) and records it in machine-local `.omx/project-profile.json`
     (`{domain, version, addons, detected_by, confirmed_at}`)
-  - `detect` (print, no write) · `write` (detect + persist, preserving an aiinit-confirmed
-    entry) · `read` · `domain`. Advisory metadata only — changes no project behaviour; read by
-    the domain-gated retrieval hook and written on aiinit for detected Odoo projects
+  - `detect` (print, no write) · `write` (detect + persist, preserving an
+    interview-confirmed entry) · `read` · `domain`. Advisory metadata only — changes no project
+    behaviour; read by the domain-gated retrieval hook and written by `ai-auto setup` for
+    detected Odoo projects
 
 - `knowledge-capture`
   - Harvests reusable findings the author already distilled into sanitized local knowledge
@@ -210,9 +212,9 @@ ai-lab-only bootstrap command:
 Expected links:
 
     ~/bin/AI_AUTO -> ~/workspace/ai-lab/tools/ai-home
-    ~/bin/ai-auto-init -> ~/workspace/ai-lab/tools/ai-auto-init
+    ~/bin/ai-auto -> ~/workspace/ai-lab/tools/ai-auto
     ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
-    ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
+    ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
     ~/bin/ai-domain-pack -> ~/workspace/ai-lab/tools/ai-domain-pack
     ~/bin/ai-gstack-contract -> ~/workspace/ai-lab/tools/ai-gstack-contract
@@ -247,9 +249,9 @@ replace existing paths if used carelessly.
 
     mkdir -p ~/bin
     ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/AI_AUTO
-    ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/ai-auto-init
+    ln -sf ~/workspace/ai-lab/tools/ai-auto ~/bin/ai-auto
     ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/ai-home
-    ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
+    ln -sf ~/workspace/ai-lab/tools/ai-auto ~/bin/aiinit
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
     ln -sf ~/workspace/ai-lab/tools/ai-domain-pack ~/bin/ai-domain-pack
     ln -sf ~/workspace/ai-lab/tools/ai-gstack-contract ~/bin/ai-gstack-contract

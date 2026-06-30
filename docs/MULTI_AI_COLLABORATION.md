@@ -30,7 +30,7 @@ Current working pieces include:
 - Gemini as an optional but currently disabled reviewer
 - ./scripts/summarize-ai-reviews.sh for review result summarization
 - ./scripts/review-gate.sh as the current final review gate
-- aiinit as the project setup command
+- `ai-auto setup` as the project setup command
 - ./scripts/automation-doctor.sh as the repo-local automation readiness doctor
 - workspace-scan as the workspace status scanner
 
@@ -360,7 +360,7 @@ Current command group:
 - `자동화 수정`: run `./scripts/automation-doctor.sh --fix` to apply safe non-overwriting setup fixes.
 - `부트스트랩 진단`: run `./scripts/bootstrap-ai-lab.sh` to inspect first-time ai-lab checkout setup.
 - `부트스트랩 수정`: run `./scripts/bootstrap-ai-lab.sh --fix` to create safe ai-lab helper links and run doctor fixes.
-- `초기화`: run `aiinit` inside a target git repository, or `aiinit /path/to/repo`, to set up the AI_AUTO workflow and run automation-doctor.
+- `초기화`: run `ai-auto setup` inside a target git repository, or `ai-auto setup /path/to/repo`, to adopt global AI_AUTO mode (hook shims + .omx ignore + de-pollution); then run `ai-auto doctor`.
 - `워크스페이스 스캔`: run `workspace-scan` to inspect repositories under `~/workspace`.
 - `리뷰 상태`: inspect `.omx/reviewer-state/` and summarize which reviewers are disabled and why.
 - `클로드 복구`: re-enable Claude review with `RESET_DISABLED_AI_REVIEWERS=claude`.
@@ -409,9 +409,9 @@ Includes:
 - Gemini review by default when available
 - review summary
 - review gate
-- reusable template
+- reusable baseline
 - automation doctor
-- aiinit
+- ai-auto setup
 - ai-lab bootstrap
 - workspace scanning
 

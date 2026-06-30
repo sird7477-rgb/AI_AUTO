@@ -26,29 +26,29 @@ baseline; domain packs are for concrete domains or frameworks such as Odoo.
 ## Lifecycle
 
 1. Source packs live under `templates/domain-packs/<name>/`.
-2. `aiinit` copies available packs into the target repository under
-   `.omx/domain-packs/<name>/`.
+2. `ai-domain-pack refresh --apply` installs a pack into the target repository
+   under `.omx/domain-packs/<name>/`. Packs are not auto-copied at setup.
 3. `.omx/` is ignored, so installed domain packs are onboarding references, not
    commit candidates.
 4. During onboarding, inspect local evidence first, then select, reject, or
    defer each installed pack.
-5. If a pack applies, merge only the applicable guidance into project files such
-   as `AGENTS.md`, `docs/WORKFLOW.md`, and `scripts/verify.sh`.
+5. If a pack applies, merge only the applicable guidance into project-owned
+   files such as the `AGENTS.md` overlay and `scripts/verify-project.sh`.
 6. Record rejected packs as non-goals so generic projects do not inherit
    unrelated domain rules.
 7. During later maintenance, run `ai-domain-pack status` before using an
    installed reference. Use `ai-domain-pack refresh --apply` only when the
    status reports a clean managed update path.
 
-`aiinit` preserves an existing installed pack reference instead of overwriting
-it. New installs write sidecar baseline manifests under
+`ai-domain-pack` preserves an existing installed pack reference instead of
+overwriting it. New installs write sidecar baseline manifests under
 `.omx/domain-packs/.manifest/`, so `ai-domain-pack` can compare the installed
 copy, the install-time baseline, and the current AI_AUTO source. Clean managed
 copies can be refreshed mechanically; locally modified copies, dirty legacy
 copies without a matching manifest, unreadable manifests, and deliberately
 removed packs fail closed or remain report-only. Refreshing a domain-pack
-reference never merges content into project `AGENTS.md`, `docs/WORKFLOW.md`, or
-`scripts/verify.sh`.
+reference never merges content into project files such as the `AGENTS.md`
+overlay or `scripts/verify-project.sh`.
 
 Legacy projects that already have `.omx/domain-packs/<name>/` but no sidecar
 manifest are `adoptable` only when their installed files exactly match the

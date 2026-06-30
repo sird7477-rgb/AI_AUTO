@@ -1,41 +1,43 @@
 # New Project Automation Guide
 
-This guide explains how to initialize the automation workflow in a new repository.
+AI_AUTO is a globally-installed tool that operates ON a project directory. A
+project repo carries ZERO committed framework files. This guide explains how a
+project adopts the global workflow.
 
-## Manual setup
+## Setup
 
 From inside the target git repository:
 
-    aiinit
+    ai-auto setup
 
-Or from another directory:
+Or against another directory:
 
-    aiinit /path/to/target-repo
+    ai-auto setup /path/to/target-repo
 
-`aiinit` sets up the AI_AUTO workflow, creates `.omx/reviewer-state`, adds
-`.omx/` to the target repository's local `.git/info/exclude`, registers the
-project in the local AI_AUTO project registry, and then runs automation-doctor
-with the install-time dirty-tree check skipped. No framework files are vendored
-into the project.
+`ai-auto setup` is one idempotent command. It:
 
-After `aiinit`, ask the AI:
+- installs thin `pre-commit`/`post-commit` hook shims with the engine path baked
+  in, so commits run the gate from the global engine;
+- adds `.omx/` to the target repository's local `.git/info/exclude`;
+- detects the project domain (advisory, via `ai-project-profile`);
+- de-pollutes any framework files left from the old copy model: a tracked file
+  byte-identical to the global pristine is `git rm`'d (staged, not committed);
+  a modified or symlinked one is LEFT and REPORTED.
+
+It never vendors framework files, never auto-commits, and aborts without changes
+if run against the engine repo itself or on a tree with staged non-deletions.
+A pristine `scripts/verify.sh` is removed; a customized one is kept and should be
+converted by hand into `scripts/verify-project.sh` (the optional project test
+hook the gate runs).
+
+After `ai-auto setup`, ask the AI:
 
     프로젝트 초기설정 해줘
 
-Equivalent detailed request:
-
-    프로젝트 요구사항을 인터뷰하고, docs/*_COMPLETION.md 완료팩과
-    .omx/domain-packs/에 설치된 도메인팩 중 적용할 항목이 있는지 확정한 뒤,
-    리뷰 강도, Advisory reviewer 사용 여부, 실패 패턴 기록, 승인 마찰 관리,
-    서브에이전트 사용 기준을 정하고
-    작업 중 플랜/인터뷰 강도와 Incident Ops 감시/장애대응 기준까지 정한 뒤,
-    AI 자동화 hardening 적용 여부와 guidance context budget 기준을 정하고,
-    AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 설정해줘
-
-This should start the `docs/INTERVIEW_PLAN_LAYER.md` onboarding interview before
-real work begins. Keep questions narrow, inspect local evidence first, map each
-answer into the project baseline, and track ambiguity instead of hiding
-assumptions. Capture:
+This starts the `docs/INTERVIEW_PLAN_LAYER.md` onboarding interview before real
+work begins. Keep questions narrow, inspect local evidence first, map each answer
+into the project baseline, and track ambiguity instead of hiding assumptions.
+Capture:
 
 - project purpose and non-goals
 - users, final deliverable, and assumptions that could not be confirmed from
@@ -70,7 +72,8 @@ assumptions. Capture:
 - user-facing report language: plain Korean outcome summaries first, without
   leading with internal variable names unless they are needed for reproduction
   or user action
-- guidance context budget: what belongs in `AGENTS.md` versus linked docs
+- guidance context budget: what belongs in the project `AGENTS.md` overlay
+  versus linked docs
 - AI automation hardening: use `docs/AI_AUTOMATION_TREND_HARDENING.md` when
   agent identity, tool permissions, revocation, local automation observability,
   or recurring trend research are in scope
@@ -83,84 +86,49 @@ assumptions. Capture:
 - completion checks from selected completion packs
 - project-specific docs or domain constraints
 
-Then customize:
+Project-owned files are limited to OPTIONAL overlays:
 
-    AGENTS.md
-    docs/WORKFLOW.md
-    scripts/verify.sh
+    AGENTS.md                 # thin project overlay; the engine reads the
+                              # global base alongside it (no overlay = base only)
+    scripts/verify-project.sh # optional real project tests the gate runs
 
-The generated `scripts/verify.sh` is a placeholder and exits non-zero until it is replaced with project-specific checks.
+The engine's `docs/*`, `scripts/*`, and base `AGENTS.md` live in the global
+checkout and are never copied into the project.
 
-Run the gate:
+Run the gate from the global engine (or let the installed hooks run it):
 
-    ./scripts/automation-doctor.sh
-    ./scripts/verify.sh
-    ./scripts/review-gate.sh
+    ai-auto doctor    # automation-doctor.sh --project
+    ai-auto verify    # verify.sh
+    ai-auto gate      # review-gate.sh
 
 ## Codex setup request
 
-Use this request when asking Codex to initialize a new project:
+Use this request when asking Codex to onboard a project:
 
-    이 프로젝트에 자동화 기반을 초기화해줘.
+    이 프로젝트를 전역 AI_AUTO 워크플로에 연결해줘.
 
     절차:
     1. 현재 경로와 git 상태를 확인해.
-    2. aiinit을 실행해.
-    3. aiinit이 출력한 automation-doctor 결과를 확인해.
-    4. 기존 README/docs/package/script를 먼저 읽고, 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위를 인터뷰해.
-    5. 리뷰 강도를 lightweight/standard/strict 중에서 확정해. 기본 추천은 standard야.
-    6. 민감정보를 제외한 실패 패턴/개선사항을 .omx/feedback/queue.jsonl에 기록할지 확인해.
-    7. 반복되는 비파괴 명령의 승인 마찰을 줄일 approved prefix/helper 기준을 정해. 단 destructive/credential/production 작업은 승인 대상으로 유지해.
-    8. 서브에이전트 사용 기준을 정해. repo 탐색, 분리 가능한 구현, 테스트/UX/의존성 검토, critique는 위임 가능하지만 최종 통합과 완료 주장은 leader 책임으로 둬.
-    9. CPU/메모리/디스크/로드를 가능한 범위에서 직접 확인한 뒤, 우분투/WSL 강제 종료 이력, 동시에 돌아가는 무거운 세션, 발열 한계, 최대 병렬 작업 수를 인터뷰해서 resource-aware parallelism 기준을 정해.
-    10. 작업 중 플랜/인터뷰 강도 기준을 docs/INTERVIEW_PLAN_LAYER.md에 맞춰 정해. 작은 작업은 즉시 실행, 방향이 갈리는 작업은 좁은 질문, 장기 정책/아키텍처/검증 체계는 plan-first interview를 기본으로 해.
-    11. 운영 준비 규칙을 정해. 필수 입력이 missing/stale/incomplete/degraded이면 fail-closed로 막고, partial success는 진단으로만 남기며 accepted operating artifact로 저장하지 않게 해.
-    12. operational dry-run/deployment 전에 read-only/auth/network 권한, DB, token, cooldown, output path, API budget, side-effect boundary preflight 기준을 정해. sandboxed external API probe 실패와 승인된 real-network path 결과를 구분해.
-    13. Incident Ops 기준을 정해. dry-run/field-test 감시, 자동 조치 class, incident log 필드, UI field-test evidence, heartbeat/quiet/active-incident 보고 주기를 docs/INCIDENT_OPS.md 기준으로 프로젝트에 맞게 확정해.
-    14. plan index와 TODO reconciliation 기준을 정해. 코드 수정 후 어떤 기획서/사양서/설계자료와 diff를 대조할지도 정해.
-    15. 사용자에게 보고할 때 변수명이나 내부 식별자를 앞세우지 않고 쉬운 한국어로 먼저 설명하는 기준을 정해.
-    16. 긴 runbook/checklist는 AGENTS.md에 계속 붙이지 말고 linked docs로 분리해.
-    17. docs/*_COMPLETION.md 완료팩 중 UI, 배포, 보안, 데이터, 성능, 관측성 중 무엇이 필요한지 확인해. 필요한 팩은 완료/검증 조건을 잡고, 필요 없는 팩은 non-goal로 기록한 뒤 프로젝트 문서에 불필요하면 삭제해.
-    18. .omx/domain-packs/에 설치된 선택 적용 도메인팩을 확인하고, 이 프로젝트에 적용할 팩과 제외할 팩을 인터뷰로 확정해.
-    19. 적용하기로 확정한 완료팩/도메인팩이 있으면 필요한 항목만 반영해.
-    20. 생성된 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 프로젝트에 맞게 수정해.
-    21. ./scripts/automation-doctor.sh를 실행해.
-    22. ./scripts/verify.sh를 실행해.
-    23. 확정한 리뷰 강도에 맞춰 ./scripts/review-gate.sh를 실행해.
-    24. 커밋은 하지 말고 결과만 보고해.
+    2. ai-auto setup을 실행해 (훅 심 설치 + .omx ignore + 잔존 프레임워크 파일 정리).
+    3. 기존 README/docs/package/script를 먼저 읽고, 프로젝트 목적, 사용자, 최종 산출물,
+       non-goal, 스택, 완료 기준, 금지 범위를 인터뷰해.
+    4. 리뷰 강도(lightweight/standard/strict, 기본 standard), 실패 패턴 기록 여부,
+       승인 마찰 관리, 서브에이전트 사용 기준, resource-aware parallelism, 플랜/인터뷰
+       강도(none/light/standard/deep), 운영 준비 fail-closed 기준,
+       sandbox-vs-real-network evidence, Incident Ops 감시/보고 기준,
+       plan index/TODO reconciliation, spec/design alignment, 쉬운 한국어 보고 기준,
+       AGENTS.md 오버레이와 linked docs 분리 기준을 확정해.
+    5. docs/*_COMPLETION.md 중 필요한 완료팩(UI/배포/보안/데이터/성능/관측성)과
+       적용할 도메인팩(ai-domain-pack)을 확정해.
+    6. 인터뷰 결과를 프로젝트 소유 파일에만 반영해: 필요하면 AGENTS.md 오버레이와
+       scripts/verify-project.sh를 작성/수정해. (docs/*·scripts/*·기반 AGENTS.md는
+       전역 엔진 소유라 프로젝트에 복사하지 않아.)
+    7. ai-auto doctor, ai-auto verify, 확정한 리뷰 강도에 맞춘 ai-auto gate를 실행해.
+    8. 커밋은 하지 말고 결과만 보고해.
 
-    완료 보고에는 아래를 포함해:
-    - 변경 파일
-    - automation-doctor 결과
-    - 인터뷰에서 확정한 운영 지침
-    - 리뷰 강도와 승인 마찰 관리 기준
-    - 실패 패턴/개선사항 기록 여부
-    - 서브에이전트 사용 기준
-    - docs/INTERVIEW_PLAN_LAYER.md 기준의 플랜/인터뷰 강도와 질문 범위 최소화 기준
-    - 운영 준비 fail-closed 기준
-    - Incident Ops 감시/장애대응/주기보고 기준
-    - plan index/TODO reconciliation 기준
-    - spec/design alignment 기준
-    - 사용자 보고를 쉬운 한국어로 먼저 작성하는 기준
-    - AGENTS.md와 linked docs 분리 기준
-    - 선택/제외한 완료팩과 선택한 팩의 완료/검증 기준
-    - verify.sh에 넣은 검증 기준
-    - verify 결과
-    - review-gate 결과
-    - Claude 리뷰 요약
-    - Gemini skip 여부
-    - 남은 warning 또는 제한사항
-    - 커밋하지 않았다는 확인
-
-## Short request
-
-    현재 프로젝트에 aiinit으로 AI_AUTO 워크플로를 설정해줘. aiinit 이후 기존 파일을 먼저 읽고 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위, 리뷰 강도(lightweight/standard/strict), 실패 패턴/개선사항 기록 여부, 승인 마찰 관리 기준, 서브에이전트 사용 기준, 플랜/인터뷰 강도 기준(none/light/standard/deep), 운영 준비 fail-closed 기준, sandbox-vs-real-network evidence 기준, Incident Ops 감시/장애대응/주기보고 기준, plan index/TODO reconciliation 기준, spec/design alignment 기준, 사용자 보고를 쉬운 한국어로 먼저 작성하는 기준, AGENTS.md와 linked docs 분리 기준, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, 확정한 리뷰 강도에 따른 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
-
-## Post-aiinit request
-
-Use this after `aiinit` has already set up the project:
-
-    프로젝트 초기설정 해줘
+    완료 보고에는 변경 파일, ai-auto setup 결과(정리/유지 파일), 인터뷰에서 확정한
+    운영 지침, verify-project.sh에 넣은 검증 기준, verify/gate 결과, Claude 리뷰 요약,
+    Gemini skip 여부, 남은 warning, 커밋하지 않았다는 확인을 포함해.
 
 ## Finding AI_AUTO Again
 
@@ -182,13 +150,13 @@ The managed shell integration also adds two local project-list shortcuts:
 directly under `/mnt/z/JSJEON/Project_SirD`. If your JW projects live under
 an extra grouping folder such as `Project_JW/99. odoo`, set
 `AI_AUTO_JW_PROJECT_ROOT` to that folder. The folders do not need to be git
-repositories or AI_AUTO-initialized projects. Each command prompts for a number:
+repositories or AI_AUTO-adopted projects. Each command prompts for a number:
 choose `0` to enter the currently displayed folder, or choose a subfolder to
 drill down through grouped project folders. When a selected folder contains
 common project markers such as `.git`, `AGENTS.md`, `package.json`,
 `pyproject.toml`, `requirements.txt`, `docker-compose.yml`, or
-`scripts/verify.sh`, the command enters that folder instead of drilling into
-internal directories. Override the roots with `AI_AUTO_JW_PROJECT_ROOT` or
+`scripts/verify-project.sh`, the command enters that folder instead of drilling
+into internal directories. Override the roots with `AI_AUTO_JW_PROJECT_ROOT` or
 `AI_AUTO_SIRD_PROJECT_ROOT` only for a different local machine layout.
 
 Bare `tmux` is convenient too: typing `tmux` with no arguments creates a new
@@ -216,18 +184,20 @@ Different runtimes in the same project also use separate session names, so
 
 ## Project Registry
 
-New `aiinit` runs register the target repository in:
+`ai-auto setup` does not register the project. Registration is a separate,
+optional convenience for discovery and feedback collection. Register a project
+in:
 
     ~/.local/state/ai-auto/projects.tsv
+
+with:
+
+    ai-register
+    ai-register /path/to/existing-repo
 
 Override the registry path with:
 
     AI_AUTO_PROJECT_REGISTRY_FILE=/path/to/projects.tsv
-
-Projects initialized before registry support can be registered later:
-
-    ai-register
-    ai-register /path/to/existing-repo
 
 Remove registry entries for repositories that were deleted or moved:
 
@@ -245,19 +215,18 @@ needed.
 
 ## Domain Packs
 
-Domain packs are optional reference packs for project-specific onboarding.
-`aiinit` copies them into the target repository only as ignored runtime
-references under `.omx/domain-packs/`. It does not merge them into project
-instructions automatically.
+Domain packs are optional reference packs for project-specific onboarding. They
+are NOT auto-copied at setup. Install or update a pack into the project's ignored
+runtime references under `.omx/domain-packs/` with:
 
-Use `docs/DOMAIN_PACKS.md` for the domain-pack lifecycle, selection, rejection,
-and application rules. Generic projects do not need a generic domain pack;
-continue with the AI_AUTO baseline and any applicable completion packs when no
-installed domain pack matches.
-After the AI_AUTO source updates a pack, run `ai-domain-pack status` in the
-target project. `ai-domain-pack refresh --apply` updates only clean managed
-copies or exact-match legacy copies and never merges pack text into
-`AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`.
+    ai-domain-pack status            # read-only state
+    ai-domain-pack refresh --apply   # install/update clean managed copies only
+
+`ai-domain-pack` never merges pack text into project files. Use
+`docs/DOMAIN_PACKS.md` for the domain-pack lifecycle, selection, rejection, and
+application rules. Generic projects do not need a generic domain pack; continue
+with the AI_AUTO baseline and any applicable completion packs when no installed
+domain pack matches.
 
 Use `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` only when creating or changing a
 reusable source pack. Project onboarding should normally select, reject, defer,
@@ -270,9 +239,9 @@ Source packs in this repository:
 
 During onboarding, the AI should ask whether the project matches an available
 pack. In the target repository, read the installed copy from `.omx/domain-packs/`.
-If a pack applies, use it as source material for `AGENTS.md`,
-`docs/WORKFLOW.md`, and `scripts/verify.sh`. Apply only the parts that match the
-actual project. Keep unrelated domain guidance out of generic projects.
+If a pack applies, use it as source material for an `AGENTS.md` overlay and
+`scripts/verify-project.sh`. Apply only the parts that match the actual project.
+Keep unrelated domain guidance out of generic projects.
 
 The onboarding interview should explicitly record:
 
@@ -282,46 +251,47 @@ The onboarding interview should explicitly record:
 
 ## Existing Project Adoption
 
-`aiinit` is intentionally conservative. If an existing project already has files
-such as `AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`, it stops instead
-of overwriting them.
+`ai-auto setup` is conservative: it never overwrites or deletes customized work.
+A modified framework file is left in place and reported, never removed. Run it on
+an existing project to install the hook shims, ignore `.omx/`, and clear out only
+byte-identical leftover copies from the old vendoring model.
 
 For an existing or already-advanced project, ask the AI:
 
-    기존 프로젝트에 자동화 기반을 병합 도입해줘.
-    기존 AGENTS.md, docs, scripts/verify.sh는 덮어쓰지 말고 먼저 분석한 뒤
-    필요한 자동화 파일과 지침만 제안/반영해줘.
+    기존 프로젝트에 전역 AI_AUTO 워크플로를 도입해줘.
+    기존 AGENTS.md, docs, 검증 스크립트는 덮어쓰지 말고 먼저 분석한 뒤
+    필요한 오버레이와 지침만 제안/반영해줘.
 
 The AI should preserve existing project instructions and verification behavior,
-then add only the missing automation files or guidance needed for the Codex/OMX
-workflow.
+then add only the missing overlay or guidance needed for the workflow.
 
 Recommended adoption flow:
 
-1. Read the existing `AGENTS.md`, workflow docs, and verification scripts.
-2. List what the existing project already covers.
-3. Compare against the AI_AUTO workflow baseline.
-4. Propose a small merge plan before editing.
-5. Copy only missing automation scripts or docs that do not overwrite project
-   rules.
+1. Run `ai-auto setup` and review the removed/kept report.
+2. Read the existing project instructions and verification scripts.
+3. List what the project already covers and compare against the AI_AUTO baseline.
+4. Propose a small plan before editing.
+5. Add only a thin `AGENTS.md` overlay and/or `scripts/verify-project.sh` as
+   needed; do not re-vendor engine docs or scripts.
 6. Preserve project-specific instructions as the source of truth when they are
    stricter than the AI_AUTO baseline.
-7. Run `./scripts/automation-doctor.sh`, the project verification command, and
-   `./scripts/review-gate.sh`.
+7. Run `ai-auto doctor`, `ai-auto verify`, and `ai-auto gate`.
 
 ## Notes
 
-- `aiinit` must be run inside a git repository.
-- `aiinit /path/to/repo` may be used from outside the target repository.
-- `aiinit` runs the installed `./scripts/automation-doctor.sh` after template installation.
-- `ai-register` can register older already-initialized projects without
-  reinstalling or overwriting automation files.
-- `./scripts/automation-doctor.sh` diagnoses automation readiness and suggests repair commands.
-- `./scripts/automation-doctor.sh --fix` may apply only safe non-overwriting setup fixes.
-- Optional `docs/*_COMPLETION.md` files are onboarding references. Delete the
-  packs rejected as non-goals if they would clutter the target project.
-- Project-specific agent instructions belong in `AGENTS.md`.
-- Project-specific workflow notes belong in `docs/WORKFLOW.md`.
-- Project-specific checks belong in `scripts/verify.sh`.
-- Do not keep the placeholder `scripts/verify.sh` as a real project gate.
-- Commit only after reviewing the generated files and verification results.
+- `ai-auto setup` must be run inside a git repository.
+- `ai-auto setup /path/to/repo` may be used from outside the target repository.
+- `ai-auto setup` is idempotent; re-running re-asserts the hook shims and
+  `.omx/` ignore.
+- `ai-register` can register already-adopted projects for discovery without
+  touching project files.
+- `ai-auto doctor` (automation-doctor.sh --project) diagnoses the project and
+  warns loudly when `scripts/verify-project.sh` is absent, so a missing real
+  test is visible, never a silent green.
+- Optional `docs/*_COMPLETION.md` files are global onboarding references; do not
+  copy them into the project.
+- Project-specific agent instructions belong in the optional `AGENTS.md` overlay.
+- Project-specific checks belong in `scripts/verify-project.sh`.
+- Commit only after reviewing the staged changes and verification results.
+</content>
+</invoke>

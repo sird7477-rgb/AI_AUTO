@@ -3,8 +3,9 @@
 This pack is an optional reference for projects that build, customize, or test
 Odoo modules.
 
-It is copied by `aiinit` only as an ignored onboarding reference under
-`.omx/domain-packs/odoo/`. It is not merged into project instructions
+It is installed on demand by `ai-domain-pack refresh --apply` as an
+ignored onboarding reference under `.omx/domain-packs/odoo/`. It is not merged
+into project instructions
 automatically. During project onboarding, inspect the target project first,
 confirm that it is an Odoo project, then apply only the parts that match the
 project version, deployment model, and test environment.

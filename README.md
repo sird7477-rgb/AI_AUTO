@@ -28,10 +28,12 @@ This is not an end-user app, a deployment template, or a framework showcase.
 
 ## What This Repository Maintains
 
-- `aiinit` / `ai-auto-init` for setting up the AI_AUTO workflow on another
-  git repository (no framework files are vendored into the project).
+- `ai-auto setup` for adopting the global AI_AUTO workflow on another
+  git repository (no framework files are vendored into the project; it installs
+  hook shims, ignores `.omx/`, and removes leftover vendored copies).
 - `./scripts/verify.sh` and `./scripts/review-gate.sh` for the local
-  verify-review completion loop.
+  verify-review completion loop, reachable in a project via `ai-auto verify` /
+  `ai-auto gate`.
 - Active principal runtime contracts so `codex`, `claude`, or `gemini` can be
   recorded as the current AI_AUTO/OMX principal while preserving the same
   workflow, permissions, and `.omx/*` artifact paths.
@@ -190,7 +192,7 @@ Out of scope:
 - `docs/WORKFLOW.md` describes the required Codex/OMX verification and review-gate loop.
 - `docs/INTERVIEW_PLAN_LAYER.md` defines the reusable interview, plan, ambiguity, and execution-gate contract.
 - `docs/CURRENT_STATE.md` is the current handoff document for completed automation capabilities, known limitations, and next-stage boundaries.
-- `docs/GLOBAL_TOOLS.md` describes `aiinit`, `workspace-scan`, and bootstrap helper setup.
+- `docs/GLOBAL_TOOLS.md` describes `ai-auto`, `workspace-scan`, and bootstrap helper setup.
 - `docs/OBSIDIAN_INTEGRATION.md` describes curated Obsidian note publishing and scoped plain-guide folder pushes.
 - `docs/NEW_PROJECT_GUIDE.md` explains how to set up the AI_AUTO workflow on another repository.
 - `docs/DOMAIN_PACKS.md` explains reusable domain packs and their application lifecycle.
@@ -360,15 +362,15 @@ source ~/.bashrc
 설치 또는 복구되는 전역 helper는 다음 symlink입니다.
 
 ```text
-~/bin/ai-auto-init -> <현재 클론 경로>/tools/ai-auto-init
-~/bin/aiinit       -> <현재 클론 경로>/tools/ai-auto-init
+~/bin/ai-auto -> <현재 클론 경로>/tools/ai-auto
+~/bin/aiinit  -> <현재 클론 경로>/tools/ai-auto
 ~/bin/workspace-scan -> <현재 클론 경로>/tools/workspace-scan
 ```
 
-이후 새 프로젝트에서는 어디서든 다음 명령으로 자동화 템플릿을 설치할 수 있습니다.
+이후 새 프로젝트에서는 어디서든 다음 명령으로 전역 AI_AUTO 모드를 도입할 수 있습니다(프레임워크 파일을 복사하지 않고 훅 심만 설치).
 
 ```bash
-aiinit
+ai-auto setup
 ```
 
 `workspace-scan`은 `~/workspace` 아래 git 저장소들의 자동화 준비 상태를 훑어보는
@@ -387,7 +389,7 @@ workspace-scan
 - 이미 존재하는 일반 파일을 덮어쓰지 않습니다.
 - 안전한 symlink 생성/복구와 결과 요약만 수행합니다.
 
-만약 `aiinit` 또는 `workspace-scan` 명령이 실행되지 않으면 `~/bin`이 PATH에 없을
+만약 `ai-auto` 또는 `workspace-scan` 명령이 실행되지 않으면 `~/bin`이 PATH에 없을
 가능성이 큽니다. 현재 터미널에서는 아래 명령으로 임시 적용할 수 있습니다.
 
 ```bash

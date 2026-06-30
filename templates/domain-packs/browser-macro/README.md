@@ -4,8 +4,9 @@ This pack is an optional reference for projects that automate a browser UI
 through a Chrome extension, content script, injected page script, userscript,
 bookmarklet, Playwright helper, or similar frontend manipulation macro.
 
-It is copied by `aiinit` only as an ignored onboarding reference under
-`.omx/domain-packs/browser-macro/`. It is not merged into project instructions
+It is installed on demand by `ai-domain-pack refresh --apply` as an
+ignored onboarding reference under `.omx/domain-packs/browser-macro/`. It is not
+merged into project instructions
 automatically. During project onboarding, inspect the target project first,
 confirm that browser UI automation is actually in scope, then apply only the
 parts that match the runtime surface, target site, permissions, and verification

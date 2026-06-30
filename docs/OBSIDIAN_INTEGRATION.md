@@ -29,7 +29,7 @@ Supported types:
 - `technical-spec`: user-requested, user-supplied, or workflow-required
   reference material
 - `promotion-candidate`: repeated sanitized pattern proposed for AI_AUTO docs,
-  templates, doctor checks, review gates, `aiinit`, or domain packs
+  doctor checks, review gates, `ai-auto setup`, or domain packs
 
 Sync classes:
 
@@ -322,7 +322,7 @@ those paths as stale migration sources only, and prefer `config/ai-auto-local.js
 `AI_AUTO_OBSIDIAN_VAULT_DIR`, or an explicit current vault path before writing
 or validating Obsidian material.
 
-Agent-written `aiinit`, AI_AUTO template patches, and Obsidian vault pushes under
+Agent-run `ai-auto setup`, AI_AUTO engine updates, and Obsidian vault pushes under
 `/mnt/z` require either an approved write command for that target path or a Codex
 session configured with the target project/vault as a writable root. Human-run
 commands in a normal WSL shell can write to the SSD directly when the real probe

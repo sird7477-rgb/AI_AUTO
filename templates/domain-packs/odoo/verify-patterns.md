@@ -99,7 +99,8 @@ file that does not exist in the module. That is a deterministic post-push build
 failure — `odoo -u <module>` and odoo.sh raise `FileNotFoundError` loading the data
 file — so unlike the action-shape screen this is a **fail-closed gate, not
 advisory**: the pre-push hook blocks the push. It needs no docker and is co-installed
-next to the pre-push hook (`.githooks/`, by `aiinit`), so -- unlike the docker
+next to the pre-push hook (`.githooks/`, wired by the pack's validation-harness
+setup), so -- unlike the docker
 warm-base validation -- it runs even when `ODOO_HARNESS_DIR` is unset, before the
 harness/docker skips. That closes the gap where a stale-path or never-committed data
 file reached odoo.sh because the warm-base validation was skipped.

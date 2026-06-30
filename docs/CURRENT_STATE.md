@@ -211,38 +211,40 @@ Current behavior:
 
 Domain-specific standards are separated from the generic AI_AUTO baseline.
 `docs/DOMAIN_PACKS.md` is the canonical lifecycle and application contract.
-`aiinit` sets up the AI_AUTO workflow and copies optional domain packs into
-`.omx/domain-packs/` as ignored onboarding references.
+Domain packs are installed into `.omx/domain-packs/` on demand with
+`ai-domain-pack refresh --apply`; they are not auto-copied at setup.
 
 Current optional domain packs:
 
 - `templates/domain-packs/browser-macro/`
 - `templates/domain-packs/odoo/`
 
-The shorter global command is:
+The global onboarding command is:
 
-- aiinit
+- ai-auto setup
 
 Expected usage inside a target git repository:
 
-    aiinit
+    ai-auto setup
 
 Alternative usage from anywhere:
 
-    aiinit /path/to/target-repo
+    ai-auto setup /path/to/target-repo
 
-After installation, aiinit automatically runs:
+`ai-auto setup` installs baked-path `pre-commit`/`post-commit` hook shims that
+run the gate from the global engine, adds `.omx/` to the project's local git
+exclude, detects the project domain, and `git rm`'s any byte-identical leftover
+vendored framework copies (modified/symlinked files are kept and reported). It
+vendors nothing and never auto-commits.
 
-    DOCTOR_SKIP_DIRTY_CHECK=1 ./scripts/automation-doctor.sh
-
-Then it prints the recommended AI handoff request:
+The recommended AI handoff request is:
 
     프로젝트 초기설정 해줘
 
-The project's AGENTS.md routes this request to the onboarding workflow:
-interview the project owner, inspect existing reference materials, customize
-AGENTS.md, docs/WORKFLOW.md, and scripts/verify.sh, then run automation-doctor,
-verify, and review-gate before reporting.
+The global base AGENTS.md routes this request to the onboarding workflow:
+interview the project owner, inspect existing reference materials, author an
+optional thin AGENTS.md overlay and optional scripts/verify-project.sh, then run
+`ai-auto doctor`, `ai-auto verify`, and `ai-auto gate` before reporting.
 
 The onboarding workflow now also asks for planning/interview intensity
 expectations. The reusable default is:
@@ -254,26 +256,28 @@ expectations. The reusable default is:
 - long-lived policy, architecture, security, deployment, data, or verification
   work -> use a plan-first interview before execution
 
-The installer also creates `.omx/reviewer-state` and adds `.omx/` to the target repository's local `.git/info/exclude` so generated reviewer, review, and model-routing artifacts stay out of commit candidates by default.
+`ai-auto setup` adds `.omx/` to the target repository's local `.git/info/exclude`
+so generated reviewer, review, and model-routing artifacts stay out of commit
+candidates by default.
 
-If target automation files already exist, aiinit refuses to overwrite them. The
-conflict message directs users of existing or advanced projects to ask the AI:
+`ai-auto setup` never overwrites or deletes customized work: a modified or
+symlinked framework file is left in place and reported. For existing or advanced
+projects, ask the AI:
 
-    기존 프로젝트에 자동화 기반을 병합 도입해줘.
-    기존 AGENTS.md, docs, scripts/verify.sh는 덮어쓰지 말고 먼저 분석한 뒤
-    필요한 자동화 파일과 지침만 제안/반영해줘.
+    기존 프로젝트에 전역 AI_AUTO 워크플로를 도입해줘.
+    기존 AGENTS.md, docs, 검증 스크립트는 덮어쓰지 말고 먼저 분석한 뒤
+    필요한 오버레이와 지침만 제안/반영해줘.
 
-Then run a project onboarding interview and customize:
+Then run a project onboarding interview and author only the optional overlays:
 
-    AGENTS.md
-    docs/WORKFLOW.md
-    scripts/verify.sh
+    AGENTS.md                 # thin project overlay
+    scripts/verify-project.sh # optional real project tests
 
 Then run:
 
-    ./scripts/automation-doctor.sh
-    ./scripts/verify.sh
-    ./scripts/review-gate.sh
+    ai-auto doctor
+    ai-auto verify
+    ai-auto gate
 
 ### Global helper tools
 
@@ -281,7 +285,7 @@ Completed.
 
 Global helper tool sources are tracked in:
 
-- tools/ai-auto-init
+- tools/ai-auto
 - tools/ai-home
 - tools/ai-register
 - tools/ai-domain-pack
@@ -302,9 +306,9 @@ Global helper tool sources are tracked in:
 Expected links:
 
 - ~/bin/AI_AUTO -> ~/workspace/ai-lab/tools/ai-home
-- ~/bin/ai-auto-init -> ~/workspace/ai-lab/tools/ai-auto-init
+- ~/bin/ai-auto -> ~/workspace/ai-lab/tools/ai-auto
 - ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
-- ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
+- ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto
 - ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
 - ~/bin/ai-domain-pack -> ~/workspace/ai-lab/tools/ai-domain-pack
 - ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
@@ -335,10 +339,11 @@ credentials, run `automation-doctor --fix`, or overwrite non-symlink files.
 
 Project registry:
 
-- new `aiinit` runs append/update the target repository in
-  `~/.local/state/ai-auto/projects.tsv`
-- `ai-register` registers older already-initialized projects without modifying
-  project files
+- `ai-auto setup` does not register the project; registration is a separate
+  optional convenience
+- `ai-register` (and `ai-register /path/to/repo`) appends/updates the target
+  repository in `~/.local/state/ai-auto/projects.tsv` without modifying project
+  files
 - `ai-register --prune` removes deleted or moved repositories from the local
   registry
 - `workspace-scan` reports both repositories discovered under `~/workspace` and
@@ -384,7 +389,7 @@ It reports:
 - whether scripts/review-gate.sh exists
 - latest commit
 - whether origin remote exists
-- whether the repository is registered by aiinit/ai-register
+- whether the repository is registered by ai-register
 - path
 
 ### Automation doctor
@@ -443,19 +448,18 @@ For ai-lab itself:
 For a new project:
 
     cd ~/workspace/new-project
-    aiinit
+    ai-auto setup
 
-Then interview the project owner and edit:
+Then interview the project owner and author only the optional overlays:
 
-    AGENTS.md
-    docs/WORKFLOW.md
-    scripts/verify.sh
+    AGENTS.md                 # thin project overlay
+    scripts/verify-project.sh # optional real project tests
 
 Then run:
 
-    ./scripts/automation-doctor.sh
-    ./scripts/verify.sh
-    ./scripts/review-gate.sh
+    ai-auto doctor
+    ai-auto verify
+    ai-auto gate
 
 ## Known issues
 
@@ -594,8 +598,9 @@ This is the preferred workaround when API-key based bare mode is intentionally e
 
 Partially addressed as an optional domain pack.
 
-The reusable Odoo pack lives under `templates/domain-packs/odoo/` and is copied
-by `aiinit` as an ignored onboarding reference under `.omx/domain-packs/odoo/`.
+The reusable Odoo pack lives under `templates/domain-packs/odoo/` and is
+installed on demand by `ai-domain-pack refresh --apply` as an ignored onboarding
+reference under `.omx/domain-packs/odoo/`.
 It is not blindly merged into project instructions. During project onboarding,
 the agent should confirm that the target is Odoo-based, then adapt only the
 version, addon scope, localization baseline, verification patterns, and review
@@ -642,13 +647,13 @@ Completed capabilities:
 - reusable AI_AUTO baseline
 - generic automation doctor
 - global helper command setup
-- aiinit doctor handoff
+- ai-auto setup doctor handoff
 - ai-lab bootstrap first slice
 - workspace scanning
-- generic aiinit onboarding defaults with no Flask todo/testbed assumption
+- generic onboarding defaults with no Flask todo/testbed assumption
 - optional completion packs for UI, deployment, security, data, performance,
   and observability
-- planning/interview escalation policy for in-progress work and aiinit
+- planning/interview escalation policy for in-progress work and project
   onboarding
 
 No additional generic automation implementation is planned unless a real first-time setup or target-project initialization gap appears.

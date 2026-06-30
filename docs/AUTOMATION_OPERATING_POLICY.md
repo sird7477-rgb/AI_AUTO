@@ -561,12 +561,12 @@ instead of continuing to append every operational lesson directly.
 
 ## Onboarding Interview Structure
 
-For new template installation, run `aiinit` when requested, then use
-`docs/INTERVIEW_PLAN_LAYER.md` before feature work. For existing initialized
-projects or registry-only onboarding, start from local evidence and the
-interview layer without reinstalling the template. Keep the interview narrow but
-complete enough to replace the template placeholders with project-specific
-rules. Inspect local evidence first, ask one decision at a time, map each answer
+For a new project, run `ai-auto setup` to adopt global AI_AUTO mode, then use
+`docs/INTERVIEW_PLAN_LAYER.md` before feature work. For projects already adopted,
+start from local evidence and the interview layer without re-running setup. Keep
+the interview narrow but complete enough to capture project-specific rules into
+the optional `AGENTS.md` overlay and `scripts/verify-project.sh`. Inspect local
+evidence first, ask one decision at a time, map each answer
 to the target project baseline, and stop at a plan/report boundary before
 commits, pushes, destructive actions, credentials, production, or materially
 scope-changing execution.

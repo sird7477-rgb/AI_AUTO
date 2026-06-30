@@ -16,8 +16,8 @@ Good packs are:
 - explicit about when not to apply the pack
 - safe to copy into `.omx/domain-packs/` without secrets or production access
 - concise enough to inspect during onboarding
-- concrete enough to turn into `AGENTS.md`, `docs/WORKFLOW.md`, and
-  `scripts/verify.sh` changes
+- concrete enough to turn into `AGENTS.md` overlay and
+  `scripts/verify-project.sh` changes
 
 ## Required Decisions
 
@@ -93,7 +93,7 @@ Good patterns include:
 - fail-closed conditions for production, real data, or destructive paths
 
 After applying a pack, the target project must still own real verification in
-`scripts/verify.sh`.
+`scripts/verify-project.sh`.
 
 ## Split Rules
 

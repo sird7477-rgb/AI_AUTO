@@ -19,9 +19,9 @@ intent.
 
 During initial project setup, the agent should behave as follows:
 
-1. Run or confirm `aiinit` only when template installation is requested.
-   Existing initialized projects may start this interview layer without
-   reinstalling the template.
+1. Run or confirm `ai-auto setup` to adopt global AI_AUTO mode (hook shims +
+   `.omx/` ignore + de-pollution). Already-adopted projects may start this
+   interview layer without re-running setup.
 2. Inspect local evidence first: README, docs, scripts, package files, existing
    automation, domain notes, and git status.
 3. Start an onboarding interview as a sequence of narrow decisions.
