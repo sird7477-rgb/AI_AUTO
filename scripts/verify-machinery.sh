@@ -774,6 +774,79 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   want validate "WARM_NO_CACHE=1 bypasses a hit" "$(WARM_NO_CACHE=1 WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p')"
 )
 
+echo "[verify] testing odoo __manifest__.py version merge driver (ST-P1-74)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_vmerge_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_vmerge_tmp EXIT
+  drv="${repo_root}/templates/domain-packs/odoo/git-tier/odoo-manifest-version-merge.sh"
+  cd "${tmp_dir}"
+  mkman() { printf "{\n    'name': 'A',\n    'version': '%s',\n    'depends': ['base'],\n}\n" "$1" > "$2"; }
+
+  # version-only conflict, theirs higher -> resolved to theirs, rc 0
+  mkman 17.0.1.0.205 base; mkman 17.0.1.0.206 ours; mkman 17.0.1.0.207 theirs
+  cp ours A; bash "${drv}" base A theirs || { echo "[verify] version merge: clean version conflict not auto-resolved"; exit 1; }
+  grep -q "17.0.1.0.207" A || { echo "[verify] version merge: did not pick the higher version"; exit 1; }
+  # ours higher -> keep ours
+  mkman 17.0.1.0.205 base; mkman 17.0.1.0.210 ours; mkman 17.0.1.0.207 theirs
+  cp ours A; bash "${drv}" base A theirs
+  grep -q "17.0.1.0.210" A || { echo "[verify] version merge: dropped the higher local version"; exit 1; }
+  # NON-version conflict must NOT be silently resolved (rc != 0, markers kept)
+  printf "{\n 'name': 'OURS',\n 'version': '1.0',\n}\n" > ours
+  printf "{\n 'name': 'THEIRS',\n 'version': '1.0',\n}\n" > theirs
+  printf "{\n 'name': 'BASE',\n 'version': '1.0',\n}\n" > base
+  cp ours A
+  if bash "${drv}" base A theirs; then echo "[verify] version merge: WRONGLY resolved a non-version conflict"; exit 1; fi
+  grep -q '<<<<<<<' A || { echo "[verify] version merge: non-version conflict lost its markers"; exit 1; }
+  # multi-line hunk (version tangled with another edit) must be left as a conflict too
+  printf "{\n 'name': 'A',\n 'version': '1.0',\n 'x': 1,\n}\n" > base
+  printf "{\n 'name': 'A',\n 'version': '1.1',\n 'x': 2,\n}\n" > ours
+  printf "{\n 'name': 'A',\n 'version': '1.2',\n 'x': 3,\n}\n" > theirs
+  cp ours A
+  if bash "${drv}" base A theirs; then echo "[verify] version merge: WRONGLY resolved a multi-line hunk"; exit 1; fi
+  # end-to-end: a real rebase across a version-only divergence auto-resolves to the max
+  e2e="${tmp_dir}/e2e"; git -c init.defaultBranch=main init -q "${e2e}"; cd "${e2e}"
+  git config user.email verify@example.invalid; git config user.name Verify
+  git config merge.odoo-manifest-version.driver "${drv} %O %A %B"
+  git config merge.odoo-manifest-version.name vmax
+  echo '**/__manifest__.py merge=odoo-manifest-version' > .gitattributes
+  mkdir -p m; mkman 1.0.205 m/__manifest__.py; git add -A; git commit -q -m base
+  mkman 1.0.206 m/__manifest__.py; git commit -q -am "origin .206"
+  git checkout -q -b mine HEAD~1; mkman 1.0.207 m/__manifest__.py; git commit -q -am "mine .207"
+  git rebase main >/dev/null 2>&1 || { echo "[verify] version merge: real rebase did not auto-resolve"; git rebase --abort 2>/dev/null; exit 1; }
+  grep -q "1.0.207" m/__manifest__.py || { echo "[verify] version merge: rebase result not the higher version"; exit 1; }
+)
+
+echo "[verify] testing safe-push race auto-rebase-retry + non-race stop (ST-P1-73(B))..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_sp_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_sp_tmp EXIT
+  sp="${repo_root}/templates/domain-packs/odoo/git-tier/safe-push.sh"
+  drv="${repo_root}/templates/domain-packs/odoo/git-tier/odoo-manifest-version-merge.sh"
+  cd "${tmp_dir}"
+  git -c init.defaultBranch=main init -q --bare origin.git
+  setup() { git config user.email verify@example.invalid; git config user.name Verify;
+    git config merge.odoo-manifest-version.driver "${drv} %O %A %B"; git config merge.odoo-manifest-version.name vmax;
+    echo '**/__manifest__.py merge=odoo-manifest-version' > .gitattributes; }
+  mkman() { mkdir -p m; printf "{\n 'name':'A',\n 'version':'%s',\n}\n" "$1" > m/__manifest__.py; }
+  git clone -q origin.git A 2>/dev/null; ( cd A; setup; mkman 1.0.205; git add -A; git commit -q -m base; git push -q -u origin main )
+  git clone -q origin.git B 2>/dev/null; ( cd B; setup; mkman 1.0.206; git commit -q -am "B .206"; git push -q origin main )
+  # A diverged (version .207) -> first push is non-FF; safe-push must rebase + re-push.
+  cd A; mkman 1.0.207; git commit -q -am "A .207"
+  SAFE_PUSH_BACKOFF=0 bash "${sp}" origin main >/dev/null 2>&1 || { echo "[verify] safe-push: lost-race auto-rebase-retry did not succeed"; exit 1; }
+  git fetch -q origin
+  git rev-list --count origin/main | grep -qx 3 || { echo "[verify] safe-push: origin does not have all three commits"; exit 1; }
+  grep -q "1.0.207" m/__manifest__.py || { echo "[verify] safe-push: local version not preserved after rebase"; exit 1; }
+  # Non-race failure (a pre-push hook block) must NOT be retried.
+  mkdir -p .git/hooks; printf '#!/bin/sh\necho BLOCKED; exit 1\n' > .git/hooks/pre-push; chmod +x .git/hooks/pre-push
+  mkman 1.0.208; git commit -q -am "A .208"
+  out="$(SAFE_PUSH_MAX_TRIES=5 SAFE_PUSH_BACKOFF=0 bash "${sp}" origin main 2>&1)"; rc=$?
+  [ "${rc}" -ne 0 ] || { echo "[verify] safe-push: a hook-blocked push wrongly reported success"; exit 1; }
+  attempts="$(printf '%s\n' "${out}" | grep -c 'attempt ')"
+  [ "${attempts}" -eq 1 ] || { echo "[verify] safe-push: retried a non-race (hook) failure (${attempts} attempts)"; exit 1; }
+)
+
 echo "[verify] testing ai-auto-template-status domain-pack drift surfacing..."
 (
   tmp_dir="$(mktemp -d)"

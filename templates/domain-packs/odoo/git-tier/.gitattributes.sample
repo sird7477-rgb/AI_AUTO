@@ -1,0 +1,5 @@
+# Sample .gitattributes for an Odoo project that uses the version merge driver
+# (ST-P1-74). Copy this line into the project's own .gitattributes and configure the
+# driver per-clone (see git-tier/README.md):
+#   git config merge.odoo-manifest-version.driver "/abs/path/odoo-manifest-version-merge.sh %O %A %B"
+**/__manifest__.py merge=odoo-manifest-version

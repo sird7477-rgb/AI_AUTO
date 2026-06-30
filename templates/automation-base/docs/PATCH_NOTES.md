@@ -4,6 +4,28 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.30.5
+
+- odoo shared-branch push helpers — version merge driver + safe-push (ST-P1-74 + ST-P1-73(B)):
+  new `domain-packs/odoo/git-tier/`. (1) `odoo-manifest-version-merge.sh` is a git merge
+  driver that auto-resolves the `__manifest__.py` version-line conflict (a per-commit version
+  bump makes every rebase onto a shared branch conflict on that one line) by taking the higher
+  version. SAFE BY CONSTRUCTION: it resolves a hunk ONLY when both sides are exactly one line
+  AND both are a `version` key line; any multi-line hunk, non-version line, or unparseable
+  version is left as a real conflict (driver exits non-zero) — it can never silently drop a
+  code change. (2) `safe-push.sh` wraps `git push` with a bounded fetch+rebase retry on a
+  non-fast-forward rejection (`SAFE_PUSH_MAX_TRIES`=5, `SAFE_PUSH_BACKOFF`=2s); it NEVER
+  force-pushes, NEVER skips validation (the pre-push hook still runs on every attempt — made
+  cheap on a pure rebase by the ST-P1-73(A) warm-PASS cache), and retries ONLY a genuine race:
+  a hook block, an auth error, or a rebase conflict the driver cannot resolve stops the loop
+  and hands back. Per-clone install (a merge driver command is never read from a tracked file)
+  + `.gitattributes.sample` + a companion snippet to no-op the version-bump pre-commit hook
+  during a rebase, all in `git-tier/README.md`. verify-machinery fixtures: merge driver
+  (version-only->max, ours-higher-kept, non-version conflict kept, multi-line hunk kept,
+  real-rebase e2e) and safe-push (real local race -> auto-rebase -> push success; non-race
+  hook block -> single attempt, no retry). Reference tooling, advisory — not a mainline verify
+  caller. Closes ST-P1-74 and the final slice (B) of ST-P1-73 (A/B/C/E/F all shipped).
+
 ## 2026.06.30.4
 
 - odoo validate-warm warm-PASS cache (ST-P1-73(A)): the warm base is fixed and `-u
