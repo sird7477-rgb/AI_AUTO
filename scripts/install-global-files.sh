@@ -340,7 +340,7 @@ _ai_auto_project_list_cd() {
       [ -e "\$selected/pyproject.toml" ] ||
       [ -e "\$selected/requirements.txt" ] ||
       [ -e "\$selected/docker-compose.yml" ] ||
-      [ -e "\$selected/scripts/verify.sh" ]; then
+      [ -e "\$selected/scripts/verify-project.sh" ]; then
       cd "\$selected" || return
       return
     fi

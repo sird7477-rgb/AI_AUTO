@@ -57,7 +57,15 @@ ai_auto_setup() {
   # the env and they OVERRIDE `git -C` discovery. A stray GIT_* inherited from a parent
   # git context (a hook, `git rebase --exec`, husky/lefthook, some IDE terminals) would
   # make every `git` below resolve/`git rm` the WRONG repo. Clear them before any git call.
-  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+  # R2-3: also clear the config-injection family — GIT_CONFIG_COUNT + the indexed
+  # GIT_CONFIG_KEY_n/GIT_CONFIG_VALUE_n pairs (and GIT_CONFIG_GLOBAL/SYSTEM/NOSYSTEM) —
+  # any of which can inject core.hooksPath and silently redirect where shims land.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
+        GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
+  local _gcv
+  for _gcv in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
+    [ -n "$_gcv" ] && unset "$_gcv" || true
+  done
 
   local proj="${1:-$PWD}"
   proj="$(cd "$proj" 2>/dev/null && pwd)" || { echo "ai-auto setup: no such directory: ${1:-$PWD}" >&2; return 1; }
@@ -74,6 +82,21 @@ ai_auto_setup() {
     echo "ai-auto setup: ABORT — target ($top) is the AI_AUTO engine repo." >&2
     echo "ai-auto setup: refusing to de-pollute the engine. No changes made." >&2
     return 1
+  fi
+
+  # R2-4: serialize concurrent `ai-auto setup` on one project via an advisory lock under
+  # the project's .git/ (held for the rest of this run). Degrade gracefully if flock is
+  # absent: the atomic `git rm` below is still all-or-nothing, so the worst case is one
+  # racer aborting cleanly rather than a half-migrated index.
+  local _lockfile _lockfd
+  _lockfile="$(git -C "$top" rev-parse --git-path ai-auto-setup.lock 2>/dev/null || true)"
+  case "$_lockfile" in "") _lockfile="$top/.git/ai-auto-setup.lock" ;; /*) : ;; *) _lockfile="$top/$_lockfile" ;; esac
+  if command -v flock >/dev/null 2>&1; then
+    # NOTE: the 2>/dev/null is SCOPED to the group; a bare `exec ... 2>/dev/null` would
+    # redirect the whole shell's stderr permanently and swallow every later message.
+    if { exec {_lockfd}>"$_lockfile"; } 2>/dev/null; then
+      flock "$_lockfd" 2>/dev/null || true
+    fi
   fi
 
   # F3: DIRTY-INDEX PRE-CHECK — per-file `git rm` under set -e can half-migrate if a
@@ -121,10 +144,12 @@ ai_auto_setup() {
 # AI_AUTO shim — baked engine path (do not edit; re-run 'ai-auto setup' to refresh).
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
 AI_AUTO_HOME="$baked"
-# F1: if the baked engine hook was moved/renamed/reinstalled elsewhere, DO NOT exec a
-# dead path (bash would exit 127 and ABORT the user's commit). Warn loudly + exit 0.
-if [ ! -x "\$AI_AUTO_HOME/hooks/$hook" ]; then
-  printf '[$hook] WARNING: AI_AUTO engine hook missing (%s); re-run '\''ai-auto setup'\''. NOT blocking commit.\n' "\$AI_AUTO_HOME/hooks/$hook" >&2
+# F1/R2-1: if the baked engine hook was moved/renamed/reinstalled elsewhere — or the path
+# now exists but is a DIRECTORY (or any non-regular-file) — DO NOT exec it (bash would say
+# "Is a directory" / exit 126-127 and ABORT the user's commit). Require a regular,
+# executable FILE; otherwise warn loudly + exit 0.
+if ! [ -f "\$AI_AUTO_HOME/hooks/$hook" ] || ! [ -x "\$AI_AUTO_HOME/hooks/$hook" ]; then
+  printf '[$hook] WARNING: AI_AUTO engine hook missing or not a runnable file (%s); re-run '\''ai-auto setup'\''. NOT blocking commit.\n' "\$AI_AUTO_HOME/hooks/$hook" >&2
   exit 0
 fi
 PATH="\$AI_AUTO_HOME/scripts:\$PATH"
@@ -140,8 +165,14 @@ EOF
   fi
 
   # (b) CONTENT-AWARE de-pollution (LAST — the only destructive step; see F5): pristine
-  # vendored copy -> git rm; differs (or no global pristine, or a symlink) -> LEAVE +
-  # report. NEVER delete a differing/symlinked file.
+  # vendored copy -> mark for removal; differs (or no global pristine, or a symlink, or a
+  # local worktree edit) -> LEAVE + report. NEVER delete a differing/symlinked file.
+  # R2-2/R2-4: build the FULL safe-to-remove set first, EXCLUDING any path with a local
+  # worktree modification (worktree != index), then remove the whole set in ONE atomic
+  # `git rm -- "${removed[@]}"`. git validates every pathspec up front and removes NONE on
+  # any error, so there is no per-file half-migration (R2-2) and no partial state under a
+  # concurrent race (R2-4); a worktree-modified managed file is treated as customized/kept
+  # and is never handed to git rm.
   local removed=() kept=() f pristine
   for f in "${FRAMEWORK_PATHS[@]}"; do
     git -C "$top" ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
@@ -150,24 +181,30 @@ EOF
     # non-regular tracked entries and keep them.
     if [ -L "$top/$f" ]; then kept+=("$f (symlink — left untouched)"); continue; fi
     pristine="$AI_AUTO_HOME/$f"
-    if [ -f "$pristine" ] && cmp -s "$top/$f" "$pristine"; then
-      git -C "$top" rm --quiet "$f"
+    # R2-2: `git diff --quiet -- f` fails (non-zero) when the worktree differs from the
+    # index/HEAD; such a file would make a no-`--cached` `git rm` error, so KEEP it.
+    if [ -f "$pristine" ] && cmp -s "$top/$f" "$pristine" && git -C "$top" diff --quiet -- "$f"; then
       removed+=("$f")
     else
       kept+=("$f")
     fi
   done
-  # scripts/verify.sh is special: identical to engine default -> safe pristine, git rm;
-  # differs (or symlinked) -> LEAVE (human converts it to scripts/verify-project.sh).
+  # scripts/verify.sh is special: identical to engine default -> safe pristine, remove;
+  # differs (or symlinked, or worktree-modified) -> LEAVE (human converts it to
+  # scripts/verify-project.sh).
   if git -C "$top" ls-files --error-unmatch scripts/verify.sh >/dev/null 2>&1; then
     if [ -L "$top/scripts/verify.sh" ]; then
       kept+=("scripts/verify.sh (symlink — left untouched)")
-    elif [ -f "$AI_AUTO_HOME/scripts/verify.sh" ] && cmp -s "$top/scripts/verify.sh" "$AI_AUTO_HOME/scripts/verify.sh"; then
-      git -C "$top" rm --quiet scripts/verify.sh
+    elif [ -f "$AI_AUTO_HOME/scripts/verify.sh" ] && cmp -s "$top/scripts/verify.sh" "$AI_AUTO_HOME/scripts/verify.sh" \
+         && git -C "$top" diff --quiet -- scripts/verify.sh; then
       removed+=("scripts/verify.sh")
     else
       kept+=("scripts/verify.sh (customized — convert to scripts/verify-project.sh by hand)")
     fi
+  fi
+  # Atomic removal of the whole safe set (all-or-nothing; see R2-2/R2-4 above).
+  if ((${#removed[@]})); then
+    git -C "$top" rm --quiet -- "${removed[@]}"
   fi
 
   # (f) report; do NOT auto-commit. The git rm's are already staged.

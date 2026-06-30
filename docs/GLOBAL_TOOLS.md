@@ -302,7 +302,7 @@ The same managed shell integration adds small convenience functions:
     subfolder to drill down through grouped projects
   - Stops drilling down and enters a folder when common project markers are
     present, such as `.git`, `AGENTS.md`, `package.json`, `pyproject.toml`,
-    `requirements.txt`, `docker-compose.yml`, or `scripts/verify.sh`
+    `requirements.txt`, `docker-compose.yml`, or `scripts/verify-project.sh`
   - Override the root with `AI_AUTO_JW_PROJECT_ROOT=/path/to/root`
 
 - `sirdlist`
@@ -313,7 +313,7 @@ The same managed shell integration adds small convenience functions:
     subfolder to drill down through grouped projects
   - Stops drilling down and enters a folder when common project markers are
     present, such as `.git`, `AGENTS.md`, `package.json`, `pyproject.toml`,
-    `requirements.txt`, `docker-compose.yml`, or `scripts/verify.sh`
+    `requirements.txt`, `docker-compose.yml`, or `scripts/verify-project.sh`
   - Override the root with `AI_AUTO_SIRD_PROJECT_ROOT=/path/to/root`
 
 - `tmux`

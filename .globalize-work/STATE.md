@@ -37,3 +37,10 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - P4 [dispatched]: ai-auto launcher + content-aware setup (self-host guard, baked-path shims)
 - P5 [pending]: doctor 2-mode finalize + D6 collect-review-context (read global+project AGENTS) + LOW residuals
 - P6 [pending]: global-mode tests + end-to-end migrate proof; then S3 red-cert; then S4 defense game
+
+## S4 DEFENSE GAME
+- P6 aa8d028: permanent global-mode fixtures. Implementation complete (P1-P6).
+- R1 red (3 hunters): HIGH 2 (shim-no-block, docs-stale) + MED 6 + LOW many. Suite GREEN + E2E DONE confirmed.
+- R1 blue-A 2c3a8bf: code hardening F1-F6,E,M3 + fixtures (237 pass/1 skip).
+- R1 blue-B e29a5fe: docs truthfulness (ai-auto setup global model).
+- R2 red: dispatched (verify R1 fixes hold + new defects). dry-count target = 2 consecutive.

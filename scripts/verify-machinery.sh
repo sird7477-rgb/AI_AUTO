@@ -6663,6 +6663,90 @@ echo "[verify] testing ai-auto setup IDEMPOTENCY (second run mutates nothing)...
     || { echo "[verify] idempotent setup: exclude changed on re-run"; exit 1; }
 )
 
+echo "[verify] testing ai-auto setup R2-1 (baked engine hook that is a DIRECTORY -> commit PROCEEDS, not blocked)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'hi\n' > f; git add -A; git commit -qm init )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  # Replace the baked engine pre-commit hook with a DIRECTORY: `[ -x DIR ]` is TRUE (search
+  # bit), so the old guard let the shim `exec` a directory -> "Is a directory" -> commit
+  # ABORTED. The R2-1 guard requires a regular executable FILE; otherwise warn + exit 0.
+  rm -f "${tmp_dir}/eng/hooks/pre-commit"; mkdir -p "${tmp_dir}/eng/hooks/pre-commit"
+  rc=0; out="$(cd "${proj}"; printf 'b\n' >> f; git add -A; git commit -qm c2 2>&1)" || rc=$?
+  test "${rc}" -eq 0 \
+    || { echo "[verify] R2-1: commit was BLOCKED by a directory engine hook"; exit 1; }
+  echo "${out}" | grep -q "WARNING" \
+    || { echo "[verify] R2-1: missing the not-a-runnable-file warning"; exit 1; }
+  ( cd "${proj}"; git log --oneline | grep -q " c2$" ) \
+    || { echo "[verify] R2-1: c2 not committed (commit was blocked)"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup R2-2 (worktree-modified pristine-byte file is KEPT; atomic all-or-nothing rm)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/docs"
+  # AGENTS.md: committed pristine (HEAD==worktree==pristine) -> safe to remove.
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  # docs/PATCH_NOTES.md: a SECOND committed pristine -> proves the rm is a single atomic
+  # call removing the whole safe set together (all-or-nothing), not a per-file loop.
+  printf 'PRISTINE FRAMEWORK AGENTS\n' > "${tmp_dir}/eng/docs/PATCH_NOTES.md"
+  cp "${tmp_dir}/eng/docs/PATCH_NOTES.md" "${proj}/docs/PATCH_NOTES.md"
+  # docs/WORKFLOW.md: HEAD is an OLD copy; worktree refreshed to EXACT pristine bytes but
+  # UNSTAGED. cmp matches pristine, yet a no-`--cached` git rm would error ("local
+  # modifications"). The R2-2 fix excludes worktree-modified paths -> KEEP it, never half-
+  # migrate. (Old per-file loop staged-deleted AGENTS.md then aborted on WORKFLOW.)
+  printf 'OLD v1 workflow\n' > "${proj}/docs/WORKFLOW.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  cp "${tmp_dir}/eng/docs/WORKFLOW.md" "${proj}/docs/WORKFLOW.md"   # refresh worktree, UNSTAGED
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -eq 0 \
+    || { echo "[verify] R2-2: setup aborted (half-migration not prevented)"; exit 1; }
+  cd "${proj}"
+  # both pristine files removed together (atomic set).
+  git diff --cached --name-only --diff-filter=D | grep -qx "AGENTS.md" \
+    || { echo "[verify] R2-2: AGENTS.md not removed"; exit 1; }
+  git diff --cached --name-only --diff-filter=D | grep -qx "docs/PATCH_NOTES.md" \
+    || { echo "[verify] R2-2: docs/PATCH_NOTES.md not removed (atomic set incomplete)"; exit 1; }
+  # the worktree-modified pristine-byte file is KEPT, NOT staged -> recoverable state.
+  git ls-files --error-unmatch docs/WORKFLOW.md >/dev/null 2>&1 \
+    || { echo "[verify] R2-2: worktree-modified WORKFLOW.md wrongly removed"; exit 1; }
+  git diff --cached --name-only | grep -qx "docs/WORKFLOW.md" \
+    && { echo "[verify] R2-2: WORKFLOW.md partially staged (not all-or-nothing)"; exit 1; }
+  echo "${out}" | grep -q "docs/WORKFLOW.md" \
+    || { echo "[verify] R2-2: kept worktree-modified file not reported"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup R2-3 (GIT_CONFIG_* core.hooksPath injection cannot redirect shims)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > f; git add -A; git commit -qm base )
+  mkdir -p "${tmp_dir}/evil"
+  # Inject core.hooksPath via the config env family. Without the R2-3 scrub git would honor
+  # it (rev-parse --git-path hooks), drop the shims in the evil dir, and a NORMAL commit
+  # (without the env) would look in .git/hooks -> nothing -> gate silently inert.
+  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="${tmp_dir}/evil" \
+    "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  test ! -e "${tmp_dir}/evil/pre-commit" \
+    || { echo "[verify] R2-3: shim landed in injected core.hooksPath dir"; exit 1; }
+  grep -q "AI_AUTO shim" "${proj}/.git/hooks/pre-commit" \
+    || { echo "[verify] R2-3: shim NOT installed where git actually runs it (.git/hooks)"; exit 1; }
+  # a plain commit (no injected env) must reach the engine hook -> gate is NOT inert.
+  out="$(cd "${proj}"; printf 'y\n' >> f; git add -A; git commit -qm c1 2>&1)"
+  echo "${out}" | grep -q "PRE_COMMIT_ENGINE_REACHED" \
+    || { echo "[verify] R2-3: normal commit ran no engine hook (gate silently inert)"; exit 1; }
+)
+
 echo "[verify] testing ai-auto LAUNCHER dispatch + usage exit codes..."
 (
   tmp_dir="$(mktemp -d)"
