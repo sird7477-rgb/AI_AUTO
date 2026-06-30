@@ -61,3 +61,6 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - R6 red: safety HIGH 1 (collect-review-context hardening gap = R5-1 incomplete); holistic MED 1 (onboarding fail-closed blocks adoption commit); minimality LOW 1. NOT dry.
 - R6 blue 54d2b3e: single scripts/git-harden.sh sourced by all 3 trust-path scripts (review_git in ONE file), collect-review-context hardened -> local-config RCE FULLY closed w/ positive-control fixture; derived pre-commit warn-and-allow onboarding; conftest helper. 237/1 green.
 - git-injection class architecturally closed. R7 red dispatched. dry-count=0; need a genuinely-clean round (then confirm with a 2nd).
+- R7 red: safety HIGH 1 (core.fsmonitor RCE on all worktree git calls)+LOW; holistic LOW 1; minimality LOW 1. NOT dry.
+- R7 blue b581bf5: process-level config chokepoint (git-scrub exports GIT_CONFIG core.fsmonitor=/diff.external=) + review_git 2-layer defense; non-exec verify-project; git-harden in FRAMEWORK_PATHS; SPEC word + positive-control fixtures (237/1 green).
+- git-exec class closed 2-layer (config chokepoint + attribute call-site). R8 red dispatched. dry-count=0; need 2 consecutive clean.

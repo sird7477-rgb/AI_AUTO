@@ -84,7 +84,7 @@ def added_lines(base, path, untracked):
         except OSError:
             return set()
         return set(range(1, n + 1))
-    out = run(["git", "diff", "-U0", base, "--", path])
+    out = run(["git", "diff", "--no-ext-diff", "-U0", base, "--", path])
     lines = set()
     for line in out.splitlines():
         if line.startswith("@@"):

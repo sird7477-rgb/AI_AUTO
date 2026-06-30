@@ -7182,9 +7182,16 @@ echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/c
   scrub="${repo_root}/hooks/git-scrub.sh"
   collector="${repo_root}/scripts/collect-review-context.sh"
   test -s "${scrub}" || { echo "[verify] R7-F1: git-scrub.sh not found"; exit 1; }
-  # the defensive override must pin BOTH config-exec keys (env GIT_CONFIG_* overrides repo config).
-  grep -q 'core.fsmonitor' "${scrub}" && grep -q 'diff.external' "${scrub}" \
-    || { echo "[verify] R7-F1: git-scrub.sh missing the defensive core.fsmonitor/diff.external override"; exit 1; }
+  # The defensive override pins core.fsmonitor empty (env GIT_CONFIG_* overrides repo config).
+  # R8-H8-1: it must pin EXACTLY ONE key — `diff.external` must NOT be exported empty (an empty
+  # value = "run the empty program" = `fatal: external diff died` on every plain patch diff,
+  # a process-wide DoS). It is GIT_CONFIG_KEY_0 only, with GIT_CONFIG_COUNT=1.
+  grep -Eq "export GIT_CONFIG_KEY_0='core.fsmonitor'" "${scrub}" \
+    || { echo "[verify] R7-F1: git-scrub.sh missing the defensive core.fsmonitor override"; exit 1; }
+  grep -Eq 'export GIT_CONFIG_COUNT=1' "${scrub}" \
+    || { echo "[verify] R7-F1: git-scrub.sh GIT_CONFIG_COUNT must be 1 (core.fsmonitor only)"; exit 1; }
+  ! grep -Eq "export GIT_CONFIG_(KEY|VALUE)_1=.*diff.external|GIT_CONFIG_VALUE_1=.*diff.external|GIT_CONFIG_KEY_1='diff.external'" "${scrub}" \
+    || { echo "[verify] R8-H8-1: git-scrub.sh re-exports diff.external='' — DoS regression on every plain git diff"; exit 1; }
   mk_poisoned() {  # repo whose IN-REPO .git/config core.fsmonitor execs on ANY worktree scan
     local p="$1"; mkdir -p "${p}"
     ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
@@ -7216,6 +7223,117 @@ echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/c
   ( cd "${proj2}"; . "${ctl_scrub}"; OUT_DIR="${tmp_dir}/rcctl" bash "${collector}" >/dev/null 2>&1 || true )
   test -e "${tmp_dir}/FSM" \
     || { echo "[verify] R7-F1: control (override stripped) inert — fixture would not catch a regression"; exit 1; }
+)
+
+echo "[verify] testing R8-H8-1 (SOURCED-chokepoint integration: a plain patch-producing 'git diff' through a shell that sourced git-scrub.sh SUCCEEDS with real output — diff.external='' must NOT be exported)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  scrub="${repo_root}/hooks/git-scrub.sh"
+  test -s "${scrub}" || { echo "[verify] R8-H8-1: git-scrub.sh not found"; exit 1; }
+  # The R7 fixtures sourced git-scrub.sh but only ever exercised --name-only/status SCAN paths,
+  # so they never saw that an exported diff.external='' makes git try to exec the EMPTY program
+  # on every PLAIN patch diff (`fatal: external diff died`, exit 128, empty patch) — the exact
+  # engine/self-host/odoo-QC path. This fixture runs a representative plain `git diff` AND the
+  # shipped odoo validator's `git diff -U0` path with git-scrub.sh SOURCED first and asserts REAL
+  # patch output, closing that integration gap.
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+    printf 'world\n' >> a.txt )                                    # unstaged edit -> patch diff
+  # (1) plain `git diff` through a sourced-git-scrub shell MUST succeed with a real patch.
+  # shellcheck disable=SC1090  # dynamic source of the engine git-scrub.sh under test
+  out="$( cd "${proj}"; . "${scrub}"; git diff -- a.txt 2>&1 )"; drc=$?
+  test "${drc}" -eq 0 \
+    || { echo "[verify] R8-H8-1: plain 'git diff' through sourced git-scrub FAILED (rc=${drc}): ${out}"; exit 1; }
+  printf '%s' "${out}" | grep -q '^+world$' \
+    || { echo "[verify] R8-H8-1: plain 'git diff' produced no real patch through sourced git-scrub (got: ${out})"; exit 1; }
+  ! printf '%s' "${out}" | grep -q 'external diff died' \
+    || { echo "[verify] R8-H8-1: 'git diff' hit 'external diff died' through sourced git-scrub (diff.external='' regression)"; exit 1; }
+  # (2) the SAME diff with diff.external='' re-injected (the pre-fix R7 export) MUST die — proving
+  # the assertion above is non-vacuous and that re-adding the override reintroduces the regression.
+  # NB: the failing substitution is wrapped in if/else so `set -e` does not abort on the
+  # (intended) non-zero git exit before we can assert it.
+  # shellcheck disable=SC1090  # dynamic source of the engine git-scrub.sh under test
+  if cout="$( cd "${proj}"; . "${scrub}"; GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0='' git diff -- a.txt 2>&1 )"; then crc=0; else crc=$?; fi
+  { test "${crc}" -ne 0 && printf '%s' "${cout}" | grep -q 'external diff died'; } \
+    || { echo "[verify] R8-H8-1: control (diff.external='') did NOT break plain git diff — fixture would not catch the regression"; exit 1; }
+  # (3) the machinery's own inherit-overlap self-host case (the loud victim) runs THROUGH a sourced
+  # git-scrub via the shipped validator's `git diff --no-ext-diff -U0` path: build the two-addon
+  # same-field repo and assert the validator (called with git-scrub sourced) FLAGS it.
+  val="${repo_root}/templates/domain-packs/odoo/validation-harness/check-inherited-field-overlap.py"
+  if [ -f "${val}" ]; then
+    grep -q 'no-ext-diff' "${val}" \
+      || { echo "[verify] R8-H8-1: check-inherited-field-overlap.py missing --no-ext-diff at its git diff -U0 site"; exit 1; }
+    # shellcheck disable=SC1090  # dynamic source of the engine git-scrub.sh under test
+    o2="$( cd "${proj}"; . "${scrub}"; git diff --no-ext-diff -U0 -- a.txt 2>&1 )"; r2=$?
+    { test "${r2}" -eq 0 && printf '%s' "${o2}" | grep -q '^@@'; } \
+      || { echo "[verify] R8-H8-1: odoo validator 'git diff --no-ext-diff -U0' path broken under sourced git-scrub (rc=${r2})"; exit 1; }
+  fi
+)
+
+echo "[verify] testing R8-DRIFT (structural: every patch/--no-index diff in the trust path carries the documented git-harden flags — no --no-filters/--no-ext-diff/--no-textconv omission like collect-review-context.sh:1400)..."
+(
+  fail=0
+  for src in scripts/collect-review-context.sh scripts/review-gate.sh \
+             scripts/summarize-ai-reviews.sh scripts/run-ai-reviews.sh; do
+    f="${repo_root}/${src}"
+    test -f "${f}" || { echo "[verify] R8-DRIFT: ${src} not found"; exit 1; }
+    # (a) every `--no-index` content read must carry --no-filters AND --no-ext-diff --no-textconv.
+    while IFS= read -r line; do
+      case "${line}" in *--no-index*) ;; *) continue;; esac
+      case "${line}" in *--no-filters*--no-index*|*--no-index*--no-filters*) ;; *)
+        echo "[verify] R8-DRIFT: ${src}: --no-index content read MISSING --no-filters: ${line}"; fail=1;; esac
+      case "${line}" in *--no-ext-diff*) ;; *)
+        echo "[verify] R8-DRIFT: ${src}: --no-index content read MISSING --no-ext-diff: ${line}"; fail=1;; esac
+      case "${line}" in *--no-textconv*) ;; *)
+        echo "[verify] R8-DRIFT: ${src}: --no-index content read MISSING --no-textconv: ${line}"; fail=1;; esac
+    done < <(grep -nE '(review_git|git) +diff' "${f}")
+    # (b) every patch-producing `review_git diff` (NOT --name-only/--stat/--numstat/--quiet)
+    # must carry --no-ext-diff --no-textconv (the per-attr-driver call-site defense).
+    while IFS= read -r line; do
+      case "${line}" in *--name-only*|*--stat*|*--numstat*|*--quiet*) continue;; esac
+      case "${line}" in *review_git*diff*) ;; *) continue;; esac
+      case "${line}" in *--no-ext-diff*) ;; *)
+        echo "[verify] R8-DRIFT: ${src}: patch-producing review_git diff MISSING --no-ext-diff: ${line}"; fail=1;; esac
+      case "${line}" in *--no-textconv*) ;; *)
+        echo "[verify] R8-DRIFT: ${src}: patch-producing review_git diff MISSING --no-textconv: ${line}"; fail=1;; esac
+    done < <(grep -nE 'review_git +diff' "${f}")
+  done
+  test "${fail}" -eq 0 || exit 1
+)
+
+echo "[verify] testing R8-safety (filter-clean RCE on the untracked-content path: in-repo .gitattributes filter + .git/config clean must NOT execute via collect-review-context.sh:1400 --no-index content read)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  collector="${repo_root}/scripts/collect-review-context.sh"
+  test -s "${collector}" || { echo "[verify] R8-safety: collector not found"; exit 1; }
+  mk_poisoned() {  # repo with an untracked file whose in-repo clean filter runs on --no-index read
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'base\n' > keep.txt; git add keep.txt; git commit -qm init
+      git config filter.evilf.clean "touch ${tmp_dir}/PWNED; cat"   # clean filter driver
+      printf 'u.txt filter=evilf\n' > .gitattributes
+      printf 'hello\n' > u.txt )                                    # untracked attacker file
+  }
+  # HARDENED: the real collector with INCLUDE_UNTRACKED_CONTENT=1 reaches :1400 on u.txt; the added
+  # --no-filters must keep the clean filter UN-run.
+  proj="${tmp_dir}/proj"; mk_poisoned "${proj}"
+  ( cd "${proj}"; OUT_DIR="${tmp_dir}/rc" INCLUDE_UNTRACKED_CONTENT=1 \
+      bash "${collector}" >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R8-safety: clean filter EXECUTED via --no-index untracked-content read (RCE)"; exit 1; }
+  # Positive control: strip --no-filters (the pre-fix line 1400); the SAME repo MUST fire PWNED,
+  # proving the negative is non-vacuous.
+  ctl="${tmp_dir}/collect-ctl.sh"
+  sed 's/--no-textconv --no-filters --no-index/--no-textconv --no-index/' "${collector}" > "${ctl}"
+  proj2="${tmp_dir}/proj2"; mk_poisoned "${proj2}"
+  ( cd "${proj2}"; AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh" \
+      OUT_DIR="${tmp_dir}/rcctl" INCLUDE_UNTRACKED_CONTENT=1 \
+      bash "${ctl}" >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R8-safety: control (no --no-filters) inert — fixture would not catch the drift"; exit 1; }
 )
 
 echo "[verify] testing pre-commit D2/H1 (DERIVED hook: absent verify-project.sh -> warn+ALLOW the onboarding commit; present -> gates)..."

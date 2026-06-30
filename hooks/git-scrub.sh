@@ -14,11 +14,13 @@
 #   - GIT_TRACE* (R5-2)          : append/clobber an attacker-chosen absolute path on every git op
 #   - GIT_TEMPLATE_DIR + attr/ceiling (R5-3): inject hooks into `git init` fixtures -> RCE
 # NOTE: the unset above closes the ENV surface only. The project-local `.git/config`
-# CONFIG-key exec vectors (core.fsmonitor / diff.external) are then closed for EVERY git call
-# by the defensive GIT_CONFIG_* re-export below (env-config overrides repo-local config). The
-# `.gitattributes` ATTRIBUTE-driven diff/textconv/filter drivers, which a config override
-# cannot fully neutralize, stay closed at the call site (review_git: --no-ext-diff /
-# --no-textconv / --no-filters).
+# `core.fsmonitor` exec vector is then closed for EVERY git call by the defensive
+# GIT_CONFIG_* re-export below (env-config overrides repo-local config). The repo-local
+# `diff.external` exec vector and the `.gitattributes` ATTRIBUTE-driven diff/textconv/filter
+# drivers — which an EMPTY config override cannot neutralize (diff.external='' = run the
+# empty program = `fatal: external diff died`) — stay closed at the call site (review_git:
+# -c diff.external= --no-ext-diff / --no-textconv / --no-filters; odoo QC validators:
+# --no-ext-diff).
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
       GIT_EXTERNAL_DIFF GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_SSH GIT_SSH_COMMAND \
       GIT_PROXY_COMMAND GIT_ASKPASS GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
@@ -30,17 +32,22 @@ done
 unset _gcv 2>/dev/null || true
 
 # --- R7-F1 defensive config override (BEGIN) --------------------------------
-# `core.fsmonitor` / `diff.external` living in a malicious project's IN-REPO `.git/config`
-# are a code-exec vector that fires on EVERY worktree-scanning git call (`git status`,
-# `git ls-files`, `git diff --name-only/--quiet/--stat`) — not just the patch-producing
-# calls routed through review_git(). The env unset above CANNOT reach an in-repo config.
-# But env GIT_CONFIG_* has HIGHER precedence than repo-local `.git/config`, so after the
-# anti-injection unset we re-export a CONTROLLED pair set that pins those exec keys EMPTY
-# for every git call in this process AND its children. One process-level chokepoint thus
-# neutralizes the config-driven exec vectors at ~15 plain-`git` sites without touching any
-# call site. (review_git ALSO keeps --no-ext-diff/--no-textconv/--no-filters for the
-# `.gitattributes` attribute-driven drivers that a config override cannot fully neutralize.)
-export GIT_CONFIG_COUNT=2
+# `core.fsmonitor` living in a malicious project's IN-REPO `.git/config` is a code-exec
+# vector that fires on EVERY worktree-scanning git call (`git status`, `git ls-files`,
+# `git diff --name-only/--quiet/--stat`) — not just the patch-producing calls routed
+# through review_git(). The env unset above CANNOT reach an in-repo config. But env
+# GIT_CONFIG_* has HIGHER precedence than repo-local `.git/config`, so after the
+# anti-injection unset we re-export a CONTROLLED pair that pins `core.fsmonitor` EMPTY for
+# every git call in this process AND its children. `core.fsmonitor=''` == disabled, so it
+# is functionally inert except to neutralize the hook-program vector.
+#
+# R8-H8-1: `diff.external` is DELIBERATELY NOT pinned here. An empty env value is NOT
+# equivalent to `--no-ext-diff`: git treats `diff.external=''` as "run the empty program"
+# and EVERY plain patch-producing `git diff` dies with `fatal: external diff died` (exit
+# 128, empty patch) — a process-wide DoS, not a defense. There is no env-config equivalent
+# of `--no-ext-diff`. The config-level external-diff RCE is therefore closed at the CALL
+# SITE instead: review_git() passes `-c diff.external= --no-ext-diff` on every
+# patch-producing diff, and the shipped odoo QC validators pass `--no-ext-diff` directly.
+export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0='core.fsmonitor' GIT_CONFIG_VALUE_0=''
-export GIT_CONFIG_KEY_1='diff.external'  GIT_CONFIG_VALUE_1=''
 # --- R7-F1 defensive config override (END) ----------------------------------

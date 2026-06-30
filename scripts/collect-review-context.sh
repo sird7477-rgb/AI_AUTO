@@ -1397,7 +1397,7 @@ fi
         echo "# skipped untracked file content: ${file} is ${size} bytes, limit is ${MAX_UNTRACKED_BYTES}"
         continue
       fi
-      review_git diff --no-ext-diff --no-textconv --no-index -- /dev/null "$file" || true
+      review_git diff --no-ext-diff --no-textconv --no-filters --no-index -- /dev/null "$file" || true
     done < <(git ls-files -z --others --exclude-standard)
     echo '```'
   fi
