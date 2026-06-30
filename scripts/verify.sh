@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_PORT="${API_PORT:-5001}"
-BASE_URL="http://localhost:${API_PORT}"
 # Framework siblings resolve via our own dir (symlink-followed) so they are reachable
 # from ANY cwd / PATH / temp-sandbox fixture; project context stays $(pwd).
 AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
@@ -38,53 +36,27 @@ if command -v session_lock_acquire >/dev/null 2>&1; then
   [ "${_lock_rc}" -eq 0 ] || exit "${_lock_rc}"
 fi
 
-run_product_pytest() {
-  echo "[verify] running product pytest..."
-  .venv/bin/python -m pytest -q tests/test_app.py
-}
-
-run_product_smoke() {
-  echo "[verify] starting docker compose on API_PORT=${API_PORT}..."
-  API_PORT="${API_PORT}" docker compose up --build -d
-
-  echo "[verify] waiting for API..."
-  for i in {1..30}; do
-    if curl -fsS "${BASE_URL}/" >/dev/null; then
-      break
-    fi
-
-    if [ "$i" -eq 30 ]; then
-      echo "[verify] API did not become ready"
-      docker compose ps
-      docker compose logs api --tail=80
-      exit 1
-    fi
-
-    sleep 1
-  done
-
-  echo "[verify] checking / ..."
-  curl -fsS "${BASE_URL}/"
-  echo
-
-  echo "[verify] checking /todos ..."
-  curl -fsS "${BASE_URL}/todos"
-  echo
-
-  echo "[verify] docker compose status..."
-  docker compose ps
-
-  echo "[verify] success"
+# The "product" step is the PROJECT's own real verification: an OPTIONAL,
+# project-owned hook at ./scripts/verify-project.sh (pwd-relative — project context,
+# NOT a framework sibling). Present + executable -> run it. ABSENT -> FAIL-CLOSED so a
+# derived project's verify is never a silent green no-op.
+run_product() {
+  if [ -x ./scripts/verify-project.sh ]; then
+    echo "[verify] delegating to project verification: ./scripts/verify-project.sh"
+    ./scripts/verify-project.sh
+  else
+    echo "[verify] no project verification: scripts/verify-project.sh is absent — NOTHING was verified" >&2
+    exit 1
+  fi
 }
 
 case "${AI_AUTO_VERIFY_SCOPE}" in
   full)
     "$AH/verify-machinery.sh"
-    run_product_smoke
+    run_product
     ;;
   product)
-    run_product_pytest
-    run_product_smoke
+    run_product
     ;;
   machinery)
     "$AH/verify-machinery.sh"

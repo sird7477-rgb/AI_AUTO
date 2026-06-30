@@ -51,10 +51,17 @@ def test_verify_script_keeps_structural_audit_markers() -> None:
         "product)",
         "machinery)",
         "$AH/verify-machinery.sh",
-        ".venv/bin/python -m pytest -q tests/test_app.py",
+        # C4 seam: the product step delegates to the optional project-owned hook and
+        # fails closed when absent (the sample-app pytest moved to verify-project.sh).
+        "./scripts/verify-project.sh",
+        "NOTHING was verified",
     ]
     for marker in required_scope_markers:
         assert marker in verify
+
+    # C4: ai-lab's own real verification now lives in verify-project.sh, not verify.sh.
+    verify_project = _read("scripts/verify-project.sh")
+    assert ".venv/bin/python -m pytest -q tests/test_app.py" in verify_project
 
     review_gate = _read("scripts/review-gate.sh")
     required_unsets = [

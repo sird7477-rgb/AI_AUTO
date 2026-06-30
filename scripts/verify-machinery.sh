@@ -6406,5 +6406,33 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
 
+echo "[verify] testing verify.sh project-verify seam (C4: present->runs, absent->fail-closed)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  mkdir -p "${tmp_dir}/scripts"
+  cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"
+  # Stub the session lock so the entrypoint's cleanup trap resolves cleanly in this
+  # stripped sandbox (a real install sources the real session-lock.sh sibling).
+  printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
+    > "${tmp_dir}/scripts/session-lock.sh"
+  chmod +x "${tmp_dir}/scripts/verify.sh"
+
+  # PRESENT: an executable project hook runs and the product scope passes.
+  printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\nexit 0\n' \
+    > "${tmp_dir}/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/scripts/verify-project.sh"
+  present_out="$(cd "${tmp_dir}" && AI_AUTO_VERIFY_SCOPE=product bash scripts/verify.sh 2>&1)"
+  echo "${present_out}" | grep -q "PROJECT_VERIFY_RAN"
+
+  # ABSENT: no project hook -> FAIL-CLOSED (non-zero + loud "NOTHING was verified").
+  rm "${tmp_dir}/scripts/verify-project.sh"
+  absent_rc=0
+  absent_out="$(cd "${tmp_dir}" && AI_AUTO_VERIFY_SCOPE=product bash scripts/verify.sh 2>&1)" || absent_rc=$?
+  test "${absent_rc}" -ne 0
+  echo "${absent_out}" | grep -q "NOTHING was verified"
+)
+
 echo "[verify] running ai-lab bootstrap check..."
 ./scripts/bootstrap-ai-lab.sh
