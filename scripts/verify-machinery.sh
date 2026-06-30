@@ -735,6 +735,45 @@ echo "[verify] testing validate-warm asset-only no-op skip classification (ST-P1
   want validate "committed-unpushed models (up...HEAD)" "$(cl)"
 )
 
+echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P1-73(A))..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_warm_cache_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_warm_cache_tmp EXIT
+  hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
+  mkdir -p "${tmp_dir}/harness"
+  cp "${hp}/validate-warm.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
+  git -c init.defaultBranch=main init -q --bare "${tmp_dir}/origin.git"
+  proj="${tmp_dir}/proj"
+  git -c init.defaultBranch=main clone -q "${tmp_dir}/origin.git" "${proj}" 2>/dev/null
+  cd "${proj}"
+  git config user.email verify@example.invalid; git config user.name Verify
+  mkdir -p custom-addons/mod_a/models
+  printf "{\n 'name': 'A',\n 'version': '1.0.0',\n 'depends': ['base'],\n}\n" > custom-addons/mod_a/__manifest__.py
+  printf "class A: pass\n" > custom-addons/mod_a/models/a.py
+  git add -A; git commit -q -m base; git push -q -u origin main 2>/dev/null
+
+  H="${tmp_dir}/harness/validate-warm.sh"
+  slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "${proj}")"
+  epoch="${tmp_dir}/harness/.warm-base.${slug}.base.epoch"
+  cl() { WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p'; }
+  want() { [ "$3" = "$1" ] || { echo "[verify] validate-warm cache: ${2} -> got '${3}', expected '${1}'"; exit 1; }; }
+
+  printf "class A:\n    x = 1\n" > custom-addons/mod_a/models/a.py
+  want validate "fresh code -> miss" "$(cl)"
+  WARM_CACHE_PRIME=1 bash "$H" "${proj}" >/dev/null 2>&1          # record a PASS for this exact content
+  want cached "same content after PASS -> hit" "$(cl)"
+  printf "class A:\n    x = 2\n" > custom-addons/mod_a/models/a.py
+  want validate "content changed -> miss" "$(cl)"
+  printf "class A:\n    x = 1\n" > custom-addons/mod_a/models/a.py # revert to the cached content
+  want cached "reverted content -> hit again (history-independent)" "$(cl)"
+  date +%s%N > "${epoch}"                                          # base rebuilt -> epoch bump
+  want validate "base epoch bump invalidates cache -> miss" "$(cl)"
+  rm -f "${epoch}"
+  want cached "epoch removed -> back to the cached key (hit)" "$(cl)"
+  want validate "WARM_NO_CACHE=1 bypasses a hit" "$(WARM_NO_CACHE=1 WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p')"
+)
+
 echo "[verify] testing ai-auto-template-status domain-pack drift surfacing..."
 (
   tmp_dir="$(mktemp -d)"

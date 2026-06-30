@@ -4,6 +4,28 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.30.4
+
+- odoo validate-warm warm-PASS cache (ST-P1-73(A)): the warm base is fixed and `-u
+  <changed> --stop-after-init` installs the changed modules' ON-DISK content onto it,
+  so the validation outcome depends only on (changed module set, that content, the base
+  identity) — NOT on git history. A rebase that reshuffles unrelated commits but leaves
+  the changed modules' content identical re-ran the full multi-minute build for nothing
+  (the redundant-revalidate half of the ST-P1-73 loop). `validate-warm.sh` now records
+  each PASS as a marker under `.warm-pass-cache.<slug>/` keyed by `sha256(sorted modset |
+  on-disk content hash | base epoch)` and carries it forward on an exact re-hit (`[warm]
+  PASS (cached, no-op)`, no `dc up`/`-u`). SAFE BY CONSTRUCTION: the content hash covers
+  every file under each changed module dir (excluding `__pycache__`/`*.pyc`), so ANY
+  difference misses and re-validates — only a sha256 collision could false-hit; a missing/
+  deleted module dir disables caching; and `prepare-base-db.sh` now stamps a per-base
+  nanosecond epoch on every (re)build so a new parity pin / module set invalidates all
+  prior entries. PASS-only (a FAIL is never cached). Opt out: `WARM_NO_CACHE=1`. Test
+  hooks (never set in normal use): `WARM_CLASSIFY_ONLY=1` prints `cached`/`validate` and
+  `WARM_CACHE_PRIME=1` records the current key — both exit before Docker, making the cache
+  path fixturable offline (verify-machinery covers miss → prime → hit → content-miss →
+  epoch-invalidation → NO_CACHE-bypass). Also hardened the `ca=` scope capture in (F) with
+  `|| true` (already shipped in .3). Fourth slice of ST-P1-73 (B race-mitigation remains).
+
 ## 2026.06.30.3
 
 - odoo validate-warm asset-only no-op skip (ST-P1-73(F)): `validation-harness/

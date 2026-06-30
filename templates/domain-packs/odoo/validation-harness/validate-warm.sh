@@ -78,6 +78,45 @@ if asset_only_noop; then
   echo "[warm] SKIP (no-op): changed custom-addons files are static assets and/or a __manifest__.py version-line bump only; the -u registry/install load cannot change and is not run. Installable as-is. (override: WARM_NO_ASSET_SKIP=1)"
   exit 0
 fi
+# (A) warm-PASS cache: the warm base is fixed and `-u <changed> --stop-after-init` installs
+# the changed modules' ON-DISK content onto it, so the outcome depends only on (changed
+# module set, that content, the base identity) — NOT on git history. A rebase that reshuffles
+# unrelated commits but leaves the changed modules' content identical yields the same result,
+# so a prior PASS is carried instead of re-running the multi-minute build. SAFE BY
+# CONSTRUCTION: the key is sha256(sorted modset | on-disk content hash | base epoch), so ANY
+# content difference (or a base rebuild, which bumps the epoch) misses and re-validates; only
+# a sha256 collision could false-hit. PASS-only; a FAIL is never cached. Opt out: WARM_NO_CACHE=1.
+warm_content_hash() {  # $1=comma modset ; prints a content hash, or nothing on any error
+  local m
+  { for m in $(printf '%s' "$1" | tr ',' ' '); do
+      find "$PROJECT/custom-addons/$m" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null
+    done | LC_ALL=C sort -z | xargs -0 -r sha256sum 2>/dev/null | sed "s#${PROJECT}/##g" | sha256sum | cut -d' ' -f1; } 2>/dev/null || true
+}
+WARM_CACHE_DIR="${HARNESS_DIR}/.warm-pass-cache.${HARNESS_SLUG}"
+WARM_CACHE_KEY=""
+if [ "${WARM_NO_CACHE:-0}" != "1" ]; then
+  _modset="$(printf '%s' "$MODCOMMA" | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -)"
+  _eligible=1
+  for _m in $(printf '%s' "$_modset" | tr ',' ' '); do
+    [ -d "$PROJECT/custom-addons/$_m" ] || _eligible=0   # a deleted/missing module dir -> never cache
+  done
+  if [ "$_eligible" = "1" ]; then
+    _chash="$(warm_content_hash "$_modset")"
+    _epoch="$(cat "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.epoch" 2>/dev/null || echo none)"
+    [ -n "$_chash" ] && WARM_CACHE_KEY="$(printf '%s|%s|%s' "$_modset" "$_chash" "$_epoch" | sha256sum | cut -d' ' -f1)"
+  fi
+fi
+if [ -n "$WARM_CACHE_KEY" ] && [ -f "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" ]; then
+  [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: cached"; exit 0; }
+  echo "[warm] PASS (cached, no-op): '$MODCOMMA' content already validated on this warm base (key ${WARM_CACHE_KEY:0:12}); -u not re-run. (override: WARM_NO_CACHE=1)"
+  exit 0
+fi
+# Test/CI hook: prime the cache for the current key WITHOUT a docker run, so the cache path
+# is fixturable offline. Never set in normal use.
+if [ "${WARM_CACHE_PRIME:-0}" = "1" ] && [ -n "$WARM_CACHE_KEY" ]; then
+  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && : > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
+  echo "[warm] CACHE PRIMED ${WARM_CACHE_KEY:0:12}"; exit 0
+fi
 [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: validate"; exit 0; }
 
 echo "[warm] modules: $MODCOMMA  (-u on a clone of '$BASE_DB')"
@@ -123,4 +162,9 @@ if [ "$rc" -ne 0 ] || grep -qiE "ParseError|cannot be located|does not exist|Inv
   rm -f "$LOG"; exit 1
 fi
 rm -f "$LOG"
+# Record this PASS so an identical (modset, on-disk content, base epoch) skips the -u re-run.
+# Only ever written on a real PASS; a FAIL above already exited without reaching here.
+if [ -n "${WARM_CACHE_KEY:-}" ]; then
+  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && : > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
+fi
 echo "[warm] PASS — $MODCOMMA updates cleanly on warm base (parity-pinned Odoo 19)"

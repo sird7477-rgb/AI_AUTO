@@ -149,6 +149,17 @@ on failure**; allow `SKIP_ODOO_VALIDATE=1` for an explicit emergency override.
 > the full validation. `WARM_CLASSIFY_ONLY=1` prints the `skip`/`validate` decision
 > and exits before touching Docker.
 
+> Warm-PASS cache: the warm base is fixed and `-u <changed> --stop-after-init`
+> installs the changed modules' **on-disk content** onto it, so the result depends
+> only on `(changed module set, that content, the base identity)` — NOT on git
+> history. `validate-warm.sh` records each PASS keyed by `sha256(sorted modset |
+> on-disk content hash | base epoch)` (under `.warm-pass-cache.<slug>/`, a runtime
+> artifact) and carries it forward on an exact re-hit, so a rebase that only reshuffles
+> unrelated commits skips the multi-minute re-build. SAFE BY CONSTRUCTION: any content
+> difference misses and re-validates; `prepare-base-db.sh` bumps a base epoch on every
+> rebuild so a new parity pin / module set invalidates the cache; only a PASS is ever
+> cached. Opt out with `WARM_NO_CACHE=1`.
+
 > Liveness: the warm validation runs Odoo at `--log-level=warn`, so a clean
 > install is quiet for ~tens of seconds to ~2 min between the `[warm] modules:`
 > start line and the `[warm] PASS/FAIL` result line — this is normal, **do not

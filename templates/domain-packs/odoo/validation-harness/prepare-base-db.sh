@@ -94,4 +94,9 @@ python3 /mnt/community/odoo-bin $OPTS -i base ${LANGCODE:+--load-language=$LANGC
 python3 /mnt/community/odoo-bin shell $OPTS --no-http < /mnt/harness/setup_company.py
 python3 /mnt/community/odoo-bin $OPTS -i $MODS $DEMO_FLAG --stop-after-init
 '
+# (A) warm-PASS cache invalidation: stamp a base epoch so validate-warm.sh's PASS cache
+# (keyed partly on this) is invalidated whenever the base is rebuilt — a new parity pin or
+# module set means a prior PASS no longer proves installability. A nanosecond stamp differs
+# across rebuilds.
+date +%s%N > "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.epoch" 2>/dev/null || true
 echo "[base] '$BASE_DB' ready. Fast validate: validate-warm.sh \"$PROJECT\" [module ...]"
