@@ -6,7 +6,14 @@
 : "${AI_AUTO_HOME:=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
 case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$PATH";; esac
 
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+# R3-3: scrub the GIT_DIR family AND the GIT_CONFIG_* injection family — an inherited
+# core.fsmonitor/core.hooksPath via GIT_CONFIG_COUNT + GIT_CONFIG_KEY_n/VALUE_n is an
+# arbitrary-command-execution vector through every git call this hook makes.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
+      GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
+for _gcv in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
+  [ -n "$_gcv" ] && unset "$_gcv" || true
+done
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "${repo_root}" || exit 0

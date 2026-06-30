@@ -8,6 +8,18 @@ AI_AUTO_HOME="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$PATH";; esac
 export AI_AUTO_HOME PATH
 
+# R3-2: scrub the git env at the TOP of the launcher so EVERY dispatch (gate/verify/doctor/
+# setup) resolves the cwd project, never a repo an inherited GIT_DIR points at. git reads
+# GIT_DIR/GIT_WORK_TREE/... from the env and they OVERRIDE `git -C` discovery; the
+# config-injection family (GIT_CONFIG_COUNT + indexed GIT_CONFIG_KEY_n/VALUE_n, plus
+# GIT_CONFIG_GLOBAL/SYSTEM/NOSYSTEM) can also inject core.hooksPath/fsmonitor (exec vector).
+# Clear all of it once, here, before any git call in any subcommand. (Not `local`: top scope.)
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
+      GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
+for _gcv in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
+  [ -n "$_gcv" ] && unset "$_gcv" || true
+done
+
 # Framework files the OLD copy model used to vendor (MANAGED_PATHS from the deleted
 # install-automation-template.sh, minus scripts/verify.sh [special] and the retired
 # AI_AUTO_TEMPLATE_VERSION marker). scripts/verify.sh is handled separately below.
@@ -53,20 +65,9 @@ USAGE
 
 # ai-auto setup [project_dir] — content-aware de-vendor + hook shims. Idempotent.
 ai_auto_setup() {
-  # F2: git reads GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR (and friends) from
-  # the env and they OVERRIDE `git -C` discovery. A stray GIT_* inherited from a parent
-  # git context (a hook, `git rebase --exec`, husky/lefthook, some IDE terminals) would
-  # make every `git` below resolve/`git rm` the WRONG repo. Clear them before any git call.
-  # R2-3: also clear the config-injection family — GIT_CONFIG_COUNT + the indexed
-  # GIT_CONFIG_KEY_n/GIT_CONFIG_VALUE_n pairs (and GIT_CONFIG_GLOBAL/SYSTEM/NOSYSTEM) —
-  # any of which can inject core.hooksPath and silently redirect where shims land.
-  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
-        GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
-  local _gcv
-  for _gcv in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
-    [ -n "$_gcv" ] && unset "$_gcv" || true
-  done
-
+  # F2/R2-3: the git env (GIT_DIR family + the GIT_CONFIG_* injection family) is scrubbed at
+  # the TOP of this launcher (see R3-2 above), so every `git` below resolves the cwd project
+  # and no inherited core.hooksPath can redirect where shims land.
   local proj="${1:-$PWD}"
   proj="$(cd "$proj" 2>/dev/null && pwd)" || { echo "ai-auto setup: no such directory: ${1:-$PWD}" >&2; return 1; }
 
@@ -77,8 +78,11 @@ ai_auto_setup() {
   # F4: identify an engine checkout by ENGINE-ONLY markers that are NEVER vendored into a
   # project (scripts/verify-machinery.sh AND tools/ai-auto), NOT templates/domain-packs or
   # FRAMEWORK_PATHS members (review-gate.sh) which a legitimate project may carry/author.
+  # R3-1: test EXISTENCE (`-f`), not the exec bit (`-x`) — a tarball/zip/`cp`-without-`-p`/
+  # core.fileMode=false checkout of the engine can lose `tools/ai-auto`'s exec bit while its
+  # CONTENT survives; `-x` would then miss the guard and de-pollute the engine copy.
   if [ "$top" = "$AI_AUTO_HOME" ] \
-     || { [ -f "$top/scripts/verify-machinery.sh" ] && [ -x "$top/tools/ai-auto" ]; }; then
+     || { [ -f "$top/scripts/verify-machinery.sh" ] && [ -f "$top/tools/ai-auto" ]; }; then
     echo "ai-auto setup: ABORT — target ($top) is the AI_AUTO engine repo." >&2
     echo "ai-auto setup: refusing to de-pollute the engine. No changes made." >&2
     return 1
@@ -88,9 +92,13 @@ ai_auto_setup() {
   # the project's .git/ (held for the rest of this run). Degrade gracefully if flock is
   # absent: the atomic `git rm` below is still all-or-nothing, so the worst case is one
   # racer aborting cleanly rather than a half-migrated index.
-  local _lockfile _lockfd
-  _lockfile="$(git -C "$top" rev-parse --git-path ai-auto-setup.lock 2>/dev/null || true)"
-  case "$_lockfile" in "") _lockfile="$top/.git/ai-auto-setup.lock" ;; /*) : ;; *) _lockfile="$top/$_lockfile" ;; esac
+  # R3-5: lock on the COMMON git dir (not the per-worktree --git-path) so two `ai-auto setup`
+  # runs on DIFFERENT worktrees of one repo serialize against the SHARED info/exclude + hooks
+  # they both write. (--git-path ai-auto-setup.lock resolves per-worktree -> no mutual excl.)
+  local _lockfile _lockfd _lockcommon
+  _lockcommon="$(git -C "$top" rev-parse --git-common-dir 2>/dev/null || true)"
+  case "$_lockcommon" in "") _lockcommon="$top/.git" ;; /*) : ;; *) _lockcommon="$top/$_lockcommon" ;; esac
+  _lockfile="$_lockcommon/ai-auto-setup.lock"
   if command -v flock >/dev/null 2>&1; then
     # NOTE: the 2>/dev/null is SCOPED to the group; a bare `exec ... 2>/dev/null` would
     # redirect the whole shell's stderr permanently and swallow every later message.
@@ -142,7 +150,14 @@ ai_auto_setup() {
       cat > "$dst" <<EOF
 #!/usr/bin/env bash
 # AI_AUTO shim — baked engine path (do not edit; re-run 'ai-auto setup' to refresh).
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+# R3-3: scrub the GIT_DIR family AND the GIT_CONFIG_* injection family before running the
+# engine hook — an inherited core.fsmonitor/core.hooksPath via GIT_CONFIG_KEY_*/VALUE_* is
+# an arbitrary-command-execution vector through a shimmed commit.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \\
+      GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM
+for _gcv in "\${!GIT_CONFIG_KEY_@}" "\${!GIT_CONFIG_VALUE_@}"; do
+  [ -n "\$_gcv" ] && unset "\$_gcv" || true
+done
 AI_AUTO_HOME="$baked"
 # F1/R2-1: if the baked engine hook was moved/renamed/reinstalled elsewhere — or the path
 # now exists but is a DIRECTORY (or any non-regular-file) — DO NOT exec it (bash would say
@@ -228,7 +243,7 @@ shift || true
 case "$cmd" in
   gate)   exec "$AI_AUTO_HOME/scripts/review-gate.sh" "$@" ;;
   verify) exec "$AI_AUTO_HOME/scripts/verify.sh" "$@" ;;
-  doctor) exec "$AI_AUTO_HOME/scripts/automation-doctor.sh" --project "$@" ;;
+  doctor) case "${1:-}" in --home|--project) exec "$AI_AUTO_HOME/scripts/automation-doctor.sh" "$@" ;; *) exec "$AI_AUTO_HOME/scripts/automation-doctor.sh" --project "$@" ;; esac ;;
   setup)  ai_auto_setup "$@" ;;
   -h|--help) usage ;;
   "")     usage >&2; exit 1 ;;

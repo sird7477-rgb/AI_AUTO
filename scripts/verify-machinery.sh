@@ -6440,6 +6440,47 @@ echo "[verify] testing verify.sh project-verify seam (C4: present->runs, absent-
   absent_out="$(cd "${tmp_dir}" && AI_AUTO_VERIFY_SCOPE=product bash scripts/verify.sh 2>&1)" || absent_rc=$?
   test "${absent_rc}" -ne 0
   echo "${absent_out}" | grep -q "NOTHING was verified"
+
+  # H1: with NO explicit scope, the engine-aware default in a DERIVED project (no
+  # verify-machinery.sh sibling) must be `product` -> reaches the product/fail-closed seam,
+  # NOT the engine machinery harness (which would exit 127 against the project cwd).
+  printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\nexit 0\n' \
+    > "${tmp_dir}/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/scripts/verify-project.sh"
+  def_out="$(cd "${tmp_dir}" && bash scripts/verify.sh 2>&1)"
+  echo "${def_out}" | grep -q "PROJECT_VERIFY_RAN" \
+    || { echo "[verify] H1: default-scope verify did not reach product seam"; exit 1; }
+  ! echo "${def_out}" | grep -q "verify-machinery" \
+    || { echo "[verify] H1: default-scope verify ran engine machinery in a derived project"; exit 1; }
+  # default-scope ABSENT project hook -> fail-closed exit 1 (the designed loud exit, NOT 127).
+  rm "${tmp_dir}/scripts/verify-project.sh"
+  def_rc=0
+  def_out="$(cd "${tmp_dir}" && bash scripts/verify.sh 2>&1)" || def_rc=$?
+  test "${def_rc}" -eq 1 \
+    || { echo "[verify] H1: default-scope verify not fail-closed exit 1 (got ${def_rc})"; exit 1; }
+  echo "${def_out}" | grep -q "NOTHING was verified" \
+    || { echo "[verify] H1: default-scope verify missing fail-closed message"; exit 1; }
+)
+
+echo "[verify] testing verify.sh H1 engine-aware default scope (self-host -> folds machinery)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  mkdir -p "${tmp_dir}/scripts"
+  cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"; chmod +x "${tmp_dir}/scripts/verify.sh"
+  printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
+    > "${tmp_dir}/scripts/session-lock.sh"
+  # Engine self-host shape: a verify-machinery.sh SIBLING is present AND the engine root
+  # ($AH/..) IS the cwd. The engine-aware default must therefore pick `full` and FOLD the
+  # machinery harness (then product) — the standalone `ai-auto verify` stays whole on the engine.
+  printf '#!/usr/bin/env bash\necho MACHINERY_RAN\n'      > "${tmp_dir}/scripts/verify-machinery.sh"
+  printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\n' > "${tmp_dir}/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/scripts/verify-machinery.sh" "${tmp_dir}/scripts/verify-project.sh"
+  out="$(cd "${tmp_dir}" && bash scripts/verify.sh 2>&1)"
+  echo "${out}" | grep -q "MACHINERY_RAN" \
+    || { echo "[verify] H1: engine self-host default scope did not fold machinery"; exit 1; }
+  echo "${out}" | grep -q "PROJECT_VERIFY_RAN" \
+    || { echo "[verify] H1: engine self-host default scope did not run product"; exit 1; }
 )
 
 # ---------------------------------------------------------------------------
@@ -6747,6 +6788,106 @@ echo "[verify] testing ai-auto setup R2-3 (GIT_CONFIG_* core.hooksPath injection
     || { echo "[verify] R2-3: normal commit ran no engine hook (gate silently inert)"; exit 1; }
 )
 
+echo "[verify] testing ai-auto setup R3-1 (engine copy with exec bit STRIPPED still ABORTS)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # An engine CHECKOUT that kept its CONTENT (verify-machinery.sh + tools/ai-auto present)
+  # but lost tools/ai-auto's exec bit (tarball/zip/`cp` w/o -p/core.fileMode=false). The
+  # self-host guard must key on EXISTENCE (`-f`), not the exec bit (`-x`), so setup ABORTS
+  # and never stages a `git rm` of the engine's framework files.
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts" "${proj}/tools"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > scripts/verify-machinery.sh
+    printf 'x\n' > tools/ai-auto; chmod -x tools/ai-auto       # exec bit DROPPED
+    printf 'PRISTINE FRAMEWORK AGENTS\n' > AGENTS.md            # pristine -> WOULD be rm'd
+    git add -A; git -c core.fileMode=false commit -qm base )
+  test ! -x "${proj}/tools/ai-auto"                            # confirm the precondition
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] R3-1: setup did NOT abort on a non-executable engine copy"; exit 1; }
+  echo "${out}" | grep -q "ABORT — target" \
+    || { echo "[verify] R3-1: missing engine-abort message"; exit 1; }
+  test -z "$(git -C "${proj}" diff --cached --name-only)" \
+    || { echo "[verify] R3-1: engine copy was de-polluted (staged git rm reached)"; exit 1; }
+)
+
+echo "[verify] testing ai-auto R3-2 (dispatch scrubs GIT_* -> gate resolves cwd repo, not GIT_DIR target)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # gate stub reports the repo it resolves; an inherited GIT_DIR must NOT redirect it.
+  printf '#!/usr/bin/env bash\ngit rev-parse --show-toplevel\n' > "${tmp_dir}/eng/scripts/review-gate.sh"
+  chmod +x "${tmp_dir}/eng/scripts/review-gate.sh"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > f; git add -A; git commit -qm base )
+  victim="${tmp_dir}/victim"; mkdir -p "${victim}"
+  ( cd "${victim}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > f; git add -A; git commit -qm base )
+  proj_top="$(cd "${proj}" && git rev-parse --show-toplevel)"
+  out="$(cd "${proj}"; GIT_DIR="${victim}/.git" GIT_WORK_TREE="${victim}" \
+    "${tmp_dir}/eng/tools/ai-auto" gate 2>&1)"
+  test "${out}" = "${proj_top}" \
+    || { echo "[verify] R3-2: gate resolved '${out}', expected cwd repo '${proj_top}' (GIT_DIR hijack)"; exit 1; }
+)
+
+echo "[verify] testing ai-auto R3-3 (GIT_CONFIG_* config-injection scrubbed in shim+hook -> no RCE)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # Make the engine pre-commit perform an INDEX-touching git call (like the real hook's
+  # `git diff --cached`) so an un-scrubbed core.fsmonitor in the env would execute during
+  # the hook. A bare echo hook would never exercise the scrub.
+  printf '#!/usr/bin/env bash\nset -e\ngit diff --cached --name-only >/dev/null\necho PRE_COMMIT_ENGINE_REACHED\n' \
+    > "${tmp_dir}/eng/hooks/pre-commit"; chmod +x "${tmp_dir}/eng/hooks/pre-commit"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  # git hands a hook its inherited environment; a config-injection env therefore reaches the
+  # installed shim. The shim AND the engine hook must scrub GIT_CONFIG_* BEFORE any git call,
+  # so the core.fsmonitor payload never executes. Invoke the shim exactly as git would.
+  ( cd "${proj}"
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0="touch ${tmp_dir}/PWNED" \
+      bash .git/hooks/pre-commit ) >/dev/null
+  test ! -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R3-3: config-injection payload EXECUTED through the shim/hook"; exit 1; }
+  # Control: the SAME env straight into the SAME git call DOES fire -> proves the vector is
+  # live, so the negative assertion above is meaningful (not vacuously green).
+  ( cd "${proj}"
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0="touch ${tmp_dir}/CTRL" \
+      git diff --cached --name-only >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/CTRL" \
+    || { echo "[verify] R3-3: control vector inert — test would not catch a regression"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup R3-5 (lock on the COMMON git dir, shared across worktrees)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  main="${tmp_dir}/main"; mkdir -p "${main}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${main}/AGENTS.md"
+  ( cd "${main}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base
+    git worktree add -q ../wt -b wt >/dev/null 2>&1 )
+  wt="${tmp_dir}/wt"
+  cp "${tmp_dir}/eng/AGENTS.md" "${wt}/AGENTS.md" 2>/dev/null || true
+  # Run setup inside the LINKED worktree; the advisory lock must land in the COMMON git dir
+  # (shared by all worktrees), NOT the per-worktree .git/worktrees/<wt>/ dir, so concurrent
+  # setups on different worktrees serialize against the shared info/exclude + hooks.
+  "${tmp_dir}/eng/tools/ai-auto" setup "${wt}" >/dev/null 2>&1 || true
+  test -f "${main}/.git/ai-auto-setup.lock" \
+    || { echo "[verify] R3-5: lock not on the common git dir (.git/ai-auto-setup.lock)"; exit 1; }
+  ! ls "${main}/.git/worktrees/"*/ai-auto-setup.lock >/dev/null 2>&1 \
+    || { echo "[verify] R3-5: lock landed in a per-worktree dir (no cross-worktree mutual excl.)"; exit 1; }
+)
+
 echo "[verify] testing ai-auto LAUNCHER dispatch + usage exit codes..."
 (
   tmp_dir="$(mktemp -d)"
@@ -6765,6 +6906,10 @@ echo "[verify] testing ai-auto LAUNCHER dispatch + usage exit codes..."
   "${aa}" gate   --x    2>&1 | grep -q "review-gate_DISPATCH --x"
   "${aa}" verify v      2>&1 | grep -q "verify_DISPATCH v"
   "${aa}" doctor        2>&1 | grep -q "automation-doctor_DISPATCH --project"
+  # doctor defaults to --project, but an explicit --home/--project passes through verbatim
+  # (no hardwired --project) so the engine self-check is reachable via the launcher.
+  "${aa}" doctor --home 2>&1 | grep -q "automation-doctor_DISPATCH --home"
+  ! "${aa}" doctor --home 2>&1 | grep -q -- "--project"
 )
 
 echo "[verify] running ai-lab bootstrap check..."

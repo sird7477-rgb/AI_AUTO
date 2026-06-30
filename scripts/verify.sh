@@ -4,7 +4,19 @@ set -euo pipefail
 # Framework siblings resolve via our own dir (symlink-followed) so they are reachable
 # from ANY cwd / PATH / temp-sandbox fixture; project context stays $(pwd).
 AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-AI_AUTO_VERIFY_SCOPE="${AI_AUTO_VERIFY_SCOPE:-full}"
+# H1: ENGINE-AWARE default scope. `full` runs the engine's verify-machinery.sh, which is
+# meaningful ONLY on the engine repo itself; in a DERIVED project it would run against the
+# project cwd and exit 127. So default to `full` ONLY when this IS the engine self-host —
+# mirror the gate's machinery-fold guard (review-gate.sh:506): the engine's own
+# verify-machinery.sh is present AND the engine root ($AH/..) is the current repo.
+# OTHERWISE default to `product` (the fail-closed verify-project.sh seam). Explicit env wins.
+if [ -z "${AI_AUTO_VERIFY_SCOPE:-}" ]; then
+  if [ -f "$AH/verify-machinery.sh" ] && [ "$(dirname "$AH")" -ef "$(pwd)" ]; then
+    AI_AUTO_VERIFY_SCOPE=full
+  else
+    AI_AUTO_VERIFY_SCOPE=product
+  fi
+fi
 
 if [ -f "$AH/docker-config-guard.sh" ]; then
   # shellcheck source=scripts/docker-config-guard.sh

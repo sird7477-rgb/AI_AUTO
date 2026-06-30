@@ -44,3 +44,6 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - R1 blue-A 2c3a8bf: code hardening F1-F6,E,M3 + fixtures (237 pass/1 skip).
 - R1 blue-B e29a5fe: docs truthfulness (ai-auto setup global model).
 - R2 red: dispatched (verify R1 fixes hold + new defects). dry-count target = 2 consecutive.
+- R2 red: safety HIGH 1+MED 3+LOW 2; engine CLEAN; minimality 1 LOW. NOT dry.
+- R2 blue c3b4781: dir-guard, atomic git rm + flock, GIT_CONFIG scrub, marker align + fixtures (237/1 green).
+- R3 red dispatched (3 hunters). dry-count=0; need 2 consecutive dry.
