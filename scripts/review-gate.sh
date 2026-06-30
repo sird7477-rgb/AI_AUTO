@@ -631,6 +631,24 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ]; then
   fi
 fi
 
+# ST-P1-73(C): an INFRA precondition failure -- the gate's own working directory was
+# removed out from under it (a concurrent session pruned this temp/shared worktree) --
+# must NOT be recorded as a false `blocked` verify failure. getcwd() then fails and git
+# emits "fatal: Unable to read current working directory", surfacing as a nonzero
+# verify_status the red-signal branch below would turn into a blocked verdict (which an
+# operator misreads as a code failure and reaches for --no-verify). We corroborate the
+# condition DIRECTLY -- `pwd -P` runs getcwd(3), the same call git failed on -- rather
+# than string-matching verify output, so a real verification failure that merely prints
+# the phrase can never be mis-deferred. A genuinely-unreadable cwd is also one where we
+# cannot reliably WRITE a verdict file, so deferring as retryable (exit 75, no verdict) is
+# the only safe action, mirroring the lock-contention path. Distinct from the ST-P1-69
+# decision not to special-case a 75 FROM verify (that is about lock 75s); this is the
+# gate's own cwd being unreadable, detected independently of verify's exit meaning.
+if [ "${verify_status}" -ne 0 ] && ! pwd -P >/dev/null 2>&1; then
+  echo "[gate] deferred (retryable): this working tree was removed mid-run -- cwd is unreadable (getcwd failed). No verdict recorded -- this is an infrastructure failure, not a verification failure. Re-run from a stable worktree (aiwt)." >&2
+  exit 75
+fi
+
 # Red-signal handling: a failed verify.sh must never silently turn into a proceed.
 # (No special-casing of a 75 from verify here: under the gate, nested verify is re-entrant
 # or shared-tree, so it never legitimately exits 75 from lock contention — any 75 reaching

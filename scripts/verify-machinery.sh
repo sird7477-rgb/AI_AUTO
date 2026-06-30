@@ -4107,6 +4107,49 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   grep -q "approved_by=tester" .omx/state/verify-override.env
 )
 
+echo "[verify] testing review-gate defers (exit 75, no blocked verdict) when its worktree is removed mid-run..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_rg_cwdgone_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_rg_cwdgone_tmp EXIT
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  mkdir -p scripts .omx/review-results
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
+  cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
+  # verify.sh stub: emit the getcwd fatal phrase, then remove the gate's OWN working tree
+  # (simulating a concurrent session pruning this temp/shared worktree) and exit nonzero.
+  # cd / first so the rm does not trip verify's own getcwd; the gate (parent) keeps the
+  # now-removed dir as its cwd, so its next git/pwd call hits the real getcwd failure.
+  printf '#!/usr/bin/env bash\necho "fatal: Unable to read current working directory: No such file or directory" >&2\ncd / && rm -rf "%s"\nexit 1\n' "${target_dir}" > scripts/verify.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho "summarize fixture ran"\n' > scripts/summarize-ai-reviews.sh
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+
+  set +e
+  ./scripts/review-gate.sh > "${tmp_dir}/cwdgone.out" 2>&1
+  rg_status=$?
+  set -e
+  cd "${tmp_dir}"  # leave the now-removed target_dir so the rest of the subshell has a valid cwd
+
+  [ "${rg_status}" -eq 75 ] \
+    || { echo "[verify] cwd-removed gate did not exit 75 (got ${rg_status}):"; cat "${tmp_dir}/cwdgone.out"; exit 1; }
+  grep -qi "retryable" "${tmp_dir}/cwdgone.out" \
+    || { echo "[verify] cwd-removed gate did not surface a retryable defer"; cat "${tmp_dir}/cwdgone.out"; exit 1; }
+  # The infra defer must NOT masquerade as a verification failure: no blocked verdict, and
+  # the AI panel must not have run.
+  if grep -q "blocked verdict written" "${tmp_dir}/cwdgone.out"; then
+    echo "[verify] cwd-removed gate wrongly recorded a blocked verdict"; exit 1
+  fi
+  if grep -q "review fixture ran" "${tmp_dir}/cwdgone.out"; then
+    echo "[verify] cwd-removed gate wrongly ran the AI panel"; exit 1
+  fi
+)
+
 echo "[verify] testing review-gate downstream template-staleness gate..."
 (
   stale_tmp="$(mktemp -d)"

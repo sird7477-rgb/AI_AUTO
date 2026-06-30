@@ -4,6 +4,25 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.30.1
+
+- review-gate cwd-unreadable retryable defer (ST-P1-73(C)): when the gate's own working
+  directory is removed out from under it mid-run (a concurrent session prunes this
+  temp/shared worktree), getcwd() fails and git emits "fatal: Unable to read current
+  working directory", which `review-gate.sh` previously folded into the red-signal branch
+  as a false `blocked` verify failure (an operator then misreads it as a code failure and
+  reaches for --no-verify). The gate now, when verify exits nonzero AND its cwd is
+  unreadable — corroborated DIRECTLY via `pwd -P` (which runs getcwd(3), the exact call
+  git failed on; NOT a string-match of verify output, so a real failure that merely prints
+  the phrase can never be mis-deferred) — defers as retryable (`exit 75`, NO verdict
+  written), mirroring the lock-contention path. A genuine verification failure with a
+  READABLE cwd still blocks, unchanged. Distinct from the ST-P1-69 "no 75-special-casing
+  from verify" decision (that is lock 75s; this is the gate's OWN cwd being unreadable,
+  detected independently of verify's exit meaning). verify-machinery fixture proves
+  cwd-removed-mid-run → exit 75 + no blocked verdict + AI panel not run; the existing
+  verify-failed fixture (readable cwd) proves the block path is unaffected. First slice of
+  the ST-P1-73 multi-part item (A cache / B race / E docker-trap / F asset-skip remain).
+
 ## 2026.06.28.6
 
 - odoo domain-pack WORKFLOW.md serve guidance (ST-P1-71 follow-up): the agent-facing
