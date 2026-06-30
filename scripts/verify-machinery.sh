@@ -6434,5 +6434,151 @@ echo "[verify] testing verify.sh project-verify seam (C4: present->runs, absent-
   echo "${absent_out}" | grep -q "NOTHING was verified"
 )
 
+# ---------------------------------------------------------------------------
+# globalize P6: permanent fixtures for the GLOBAL ai-auto launcher, `ai-auto
+# setup` (self-host guard + content-aware migrate + idempotency), and the
+# baked-path hook shim. Hermetic: a throwaway "fake engine" stands in for the
+# real engine so dispatch/hook bodies are deterministic markers (no docker, no
+# network, no real projects). Pristine framework files live in the fake engine
+# so the content-aware cmp has something to compare against.
+globalize_mk_engine() {  # $1 = engine dir; populates a minimal AI_AUTO engine
+  local e="$1" s
+  mkdir -p "${e}/tools" "${e}/hooks" "${e}/scripts" "${e}/templates/domain-packs" "${e}/docs"
+  cp "${repo_root}/tools/ai-auto" "${e}/tools/ai-auto"; chmod +x "${e}/tools/ai-auto"
+  printf '#!/usr/bin/env bash\necho PRE_COMMIT_ENGINE_REACHED\n'  > "${e}/hooks/pre-commit"
+  printf '#!/usr/bin/env bash\necho POST_COMMIT_ENGINE_REACHED\n' > "${e}/hooks/post-commit"
+  for s in review-gate verify automation-doctor; do
+    printf '#!/usr/bin/env bash\necho %s_DISPATCH "$@"\n' "${s}" > "${e}/scripts/${s}.sh"
+  done
+  chmod +x "${e}/hooks/"* "${e}/scripts/"*
+  printf 'PRISTINE FRAMEWORK AGENTS\n' > "${e}/AGENTS.md"        # pristine vendored copy
+  printf 'PRISTINE FRAMEWORK WORKFLOW\n' > "${e}/docs/WORKFLOW.md"
+}
+
+echo "[verify] testing ai-auto setup SELF-HOST guard (aborts before any mutation)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # (a) path-equality branch against the REAL engine: running setup on the engine
+  # repo itself must ABORT non-zero and leave the engine working tree untouched.
+  before="$(git -C "${repo_root}" status --porcelain)"
+  rc=0; out="$("${repo_root}/tools/ai-auto" setup "${repo_root}" 2>&1)" || rc=$?
+  test "${rc}" -ne 0
+  echo "${out}" | grep -q "ABORT — target"
+  test "$(git -C "${repo_root}" status --porcelain)" = "${before}"
+  # (b) heuristic branch: a DIFFERENT engine setting up a project that merely LOOKS
+  # like an engine (review-gate.sh + templates/domain-packs) must also abort, with
+  # zero staged changes (no git rm reached).
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts" "${proj}/templates/domain-packs"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > scripts/review-gate.sh; printf 'y\n' > templates/domain-packs/keep
+    git add -A; git commit -qm base )
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -ne 0
+  echo "${out}" | grep -q "ABORT — target"
+  test -z "$(git -C "${proj}" diff --cached --name-only)"
+)
+
+echo "[verify] testing ai-auto setup CONTENT-AWARE migrate (pristine rm, customized kept)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  baked="$(readlink -f "${tmp_dir}/eng")"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/docs"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"          # byte-identical pristine -> rm
+  printf 'CUSTOMIZED — local edits\n' > "${proj}/docs/WORKFLOW.md"  # same path, differs -> keep
+  printf 'project readme\n' > "${proj}/README.md"             # normal project file
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)"
+  cd "${proj}"
+  # pristine framework file -> staged for deletion.
+  git diff --cached --name-only --diff-filter=D | grep -qx "AGENTS.md" \
+    || { echo "[verify] ai-auto setup: pristine AGENTS.md not git-rm staged"; exit 1; }
+  # customized framework file -> still tracked, NOT staged, reported as kept.
+  git ls-files --error-unmatch docs/WORKFLOW.md >/dev/null \
+    || { echo "[verify] ai-auto setup: customized WORKFLOW.md wrongly untracked"; exit 1; }
+  git diff --cached --name-only | grep -qx "docs/WORKFLOW.md" \
+    && { echo "[verify] ai-auto setup: customized WORKFLOW.md wrongly staged"; exit 1; }
+  echo "${out}" | grep -q "docs/WORKFLOW.md" \
+    || { echo "[verify] ai-auto setup: kept file not reported"; exit 1; }
+  # .omx/ gitignored via project exclude.
+  grep -Eq '^[.]omx/?$' .git/info/exclude \
+    || { echo "[verify] ai-auto setup: .omx/ not added to exclude"; exit 1; }
+  # ZERO framework files added (setup only removes/keeps; never vendors).
+  test -z "$(git diff --cached --name-only --diff-filter=A)" \
+    || { echo "[verify] ai-auto setup: unexpectedly staged an addition"; exit 1; }
+  test -n "${baked}"
+)
+
+echo "[verify] testing ai-auto BAKED-PATH hook shim (reaches global engine hook)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  baked="$(readlink -f "${tmp_dir}/eng")"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > f; git add -A; git commit -qm base )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  for hook in pre-commit post-commit; do
+    grep -q "AI_AUTO shim" "${proj}/.git/hooks/${hook}" \
+      || { echo "[verify] hook shim: ${hook} is not an AI_AUTO shim"; exit 1; }
+    grep -qF "${baked}" "${proj}/.git/hooks/${hook}" \
+      || { echo "[verify] hook shim: ${hook} does not bake the engine path"; exit 1; }
+  done
+  # With AI_AUTO_HOME unset and a stripped PATH, the baked shim must still resolve
+  # and exec the GLOBAL engine hook body (here a deterministic marker).
+  out="$(cd "${proj}" && env -u AI_AUTO_HOME PATH=/usr/bin:/bin .git/hooks/pre-commit 2>&1)"
+  echo "${out}" | grep -q "PRE_COMMIT_ENGINE_REACHED" \
+    || { echo "[verify] hook shim: pre-commit did not reach the engine hook"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup IDEMPOTENCY (second run mutates nothing)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/docs"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  printf 'project readme\n' > "${proj}/README.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  cd "${proj}"
+  hook_before="$(md5sum .git/hooks/pre-commit)"; excl_before="$(md5sum .git/info/exclude)"
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -eq 0
+  echo "${out}" | grep -q "Nothing to remove" \
+    || { echo "[verify] idempotent setup: second run reported removals"; exit 1; }
+  test -z "$(git diff --cached --name-only --diff-filter=A)"
+  test "$(md5sum .git/hooks/pre-commit)" = "${hook_before}" \
+    || { echo "[verify] idempotent setup: hook shim changed on re-run"; exit 1; }
+  test "$(md5sum .git/info/exclude)" = "${excl_before}" \
+    || { echo "[verify] idempotent setup: exclude changed on re-run"; exit 1; }
+)
+
+echo "[verify] testing ai-auto LAUNCHER dispatch + usage exit codes..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  aa="${tmp_dir}/eng/tools/ai-auto"
+  # usage / exit codes: no-arg -> usage on stderr + exit 1; --help -> stdout + 0;
+  # unknown command -> exit 2.
+  rc=0; out="$("${aa}" 2>&1 1>/dev/null)" || rc=$?
+  test "${rc}" -eq 1; echo "${out}" | grep -q "Usage: ai-auto"
+  rc=0; out="$("${aa}" --help 2>/dev/null)" || rc=$?
+  test "${rc}" -eq 0; echo "${out}" | grep -q "Usage: ai-auto"
+  rc=0; "${aa}" no-such-cmd >/dev/null 2>&1 || rc=$?
+  test "${rc}" -eq 2
+  # subcommands resolve+exec the right engine script (stub markers prove the target).
+  "${aa}" gate   --x    2>&1 | grep -q "review-gate_DISPATCH --x"
+  "${aa}" verify v      2>&1 | grep -q "verify_DISPATCH v"
+  "${aa}" doctor        2>&1 | grep -q "automation-doctor_DISPATCH --project"
+)
+
 echo "[verify] running ai-lab bootstrap check..."
 ./scripts/bootstrap-ai-lab.sh
