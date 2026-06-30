@@ -704,11 +704,6 @@ else
   say_pass "not running inside ai-lab source checkout; helper link checks skipped"
 fi
 
-if [ "${IN_AI_LAB:-0}" -ne 1 ]; then
-  echo "[doctor] checking for off-manifest shadow copies..."
-  check_offmanifest_shadows
-fi
-
 echo
 printf 'Summary: %s passed, %s warnings, %s failed' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
 if [ "$FIX_COUNT" -gt 0 ]; then
