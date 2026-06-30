@@ -811,15 +811,15 @@ REVIEW_STATE_DIR="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
 REVIEW_PROVENANCE_ENV="${REVIEW_STATE_DIR}/approved-provenance.env"
 REVIEW_PROVENANCE_LOG="${REVIEW_STATE_DIR}/approved-provenance.log"
 
-# R5-1: every provenance diff/hash MUST stay inert to a PROJECT-LOCAL `.gitattributes` +
-# `.git/config` diff/filter driver — git's standard code-exec surface (an external-diff
-# `command`, a `textconv`, or a `clean` filter) that env scrubbing CANNOT touch because it
-# lives IN the repo. Neutralize at the call site: --no-ext-diff/--no-textconv on every
-# patch-producing diff, --no-filters on hash-object, plus -c overrides defeating any
-# global/attr/config-driven exec. The red team verified these flags close the RCE.
-review_git() {
-  git -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null --no-pager "$@"
-}
+# R5-1/R6: review_git (the hardened-git wrapper) is single-sourced in scripts/git-harden.sh
+# and sourced here so review-gate.sh, summarize-ai-reviews.sh, and collect-review-context.sh
+# share ONE implementation — no patch-producing call can drift un-hardened. It stays inert to a
+# PROJECT-LOCAL `.gitattributes` + `.git/config` diff/filter driver (git's code-exec surface that
+# env scrubbing CANNOT reach because it lives IN the repo); callers pass --no-ext-diff/--no-textconv
+# on every patch-producing diff and --no-filters on hash-object. Tests that source this block
+# standalone set AI_AUTO_GIT_HARDEN_SH to point at scripts/git-harden.sh.
+# shellcheck source=scripts/git-harden.sh
+. "${AI_AUTO_GIT_HARDEN_SH:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/git-harden.sh}"
 
 # Working-tree-inclusive provenance hash: HEAD commit + staged + unstaged + untracked
 # content. Corrects DR1 (a committed-tree SHA would false-skip unstaged edits). Never

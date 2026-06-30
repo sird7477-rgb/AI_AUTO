@@ -1291,6 +1291,7 @@ echo "[verify] testing Codex fallback uses runtime adapter read-only mode..."
   cp "${repo_root}/scripts/ai-runtime-adapter.sh" scripts/ai-runtime-adapter.sh
   cp "${repo_root}/scripts/run-ai-reviews.sh" scripts/run-ai-reviews.sh
   cp "${repo_root}/scripts/summarize-ai-reviews.sh" scripts/summarize-ai-reviews.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   chmod +x scripts/ai-runtime-adapter.sh
   chmod +x scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
 
@@ -1370,6 +1371,7 @@ echo "[verify] testing review runner honors runtime adapter command overrides...
   cp "${repo_root}/scripts/ai-runtime-adapter.sh" scripts/ai-runtime-adapter.sh
   cp "${repo_root}/scripts/run-ai-reviews.sh" scripts/run-ai-reviews.sh
   cp "${repo_root}/scripts/summarize-ai-reviews.sh" scripts/summarize-ai-reviews.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   chmod +x scripts/ai-runtime-adapter.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
 
   printf '# Claude Review\n\n## Verdict\n\napprove\n' > .omx/review-prompts/claude-review.md
@@ -3964,6 +3966,7 @@ echo "[verify] testing review-gate captures failed verdict drafts before exiting
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
@@ -4023,6 +4026,7 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
@@ -4069,6 +4073,7 @@ echo "[verify] testing review-gate defers (exit 75, no blocked verdict) when its
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
@@ -4112,6 +4117,7 @@ echo "[verify] testing review-gate stale-disabled-reviewer warning..."
   mkdir -p scripts .omx/review-results .omx/reviewer-state
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
@@ -4169,6 +4175,7 @@ echo "[verify] testing review-gate verify-only diff skip..."
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/verify.sh <<-'SH'
 #!/usr/bin/env bash
@@ -4233,6 +4240,7 @@ echo "[verify] testing review-gate code diff keeps external review..."
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/verify.sh <<-'SH'
 #!/usr/bin/env bash
@@ -7066,7 +7074,9 @@ echo "[verify] testing review-gate R5-1 (provenance git calls INERT to project-l
     printf 'changed\n' >> a.txt; printf 'changed\n' >> b.txt       # unstaged edits -> patch diff
     printf 'secret\n' > untr.txt )                                 # untracked -> hash-object
   # shellcheck source=/dev/null
-  ( cd "${proj}"; . "${prov}"; review_provenance_hash >/dev/null 2>&1 || true )
+  # R6: the block sources review_git from scripts/git-harden.sh; point the override at it since
+  # the extracted block has no on-disk path of its own.
+  ( cd "${proj}"; AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh" . "${prov}"; review_provenance_hash >/dev/null 2>&1 || true )
   for marker in EXT TXT CLEAN; do
     test ! -e "${tmp_dir}/${marker}" \
       || { echo "[verify] R5-1: project-local driver EXECUTED (${marker}) through gate provenance (RCE)"; exit 1; }
@@ -7077,6 +7087,59 @@ echo "[verify] testing review-gate R5-1 (provenance git calls INERT to project-l
     git hash-object untr.txt >/dev/null 2>&1 || true )
   { test -e "${tmp_dir}/EXT" && test -e "${tmp_dir}/CLEAN"; } \
     || { echo "[verify] R5-1: control vectors inert — fixture would not catch a regression"; exit 1; }
+)
+
+echo "[verify] testing R6-1 (collect-review-context.sh patch calls INERT to project-local .gitattributes diff/textconv RCE — the gate's FIRST git work, run before any skip)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # review-gate.sh runs collect-review-context.sh UNCONDITIONALLY before the docs-only /
+  # provenance-exact skips, so its patch-producing `git diff` / `git show` / `git diff
+  # --no-index` are an earlier exec surface than the provenance hash. Run the ACTUAL collector
+  # (the child the gate spawns) in a poisoned repo and assert no payload marker is created.
+  collector="${repo_root}/scripts/collect-review-context.sh"
+  test -s "${collector}" || { echo "[verify] R6-1: collector not found"; exit 1; }
+  # single-source: review_git() is DEFINED in exactly one file (scripts/git-harden.sh); the three
+  # consumers SOURCE it, never inline a copy — so a new patch-producing call cannot drift un-hardened.
+  defs="$(grep -rl '^review_git() {' "${repo_root}/scripts" "${repo_root}/hooks" "${repo_root}/tools" 2>/dev/null || true)"
+  test "${defs}" = "${repo_root}/scripts/git-harden.sh" \
+    || { echo "[verify] R6-1: review_git() not single-sourced (defined in: ${defs})"; exit 1; }
+  for src in scripts/review-gate.sh scripts/summarize-ai-reviews.sh scripts/collect-review-context.sh; do
+    grep -q 'git-harden.sh' "${repo_root}/${src}" \
+      || { echo "[verify] R6-1: ${src} does not source git-harden.sh"; exit 1; }
+  done
+  mk_poisoned() {  # $1 = dest dir; builds a repo whose attrs+config exec on any patch diff
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; printf 'hello\n' > b.txt; git add a.txt b.txt; git commit -qm init
+      git config diff.evil.command   "touch ${tmp_dir}/EXT"          # external-diff driver (a.txt)
+      git config diff.evilt.textconv "touch ${tmp_dir}/TXT; cat"     # textconv driver (b.txt, untr.txt)
+      printf 'a.txt diff=evil\nb.txt diff=evilt\nuntr.txt diff=evilt\n' > .gitattributes
+      printf 'changed\n' >> a.txt; printf 'changed\n' >> b.txt       # unstaged edits -> patch diff
+      printf 'secret\n' > untr.txt )                                 # untracked -> diff --no-index
+  }
+  # (1) worktree-diff + untracked-content path (write_diff + tracked_diff_bytes + :1390).
+  proj="${tmp_dir}/proj"; mk_poisoned "${proj}"
+  ( cd "${proj}"; OUT_DIR="${tmp_dir}/rc" INCLUDE_UNTRACKED_CONTENT=1 \
+      bash "${collector}" >/dev/null 2>&1 || true )
+  # (2) clean-tree post-commit path (git show --format= HEAD): commit the edits, re-run.
+  ( cd "${proj}"; git add -A; git commit -qm edits >/dev/null 2>&1 || true )
+  ( cd "${proj}"; OUT_DIR="${tmp_dir}/rc2" bash "${collector}" >/dev/null 2>&1 || true )
+  for marker in EXT TXT; do
+    test ! -e "${tmp_dir}/${marker}" \
+      || { echo "[verify] R6-1: project-local driver EXECUTED (${marker}) through collect-review-context.sh (RCE)"; exit 1; }
+  done
+  # Positive control: a copy with the call-site hardening stripped (review_git -> git, flags
+  # removed) is the PRE-FIX collector; the SAME poisoned repo MUST fire the markers, proving the
+  # negatives above are not vacuously green. (Override the helper path since the copy has no sibling.)
+  ctl="${tmp_dir}/collect-ctl.sh"
+  sed -e 's/ --no-ext-diff --no-textconv//g' -e 's/review_git /git /g' "${collector}" > "${ctl}"
+  proj2="${tmp_dir}/proj2"; mk_poisoned "${proj2}"
+  ( cd "${proj2}"; AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh" \
+      OUT_DIR="${tmp_dir}/rcctl" INCLUDE_UNTRACKED_CONTENT=1 \
+      bash "${ctl}" >/dev/null 2>&1 || true )
+  { test -e "${tmp_dir}/EXT" && test -e "${tmp_dir}/TXT"; } \
+    || { echo "[verify] R6-1: control collector inert — fixture would not catch a regression"; exit 1; }
 )
 
 echo "[verify] testing git-exec-env scrub SINGLE-SOURCE (F1: one list, no four-copy drift; GIT_TRACE/GIT_TEMPLATE_DIR scrubbed)..."
@@ -7112,7 +7175,7 @@ echo "[verify] testing git-exec-env scrub SINGLE-SOURCE (F1: one list, no four-c
     || { echo "[verify] F1: GIT_TRACE*/GIT_TEMPLATE_DIR not scrubbed by git-scrub.sh (got '${out}')"; exit 1; }
 )
 
-echo "[verify] testing pre-commit D2 (DERIVED project gates via verify-project.sh seam, not a pytest no-op)..."
+echo "[verify] testing pre-commit D2/H1 (DERIVED hook: absent verify-project.sh -> warn+ALLOW the onboarding commit; present -> gates)..."
 (
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
@@ -7127,18 +7190,35 @@ echo "[verify] testing pre-commit D2 (DERIVED project gates via verify-project.s
   ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
     git add -A; git commit -qm base )
   "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
-  # (a) WITHOUT scripts/verify-project.sh: pre-commit must FAIL-CLOSED (not a silent pytest no-op).
+  # (a) H1 onboarding: a freshly-adopted project has NO verify-project.sh yet, and `ai-auto setup`
+  # tells the user to make the de-pollution/adoption commit immediately. The HOOK must WARN and
+  # ALLOW (exit 0) — disclosed, NOT a silent pytest no-op (D2's bug) and NOT a fail-close that
+  # blocks the documented first commit.
   rc=0; out="$( cd "${proj}"; bash .git/hooks/pre-commit 2>&1 )" || rc=$?
-  test "${rc}" -ne 0 \
-    || { echo "[verify] D2: derived pre-commit PASSED with no verification (silent no-op)"; exit 1; }
-  echo "${out}" | grep -q "NOTHING was verified" \
-    || { echo "[verify] D2: derived pre-commit did not fail-closed via the verify-project.sh seam"; exit 1; }
-  # (b) WITH an executable verify-project.sh: pre-commit must RUN it (not pytest).
+  test "${rc}" -eq 0 \
+    || { echo "[verify] D2/H1: derived pre-commit blocked the onboarding commit with no verify-project.sh (rc=${rc})"; exit 1; }
+  echo "${out}" | grep -q "scripts/verify-project.sh absent" \
+    || { echo "[verify] D2/H1: hook did not LOUDLY disclose the missing verify-project.sh"; exit 1; }
+  echo "${out}" | grep -q "NOT gated" \
+    || { echo "[verify] D2/H1: hook did not disclose the commit is NOT gated"; exit 1; }
+  ! echo "${out}" | grep -q "NOTHING was verified" \
+    || { echo "[verify] D2/H1: hook still emits the verify.sh fail-closed message (should warn+allow)"; exit 1; }
+  # the setup-printed adoption commit itself must SUCCEED through the installed hook (the H1 bug).
+  ( cd "${proj}"; printf 'x\n' > app.txt; git add app.txt
+    git commit -m 'adopt global AI_AUTO mode: drop vendored framework files' >/dev/null 2>&1 ) \
+    || { echo "[verify] D2/H1: setup-printed adoption commit is BLOCKED by the pre-commit hook"; exit 1; }
+  # (b) WITH an executable PASSING verify-project.sh: the hook must RUN it (gates on it, not pytest).
   printf '#!/usr/bin/env bash\ntouch "%s/PROJECT_VERIFY_RAN"\n' "${tmp_dir}" > "${proj}/scripts/verify-project.sh"
   chmod +x "${proj}/scripts/verify-project.sh"
   ( cd "${proj}"; bash .git/hooks/pre-commit ) >/dev/null 2>&1
   test -e "${tmp_dir}/PROJECT_VERIFY_RAN" \
     || { echo "[verify] D2: derived pre-commit did NOT invoke scripts/verify-project.sh"; exit 1; }
+  # (c) WITH a FAILING verify-project.sh: the hook must BLOCK the commit (fail-closed when present).
+  printf '#!/usr/bin/env bash\nexit 1\n' > "${proj}/scripts/verify-project.sh"
+  chmod +x "${proj}/scripts/verify-project.sh"
+  frc=0; ( cd "${proj}"; bash .git/hooks/pre-commit ) >/dev/null 2>&1 || frc=$?
+  test "${frc}" -ne 0 \
+    || { echo "[verify] D2: derived pre-commit did not block on a FAILING verify-project.sh"; exit 1; }
 )
 
 echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed by aiinit' claim)..."

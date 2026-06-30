@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)"
 SUMMARY_SCRIPT="${REPO_ROOT}/scripts/summarize-ai-reviews.sh"
+# R6: the provenance block now sources review_git from scripts/git-harden.sh via BASH_SOURCE.
+# Cases that source the block STANDALONE (process substitution) have no on-disk path to resolve,
+# so point the wrapper at the real helper. Inherited by every subshell that sources the block.
+export AI_AUTO_GIT_HARDEN_SH="${REPO_ROOT}/scripts/git-harden.sh"
 TMP_ROOT="$(mktemp -d)"
 
 cleanup() {

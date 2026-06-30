@@ -19,6 +19,16 @@ OUT_FILE="${OUT_DIR}/latest-review-context.md"
 
 mkdir -p "${OUT_DIR}"
 
+# R6 (R5-1 completion): the gate runs THIS collector unconditionally BEFORE any skip check
+# (review-gate.sh), so every patch-producing git call here must be inert to a project-local
+# `.gitattributes` + `.git/config` external-diff/textconv/clean driver (an in-repo RCE that env
+# scrubbing cannot reach). review_git is single-sourced in scripts/git-harden.sh; callers add
+# --no-ext-diff/--no-textconv. The name-only/--stat/--quiet/--exit-code calls do NOT exec a
+# driver (verified) and stay as plain git.
+CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=scripts/git-harden.sh
+. "${AI_AUTO_GIT_HARDEN_SH:-${CRC_DIR}/git-harden.sh}"
+
 has_worktree_diff() {
   has_unstaged_diff || has_staged_diff
 }
@@ -73,8 +83,8 @@ is_positive_integer() {
 
 tracked_diff_bytes() {
   {
-    git diff 2>/dev/null || true
-    git diff --cached 2>/dev/null || true
+    review_git diff --no-ext-diff --no-textconv 2>/dev/null || true
+    review_git diff --cached --no-ext-diff --no-textconv 2>/dev/null || true
   } | wc -c | tr -d ' '
 }
 
@@ -144,7 +154,7 @@ write_diff() {
       echo "### Unstaged Diff"
       echo
       echo '```diff'
-      git diff
+      review_git diff --no-ext-diff --no-textconv
       echo '```'
       echo
     fi
@@ -152,7 +162,7 @@ write_diff() {
       echo "### Staged Diff"
       echo
       echo '```diff'
-      git diff --cached
+      review_git diff --cached --no-ext-diff --no-textconv
       echo '```'
       echo
     fi
@@ -163,7 +173,7 @@ write_diff() {
     echo "No working tree diff detected; showing latest commit diff for post-commit review context."
     echo
     echo '```diff'
-    git show --format= --find-renames HEAD
+    review_git show --no-ext-diff --no-textconv --format= --find-renames HEAD
     echo '```'
     echo
     return 0
@@ -1387,7 +1397,7 @@ fi
         echo "# skipped untracked file content: ${file} is ${size} bytes, limit is ${MAX_UNTRACKED_BYTES}"
         continue
       fi
-      git diff --no-index -- /dev/null "$file" || true
+      review_git diff --no-ext-diff --no-textconv --no-index -- /dev/null "$file" || true
     done < <(git ls-files -z --others --exclude-standard)
     echo '```'
   fi

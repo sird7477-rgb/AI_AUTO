@@ -65,8 +65,18 @@ if [ "$AI_AUTO_HOME" -ef "$repo_root" ]; then
   fi
 else
   # DERIVED project: gate via the project's own verification (scripts/verify-project.sh).
-  # Absent -> fail-closed ("NOTHING was verified", exit 1), identical to `ai-auto verify`
-  # (verify.sh product scope) and the gate — never a silent pytest no-op. Fail-closed via set -e.
-  echo "[pre-commit] running project verification (ai-auto verify, product scope)..."
-  AI_AUTO_VERIFY_SCOPE=product "$AI_AUTO_HOME/scripts/verify.sh"
+  # H1 (onboarding): `ai-auto setup` tells the user to make the de-pollution/adoption commit
+  # immediately, but a freshly-adopted project has NO scripts/verify-project.sh yet — fail-closing
+  # the HOOK here would BLOCK that very first documented commit. So when the file is absent the
+  # hook LOUDLY WARNS (disclosed — NOT a silent no-op, which was D2's bug) and ALLOWS the commit;
+  # when present it runs it and gates (fail-closed via set -e). The explicit `ai-auto verify` query
+  # KEEPS its fail-closed exit 1 on absence (verify.sh product scope, unchanged) — a deliberate
+  # query, not a commit gate.
+  if [ -x ./scripts/verify-project.sh ]; then
+    echo "[pre-commit] running project verification (ai-auto verify, product scope)..."
+    AI_AUTO_VERIFY_SCOPE=product "$AI_AUTO_HOME/scripts/verify.sh"
+  else
+    echo "[pre-commit] no project verification defined: scripts/verify-project.sh absent —" >&2
+    echo "[pre-commit] commit NOT gated; add scripts/verify-project.sh to enable commit-time verification." >&2
+  fi
 fi
