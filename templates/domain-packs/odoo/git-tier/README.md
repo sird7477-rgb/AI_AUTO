@@ -11,9 +11,12 @@ onto origin conflict on that one line (`.207` vs `.206`). The answer is always "
 higher version", so this merge driver does exactly that — and **nothing else**.
 
 **Safe by construction:** a hunk is auto-resolved ONLY when both sides are exactly one line
-and both are a `version` key line. Any multi-line hunk, any non-version line, or an
-unparseable version is left as a normal conflict and the driver exits non-zero, so git
-reports the file conflicted for manual resolution. It can never silently drop a code change.
+AND that line is the `version` key and **nothing else** (key + quoted value + optional comma
++ end-of-line). A multi-line hunk, a non-version line, a version line that ALSO carries
+another key (`'version': '..', 'auto_install': False,`), or an unparseable version is left
+as a normal conflict (driver exits non-zero) for manual resolution — it can never silently
+drop a code change. It also merges on a **copy** of the file, so a `git merge-file` error
+never truncates or corrupts the manifest.
 
 Install (per clone):
 

@@ -4,6 +4,44 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.30.6
+
+- odoo ST-P1-73/74 adversarial-review hardening: a 3-reviewer adversarial pass on the
+  same-day .2–.5 work found and this fixes FOUR confirmed HIGH false-skip / data-loss
+  defects (each reproduced, each now regression-fixtured):
+  - validate-warm asset/version skip (F): the "version-line-only" test now requires the
+    changed manifest line to be the version key AND NOTHING ELSE (key+value+optional
+    comma+EOL) — a compact line like `'version': '..', 'depends': [...]` or
+    `'version': '..', 'installable': False` no longer false-skips an install-relevant
+    change; and `static/**/*.xml` / `*.csv` (Odoo can load these as `data`/QWeb) are no
+    longer treated as inert assets.
+  - validate-warm warm-PASS cache (A): an ABSENT base epoch now DISABLES caching instead
+    of substituting the constant `none` (which could carry a hit across a base change for
+    a pre-epoch / unwritable-dir base).
+  - validate-warm orphan trap (E): the run container is removed by EXACT name
+    (`docker rm -f "$RUNC"`) instead of a `--filter name=` SUBSTRING — the substring form
+    matched a concurrent sibling whose pid is a digit-prefix (`...-warmrun-123` vs
+    `...-warmrun-1234`) and force-killed its LIVE validation (a self-inflicted false FAIL).
+  - version merge driver (74): `is_version_line` now requires a version-key-ONLY line, so a
+    version line carrying another key is left as a conflict (was silently dropping the
+    co-located content at exit 0); the driver merges on a COPY and treats a `git merge-file`
+    error (exit 255 — the old `-lt 0` guard was dead) as "leave ours, conflict" instead of
+    truncating the file to empty at exit 0; the clean-merge path is now byte-identical
+    (no command-substitution newline strip); and conflict-flush iteration is empty-array
+    safe under `set -u` on bash ≤ 4.3.
+  - safe-push (B): the retry gate now matches git's OWN rejection strings (`! [rejected]`,
+    `(non-fast-forward)`, `(fetch first)`, "Updates were rejected because") AND only
+    rebases when the remote ref ACTUALLY advanced after fetch — a pre-push hook message
+    containing race-like prose ("please fetch first") can no longer trigger a retry or a
+    local-history rewrite on a non-race.
+  Bounded/accepted (no code change, documented): a cached PASS that predates a manual base
+  drop (truthful evidence, cannot ship a broken module); `sort -V` on inconsistent-length
+  version strings (user error); a real verify failure coinciding with an unreadable cwd
+  downgrading from a recorded `blocked` to exit-75 no-verdict (when the cwd is gone a verdict
+  cannot be written at all, and it is self-healing on re-run, never an auto-merge). No
+  version-string format changes; behaviour-only hardening + expanded verify-machinery
+  fixtures.
+
 ## 2026.06.30.5
 
 - odoo shared-branch push helpers — version merge driver + safe-push (ST-P1-74 + ST-P1-73(B)):

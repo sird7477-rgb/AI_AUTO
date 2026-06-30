@@ -8,10 +8,12 @@
 # rebase-retry of a contended push.
 #
 # SAFE BY CONSTRUCTION: a hunk is auto-resolved ONLY when BOTH sides are exactly one line
-# AND both are a `version` key line. Anything else (multi-line hunk, a non-version line, a
-# version line tangled with other edits) is left as a normal conflict and the driver exits
-# non-zero, so git reports the file as conflicted for manual resolution. It can never
-# silently drop a real code change.
+# AND that line is the `version` key AND NOTHING ELSE (key, quoted value, optional trailing
+# comma, end-of-line). A multi-line hunk, a non-version line, a version line that ALSO
+# carries another key (`'version': '..', 'auto_install': False,`), or an unparseable version
+# is left as a normal conflict and the driver exits non-zero, so git reports the file
+# conflicted for manual resolution. It can never silently drop a real code change. It also
+# operates on a COPY of %A, so a `git merge-file` error never corrupts or truncates the file.
 #
 # Install (per clone):
 #   git config merge.odoo-manifest-version.name "Odoo __manifest__.py version max-merge"
@@ -23,34 +25,41 @@ set -u
 
 O="${1:?merge driver: missing %O}"; A="${2:?merge driver: missing %A}"; B="${3:?missing %B}"
 
-# Pattern for an Odoo manifest version key line, e.g.   'version': '17.0.1.0.207',
-vpat=$'^[[:space:]]*[\x27"]version[\x27"][[:space:]]*:'
-
+# A version line and NOTHING else: e.g.   'version': '17.0.1.0.207',
+vpat=$'^[[:space:]]*[\x27"]version[\x27"][[:space:]]*:[[:space:]]*[\x27"][^\x27"]*[\x27"][[:space:]]*,?[[:space:]]*$'
 is_version_line() { [[ "$1" =~ $vpat ]]; }
-
 version_value() {  # extract the X.Y.Z string from a version line
   printf '%s\n' "$1" | sed -n "s/.*[\"']version[\"'][[:space:]]*:[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p"
 }
 
-# 3-way merge into stdout with labelled conflict markers. Exit 0 == clean.
-merged="$(git merge-file -p -L ours -L base -L theirs "$A" "$O" "$B" 2>/dev/null)"
-mf_status=$?
-if [ "$mf_status" -eq 0 ]; then
-  printf '%s' "$merged" > "$A"
+# Merge on a COPY so a merge-file error cannot corrupt/truncate %A (we then leave %A = ours
+# for the human). `git merge-file` writes the result (or conflict markers) in place and
+# returns 0 (clean), a positive conflict count, or 255 on error.
+tmp="$(mktemp)" || exit 1
+cleanup() { rm -f "$tmp"; }
+trap cleanup EXIT
+cp -- "$A" "$tmp" || exit 1
+
+git merge-file -q -L ours -L base -L theirs "$tmp" "$O" "$B"
+status=$?
+if [ "$status" -eq 0 ]; then
+  cp -- "$tmp" "$A"            # clean merge — byte-exact (no command-substitution newline strip)
   exit 0
 fi
-if [ "$mf_status" -lt 0 ]; then
-  exit 1   # merge-file error — do not touch the file, leave it for the human
+if [ "$status" -lt 0 ] || [ "$status" -gt 128 ]; then
+  exit 1                       # merge-file ERROR (e.g. 255) — leave %A = ours, report conflict
 fi
 
+# status = conflict count (1..128). Resolve version-only hunks; leave everything else.
 out=""; unresolved=0; state=normal
 ours=(); theirs=()
 flush_conflict_verbatim() {
   unresolved=1
   out+='<<<<<<< ours'$'\n'
-  local l; for l in "${ours[@]}"; do out+="$l"$'\n'; done
+  local l
+  for l in ${ours[@]+"${ours[@]}"};  do out+="$l"$'\n'; done
   out+='======='$'\n'
-  for l in "${theirs[@]}"; do out+="$l"$'\n'; done
+  for l in ${theirs[@]+"${theirs[@]}"}; do out+="$l"$'\n'; done
   out+='>>>>>>> theirs'$'\n'
 }
 while IFS= read -r line || [ -n "$line" ]; do
@@ -86,7 +95,7 @@ while IFS= read -r line || [ -n "$line" ]; do
       theirs+=("$line")
       ;;
   esac
-done <<< "$merged"
+done < "$tmp"
 
 printf '%s' "$out" > "$A"
 [ "$unresolved" -eq 0 ]

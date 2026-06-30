@@ -33,10 +33,12 @@ while : ; do
     echo "[safe-push] pushed to ${REMOTE}/${BRANCH} on attempt ${i}."
     exit 0
   fi
-  # Retry ONLY a stale/non-fast-forward rejection. A hook block (validation failure), an
-  # auth error, or any other non-race failure must surface as-is — a rebase would not help
-  # and re-pushing would be wrong.
-  if ! printf '%s' "${out}" | grep -qiE 'non-fast-forward|fetch first|\[rejected\]|tip of your current branch is behind'; then
+  # Retry ONLY a stale/non-fast-forward rejection. Match git's OWN rejection strings
+  # (`! [rejected]`, the `(non-fast-forward)`/`(fetch first)` parenthesised reasons, the
+  # "Updates were rejected because" hint) — case-sensitive and shaped so a pre-push hook's
+  # free-text message (e.g. "please fetch first") cannot false-trigger a retry. A hook block,
+  # an auth error, or any other non-race failure surfaces as-is — a rebase would be wrong.
+  if ! printf '%s' "${out}" | grep -qE '! \[rejected\]|\(non-fast-forward\)|\(fetch first\)|Updates were rejected because'; then
     echo "[safe-push] push failed for a non-race reason (validation block / auth / other) — not retrying." >&2
     exit "${rc}"
   fi
@@ -44,11 +46,21 @@ while : ; do
     echo "[safe-push] still non-fast-forward after ${MAX} attempts; giving up. Re-run safe-push, or rebase + push manually." >&2
     exit 1
   fi
-  echo "[safe-push] non-fast-forward — fetching and rebasing onto ${REMOTE}/${BRANCH} ..."
+  echo "[safe-push] non-fast-forward — fetching ${REMOTE}/${BRANCH} ..."
+  before="$(git rev-parse "${REMOTE}/${BRANCH}" 2>/dev/null || echo none)"
   if ! git fetch "${REMOTE}" "${BRANCH}"; then
     echo "[safe-push] fetch failed — aborting." >&2
     exit 1
   fi
+  after="$(git rev-parse "${REMOTE}/${BRANCH}" 2>/dev/null || echo none)"
+  # Definitive race confirmation: only rewrite local history (rebase) if the remote ref
+  # ACTUALLY advanced. If it did not, the rejection was not a lost race (a stale grep match,
+  # a server-side hook, a protected branch) — never rebase/loop on that.
+  if [ "${before}" = "${after}" ]; then
+    echo "[safe-push] ${REMOTE}/${BRANCH} did not advance — the rejection was not a race; not rebasing. Resolve the push failure above and retry." >&2
+    exit 1
+  fi
+  echo "[safe-push] rebasing onto ${REMOTE}/${BRANCH} (${before:0:7}..${after:0:7}) ..."
   if ! git rebase "${REMOTE}/${BRANCH}"; then
     git rebase --abort 2>/dev/null || true
     echo "[safe-push] rebase hit a conflict the version merge driver could not auto-resolve." >&2

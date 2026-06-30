@@ -52,7 +52,10 @@ manifest_version_only_change() {  # $1=path ; 0 iff the only changed content lin
           [ -n "${up:-}" ] && git -C "$PROJECT" diff "${up}...HEAD" -- "$f" 2>/dev/null; } \
         | grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' || true )"
   [ -n "$d" ] || return 1   # no detectable content change -> be safe, validate
-  printf '%s\n' "$d" | grep -vqE "^[+-][[:space:]]*[\"']version[\"'][[:space:]]*:" && return 1
+  # The whole changed line must be the version key AND NOTHING ELSE (key, quoted value,
+  # optional trailing comma, EOL). A compact line that merely STARTS with 'version' but
+  # also carries e.g. 'depends'/'installable' is install-relevant and must NOT be skipped.
+  printf '%s\n' "$d" | grep -vqE "^[+-][[:space:]]*[\"']version[\"'][[:space:]]*:[[:space:]]*[\"'][^\"']*[\"'][[:space:]]*,?[[:space:]]*$" && return 1
   return 0
 }
 asset_only_noop() {
@@ -66,9 +69,10 @@ asset_only_noop() {
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
-      custom-addons/*/static/*) : ;;                                        # asset -> irrelevant
+      custom-addons/*/static/*.xml|custom-addons/*/static/*.csv) return 1 ;;  # data/QWeb loadable even under static/ -> validate
+      custom-addons/*/static/*) : ;;                                          # true static asset (js/css/img/...) -> irrelevant
       custom-addons/*/__manifest__.py) manifest_version_only_change "$f" || return 1 ;;
-      *) return 1 ;;                                                        # anything else -> relevant
+      *) return 1 ;;                                                          # anything else -> relevant
     esac
   done <<< "$ca"
   return 0
@@ -102,8 +106,13 @@ if [ "${WARM_NO_CACHE:-0}" != "1" ]; then
   done
   if [ "$_eligible" = "1" ]; then
     _chash="$(warm_content_hash "$_modset")"
-    _epoch="$(cat "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.epoch" 2>/dev/null || echo none)"
-    [ -n "$_chash" ] && WARM_CACHE_KEY="$(printf '%s|%s|%s' "$_modset" "$_chash" "$_epoch" | sha256sum | cut -d' ' -f1)"
+    # An ABSENT base epoch means we cannot prove which base the prior PASS was on, so a base
+    # change (new parity / module set) could not invalidate the key. Refuse to cache rather
+    # than substitute a constant — caching stays inert until prepare-base-db.sh stamps an epoch.
+    _epoch="$(cat "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.epoch" 2>/dev/null || true)"
+    if [ -n "$_chash" ] && [ -n "$_epoch" ]; then
+      WARM_CACHE_KEY="$(printf '%s|%s|%s' "$_modset" "$_chash" "$_epoch" | sha256sum | cut -d' ' -f1)"
+    fi
   fi
 fi
 if [ -n "$WARM_CACHE_KEY" ] && [ -f "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" ]; then
@@ -135,16 +144,19 @@ RUNC="${COMPOSE_PROJECT_NAME}-warmrun-$$"
 # removes ONLY this invocation's ephemeral artifacts (its named run container, the clone
 # DB, and the temp log); it deliberately does NOT touch the shared, by-design-persistent
 # `db` container that concurrent sibling validations of this project reuse under the READ
-# lock. Idempotent — safe on the normal path (where --rm/explicit drops already ran).
+# lock. The run container is removed by EXACT name (`docker rm -f "$RUNC"`), never via a
+# `--filter name=` substring — a substring match would catch a sibling whose pid is a
+# digit-prefix of ours (`...-warmrun-123` matching `...-warmrun-1234`) and force-kill its
+# LIVE validation. Idempotent — safe on the normal path (where --rm/explicit drops already ran).
 cleanup_warm() {
-  { docker ps -aq --filter "name=${RUNC}" 2>/dev/null | xargs -r docker rm -f; } >/dev/null 2>&1 || true
+  docker rm -f "$RUNC" >/dev/null 2>&1 || true
   dc exec -T db dropdb -U odoo --if-exists "$CLONE" >/dev/null 2>&1 || true
   [ -n "${LOG:-}" ] && rm -f "$LOG" 2>/dev/null || true
 }
 trap cleanup_warm EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
-{ docker ps -aq --filter "name=${RUNC}" 2>/dev/null | xargs -r docker rm -f; } >/dev/null 2>&1 || true  # clear a stale same-name run container (pid reuse)
+docker rm -f "$RUNC" >/dev/null 2>&1 || true  # clear a stale same-EXACT-name run container (pid reuse); never a substring match
 dc exec -T db createdb -U odoo -T "$BASE_DB" "$CLONE"
 LOG="$(mktemp)"
 set +e

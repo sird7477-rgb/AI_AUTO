@@ -697,11 +697,15 @@ echo "[verify] testing validate-warm asset-only no-op skip classification (ST-P1
   git -c init.defaultBranch=main clone -q "${tmp_dir}/origin.git" "${proj}" 2>/dev/null
   cd "${proj}"
   git config user.email verify@example.invalid; git config user.name Verify
-  mkdir -p custom-addons/mod_a/static/src/js custom-addons/mod_a/views custom-addons/mod_a/models
+  mkdir -p custom-addons/mod_a/static/src/js custom-addons/mod_a/static/src/xml custom-addons/mod_a/views custom-addons/mod_a/models custom-addons/mod_b
   printf "{\n 'name': 'A',\n 'version': '1.0.0',\n 'depends': ['base'],\n}\n" > custom-addons/mod_a/__manifest__.py
   printf "console.log(1)\n" > custom-addons/mod_a/static/src/js/a.js
+  printf "<templates><t/></templates>\n" > custom-addons/mod_a/static/src/xml/tmpl.xml
   printf "<odoo></odoo>\n" > custom-addons/mod_a/views/a_views.xml
   printf "class A: pass\n" > custom-addons/mod_a/models/a.py
+  # mod_b carries a COMPACT manifest line (version key sharing its physical line with
+  # another key) for the multi-key-version-line regression below.
+  printf "{\n'version': '1.0.0', 'depends': ['base'],\n'name': 'B',\n}\n" > custom-addons/mod_b/__manifest__.py
   git add -A; git commit -q -m base; git push -q -u origin main 2>/dev/null
 
   cl() { WARM_CLASSIFY_ONLY=1 bash "${tmp_dir}/harness/validate-warm.sh" "${proj}" "$@" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p'; }
@@ -728,6 +732,13 @@ echo "[verify] testing validate-warm asset-only no-op skip classification (ST-P1
   want validate "explicit module arg never auto-skips" "$(cl mod_a)"; reset_proj
   printf "console.log(6)\n" > custom-addons/mod_a/static/src/js/a.js
   want validate "WARM_NO_ASSET_SKIP=1 override" "$(WARM_NO_ASSET_SKIP=1 cl)"; reset_proj
+  # ADVERSARIAL regressions (post-review hardening, ST-P1-73(F)):
+  # R1-F2 — a data/QWeb-loadable XML under static/ is install-relevant, NOT an asset.
+  printf "<templates><t t-name=\"x\"/></templates>\n" > custom-addons/mod_a/static/src/xml/tmpl.xml
+  want validate "static/**/*.xml is NOT an asset (data/QWeb loadable)" "$(cl)"; reset_proj
+  # R1-F1 — a version line that ALSO carries another key is NOT version-only.
+  sed -i "s/\['base'\]/['base','x']/" custom-addons/mod_b/__manifest__.py
+  want validate "multi-key version line (version+depends) -> validate" "$(cl)"; reset_proj
   # committed-but-unpushed (exercises the up...HEAD scope)
   printf "console.log(7)\n" > custom-addons/mod_a/static/src/js/a.js; git add -A; git commit -q -m "asset bump"
   want skip "committed-unpushed static (up...HEAD)" "$(cl)"
@@ -756,6 +767,7 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   H="${tmp_dir}/harness/validate-warm.sh"
   slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "${proj}")"
   epoch="${tmp_dir}/harness/.warm-base.${slug}.base.epoch"
+  echo EP1 > "${epoch}"   # a base epoch must EXIST for caching to engage (absent epoch disables it)
   cl() { WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p'; }
   want() { [ "$3" = "$1" ] || { echo "[verify] validate-warm cache: ${2} -> got '${3}', expected '${1}'"; exit 1; }; }
 
@@ -767,10 +779,13 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   want validate "content changed -> miss" "$(cl)"
   printf "class A:\n    x = 1\n" > custom-addons/mod_a/models/a.py # revert to the cached content
   want cached "reverted content -> hit again (history-independent)" "$(cl)"
-  date +%s%N > "${epoch}"                                          # base rebuilt -> epoch bump
+  echo EP2 > "${epoch}"                                           # base rebuilt -> epoch bump
   want validate "base epoch bump invalidates cache -> miss" "$(cl)"
-  rm -f "${epoch}"
-  want cached "epoch removed -> back to the cached key (hit)" "$(cl)"
+  echo EP1 > "${epoch}"                                           # restore the primed epoch
+  want cached "epoch restored -> cached key again (hit)" "$(cl)"
+  rm -f "${epoch}"                                                # ABSENT epoch -> caching disabled (R1-F3 hardening)
+  want validate "absent base epoch disables caching (no false hit)" "$(cl)"
+  echo EP1 > "${epoch}"
   want validate "WARM_NO_CACHE=1 bypasses a hit" "$(WARM_NO_CACHE=1 WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p')"
 )
 
@@ -804,6 +819,29 @@ echo "[verify] testing odoo __manifest__.py version merge driver (ST-P1-74)..."
   printf "{\n 'name': 'A',\n 'version': '1.2',\n 'x': 3,\n}\n" > theirs
   cp ours A
   if bash "${drv}" base A theirs; then echo "[verify] version merge: WRONGLY resolved a multi-line hunk"; exit 1; fi
+  # ADVERSARIAL regressions (post-review hardening, ST-P1-74):
+  # R2-F1 — a version line that ALSO carries another key must NOT be auto-resolved (that
+  # would silently drop the co-located content); leave a conflict, preserve both sides.
+  printf "    'version': '1.0.0',\n" > base
+  printf "    'version': '1.0.5',\n" > ours
+  printf "    'version': '1.0.1', 'auto_install': False,\n" > theirs
+  cp ours A
+  if bash "${drv}" base A theirs; then echo "[verify] version merge: resolved a version line carrying another key (data loss)"; exit 1; fi
+  grep -q 'auto_install' A || { echo "[verify] version merge: dropped co-located content on a version line"; exit 1; }
+  # R2-F2 — a git merge-file ERROR (here %O is a directory -> exit 255) must NOT truncate
+  # the file or report success: leave %A = ours intact and exit non-zero.
+  printf "    'version': '1.0.5',\n" > ours; cp ours A; mkdir baseDir
+  if bash "${drv}" baseDir A theirs 2>/dev/null; then echo "[verify] version merge: reported success on a merge-file error"; exit 1; fi
+  cmp -s A ours || { echo "[verify] version merge: corrupted/truncated the file on a merge-file error"; exit 1; }
+  rmdir baseDir
+  # R2-F3 — a CLEAN (non-conflicting) merge must be byte-identical to git's own merge-file
+  # output (no command-substitution trailing-newline strip).
+  printf "{\n 'name':'A',\n 'depends':['base'],\n 'version':'1.0.0',\n}\n" > base
+  printf "{\n 'name':'A',\n 'depends':['base'],\n 'version':'1.0.1',\n}\n" > ours
+  printf "{\n 'name':'BB',\n 'depends':['base'],\n 'version':'1.0.0',\n}\n" > theirs
+  cp ours A; bash "${drv}" base A theirs || { echo "[verify] version merge: clean merge returned nonzero"; exit 1; }
+  cp ours ref; git merge-file -q -L o -L b -L t ref base theirs
+  cmp -s A ref || { echo "[verify] version merge: clean merge not byte-identical to git merge-file"; exit 1; }
   # end-to-end: a real rebase across a version-only divergence auto-resolves to the max
   e2e="${tmp_dir}/e2e"; git -c init.defaultBranch=main init -q "${e2e}"; cd "${e2e}"
   git config user.email verify@example.invalid; git config user.name Verify
@@ -845,6 +883,15 @@ echo "[verify] testing safe-push race auto-rebase-retry + non-race stop (ST-P1-7
   [ "${rc}" -ne 0 ] || { echo "[verify] safe-push: a hook-blocked push wrongly reported success"; exit 1; }
   attempts="$(printf '%s\n' "${out}" | grep -c 'attempt ')"
   [ "${attempts}" -eq 1 ] || { echo "[verify] safe-push: retried a non-race (hook) failure (${attempts} attempts)"; exit 1; }
+  # R2-F4 — a non-race failure whose message CONTAINS race-like prose ("please fetch first")
+  # must STILL not be retried and must NOT rewrite local history (tightened grep + the
+  # "did origin actually advance?" guard).
+  printf '#!/bin/sh\necho "lint: please fetch first and re-run"; exit 1\n' > .git/hooks/pre-push
+  head_before="$(git rev-parse HEAD)"
+  out2="$(SAFE_PUSH_MAX_TRIES=5 SAFE_PUSH_BACKOFF=0 bash "${sp}" origin main 2>&1)"; rc2=$?
+  [ "${rc2}" -ne 0 ] || { echo "[verify] safe-push: a race-prose hook block wrongly reported success"; exit 1; }
+  [ "$(printf '%s\n' "${out2}" | grep -c 'attempt ')" -eq 1 ] || { echo "[verify] safe-push: retried a race-prose non-race failure"; exit 1; }
+  [ "$(git rev-parse HEAD)" = "${head_before}" ] || { echo "[verify] safe-push: rewrote local history on a non-race"; exit 1; }
 )
 
 echo "[verify] testing ai-auto-template-status domain-pack drift surfacing..."
