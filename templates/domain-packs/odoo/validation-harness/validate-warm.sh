@@ -46,10 +46,27 @@ dc exec -T db psql -U odoo -lqt | cut -d'|' -f1 | tr -d ' ' | grep -qx "$BASE_DB
   || { echo "[warm] base DB '$BASE_DB' missing — run prepare-base-db.sh first" >&2; exit 3; }
 
 CLONE="val_$$_$(date +%s%N)"
+RUNC="${COMPOSE_PROJECT_NAME}-warmrun-$$"
+# --rm removes the ephemeral odoo `run` container on a NORMAL finish, but a SIGTERM mid-run
+# (e.g. a 2-min tool timeout on a slow/contended validation) kills `docker compose run`
+# WITHOUT --rm firing -> the odoo container is orphaned and the clone DB leaks. This trap
+# removes ONLY this invocation's ephemeral artifacts (its named run container, the clone
+# DB, and the temp log); it deliberately does NOT touch the shared, by-design-persistent
+# `db` container that concurrent sibling validations of this project reuse under the READ
+# lock. Idempotent — safe on the normal path (where --rm/explicit drops already ran).
+cleanup_warm() {
+  { docker ps -aq --filter "name=${RUNC}" 2>/dev/null | xargs -r docker rm -f; } >/dev/null 2>&1 || true
+  dc exec -T db dropdb -U odoo --if-exists "$CLONE" >/dev/null 2>&1 || true
+  [ -n "${LOG:-}" ] && rm -f "$LOG" 2>/dev/null || true
+}
+trap cleanup_warm EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+{ docker ps -aq --filter "name=${RUNC}" 2>/dev/null | xargs -r docker rm -f; } >/dev/null 2>&1 || true  # clear a stale same-name run container (pid reuse)
 dc exec -T db createdb -U odoo -T "$BASE_DB" "$CLONE"
 LOG="$(mktemp)"
 set +e
-dc run --rm -e VDB="$CLONE" -e MODS="$MODCOMMA" odoo bash -c '
+dc run --rm --name "$RUNC" -e VDB="$CLONE" -e MODS="$MODCOMMA" odoo bash -c '
 set -e
 OPTS="-d $VDB --addons-path=/mnt/community/addons,/mnt/enterprise,/mnt/extra-addons --db_host=db --db_user=odoo --db_password=odoo --log-level=warn"
 python3 /mnt/community/odoo-bin $OPTS -u $MODS --stop-after-init

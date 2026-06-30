@@ -4,6 +4,24 @@ This file records template-level changes by AI_AUTO template version. Review it
 before patching an existing project, then use `ai-auto-template-status` to check
 which files are template-owned, hybrid, or project-owned.
 
+## 2026.06.30.2
+
+- odoo validate-warm orphan-container trap (ST-P1-73(E)): `validation-harness/
+  validate-warm.sh` ran the changed-module check via `docker compose run --rm odoo`,
+  whose `--rm` only fires on a NORMAL container exit. A SIGTERM mid-run (e.g. a 2-min
+  tool timeout on a slow/contended validation) killed the compose client WITHOUT --rm
+  firing, orphaning the odoo container and leaking the clone DB (observed:
+  `h-jw-dev-tmux-w2-…` left running, manual `docker rm` needed). The run container now
+  gets a deterministic `${COMPOSE_PROJECT_NAME}-warmrun-<pid>` name and an EXIT/INT/TERM
+  trap removes ONLY this invocation's ephemeral artifacts — that named run container, the
+  clone DB, and the temp log. It deliberately does NOT tear down the shared,
+  by-design-persistent `db` container that concurrent sibling validations reuse under the
+  harness READ lock (a blanket `compose down` would break them). Idempotent (no-op on the
+  normal path where --rm and the explicit drop already ran); a stale same-name container
+  from pid reuse is cleared before the run. Mechanism verified under a stubbed-docker
+  SIGTERM (exit 143, run container removed, clone dropped, shared db untouched); no live
+  fixture (Docker/WSL runtime). Second slice of ST-P1-73 (A/B/F remain).
+
 ## 2026.06.30.1
 
 - review-gate cwd-unreadable retryable defer (ST-P1-73(C)): when the gate's own working

@@ -143,7 +143,10 @@ on failure**; allow `SKIP_ODOO_VALIDATE=1` for an explicit emergency override.
 > install is quiet for ~tens of seconds to ~2 min between the `[warm] modules:`
 > start line and the `[warm] PASS/FAIL` result line — this is normal, **do not
 > interrupt it**; an interrupted clone DB is a throwaway and self-heals on the
-> next run. A `git fetch` issued mid-validation can show `origin` in a stale
+> next run. If it *is* killed (e.g. a tool timeout sends SIGTERM), `validate-warm.sh`
+> now traps the signal and removes its own ephemeral `…-warmrun-<pid>` odoo container
+> and clone DB — the shared, by-design-persistent `db` container is left running for
+> concurrent sibling validations, so no manual `docker rm` is needed. A `git fetch` issued mid-validation can show `origin` in a stale
 > state; confirm the true push outcome by comparing revisions
 > (`git rev-list --left-right --count @{u}...HEAD`), not by the interim fetch.
 
