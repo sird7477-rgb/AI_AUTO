@@ -185,11 +185,11 @@ else
   suggest "chmod +x ${ROOT}/scripts/*.sh"
 fi
 
-if [ -x "${ROOT}/tools/ai-auto-init" ]; then
-  say_pass "aiinit source helper is executable"
+if [ -x "${ROOT}/tools/ai-auto" ]; then
+  say_pass "ai-auto source helper is executable"
 else
-  say_fail "aiinit source helper is missing or not executable"
-  suggest "chmod +x ${ROOT}/tools/ai-auto-init"
+  say_fail "ai-auto source helper is missing or not executable"
+  suggest "chmod +x ${ROOT}/tools/ai-auto"
 fi
 
 if [ -x "${ROOT}/tools/ai-home" ]; then
@@ -334,9 +334,9 @@ echo "[bootstrap] checking helper links"
 
 if [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   ensure_link "${HOME_DIR}/bin/AI_AUTO" "${ROOT}/tools/ai-home"
-  ensure_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
+  ensure_link "${HOME_DIR}/bin/ai-auto" "${ROOT}/tools/ai-auto"
   ensure_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
-  ensure_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
+  ensure_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto"
   ensure_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   ensure_link "${HOME_DIR}/bin/ai-domain-pack" "${ROOT}/tools/ai-domain-pack"
   ensure_link "${HOME_DIR}/bin/ai-gstack-contract" "${ROOT}/tools/ai-gstack-contract"

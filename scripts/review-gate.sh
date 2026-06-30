@@ -502,7 +502,8 @@ set -e
 # (the AI_AUTO source repo only: verify-machinery.sh is not installed into derived
 # projects), run it too and fold its status into verify_status so a machinery
 # failure takes the same recorded-blocked / override path as any other red verify.
-if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ]; then
+if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
+   && [ -f "$AH/verify-machinery.sh" ] && [ "$(dirname "$AH")" -ef "." ]; then
   if { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
        | grep -Eq '^(scripts/|hooks/)'; then
     echo "[gate] automation scripts changed; running machinery-scope verify..."

@@ -79,7 +79,12 @@ run machinery twice; does NOT drop the env-scrub.
   visible, never a silent green.
 
 ## 6. AGENTS.md (R6; C1 scopes the closure) — resolves D6
-- KEEP a thin PROJECT `AGENTS.md` overlay so every engine read target exists (no crash, no skip).
+- A thin PROJECT `AGENTS.md` overlay is OPTIONAL. The engine read targets degrade gracefully to
+  the global base when the project has no overlay: `collect-review-context.sh` feeds the global
+  base `AGENTS.md` (C1) and `doc-budget.sh` simply matches nothing — no crash, no skip, gate
+  unaffected (verified, defense-r1). `ai-auto setup` therefore does NOT seed a stub when it removes
+  a pristine base (delete > add); base-only is the intended global-mode behavior. A project MAY add
+  its own `AGENTS.md` overlay at any time and it is read alongside the base.
 - **C1 — reviewer-context closure (`collect-review-context.sh` ONLY):** in
   `collect-review-context.sh:187` (the `for file in AGENTS.md …` reference-file collector) ALSO
   read the global base `$AI_AUTO_HOME/AGENTS.md` alongside the project overlay, so reviewer
@@ -104,14 +109,16 @@ passes. Update its verify-machinery tests in lockstep (folded into §2).
 ## 8. ai-auto setup (R4; C2 self-host guard) — resolves D3, fixes F2
 `ai-auto setup` (run in a project, `pwd`=project), ONE idempotent command folding init+migrate:
 0. **C2 SELF-HOST GUARD (FIRST, before any hashing or `git rm`):** ABORT with a clear message if
-   `git rev-parse --show-toplevel` resolves to `$AI_AUTO_HOME`, OR the target tree contains the
-   engine sentinel (`scripts/review-gate.sh` AND `templates/domain-packs/`). NEVER `git rm` inside
-   the engine repo. (Without this, a clean-tree `ai-auto setup` in the home byte-matches every file
-   to its own pristine and `git rm`s the entire engine.)
+   `git rev-parse --show-toplevel` resolves to `$AI_AUTO_HOME`, OR the target tree carries the
+   ENGINE-ONLY markers (`scripts/verify-machinery.sh` AND an executable `tools/ai-auto`) that are
+   never vendored into a project. (F4 fix: the earlier `scripts/review-gate.sh` + `templates/
+   domain-packs/` sentinel false-aborted a legitimate project that vendored review-gate.sh and
+   authored its OWN domain pack; both halves overlap real project content, so they cannot identify
+   an engine checkout.) NEVER `git rm` inside the engine repo.
 1. For each tracked managed framework file, compare bytes to the global pristine in `$AI_AUTO_HOME`:
    byte-match → `git rm` (unmodified vendored copy); differs → LEAVE + REPORT (never delete work).
-2. `AGENTS.md`: pristine (==global base) → remove base, seed a thin overlay stub (§6 read target);
-   customized → keep as-is (it IS the overlay).
+2. `AGENTS.md`: pristine (==global base) → remove base (do NOT seed a stub; the overlay is OPTIONAL,
+   §6 — base-only degrades gracefully); customized → keep as-is (it IS the overlay).
 3. Ensure `.omx/` is gitignored.
 4. Detect domain via existing `ai-project-profile`.
 5. Install thin hook shims (§9).

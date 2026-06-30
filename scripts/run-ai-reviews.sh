@@ -354,12 +354,12 @@ write_external_runner() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The runner always lives at <project>/.omx/external-review/, so its grandparent is the
+# project root (true in self-host AND in a globalized project). The engine scripts are
+# invoked below by ABSOLUTE path baked from the engine home, so a globalized project that
+# carries ZERO scripts/ still resolves them (E: external mode broke on ./scripts/...).
 script_dir="\$(CDPATH= cd -- "\$(dirname -- "\${BASH_SOURCE[0]}")" && pwd)"
-if [ -x "\${script_dir}/../../scripts/run-ai-reviews.sh" ]; then
-  repo_root="\$(CDPATH= cd -- "\${script_dir}/../.." && pwd)"
-else
-  repo_root="$(pwd)"
-fi
+repo_root="\$(CDPATH= cd -- "\${script_dir}/../.." && pwd)"
 cd "\${repo_root}"
 
 : "\${OUT_DIR:=${OUT_DIR}}"
@@ -436,9 +436,9 @@ RUNTIME_ADAPTER_SCRIPT="\${RUNTIME_ADAPTER_SCRIPT}" \\
 RUNTIME_ADAPTER_CLAUDE_COMMAND="\${RUNTIME_ADAPTER_CLAUDE_COMMAND}" \\
 RUNTIME_ADAPTER_AGY_COMMAND="\${RUNTIME_ADAPTER_AGY_COMMAND}" \\
 RUNTIME_ADAPTER_CODEX_COMMAND="\${RUNTIME_ADAPTER_CODEX_COMMAND}" \\
-./scripts/run-ai-reviews.sh
+"${RUN_AI_REVIEWS_SCRIPT_DIR}/run-ai-reviews.sh"
 
-AI_AUTO_PRINCIPAL="\${AI_AUTO_PRINCIPAL}" RESULT_DIR="\${OUT_DIR}" OUT_DIR="\${OUT_DIR}" ./scripts/summarize-ai-reviews.sh
+AI_AUTO_PRINCIPAL="\${AI_AUTO_PRINCIPAL}" RESULT_DIR="\${OUT_DIR}" OUT_DIR="\${OUT_DIR}" "${RUN_AI_REVIEWS_SCRIPT_DIR}/summarize-ai-reviews.sh"
 SCRIPT
 
   chmod +x "${EXTERNAL_RUNNER}"

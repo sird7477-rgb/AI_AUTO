@@ -8,7 +8,7 @@ words such as "none" or "not_applicable" when a field has no applicable content.
 
 Runtime status after the 2026-06-05 lightweighting audit:
 
-- enforce candidates: `review_gate_short_summary`, `template_parity_boundary`,
+- enforce candidates: `review_gate_short_summary`,
   `completion_acceptance_scope`, `diff_scope_classification`.
 - advisory contracts: policies mirrored by report-only review-context audits
   (`completion_pack_routing_policy`, `product_challenge_policy`,
@@ -762,16 +762,6 @@ def registry_scan_boundary(record: dict[str, Any]) -> ContractResult:
     if record.get("mounted_drive_scan"):
         return ContractResult(False, "registry_scan_must_not_mount_scan", {})
     return ContractResult(True, "registry_scan_boundary_ready", {})
-
-
-def template_parity_boundary(record: dict[str, Any]) -> ContractResult:
-    if not record.get("template_owned_change"):
-        return ContractResult(True, "template_parity_not_applicable", {})
-    required = {"template_version_updated", "patch_notes_updated", "template_sync_check"}
-    missing_controls = sorted(field for field in required if not record.get(field))
-    if missing_controls:
-        return ContractResult(False, "template_parity_missing_controls", {"missing": missing_controls})
-    return ContractResult(True, "template_parity_boundary_ready", {})
 
 
 def status_notice_boundary(record: dict[str, Any]) -> ContractResult:

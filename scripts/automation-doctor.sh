@@ -80,7 +80,7 @@ if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
   HOME_READY=1
 fi
 
-if [ -f "${ROOT}/scripts/review-gate.sh" ] && [ -d "${ROOT}/templates/domain-packs" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-gstack-contract" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/feedback-resolve" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ] && [ -x "${ROOT}/tools/micro-work" ]; then
+if [ -f "${ROOT}/scripts/review-gate.sh" ] && [ -d "${ROOT}/templates/domain-packs" ] && [ -x "${ROOT}/tools/ai-auto" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-gstack-contract" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/feedback-resolve" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ] && [ -x "${ROOT}/tools/micro-work" ]; then
   IN_AI_LAB=1
 fi
 
@@ -183,7 +183,7 @@ check_required_file() {
   if [ "${IN_AI_LAB:-0}" -eq 1 ]; then
     suggest "./scripts/automation-doctor.sh --fix"
   else
-    suggest "aiinit"
+    suggest "ai-auto setup"
   fi
 }
 
@@ -735,9 +735,9 @@ echo "[doctor] checking ai-lab helper links"
 
 if [ "${IN_AI_LAB:-0}" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ]; then
   check_helper_link "${HOME_DIR}/bin/AI_AUTO" "${ROOT}/tools/ai-home"
-  check_helper_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
+  check_helper_link "${HOME_DIR}/bin/ai-auto" "${ROOT}/tools/ai-auto"
   check_helper_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
-  check_helper_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
+  check_helper_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto"
   check_helper_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   check_helper_link "${HOME_DIR}/bin/ai-domain-pack" "${ROOT}/tools/ai-domain-pack"
   check_helper_link "${HOME_DIR}/bin/ai-gstack-contract" "${ROOT}/tools/ai-gstack-contract"

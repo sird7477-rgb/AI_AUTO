@@ -23,7 +23,6 @@ This command may create or repair safe helper symlinks under ~/bin:
 
   ~/bin/AI_AUTO
   ~/bin/ai-auto
-  ~/bin/ai-auto-init
   ~/bin/ai-home
   ~/bin/aiinit
   ~/bin/ai-register
@@ -956,7 +955,6 @@ install_tmux_hooks() {
 }
 
 check_source_helper "${ROOT}/tools/ai-auto"
-check_source_helper "${ROOT}/tools/ai-auto-init"
 check_source_helper "${ROOT}/tools/ai-home"
 check_source_helper "${ROOT}/tools/ai-register"
 check_source_helper "${ROOT}/tools/ai-domain-pack"
@@ -1061,9 +1059,8 @@ elif [ ! -d "$HOME_DIR" ]; then
 else
   install_link "${HOME_DIR}/bin/AI_AUTO" "${ROOT}/tools/ai-home"
   install_link "${HOME_DIR}/bin/ai-auto" "${ROOT}/tools/ai-auto"
-  install_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   install_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
-  install_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
+  install_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto"
   install_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
   install_link "${HOME_DIR}/bin/ai-domain-pack" "${ROOT}/tools/ai-domain-pack"
   install_link "${HOME_DIR}/bin/ai-gstack-contract" "${ROOT}/tools/ai-gstack-contract"

@@ -1440,6 +1440,14 @@ SH
   grep -q 'RUNTIME_ADAPTER_CLAUDE_COMMAND="${RUNTIME_ADAPTER_CLAUDE_COMMAND}"' .omx/external-review/run-reviewers-latest.sh
   grep -q 'RUNTIME_ADAPTER_AGY_COMMAND="${RUNTIME_ADAPTER_AGY_COMMAND}"' .omx/external-review/run-reviewers-latest.sh
   grep -q 'RUNTIME_ADAPTER_CODEX_COMMAND="${RUNTIME_ADAPTER_CODEX_COMMAND}"' .omx/external-review/run-reviewers-latest.sh
+  # E (global-mode): the generated external runner must invoke the engine scripts by
+  # ABSOLUTE engine path, never pwd-relative `./scripts/...` (absent in a globalized
+  # zero-framework project). Assert the absolute path is baked and the relative form gone.
+  grep -q "${repo_root}/scripts/run-ai-reviews.sh" .omx/external-review/run-reviewers-latest.sh
+  grep -q "${repo_root}/scripts/summarize-ai-reviews.sh" .omx/external-review/run-reviewers-latest.sh
+  if grep -Eq '(^|[^/])[.]/scripts/(run-ai-reviews|summarize-ai-reviews)\.sh' .omx/external-review/run-reviewers-latest.sh; then
+    echo "[verify] external runner still references pwd-relative ./scripts/*.sh"; exit 1
+  fi
   PATH="${tmp_dir}/bin:${PATH}" \
   CUSTOM_CLAUDE_ARGV_CAPTURE="${tmp_dir}/custom-claude.argv" \
   CUSTOM_CLAUDE_STDIN_CAPTURE="${tmp_dir}/custom-claude.stdin" \
@@ -5829,8 +5837,8 @@ echo "[verify] testing global helper link repair..."
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/AI_AUTO"
-  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
+  # stale aiinit link (old copy-model stub) must be REPOINTED at tools/ai-auto.
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
@@ -5852,9 +5860,9 @@ echo "[verify] testing global helper link repair..."
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
 
   test "$(readlink "${tmp_home}/bin/AI_AUTO")" = "$(pwd)/tools/ai-home"
-  test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-auto")" = "$(pwd)/tools/ai-auto"
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
-  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
@@ -6290,8 +6298,8 @@ echo "[verify] testing global helper symlink-to-directory repair..."
 
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/install-global-files.sh >/dev/null
 
-  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
-  test ! -e "${tmp_home}/old-helper-dir/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto"
+  test ! -e "${tmp_home}/old-helper-dir/ai-auto"
 )
 
 echo "[verify] testing bootstrap --fix global helper repair..."
@@ -6306,8 +6314,8 @@ echo "[verify] testing bootstrap --fix global helper repair..."
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/AI_AUTO"
-  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
+  # stale aiinit link (old copy-model stub) must be REPOINTED at tools/ai-auto.
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
@@ -6329,9 +6337,9 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/bootstrap-ai-lab.sh --fix >/dev/null
 
   test "$(readlink "${tmp_home}/bin/AI_AUTO")" = "$(pwd)/tools/ai-home"
-  test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-auto")" = "$(pwd)/tools/ai-auto"
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
-  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
@@ -6362,8 +6370,8 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
 
   mkdir -p "${tmp_home}/bin" "${tmp_home}/old-checkout/tools"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/AI_AUTO"
-  ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/ai-auto-init"
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
+  # stale aiinit link (old copy-model stub) must be REPOINTED at tools/ai-auto.
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
   ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
@@ -6385,9 +6393,9 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   DOCTOR_SKIP_DIRTY_CHECK=1 HOME="${tmp_home}" PATH="${tmp_home}/bin:${PATH}" ./scripts/automation-doctor.sh --fix >/dev/null
 
   test "$(readlink "${tmp_home}/bin/AI_AUTO")" = "$(pwd)/tools/ai-home"
-  test "$(readlink "${tmp_home}/bin/ai-auto-init")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/ai-auto")" = "$(pwd)/tools/ai-auto"
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
-  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
+  test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
   test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
@@ -6466,18 +6474,113 @@ echo "[verify] testing ai-auto setup SELF-HOST guard (aborts before any mutation
   test "${rc}" -ne 0
   echo "${out}" | grep -q "ABORT — target"
   test "$(git -C "${repo_root}" status --porcelain)" = "${before}"
-  # (b) heuristic branch: a DIFFERENT engine setting up a project that merely LOOKS
-  # like an engine (review-gate.sh + templates/domain-packs) must also abort, with
-  # zero staged changes (no git rm reached).
+  # (b) F4 engine-marker branch: a DIFFERENT checkout carrying the ENGINE-ONLY markers
+  # (scripts/verify-machinery.sh + an executable tools/ai-auto, never vendored into a
+  # project) must also abort, with zero staged changes (no git rm reached).
   globalize_mk_engine "${tmp_dir}/eng"
-  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts" "${proj}/templates/domain-packs"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts" "${proj}/tools"
   ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
-    printf 'x\n' > scripts/review-gate.sh; printf 'y\n' > templates/domain-packs/keep
+    printf 'x\n' > scripts/verify-machinery.sh
+    printf 'x\n' > tools/ai-auto; chmod +x tools/ai-auto
     git add -A; git commit -qm base )
   rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
   test "${rc}" -ne 0
   echo "${out}" | grep -q "ABORT — target"
   test -z "$(git -C "${proj}" diff --cached --name-only)"
+)
+
+echo "[verify] testing ai-auto setup F4 (own domain-packs + vendored review-gate.sh, no engine markers -> PROCEEDS)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # A legitimate project that authored its OWN domain pack AND vendored review-gate.sh must
+  # NOT be false-aborted: it lacks the engine-only markers (verify-machinery.sh + ai-auto),
+  # so setup must PROCEED (de-pollute pristine AGENTS.md + install shims) and leave the
+  # project's own domain pack untouched. (Old review-gate.sh+domain-packs sentinel misfired.)
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts" "${proj}/templates/domain-packs/my-pack"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"               # pristine -> should be rm'd
+  printf 'x\n' > "${proj}/scripts/review-gate.sh"                 # vendored framework name
+  printf 'name: my-pack\n' > "${proj}/templates/domain-packs/my-pack/pack.yaml"  # OWN pack
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -eq 0
+  echo "${out}" | grep -q "project=" \
+    || { echo "[verify] F4: setup wrongly aborted a legitimate project"; exit 1; }
+  git -C "${proj}" diff --cached --name-only --diff-filter=D | grep -qx "AGENTS.md" \
+    || { echo "[verify] F4: setup did not proceed (pristine AGENTS.md not staged for deletion)"; exit 1; }
+  test -f "${proj}/templates/domain-packs/my-pack/pack.yaml" \
+    || { echo "[verify] F4: project's own domain pack was disturbed"; exit 1; }
+  grep -q "AI_AUTO shim" "${proj}/.git/hooks/pre-commit" \
+    || { echo "[verify] F4: hook shim not installed"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup F2 (stray GIT_* must not redirect setup to the WRONG repo)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  # VICTIM repo that an inherited GIT_DIR/GIT_WORK_TREE point at; setup must NOT touch it.
+  victim="${tmp_dir}/victim"; mkdir -p "${victim}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${victim}/AGENTS.md"
+  ( cd "${victim}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  GIT_DIR="${victim}/.git" GIT_WORK_TREE="${victim}" GIT_INDEX_FILE="${victim}/.git/index" \
+    "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
+  git -C "${proj}" diff --cached --name-only --diff-filter=D | grep -qx "AGENTS.md" \
+    || { echo "[verify] F2: NAMED project was not migrated (stray GIT_* hijacked the repo)"; exit 1; }
+  test -z "$(git -C "${victim}" diff --cached --name-only)" \
+    || { echo "[verify] F2: VICTIM repo (GIT_DIR target) was mutated"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup F3 (staged non-deletion index -> ABORT, nothing mutated)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"              # pristine -> WOULD be rm'd
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add AGENTS.md; git commit -qm base
+    printf 'staged work in progress\n' > wip.txt; git add wip.txt )   # dirty staged ADD
+  before="$(git -C "${proj}" status --porcelain)"
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -ne 0
+  echo "${out}" | grep -q "staged changes" \
+    || { echo "[verify] F3: dirty-index abort message missing"; exit 1; }
+  test ! -e "${proj}/.git/hooks/pre-commit" \
+    || { echo "[verify] F3: hook shim installed despite dirty-index abort"; exit 1; }
+  git -C "${proj}" ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 \
+    || { echo "[verify] F3: AGENTS.md was removed despite abort"; exit 1; }
+  test "$(git -C "${proj}" status --porcelain)" = "${before}" \
+    || { echo "[verify] F3: working tree changed despite abort"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup F6 (symlinked managed file is kept, not git-rm'd)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  # external file holding the pristine bytes; AGENTS.md is a SYMLINK to it (mode 120000).
+  # cmp -s would FOLLOW the link and match pristine -> must still be KEPT (type differs).
+  printf 'PRISTINE FRAMEWORK AGENTS\n' > "${tmp_dir}/external-agents"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    ln -s "${tmp_dir}/external-agents" AGENTS.md
+    git add -A; git commit -qm base )
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -eq 0
+  git -C "${proj}" ls-files --error-unmatch AGENTS.md >/dev/null \
+    || { echo "[verify] F6: symlinked AGENTS.md wrongly removed"; exit 1; }
+  git -C "${proj}" diff --cached --name-only --diff-filter=D | grep -qx "AGENTS.md" \
+    && { echo "[verify] F6: symlinked AGENTS.md staged for deletion (cmp followed symlink)"; exit 1; }
+  echo "${out}" | grep -q "symlink — left untouched" \
+    || { echo "[verify] F6: symlink not reported as kept"; exit 1; }
 )
 
 echo "[verify] testing ai-auto setup CONTENT-AWARE migrate (pristine rm, customized kept)..."

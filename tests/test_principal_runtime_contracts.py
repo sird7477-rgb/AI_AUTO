@@ -681,7 +681,11 @@ def test_review_runner_records_principal_and_self_review_guards() -> None:
     assert "Reviewer runtimes: ${PRINCIPAL_REVIEWERS}" in text
     assert 'if ! ACTIVE_PRINCIPAL="$(normalize_principal_runtime)"; then' in text
     assert "principal_unavailable" in text
-    assert 'AI_AUTO_PRINCIPAL="\\${AI_AUTO_PRINCIPAL}" RESULT_DIR="\\${OUT_DIR}" OUT_DIR="\\${OUT_DIR}" ./scripts/summarize-ai-reviews.sh' in text
+    # E (global mode): the generated external runner invokes the engine scripts by ABSOLUTE
+    # engine path (baked from ${RUN_AI_REVIEWS_SCRIPT_DIR}), never pwd-relative ./scripts/...
+    # which is absent in a globalized zero-framework project.
+    assert 'AI_AUTO_PRINCIPAL="\\${AI_AUTO_PRINCIPAL}" RESULT_DIR="\\${OUT_DIR}" OUT_DIR="\\${OUT_DIR}" "${RUN_AI_REVIEWS_SCRIPT_DIR}/summarize-ai-reviews.sh"' in text
+    assert '"${RUN_AI_REVIEWS_SCRIPT_DIR}/run-ai-reviews.sh"' in text
     assert 'if [ "${ACTIVE_PRINCIPAL}" = "claude" ]; then' in text
     assert 'if [ "${ACTIVE_PRINCIPAL}" = "gemini" ]; then' in text
     assert "principal_rotation" in text

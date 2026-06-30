@@ -31,7 +31,6 @@ from scripts.self_demo_contracts import (
     self_demo_record,
     startup_preflight_boundary,
     status_notice_boundary,
-    template_parity_boundary,
     todo_report_reconciliation,
     tool_adoption_status_policy,
     untracked_artifact_review_guard,
@@ -534,20 +533,6 @@ def test_registry_scan_boundary_keeps_startup_scans_bounded() -> None:
     )
     assert registry_scan_boundary({**valid, "current_repo_scope": False, "registry_scope": False}).reason == (
         "registry_scan_needs_bounded_scope"
-    )
-
-
-def test_template_parity_boundary_requires_version_and_patch_notes_for_template_owned_changes() -> None:
-    assert template_parity_boundary({"template_owned_change": False}).accepted
-    valid = {
-        "template_owned_change": True,
-        "template_version_updated": True,
-        "patch_notes_updated": True,
-        "template_sync_check": True,
-    }
-    assert template_parity_boundary(valid).accepted
-    assert template_parity_boundary({**valid, "patch_notes_updated": False}).reason == (
-        "template_parity_missing_controls"
     )
 
 

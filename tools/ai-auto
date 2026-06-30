@@ -53,6 +53,12 @@ USAGE
 
 # ai-auto setup [project_dir] — content-aware de-vendor + hook shims. Idempotent.
 ai_auto_setup() {
+  # F2: git reads GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR (and friends) from
+  # the env and they OVERRIDE `git -C` discovery. A stray GIT_* inherited from a parent
+  # git context (a hook, `git rebase --exec`, husky/lefthook, some IDE terminals) would
+  # make every `git` below resolve/`git rm` the WRONG repo. Clear them before any git call.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+
   local proj="${1:-$PWD}"
   proj="$(cd "$proj" 2>/dev/null && pwd)" || { echo "ai-auto setup: no such directory: ${1:-$PWD}" >&2; return 1; }
 
@@ -60,38 +66,31 @@ ai_auto_setup() {
   local top
   top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)" \
     || { echo "ai-auto setup: $proj is not inside a git repository." >&2; return 1; }
+  # F4: identify an engine checkout by ENGINE-ONLY markers that are NEVER vendored into a
+  # project (scripts/verify-machinery.sh AND tools/ai-auto), NOT templates/domain-packs or
+  # FRAMEWORK_PATHS members (review-gate.sh) which a legitimate project may carry/author.
   if [ "$top" = "$AI_AUTO_HOME" ] \
-     || { [ -f "$top/scripts/review-gate.sh" ] && [ -d "$top/templates/domain-packs" ]; }; then
+     || { [ -f "$top/scripts/verify-machinery.sh" ] && [ -x "$top/tools/ai-auto" ]; }; then
     echo "ai-auto setup: ABORT — target ($top) is the AI_AUTO engine repo." >&2
     echo "ai-auto setup: refusing to de-pollute the engine. No changes made." >&2
     return 1
   fi
+
+  # F3: DIRTY-INDEX PRE-CHECK — per-file `git rm` under set -e can half-migrate if a
+  # managed file has STAGED index content (git rm refuses an index entry that differs from
+  # both HEAD and the worktree). Refuse to mutate, BEFORE touching anything, if the index
+  # holds any staged ADD/MODIFY/RENAME. (Staged deletions are setup's own footprint from a
+  # prior run, so an idempotent re-run is still allowed.)
+  if git -C "$top" diff --cached --name-status 2>/dev/null | grep -qvE '^D'; then
+    echo "ai-auto setup: ABORT — the git index has staged changes (non-deletions)." >&2
+    echo "ai-auto setup: commit or stash them first, then re-run. No changes made." >&2
+    return 1
+  fi
   echo "ai-auto setup: project=$top  engine=$AI_AUTO_HOME"
 
-  # (b) CONTENT-AWARE de-pollution: pristine vendored copy -> git rm; differs (or no
-  # global pristine) -> LEAVE + report. NEVER delete a differing file.
-  local removed=() kept=() f pristine
-  for f in "${FRAMEWORK_PATHS[@]}"; do
-    git -C "$top" ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
-    pristine="$AI_AUTO_HOME/$f"
-    if [ -f "$pristine" ] && cmp -s "$top/$f" "$pristine"; then
-      git -C "$top" rm --quiet "$f"
-      removed+=("$f")
-    else
-      kept+=("$f")
-    fi
-  done
-  # scripts/verify.sh is special: identical to engine default -> safe pristine, git rm;
-  # differs -> LEAVE (human converts it to scripts/verify-project.sh), just note it.
-  if git -C "$top" ls-files --error-unmatch scripts/verify.sh >/dev/null 2>&1; then
-    if [ -f "$AI_AUTO_HOME/scripts/verify.sh" ] && cmp -s "$top/scripts/verify.sh" "$AI_AUTO_HOME/scripts/verify.sh"; then
-      git -C "$top" rm --quiet scripts/verify.sh
-      removed+=("scripts/verify.sh")
-    else
-      kept+=("scripts/verify.sh (customized — convert to scripts/verify-project.sh by hand)")
-    fi
-  fi
-
+  # F5: install the SAFE steps (.omx gitignore + hook shims) BEFORE the destructive
+  # `git rm` de-pollution, so a late failure can never leave staged deletions with no
+  # hooks installed.
   # (c) ensure .omx/ is gitignored via the project's exclude file.
   local exclude_file
   exclude_file="$(git -C "$top" rev-parse --git-path info/exclude 2>/dev/null || true)"
@@ -122,6 +121,12 @@ ai_auto_setup() {
 # AI_AUTO shim — baked engine path (do not edit; re-run 'ai-auto setup' to refresh).
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
 AI_AUTO_HOME="$baked"
+# F1: if the baked engine hook was moved/renamed/reinstalled elsewhere, DO NOT exec a
+# dead path (bash would exit 127 and ABORT the user's commit). Warn loudly + exit 0.
+if [ ! -x "\$AI_AUTO_HOME/hooks/$hook" ]; then
+  printf '[$hook] WARNING: AI_AUTO engine hook missing (%s); re-run '\''ai-auto setup'\''. NOT blocking commit.\n' "\$AI_AUTO_HOME/hooks/$hook" >&2
+  exit 0
+fi
 PATH="\$AI_AUTO_HOME/scripts:\$PATH"
 exec "\$AI_AUTO_HOME/hooks/$hook" "\$@"
 EOF
@@ -132,6 +137,37 @@ EOF
   # (e) domain detect (advisory machine-local; no-op if not applicable).
   if command -v ai-project-profile >/dev/null 2>&1; then
     ai-project-profile write "$top" >/dev/null 2>&1 || true
+  fi
+
+  # (b) CONTENT-AWARE de-pollution (LAST — the only destructive step; see F5): pristine
+  # vendored copy -> git rm; differs (or no global pristine, or a symlink) -> LEAVE +
+  # report. NEVER delete a differing/symlinked file.
+  local removed=() kept=() f pristine
+  for f in "${FRAMEWORK_PATHS[@]}"; do
+    git -C "$top" ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
+    # F6: cmp follows symlinks and ignores file type/mode; a deliberately-symlinked
+    # managed path whose target bytes equal pristine would be wrongly git-rm'd. Skip
+    # non-regular tracked entries and keep them.
+    if [ -L "$top/$f" ]; then kept+=("$f (symlink — left untouched)"); continue; fi
+    pristine="$AI_AUTO_HOME/$f"
+    if [ -f "$pristine" ] && cmp -s "$top/$f" "$pristine"; then
+      git -C "$top" rm --quiet "$f"
+      removed+=("$f")
+    else
+      kept+=("$f")
+    fi
+  done
+  # scripts/verify.sh is special: identical to engine default -> safe pristine, git rm;
+  # differs (or symlinked) -> LEAVE (human converts it to scripts/verify-project.sh).
+  if git -C "$top" ls-files --error-unmatch scripts/verify.sh >/dev/null 2>&1; then
+    if [ -L "$top/scripts/verify.sh" ]; then
+      kept+=("scripts/verify.sh (symlink — left untouched)")
+    elif [ -f "$AI_AUTO_HOME/scripts/verify.sh" ] && cmp -s "$top/scripts/verify.sh" "$AI_AUTO_HOME/scripts/verify.sh"; then
+      git -C "$top" rm --quiet scripts/verify.sh
+      removed+=("scripts/verify.sh")
+    else
+      kept+=("scripts/verify.sh (customized — convert to scripts/verify-project.sh by hand)")
+    fi
   fi
 
   # (f) report; do NOT auto-commit. The git rm's are already staged.
