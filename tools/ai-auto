@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ai-auto — GLOBAL launcher. Operates ON the PROJECT in $PWD; the engine repo root
+# (AI_AUTO_HOME) is this launcher's own grandparent (tools/ is directly under it).
+# §4 self-heal guard: resolution never depends on a sourced profile (IDE/git/cron/CI).
+AI_AUTO_HOME="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$PATH";; esac
+export AI_AUTO_HOME PATH
+
+# Framework files the OLD copy model used to vendor (MANAGED_PATHS from the deleted
+# install-automation-template.sh, minus scripts/verify.sh [special] and the retired
+# AI_AUTO_TEMPLATE_VERSION marker). scripts/verify.sh is handled separately below.
+FRAMEWORK_PATHS=(
+  "AGENTS.md"
+  "docs/CHROME_CDP_ACCESS.md" "docs/AI_AUTOMATION_TREND_HARDENING.md"
+  "docs/research/AI_AUTOMATION_TRENDS.md" "docs/AI_RUNTIME_ADAPTERS.md"
+  "docs/AI_PRINCIPAL_RUNTIMES.md" "docs/AI_MODEL_ROUTING.md"
+  "docs/AUTOMATION_OPERATING_POLICY.md" "docs/DATA_COMPLETION.md"
+  "docs/DEPLOYMENT_COMPLETION.md" "docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
+  "docs/DOMAIN_PACKS.md" "docs/INTERVIEW_PLAN_LAYER.md" "docs/INCIDENT_OPS.md"
+  "docs/OBSERVABILITY_COMPLETION.md" "docs/OBSIDIAN_INTEGRATION.md"
+  "docs/PATCH_NOTES.md" "docs/PERFORMANCE_COMPLETION.md"
+  "docs/PLANNING_VISUALIZATION_GUIDE.md" "docs/SECURITY_COMPLETION.md"
+  "docs/SESSION_QUALITY_PLAN.md" "docs/UI_COMPLETION.md" "docs/WORKFLOW.md"
+  "scripts/archive-omx-artifacts.sh" "scripts/ai-principal-runtime.sh"
+  "scripts/ai-runtime-adapter.sh" "scripts/automation-doctor.sh"
+  "scripts/audit-obsidian-vault.py" "scripts/benchmark-command.py"
+  "scripts/capture-knowledge-drafts.py" "scripts/collect-odoo-docs-kb.py"
+  "scripts/collect-review-context.sh" "scripts/docker-config-guard.sh"
+  "scripts/doc-budget.sh" "scripts/guidance-duplicate-report.sh"
+  "scripts/discover-ai-models.sh" "scripts/knowledge-notes.py"
+  "scripts/make-review-prompts.sh" "scripts/record-feedback.sh"
+  "scripts/record-project-memory.sh" "scripts/resolve-feedback.sh"
+  "scripts/validate-odoo-docs-kb.py" "scripts/run-ai-reviews.sh"
+  "scripts/summarize-ai-reviews.sh" "scripts/test-review-summary.sh"
+  "scripts/todo-report.py" "scripts/review-gate.sh"
+  "scripts/write-session-checkpoint.sh"
+)
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-auto <command> [args]
+
+Commands operate on the project in the current directory ($PWD):
+  setup [dir]   adopt global AI_AUTO mode: de-pollute vendored framework files +
+                install baked-path hook shims (de-pollutes an already-patched project)
+  gate          run the review gate         (review-gate.sh)
+  verify        run verification            (verify.sh)
+  doctor        diagnose the project        (automation-doctor.sh --project)
+USAGE
+}
+
+# ai-auto setup [project_dir] — content-aware de-vendor + hook shims. Idempotent.
+ai_auto_setup() {
+  local proj="${1:-$PWD}"
+  proj="$(cd "$proj" 2>/dev/null && pwd)" || { echo "ai-auto setup: no such directory: ${1:-$PWD}" >&2; return 1; }
+
+  # (a) SELF-HOST GUARD FIRST — before ANY mutation. Never mutate the engine.
+  local top
+  top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)" \
+    || { echo "ai-auto setup: $proj is not inside a git repository." >&2; return 1; }
+  if [ "$top" = "$AI_AUTO_HOME" ] \
+     || { [ -f "$top/scripts/review-gate.sh" ] && [ -d "$top/templates/domain-packs" ]; }; then
+    echo "ai-auto setup: ABORT — target ($top) is the AI_AUTO engine repo." >&2
+    echo "ai-auto setup: refusing to de-pollute the engine. No changes made." >&2
+    return 1
+  fi
+  echo "ai-auto setup: project=$top  engine=$AI_AUTO_HOME"
+
+  # (b) CONTENT-AWARE de-pollution: pristine vendored copy -> git rm; differs (or no
+  # global pristine) -> LEAVE + report. NEVER delete a differing file.
+  local removed=() kept=() f pristine
+  for f in "${FRAMEWORK_PATHS[@]}"; do
+    git -C "$top" ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
+    pristine="$AI_AUTO_HOME/$f"
+    if [ -f "$pristine" ] && cmp -s "$top/$f" "$pristine"; then
+      git -C "$top" rm --quiet "$f"
+      removed+=("$f")
+    else
+      kept+=("$f")
+    fi
+  done
+  # scripts/verify.sh is special: identical to engine default -> safe pristine, git rm;
+  # differs -> LEAVE (human converts it to scripts/verify-project.sh), just note it.
+  if git -C "$top" ls-files --error-unmatch scripts/verify.sh >/dev/null 2>&1; then
+    if [ -f "$AI_AUTO_HOME/scripts/verify.sh" ] && cmp -s "$top/scripts/verify.sh" "$AI_AUTO_HOME/scripts/verify.sh"; then
+      git -C "$top" rm --quiet scripts/verify.sh
+      removed+=("scripts/verify.sh")
+    else
+      kept+=("scripts/verify.sh (customized — convert to scripts/verify-project.sh by hand)")
+    fi
+  fi
+
+  # (c) ensure .omx/ is gitignored via the project's exclude file.
+  local exclude_file
+  exclude_file="$(git -C "$top" rev-parse --git-path info/exclude 2>/dev/null || true)"
+  case "$exclude_file" in
+    "") exclude_file="$top/.git/info/exclude" ;;
+    /*) : ;;
+    *)  exclude_file="$top/$exclude_file" ;;
+  esac
+  mkdir -p "$(dirname "$exclude_file")"
+  grep -Eq '^[.]omx/?$' "$exclude_file" 2>/dev/null || printf '\n.omx/\n' >> "$exclude_file"
+
+  # (d) install THIN hook shims with the engine path BAKED at setup time (readlink -f).
+  # Fail-closed: never clobber a pre-existing NON-shim hook.
+  local hooks_dir baked hook dst
+  hooks_dir="$(git -C "$top" rev-parse --git-path hooks 2>/dev/null || true)"
+  case "$hooks_dir" in /*) : ;; *) hooks_dir="$top/$hooks_dir" ;; esac
+  baked="$(readlink -f "$AI_AUTO_HOME")"
+  if [ -n "$hooks_dir" ]; then
+    mkdir -p "$hooks_dir"
+    for hook in pre-commit post-commit; do
+      dst="$hooks_dir/$hook"
+      if [ -e "$dst" ] && ! grep -q 'AI_AUTO shim' "$dst" 2>/dev/null; then
+        echo "ai-auto setup: WARNING existing custom $hook left untouched: $dst (merge manually)" >&2
+        continue
+      fi
+      cat > "$dst" <<EOF
+#!/usr/bin/env bash
+# AI_AUTO shim — baked engine path (do not edit; re-run 'ai-auto setup' to refresh).
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+AI_AUTO_HOME="$baked"
+PATH="\$AI_AUTO_HOME/scripts:\$PATH"
+exec "\$AI_AUTO_HOME/hooks/$hook" "\$@"
+EOF
+      chmod +x "$dst"
+    done
+  fi
+
+  # (e) domain detect (advisory machine-local; no-op if not applicable).
+  if command -v ai-project-profile >/dev/null 2>&1; then
+    ai-project-profile write "$top" >/dev/null 2>&1 || true
+  fi
+
+  # (f) report; do NOT auto-commit. The git rm's are already staged.
+  echo
+  echo "Removed (pristine vendored copies, STAGED for deletion): ${#removed[@]}"
+  ((${#removed[@]})) && printf '  - %s\n' "${removed[@]}"
+  echo "Kept (customized — review): ${#kept[@]}"
+  ((${#kept[@]})) && printf '  ~ %s\n' "${kept[@]}"
+  echo
+  echo "Hook shims (baked engine $baked) in: $hooks_dir"
+  if ((${#removed[@]})); then
+    echo "Review, then commit the de-pollution:"
+    echo "  git -C \"$top\" commit -m 'adopt global AI_AUTO mode: drop vendored framework files'"
+  else
+    echo "Nothing to remove (already migrated); hooks + .omx gitignore re-asserted. exit 0"
+  fi
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  gate)   exec "$AI_AUTO_HOME/scripts/review-gate.sh" "$@" ;;
+  verify) exec "$AI_AUTO_HOME/scripts/verify.sh" "$@" ;;
+  doctor) exec "$AI_AUTO_HOME/scripts/automation-doctor.sh" --project "$@" ;;
+  setup)  ai_auto_setup "$@" ;;
+  -h|--help) usage ;;
+  "")     usage >&2; exit 1 ;;
+  *)      echo "ai-auto: unknown command: $cmd" >&2; usage >&2; exit 2 ;;
+esac

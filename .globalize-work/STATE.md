@@ -28,3 +28,12 @@ Conditions folded into IMPL hard gates: (a) grep-to-zero for every deleted ident
 redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:697, test_model_routing_lanes:31/91/101/230/292, automation-doctor:58/67, install-global-files:577/773 dead path, doc-scrub misses).
 
 ## S2 IMPLEMENT — dispatched P1 (delete copy-model + complete ripple)
+
+## S2 IMPLEMENT — progress (each phase committed, suite green gate)
+- P1 eb21263: delete copy-model + ripple (grep-to-zero; 238 pass)
+- P2 2a171df: self-dir sibling resolution + AI_AUTO_HOME/PATH export (smoke proven)
+- P2.5 5179df6: GREEN baseline — fixed 5 P1 regressions, doc'd 2 pre-existing (BASELINE.md)
+- P3 5df204b: verify seam (global verify.sh -> optional project verify-project.sh, fail-closed)
+- P4 [dispatched]: ai-auto launcher + content-aware setup (self-host guard, baked-path shims)
+- P5 [pending]: doctor 2-mode finalize + D6 collect-review-context (read global+project AGENTS) + LOW residuals
+- P6 [pending]: global-mode tests + end-to-end migrate proof; then S3 red-cert; then S4 defense game

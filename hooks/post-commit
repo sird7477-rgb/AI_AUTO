@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# AI_AUTO post-commit guard — GLOBAL framework body (advisory; NEVER blocks).
+# Reached through a project's thin post-commit shim. git skips pre-commit when a
+# commit uses --no-verify, but post-commit always runs, so this makes a gate-bypassing
+# commit non-silent. It cannot block (the commit already exists) -- always exit 0.
+: "${AI_AUTO_HOME:=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
+case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$PATH";; esac
+
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "${repo_root}" || exit 0
+
+# Auto-harvest reusable findings from this commit's trailers into local knowledge
+# drafts. knowledge-capture is a global helper; GIT_* is already unset (worktree-safe).
+# It no-ops on commits without Finding: trailers. Never block; stay quiet.
+if command -v knowledge-capture >/dev/null 2>&1; then
+  knowledge-capture harvest --write >/dev/null 2>&1 || true
+fi
+
+results_dir=".omx/review-results"
+recent_proceed=""
+if [ -d "${results_dir}" ]; then
+  recent_proceed="$(find "${results_dir}" -name 'review-verdict-*.md' -mmin -30 -print0 2>/dev/null \
+    | xargs -0 grep -lE '^- decision: proceed(_degraded)?$' 2>/dev/null | head -n1 || true)"
+fi
+
+if [ -z "${recent_proceed}" ]; then
+  printf '\n\033[33m[post-commit] WARNING: no review-gate proceed verdict found in the last 30 minutes.\033[0m\n' >&2
+  printf '[post-commit] This commit may have bypassed review-gate (e.g. git commit --no-verify).\n' >&2
+  printf '[post-commit] Run ai-auto gate and confirm a proceed/proceed_degraded verdict before pushing.\n' >&2
+fi
+exit 0

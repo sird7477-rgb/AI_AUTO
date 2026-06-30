@@ -22,6 +22,7 @@ Install or repair ai-lab global helper files for this checkout.
 This command may create or repair safe helper symlinks under ~/bin:
 
   ~/bin/AI_AUTO
+  ~/bin/ai-auto
   ~/bin/ai-auto-init
   ~/bin/ai-home
   ~/bin/aiinit
@@ -954,6 +955,7 @@ install_tmux_hooks() {
   fi
 }
 
+check_source_helper "${ROOT}/tools/ai-auto"
 check_source_helper "${ROOT}/tools/ai-auto-init"
 check_source_helper "${ROOT}/tools/ai-home"
 check_source_helper "${ROOT}/tools/ai-register"
@@ -1058,6 +1060,7 @@ elif [ ! -d "$HOME_DIR" ]; then
   say_fail "HOME directory does not exist: ${HOME_DIR}"
 else
   install_link "${HOME_DIR}/bin/AI_AUTO" "${ROOT}/tools/ai-home"
+  install_link "${HOME_DIR}/bin/ai-auto" "${ROOT}/tools/ai-auto"
   install_link "${HOME_DIR}/bin/ai-auto-init" "${ROOT}/tools/ai-auto-init"
   install_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
   install_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AI_AUTO worktree-safe hook — GLOBAL framework body. Reached through a project's
+# thin pre-commit shim (which bakes AI_AUTO_HOME, unsets GIT_*, and execs us). The
+# §4 self-heal guard below makes bare-name siblings resolve in ANY context.
+: "${AI_AUTO_HOME:=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
+case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$PATH";; esac
+
+# git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE / GIT_PREFIX (and on some
+# versions GIT_COMMON_DIR / GIT_NAMESPACE) into hook processes. The test suite below
+# spawns git in throwaway repos; inheriting this repo's GIT_* would corrupt git state
+# across every linked worktree. Clearing them gives the tests a clean git environment.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
+
+echo "[pre-commit] running tests before commit..."
+# pytest exit 5 == "no tests were collected"; a test-less repo (a freshly globalized
+# project, a docs-only project) is not a FAILURE, so exit 5 must not block. Only a real
+# failing run (exit 1-4) is fail-closed. Absence of a runner is a separate, positive
+# discovery (warn + defer), never inferred from a nonzero exit.
+pre_commit_run_pytest() {
+  local rc
+  if [ -x ".venv/bin/python" ]; then
+    set +e; .venv/bin/python -m pytest -q; rc=$?; set -e
+  elif command -v pytest >/dev/null 2>&1; then
+    set +e; pytest -q; rc=$?; set -e
+  else
+    echo "[pre-commit] no pytest available (.venv missing and pytest not on PATH);" >&2
+    echo "[pre-commit] cannot gate the test suite at commit. Not blocking the commit," >&2
+    echo "[pre-commit] but run ai-auto gate + ai-auto verify before pushing." >&2
+    return 0
+  fi
+  if [ "${rc}" -eq 5 ]; then
+    echo "[pre-commit] pytest collected no tests (exit 5); nothing to gate, not blocking." >&2
+    return 0
+  fi
+  return "${rc}"
+}
+
+# #3: pytest does not reach the bash machinery harness, so a regression in the
+# automation scripts/hooks slips past the commit gate. When this commit's STAGED
+# changes touch the framework AND a machinery harness is present (the AI_AUTO source
+# repo only -- verify-machinery.sh is not present in derived projects), run the harness
+# instead: it runs pytest as its first step (superseding the plain run) and also covers
+# the bash machinery tests. Fail-closed via set -e.
+if [ -f scripts/verify-machinery.sh ] \
+   && git diff --cached --name-only 2>/dev/null | grep -Eq '^(scripts/|hooks/)'; then
+  echo "[pre-commit] framework files staged; running machinery verify (includes pytest)..."
+  verify-machinery.sh
+else
+  pre_commit_run_pytest
+fi
