@@ -16,14 +16,10 @@ Before claiming a task is complete, the agent must:
 3. compare edits against any applicable plan/spec/design artifact and classify
    as aligned, updated, not applicable, or blocked (size the search per
    `docs/AUTOMATION_OPERATING_POLICY.md`); re-check if verification adds edits
-4. for changes under `templates/automation-base/` or `templates/domain-packs/`
-   (incl. template copies of hybrid root files), bump
-   `templates/automation-base/AI_AUTO_TEMPLATE_VERSION` and add a matching top
-   entry in `templates/automation-base/docs/PATCH_NOTES.md`
-5. run `./scripts/verify.sh` for basic verification
-6. run `./scripts/review-gate.sh` before presenting a commit candidate
-7. report the verification, review, and spec/design alignment results
-8. mention any remaining warnings or limitations
+4. run `./scripts/verify.sh` for basic verification
+5. run `./scripts/review-gate.sh` before presenting a commit candidate
+6. report the verification, review, and spec/design alignment results
+7. mention any remaining warnings or limitations
 
 If `./scripts/verify.sh` fails, the task is not complete.
 If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
@@ -130,20 +126,19 @@ allowlisted-surface, sanitized `local_private` drafts to `shareable_summary` and
 shareable drafts to the vault; off-allowlist or secret-like drafts stay local
 (fail-closed). `--dry-run` previews; `--no-auto-promote` publishes only already-shareable.
 
-When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as the AI_AUTO template patch workflow:
-check path/git status, run `ai-auto-template-status`, read current AI_AUTO patch notes,
-inspect managed-file differences, preserve hybrid project rules, apply only template-owned
-or review-merge updates, then run `./scripts/verify.sh` and `./scripts/review-gate.sh`.
-First confirm the AI_AUTO source checkout is current (`git -C ~/workspace/ai-lab pull`, or via `ai-home`) so the refresh targets the latest mainline, not a stale local copy. Domain-pack changes ship on a SEPARATE channel: also run `ai-domain-pack` to refresh installed packs (advisory; fail-closed on locally-edited/dirty packs) — `ai-template-refresh`/template-owned updates do NOT touch `domain-packs/`.
-For hybrid `review-merge` files, report template changes as absorbed, rejected, or deferred; for project-owned `inspect-only` files, report drift only.
-If a legitimate template-owned guide addition trips only doc-budget current-diff hard limit, rerun with `DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
-If `ai-auto-template-status` reports `template_patch_enabled: no`, stop before patching and report the source branch/channel as review-only.
-Do not overwrite project-owned files, patch `.omx/`, commit, or push unless explicitly asked.
+When the user asks `AI_AUTO 최신 패치 적용해줘`, expand it as updating the globally-installed
+AI_AUTO tool and refreshing installed domain packs: confirm the AI_AUTO source checkout is
+current (`git -C ~/workspace/ai-lab pull`, or via `ai-home`) so work targets the latest
+mainline, not a stale local copy, then run `ai-domain-pack` to refresh installed packs
+(advisory; fail-closed on locally-edited/dirty packs). A project repo carries no vendored
+framework files, so there is nothing to patch inside the project itself. Run
+`./scripts/verify.sh` and `./scripts/review-gate.sh` for any resulting changes.
+Do not patch `.omx/`, commit, or push unless explicitly asked.
 
 When the user asks for `리빌드 플랜`, `리빌딩 플랜`, `rebuild plan`, or
 `ai-rebuild-plan`, run `ai-rebuild-plan [/path/to/repo]` from the target repo.
-Read-only planning: it may inspect git state, template drift, domain-pack
-references, and refactoring candidates, but must not modify files or start rebuild.
+Read-only planning: it may inspect git state, domain-pack references, and
+refactoring candidates, but must not modify files or start rebuild.
 
 When the user asks for `리빌드 실행`, `리빌딩 실행`, or `rebuild run`, do not
 treat the phrase as approval to improvise a rebuild. Execution requires an

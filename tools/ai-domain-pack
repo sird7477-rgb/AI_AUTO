@@ -118,16 +118,13 @@ def read_manifest(target: Path, pack: str) -> tuple[dict | None, str | None]:
     return data, None
 
 
-def write_manifest(target: Path, pack: str, source_files: dict[str, str], ai_lab_root: Path) -> None:
-    version_path = ai_lab_root / "templates/automation-base/AI_AUTO_TEMPLATE_VERSION"
-    template_version = version_path.read_text(encoding="utf-8").strip() if version_path.exists() else "unknown"
+def write_manifest(target: Path, pack: str, source_files: dict[str, str]) -> None:
     path = manifest_path(target, pack)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "schema": SCHEMA,
         "pack": pack,
         "source": f"templates/domain-packs/{pack}",
-        "template_version": template_version,
         "source_root_hash": root_hash(source_files),
         "installed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "files": dict(sorted(source_files.items())),
@@ -314,15 +311,15 @@ def refresh_pack(info: dict, target: Path, ai_lab_root: Path) -> str:
         return state
     if state == "new_source_pack":
         copy_source_to_target(info["source_dir"], info["target_dir"], info["source_files"])
-        write_manifest(target, pack, info["source_files"], ai_lab_root)
+        write_manifest(target, pack, info["source_files"])
         return "installed"
     if state == "adoptable":
-        write_manifest(target, pack, info["source_files"], ai_lab_root)
+        write_manifest(target, pack, info["source_files"])
         return "adopted"
     if state == "outdated_clean":
         remove_clean_old_files(info["target_dir"], info["manifest_files"], info["source_files"])
         copy_source_to_target(info["source_dir"], info["target_dir"], info["source_files"])
-        write_manifest(target, pack, info["source_files"], ai_lab_root)
+        write_manifest(target, pack, info["source_files"])
         return "updated"
     return state
 

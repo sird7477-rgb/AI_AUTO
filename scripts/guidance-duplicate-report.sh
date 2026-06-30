@@ -9,7 +9,7 @@ REPORT_PATH="${OUT_DIR}/guidance-duplicate-report-${TIMESTAMP}.md"
 
 SCOPE=("$@")
 if [ "${#SCOPE[@]}" -eq 0 ]; then
-  SCOPE=(AGENTS.md docs templates/automation-base)
+  SCOPE=(AGENTS.md docs)
 fi
 
 mkdir -p "${OUT_DIR}"

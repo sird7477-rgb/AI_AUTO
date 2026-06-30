@@ -55,7 +55,6 @@ SKIP_COUNT=0
 SUGGESTIONS=()
 
 ROOT="$(pwd)"
-TEMPLATE_DIR="${ROOT}/templates/automation-base"
 IN_AI_LAB=0
 HOME_DIR="${HOME:-}"
 HOME_READY=0
@@ -64,7 +63,7 @@ if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
   HOME_READY=1
 fi
 
-if [ -d "${TEMPLATE_DIR}" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-auto-template-status" ] && [ -x "${ROOT}/tools/ai-gstack-contract" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/feedback-resolve" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ] && [ -x "${ROOT}/tools/micro-work" ]; then
+if [ -f "${ROOT}/scripts/review-gate.sh" ] && [ -d "${ROOT}/templates/domain-packs" ] && [ -x "${ROOT}/tools/ai-auto-init" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-gstack-contract" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/feedback-resolve" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ] && [ -x "${ROOT}/tools/micro-work" ]; then
   IN_AI_LAB=1
 fi
 
@@ -126,29 +125,6 @@ case "${OMX_KNOWLEDGE_DRAFT_WARN_COUNT}" in
     ;;
 esac
 
-copy_from_template_if_missing() {
-  local path="$1"
-  local source_path="${TEMPLATE_DIR}/${path}"
-
-  if [ -e "$path" ]; then
-    return 1
-  fi
-
-  if [ "${IN_AI_LAB:-0}" -ne 1 ] || [ ! -f "$source_path" ]; then
-    return 1
-  fi
-
-  mkdir -p "$(dirname "$path")"
-  cp "$source_path" "$path"
-  case "$path" in
-    scripts/*.sh|scripts/*.py)
-      chmod +x "$path"
-      ;;
-  esac
-  say_fix "created ${path} from automation template"
-  return 0
-}
-
 ensure_dir() {
   local path="$1"
 
@@ -171,10 +147,6 @@ check_required_file() {
 
   if [ -f "$path" ]; then
     say_pass "required file exists: ${path}"
-    return
-  fi
-
-  if [ "$FIX" -eq 1 ] && copy_from_template_if_missing "$path"; then
     return
   fi
 
@@ -432,49 +404,6 @@ check_helper_link() {
   fi
 }
 
-check_offmanifest_shadows() {
-  # Downstream only: warn about project-local files whose basename shadows a home script/tool
-  # name but are absent from the install manifest -- likely stale hand-copies (e.g. a
-  # project-local scripts/verify-machinery.sh, the jw_dev failure class the manifest-scoped
-  # version gate cannot see). Skips the source checkout and any non-managed project, and
-  # fails open if the home status helper is unreachable.
-  [ "${IN_AI_LAB:-0}" -eq 1 ] && return 0
-  [ -f .ai-auto/template-manifest.json ] || return 0
-  command -v ai-auto-template-status >/dev/null 2>&1 || return 0
-  command -v python3 >/dev/null 2>&1 || return 0
-
-  local inventory
-  inventory="$(ai-auto-template-status --inventory 2>/dev/null)" || return 0
-  [ -n "${inventory}" ] || return 0
-
-  local shadows
-  shadows="$(printf '%s\n' "${inventory}" | python3 -c '
-import json, os, sys
-inv = {l.strip() for l in sys.stdin if l.strip()}
-try:
-    managed = set(json.load(open(".ai-auto/template-manifest.json")).get("files") or {})
-except Exception:
-    sys.exit(0)
-for d in ("scripts", "tools"):
-    if not os.path.isdir(d):
-        continue
-    for name in sorted(os.listdir(d)):
-        rel = d + "/" + name
-        if os.path.isfile(rel) and name in inv and rel not in managed:
-            print(rel)
-' 2>/dev/null)" || return 0
-
-  if [ -n "${shadows}" ]; then
-    while IFS= read -r shadow; do
-      [ -n "${shadow}" ] || continue
-      say_warn "off-manifest shadow of a home tool/script: ${shadow} (stale hand-copy? remove it or propose the change upstream)"
-    done <<< "${shadows}"
-    suggest "remove off-manifest copies of home scripts, or send them upstream via record-feedback"
-  else
-    say_pass "no off-manifest shadow copies of home scripts detected"
-  fi
-}
-
 printf '[doctor] checking automation readiness in %s\n\n' "$ROOT"
 
 check_command git fail
@@ -565,11 +494,13 @@ REQUIRED_FILES=(
   "scripts/write-session-checkpoint.sh"
 )
 
-for path in "${REQUIRED_FILES[@]}"; do
-  check_required_file "$path"
-done
-
+# Framework files live in the engine home, not in a globalized project. Only the
+# engine checkout carries (and is graded on) the full engine inventory; a derived
+# project ships ZERO framework files and must not be flagged for their absence.
 if [ "${IN_AI_LAB:-0}" -eq 1 ]; then
+  for path in "${REQUIRED_FILES[@]}"; do
+    check_required_file "$path"
+  done
   check_required_file "docs/AI_ROLES.md"
 fi
 
@@ -729,9 +660,7 @@ if [ "${IN_AI_LAB:-0}" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ];
   check_helper_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
   check_helper_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
   check_helper_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
-  check_helper_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   check_helper_link "${HOME_DIR}/bin/ai-domain-pack" "${ROOT}/tools/ai-domain-pack"
-  check_helper_link "${HOME_DIR}/bin/ai-template-refresh" "${ROOT}/tools/ai-template-refresh"
   check_helper_link "${HOME_DIR}/bin/ai-gstack-contract" "${ROOT}/tools/ai-gstack-contract"
   check_helper_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
   check_helper_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"

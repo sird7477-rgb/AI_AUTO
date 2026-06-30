@@ -26,8 +26,6 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/ai-home
   ~/bin/aiinit
   ~/bin/ai-register
-  ~/bin/ai-auto-template-status
-  ~/bin/ai-template-refresh
   ~/bin/ai-gstack-contract
   ~/bin/ai-refactor-scan
   ~/bin/ai-rebuild-plan
@@ -419,9 +417,9 @@ install_codex_wrapper() {
   local end_marker="# <<< AI_AUTO codex drift notice integration <<<"
   local tmp_path
   local begin_count end_count
-  local real_codex real_claude="" real_agy="" patch_notes_quoted ai_lab_root_quoted
+  local real_codex real_claude="" real_agy="" ai_lab_root_quoted
   local real_codex_quoted real_claude_quoted="" real_agy_quoted=""
-  local drift_default tmux_auto_default claude_tmux_auto_default agy_tmux_auto_default
+  local tmux_auto_default claude_tmux_auto_default agy_tmux_auto_default
   local include_claude_wrapper=0 include_agy_wrapper=0
   local existing_value resolve_status
 
@@ -574,14 +572,7 @@ install_codex_wrapper() {
   if [ -n "$real_agy" ] && [ -z "$real_agy_quoted" ]; then
     real_agy_quoted="$(printf '%q' "$real_agy")"
   fi
-  patch_notes_quoted="$(printf '%q' "${ROOT}/templates/automation-base/docs/PATCH_NOTES.md")"
   ai_lab_root_quoted="$(printf '%q' "$ROOT")"
-  drift_default="$INSTALL_CODEX_DRIFT_NOTICE"
-  if [ "$drift_default" -ne 1 ] &&
-    [ -f "$function_path" ] &&
-    [ "$(extract_generated_function_local codex drift_notice_default "$function_path")" = "1" ]; then
-    drift_default=1
-  fi
   tmux_auto_default="${INSTALL_CODEX_TMUX_AUTO_ENTRY:-0}"
   if [ "$tmux_auto_default" -ne 1 ] &&
     [ -f "$function_path" ] &&
@@ -770,58 +761,15 @@ _ai_auto_codex_shell_quote() {
 
 codex() {
   local real_codex=${real_codex_quoted}
-  local patch_notes=${patch_notes_quoted}
   local ai_lab_root=${ai_lab_root_quoted}
-  local drift_notice_default=${drift_default}
   local tmux_auto_default=${tmux_auto_default}
   local repo_root=""
-  local status_output=""
-  local notice_key=""
-  local latest_note=""
   local knowledge_output=""
   local knowledge_timeout=""
-  local template_status_timeout=""
 
   if command -v git >/dev/null 2>&1; then
     repo_root="\$(git rev-parse --show-toplevel 2>/dev/null || true)"
   fi
-
-  if [ "\${AI_AUTO_CODEX_DRIFT_NOTICE:-\${drift_notice_default}}" != "0" ] &&
-    [ -n "\${repo_root}" ] &&
-    [ -f "\${repo_root}/AI_AUTO_TEMPLATE_VERSION" ] &&
-    command -v timeout >/dev/null 2>&1 &&
-    command -v ai-auto-template-status >/dev/null 2>&1; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      notice_key="\$(printf '%s' "\${repo_root}" | sha256sum | awk '{print \$1}')"
-    elif command -v cksum >/dev/null 2>&1; then
-      notice_key="\$(printf '%s' "\${repo_root}" | cksum | awk '{print \$1 "-" \$2}')"
-    else
-      notice_key="\$(printf '%s' "\${repo_root}" | sed 's/|/%7C/g')"
-    fi
-    case "\${AI_AUTO_CODEX_DRIFT_NOTICE_SEEN:-}" in
-      *"|"\${notice_key}"|"*)
-        ;;
-      *)
-        template_status_timeout="\${AI_AUTO_TEMPLATE_STATUS_NOTICE_TIMEOUT:-1}"
-        status_output="\$(timeout "\${template_status_timeout}" ai-auto-template-status "\${repo_root}" 2>/dev/null || true)"
-        AI_AUTO_CODEX_DRIFT_NOTICE_SEEN="\${AI_AUTO_CODEX_DRIFT_NOTICE_SEEN:-}|\${notice_key}|"
-        if printf '%s\n' "\$status_output" | grep -q '^status: customized_or_outdated'; then
-          latest_note="\$(awk '/^## / {print; exit}' "\${patch_notes}" 2>/dev/null || true)"
-          printf '%s\n' "[AI_AUTO] ===== AI_AUTO UPDATE CHECK =====" >&2
-          printf '%s\n' "[AI_AUTO] state: update_available" >&2
-          printf '%s\n' "[AI_AUTO] project: \${repo_root}" >&2
-          printf '%s\n' "\$status_output" | awk '/^(installed_version|current_version|status): / {print "[AI_AUTO] " \$0}' >&2
-          if [ -n "\${latest_note}" ]; then
-            printf '%s\n' "[AI_AUTO] latest patch note: \${latest_note#\#\# }" >&2
-          fi
-          printf '%s\n' "[AI_AUTO] review notes: \${patch_notes}" >&2
-          printf '%s\n' "[AI_AUTO] inspect: ai-auto-template-status \${repo_root}" >&2
-          printf '%s\n' "[AI_AUTO] action: AI_AUTO 최신 패치 적용해줘" >&2
-          printf '%s\n' "[AI_AUTO] ================================" >&2
-        fi
-        ;;
-    esac
-    fi
 
   if [ "\${AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE:-1}" != "0" ] &&
     [ -n "\${repo_root}" ] &&
@@ -1000,9 +948,7 @@ install_tmux_hooks() {
 check_source_helper "${ROOT}/tools/ai-auto-init"
 check_source_helper "${ROOT}/tools/ai-home"
 check_source_helper "${ROOT}/tools/ai-register"
-check_source_helper "${ROOT}/tools/ai-auto-template-status"
 check_source_helper "${ROOT}/tools/ai-domain-pack"
-check_source_helper "${ROOT}/tools/ai-template-refresh"
 check_source_helper "${ROOT}/tools/ai-gstack-contract"
 check_source_helper "${ROOT}/tools/ai-refactor-scan"
 check_source_helper "${ROOT}/tools/ai-rebuild-plan"
@@ -1107,9 +1053,7 @@ else
   install_link "${HOME_DIR}/bin/ai-home" "${ROOT}/tools/ai-home"
   install_link "${HOME_DIR}/bin/aiinit" "${ROOT}/tools/ai-auto-init"
   install_link "${HOME_DIR}/bin/ai-register" "${ROOT}/tools/ai-register"
-  install_link "${HOME_DIR}/bin/ai-auto-template-status" "${ROOT}/tools/ai-auto-template-status"
   install_link "${HOME_DIR}/bin/ai-domain-pack" "${ROOT}/tools/ai-domain-pack"
-  install_link "${HOME_DIR}/bin/ai-template-refresh" "${ROOT}/tools/ai-template-refresh"
   install_link "${HOME_DIR}/bin/ai-gstack-contract" "${ROOT}/tools/ai-gstack-contract"
   install_link "${HOME_DIR}/bin/ai-refactor-scan" "${ROOT}/tools/ai-refactor-scan"
   install_link "${HOME_DIR}/bin/ai-rebuild-plan" "${ROOT}/tools/ai-rebuild-plan"

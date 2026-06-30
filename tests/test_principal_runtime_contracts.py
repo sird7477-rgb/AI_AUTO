@@ -685,13 +685,3 @@ def test_review_runner_records_principal_and_self_review_guards() -> None:
     assert 'if [ "${ACTIVE_PRINCIPAL}" = "claude" ]; then' in text
     assert 'if [ "${ACTIVE_PRINCIPAL}" = "gemini" ]; then' in text
     assert "principal_rotation" in text
-
-
-def test_template_principal_runtime_files_match_root() -> None:
-    pairs = (
-        ("scripts/ai-principal-runtime.sh", "templates/automation-base/scripts/ai-principal-runtime.sh"),
-        ("scripts/run-ai-reviews.sh", "templates/automation-base/scripts/run-ai-reviews.sh"),
-        ("scripts/summarize-ai-reviews.sh", "templates/automation-base/scripts/summarize-ai-reviews.sh"),
-    )
-    for root_path, template_path in pairs:
-        assert (ROOT / root_path).read_bytes() == (ROOT / template_path).read_bytes()

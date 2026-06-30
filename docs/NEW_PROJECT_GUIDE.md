@@ -12,13 +12,11 @@ Or from another directory:
 
     aiinit /path/to/target-repo
 
-`aiinit` installs the automation template, creates `.omx/reviewer-state`, adds
+`aiinit` sets up the AI_AUTO workflow, creates `.omx/reviewer-state`, adds
 `.omx/` to the target repository's local `.git/info/exclude`, registers the
-project in the local AI_AUTO project registry, and then runs the installed
-automation doctor with the install-time dirty-tree check skipped. It also
-installs `AI_AUTO_TEMPLATE_VERSION`, a lightweight marker used by
-`ai-auto-template-status` to compare the project with the current AI_AUTO
-template.
+project in the local AI_AUTO project registry, and then runs automation-doctor
+with the install-time dirty-tree check skipped. No framework files are vendored
+into the project.
 
 After `aiinit`, ask the AI:
 
@@ -156,11 +154,11 @@ Use this request when asking Codex to initialize a new project:
 
 ## Short request
 
-    현재 프로젝트에 aiinit으로 자동화 템플릿을 설치해줘. aiinit 이후 기존 파일을 먼저 읽고 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위, 리뷰 강도(lightweight/standard/strict), 실패 패턴/개선사항 기록 여부, 승인 마찰 관리 기준, 서브에이전트 사용 기준, 플랜/인터뷰 강도 기준(none/light/standard/deep), 운영 준비 fail-closed 기준, sandbox-vs-real-network evidence 기준, Incident Ops 감시/장애대응/주기보고 기준, plan index/TODO reconciliation 기준, spec/design alignment 기준, 사용자 보고를 쉬운 한국어로 먼저 작성하는 기준, AGENTS.md와 linked docs 분리 기준, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, 확정한 리뷰 강도에 따른 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
+    현재 프로젝트에 aiinit으로 AI_AUTO 워크플로를 설정해줘. aiinit 이후 기존 파일을 먼저 읽고 프로젝트 목적, 사용자, 최종 산출물, non-goal, 스택, 완료 기준, 금지 범위, 리뷰 강도(lightweight/standard/strict), 실패 패턴/개선사항 기록 여부, 승인 마찰 관리 기준, 서브에이전트 사용 기준, 플랜/인터뷰 강도 기준(none/light/standard/deep), 운영 준비 fail-closed 기준, sandbox-vs-real-network evidence 기준, Incident Ops 감시/장애대응/주기보고 기준, plan index/TODO reconciliation 기준, spec/design alignment 기준, 사용자 보고를 쉬운 한국어로 먼저 작성하는 기준, AGENTS.md와 linked docs 분리 기준, 필요한 완료팩(UI/배포/보안/데이터/성능/관측성), 적용할 도메인팩을 인터뷰해서 AGENTS.md, docs/WORKFLOW.md, scripts/verify.sh를 이 프로젝트에 맞게 설정해줘. ./scripts/automation-doctor.sh, ./scripts/verify.sh, 확정한 리뷰 강도에 따른 ./scripts/review-gate.sh까지 통과시켜줘. 커밋은 하지 말고 결과만 보고해.
 
 ## Post-aiinit request
 
-Use this after `aiinit` has already installed the template:
+Use this after `aiinit` has already set up the project:
 
     프로젝트 초기설정 해줘
 
@@ -245,53 +243,6 @@ the process exits, so stale lock deletion is not needed. The default wait is 10
 seconds; override with `AI_AUTO_PROJECT_REGISTRY_LOCK_TIMEOUT_SECONDS` only when
 needed.
 
-## Template Status Comparison
-
-Use this when checking whether a project has drifted from the current reusable
-AI_AUTO template:
-
-    ai-auto-template-status /path/to/project
-
-First review `docs/PATCH_NOTES.md` in the AI_AUTO template or installed project
-to understand what changed in each template version.
-
-The command reports the installed template version, current template version,
-overall status, AI_AUTO source branch/channel, per-managed-file states,
-ownership, and patch policy. It is
-status-only and never auto-merges. Generated/runtime files such as `.omx/`
-review artifacts are outside the managed-file manifest. Treat `different` as
-"customized or outdated" until a human or AI reviews the file in context.
-If it reports `template_patch_enabled: no`, stop the patch workflow and treat
-the source as review-only; experimental AI_AUTO branches must not be used as
-project patch sources.
-Patch policies mean:
-
-- `update`: template-owned file; a newer template can normally replace or patch
-  it after review.
-- `review-merge`: hybrid file; preserve project-specific rules, merge only
-  applicable template guidance, and report absorbed, rejected, or deferred.
-- `inspect-only`: project-owned file; report drift, but do not overwrite it.
-
-When the drift should become a queued follow-up for that project, record it
-explicitly:
-
-    ai-auto-template-status --record-feedback /path/to/project
-
-This appends a sanitized feedback item with repeat key
-`automation-template:update-available` only when drift exists. The helper writes
-through AI_AUTO's trusted feedback recorder rather than executing scripts from
-the inspected project.
-
-When Codex starts in a project with the optional drift notice installed, it may
-print an `AI_AUTO UPDATE CHECK` block with
-`action: AI_AUTO 최신 패치 적용해줘`. Typing that action in the project is the short
-form for the full AI_AUTO template patch workflow: inspect template status and
-patch notes, merge only applicable managed-file changes, preserve
-project-specific rules, run verification and the review gate, and stop before
-commit/push unless explicitly asked.
-If a legitimate template-owned guide addition trips only the current guidance
-diff hard limit, rerun with `DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
-
 ## Domain Packs
 
 Domain packs are optional reference packs for project-specific onboarding.
@@ -301,7 +252,7 @@ instructions automatically.
 
 Use `docs/DOMAIN_PACKS.md` for the domain-pack lifecycle, selection, rejection,
 and application rules. Generic projects do not need a generic domain pack;
-continue with `automation-base` and any applicable completion packs when no
+continue with the AI_AUTO baseline and any applicable completion packs when no
 installed domain pack matches.
 After the AI_AUTO source updates a pack, run `ai-domain-pack status` in the
 target project. `ai-domain-pack refresh --apply` updates only clean managed
@@ -349,14 +300,13 @@ Recommended adoption flow:
 
 1. Read the existing `AGENTS.md`, workflow docs, and verification scripts.
 2. List what the existing project already covers.
-3. Compare against the current automation template.
-4. Run `ai-auto-template-status` to collect version and per-file status.
-5. Propose a small merge plan before editing.
-6. Copy only missing automation scripts or docs that do not overwrite project
+3. Compare against the AI_AUTO workflow baseline.
+4. Propose a small merge plan before editing.
+5. Copy only missing automation scripts or docs that do not overwrite project
    rules.
-7. Preserve project-specific instructions as the source of truth when they are
-   stricter than the reusable template.
-8. Run `./scripts/automation-doctor.sh`, the project verification command, and
+6. Preserve project-specific instructions as the source of truth when they are
+   stricter than the AI_AUTO baseline.
+7. Run `./scripts/automation-doctor.sh`, the project verification command, and
    `./scripts/review-gate.sh`.
 
 ## Notes

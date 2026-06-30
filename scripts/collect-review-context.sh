@@ -203,7 +203,7 @@ collect_review_reference_files() {
 classify_review_scope_for_path() {
   local file="$1"
   case "${file}" in
-    templates/automation-base/*)
+    templates/*)
       echo "templates"
       ;;
     AGENTS.md|*/AGENTS.md)
@@ -295,7 +295,7 @@ persona_lens_for_path() {
     scripts/verify.sh|scripts/review-gate.sh|scripts/run-ai-reviews.sh|scripts/collect-review-context.sh|scripts/summarize-ai-reviews.sh)
       echo "policy_compliance test_strategy review_taxonomy"
       ;;
-    templates/automation-base/*)
+    templates/*)
       echo "policy_compliance guidance_bloat review_taxonomy"
       ;;
     *auth*|*token*|*cookie*|*secret*|*credential*)
@@ -433,8 +433,8 @@ tracked_review_scope_allowlist() {
   } | sort -u | while IFS= read -r file; do
     [ -n "${file}" ] || continue
     case "${file}" in
-      templates/automation-base/*)
-        echo "templates/automation-base/"
+      templates/*)
+        echo "templates/"
         ;;
       AGENTS.md|*/AGENTS.md)
         echo "AGENTS.md"
@@ -485,7 +485,7 @@ write_untracked_review_guard() {
   local material allowlist allowlist_source in_scope filtered file
   material="$(
     git ls-files --others --exclude-standard 2>/dev/null |
-      grep -E '^(plans|docs|scripts|tools|tests|templates/automation-base)/|^AGENTS\.md$' || true
+      grep -E '^(plans|docs|scripts|tools|tests|templates)/|^AGENTS\.md$' || true
   )"
 
   if [ -z "${material}" ]; then

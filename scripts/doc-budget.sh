@@ -12,12 +12,6 @@ BASE_REF="${DOC_BUDGET_BASE_REF:-main}"
 COMPLETION_BASE_REF="${DOC_BUDGET_COMPLETION_BASE_REF:-}"
 # Extra content/spec paths to exempt from the guidance budget, space separated.
 EXEMPT_GLOBS="${DOC_BUDGET_EXEMPT_GLOBS:-}"
-# Install-time guidance baseline (sha256sum format). When present, primary
-# guidance files byte-identical to their recorded install hash are inherited and
-# unchanged, so they are excluded from the absolute guidance budget: a derived
-# project's budget then measures only what it actually authored or changed.
-# Absent (the AI_AUTO source repo, or a pre-baseline install) -> full budget.
-GUIDANCE_BASELINE="${DOC_BUDGET_BASELINE_FILE:-.ai-auto/guidance-baseline.sha256}"
 
 WARN_COUNT=0
 FAIL_COUNT=0
@@ -30,7 +24,7 @@ doc_budget_is_exempt() {
   # like docs/plans/ or docs/research/ -- stay budgeted.
   local path="$1" glob
   case "${path}" in
-    docs/specs/*|docs/reference/*|templates/automation-base/docs/specs/*|templates/automation-base/docs/reference/*)
+    docs/specs/*|docs/reference/*)
       return 0
       ;;
     *.plan.md|*.spec.md)
@@ -52,38 +46,9 @@ doc_budget_is_exempt() {
   return 1
 }
 
-doc_budget_sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{ print $1 }'
-  else
-    shasum -a 256 "$1" | awk '{ print $1 }'
-  fi
-}
-
-doc_budget_is_inherited_unchanged() {
-  # 0 (true) when the file is byte-identical to the version recorded in the
-  # install-time guidance baseline -- inherited from the AI_AUTO template and
-  # untouched. Such files are excluded from the absolute guidance budget. No
-  # baseline file, no recorded entry, or any byte change -> false -> full budget.
-  # This only gates the absolute (size/total) lane; the branch-cumulative diff
-  # lane below is unaffected, so local edits to an inherited file are still
-  # tracked there.
-  local path="$1" recorded current
-  [ -f "${GUIDANCE_BASELINE}" ] || return 1
-  [ -f "${path}" ] || return 1
-  recorded="$(awk -v p="${path}" '$1 !~ /^#/ && $2 == p { print $1; exit }' "${GUIDANCE_BASELINE}")"
-  [ -n "${recorded}" ] || return 1
-  current="$(doc_budget_sha256 "${path}")"
-  [ "${current}" = "${recorded}" ]
-}
-
 budget_primary_file() {
-  # Per-file absolute check that honors the inherited-unchanged baseline.
+  # Per-file absolute guidance check on the project's own overlay/docs.
   local label="$1" path="$2" warn_at="$3" fail_at="$4"
-  if doc_budget_is_inherited_unchanged "${path}"; then
-    printf '[budget] %s: inherited unchanged (skipped; matches install baseline)\n' "${label}"
-    return
-  fi
   check_number "${label}" "$(line_count "${path}")" "${warn_at}" "${fail_at}"
 }
 
@@ -168,18 +133,6 @@ budget_primary_file "AGENTS.md lines" AGENTS.md 150 220
 budget_primary_file "docs/WORKFLOW.md lines" docs/WORKFLOW.md 350 450
 budget_primary_file "docs/AUTOMATION_OPERATING_POLICY.md lines" docs/AUTOMATION_OPERATING_POLICY.md 650 800
 
-if [ -f "templates/automation-base/AGENTS.md" ]; then
-  check_number "template AGENTS.md lines" "$(line_count templates/automation-base/AGENTS.md)" 180 240
-fi
-
-if [ -f "templates/automation-base/docs/WORKFLOW.md" ]; then
-  check_number "template WORKFLOW.md lines" "$(line_count templates/automation-base/docs/WORKFLOW.md)" 380 500
-fi
-
-if [ -f "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md" ]; then
-  check_number "template AUTOMATION_OPERATING_POLICY.md lines" "$(line_count templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md)" 650 800
-fi
-
 primary_scan="$(
   {
     printf '%s\n' AGENTS.md
@@ -188,41 +141,14 @@ primary_scan="$(
     fi
   } | while IFS= read -r path; do
     if [ -f "$path" ] && ! doc_budget_is_exempt "$path"; then
-      if doc_budget_is_inherited_unchanged "$path"; then
-        printf 'inherited %s\n' "$(line_count "$path")"
-      else
-        printf 'budgeted %s\n' "$(line_count "$path")"
-      fi
+      printf 'budgeted %s\n' "$(line_count "$path")"
     fi
   done
 )"
 primary_guidance_total="$(printf '%s\n' "$primary_scan" | awk '$1 == "budgeted" { total += $2 } END { print total + 0 }')"
-inherited_count="$(printf '%s\n' "$primary_scan" | awk '$1 == "inherited" { count += 1 } END { print count + 0 }')"
-inherited_lines="$(printf '%s\n' "$primary_scan" | awk '$1 == "inherited" { total += $2 } END { print total + 0 }')"
-if [ "$inherited_count" -gt 0 ]; then
-  # Surface what was excluded so the inherited volume is visible, not silently dropped.
-  printf '[budget] primary guidance: excluded %s inherited-unchanged docs (%s lines) matching install baseline\n' "$inherited_count" "$inherited_lines"
-fi
 check_number "primary guidance markdown total lines" "$primary_guidance_total" 6500 8000
 
-template_guidance_total="$(
-  {
-    if [ -d templates/automation-base ]; then
-      printf '%s\n' templates/automation-base/AGENTS.md templates/automation-base/README.md
-      if [ -d templates/automation-base/docs ]; then
-        find templates/automation-base/docs -name '*.md' -print
-      fi
-    fi
-  } | while IFS= read -r path; do
-    if [ -f "$path" ] && ! doc_budget_is_exempt "$path"; then
-      line_count "$path"
-    fi
-  done | awk '{ total += $1 } END { print total + 0 }'
-)"
-check_number "template guidance markdown total lines" "$template_guidance_total" 4500 6500
-
-guidance_total=$((primary_guidance_total + template_guidance_total))
-printf '[budget] guidance markdown total lines: %s\n' "$guidance_total"
+printf '[budget] guidance markdown total lines: %s\n' "$primary_guidance_total"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   # Branch-cumulative: measure against the merge-base with the integration
@@ -234,9 +160,8 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   # the totals use this same scope. Plain 'docs/*.md' pathspecs match nested
   # paths too, so the exclude pathspecs carve out content/spec areas.
   guidance_pathspecs=(
-    AGENTS.md 'docs/*.md' 'templates/automation-base/*.md' 'templates/automation-base/docs/*.md'
+    AGENTS.md 'docs/*.md'
     ':(exclude,glob)docs/specs/**' ':(exclude,glob)docs/reference/**'
-    ':(exclude,glob)templates/automation-base/docs/specs/**' ':(exclude,glob)templates/automation-base/docs/reference/**'
     ':(exclude,glob)**/*.plan.md' ':(exclude,glob)**/*.spec.md'
     ':(exclude,glob)*.plan.md' ':(exclude,glob)*.spec.md'
   )
@@ -252,13 +177,13 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   diff_added="$(printf '%s\n' "${diff_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   diff_removed="$(printf '%s\n' "${diff_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   untracked_added="$(
-    git ls-files -z --others --exclude-standard -- AGENTS.md docs templates/automation-base 2>/dev/null |
+    git ls-files -z --others --exclude-standard -- AGENTS.md docs 2>/dev/null |
       while IFS= read -r -d '' path; do
         if doc_budget_is_exempt "$path"; then
           continue
         fi
         case "$path" in
-          AGENTS.md|docs/*.md|templates/automation-base/docs/*.md|templates/automation-base/*.md)
+          AGENTS.md|docs/*.md)
             if [ -f "$path" ]; then
               line_count "$path"
             fi
@@ -332,12 +257,6 @@ duplicate_report="$(
     if [ -d docs ]; then
       find docs -maxdepth 1 -name '*.md' -print0
     fi
-    if [ -f templates/automation-base/AGENTS.md ]; then
-      printf '%s\0' templates/automation-base/AGENTS.md
-    fi
-    if [ -d templates/automation-base/docs ]; then
-      find templates/automation-base/docs -maxdepth 1 -name '*.md' -print0
-    fi
   } | xargs -0 -r awk '
     length($0) >= 90 && $0 !~ /^[[:space:]]*#/ {
       count[$0] += 1
@@ -353,7 +272,7 @@ duplicate_report="$(
 )"
 
 if [ -n "$duplicate_report" ]; then
-  warn "long guidance lines repeated 3+ times in root or template docs"
+  warn "long guidance lines repeated 3+ times in guidance docs"
   printf '%s\n' "$duplicate_report" | sed 's/^/[budget] duplicate: /'
 fi
 

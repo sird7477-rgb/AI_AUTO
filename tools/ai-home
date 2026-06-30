@@ -71,7 +71,6 @@ Move there:
 
 Useful commands:
   AI_AUTO --status
-  ai-auto-template-status /path/to/project
   ai-refactor-scan /path/to/project
   ai-rebuild-plan /path/to/project
   ai-split-plan --source path/to/monolith.py --domain-pack trading --output .omx/rebuild/split-plan.json

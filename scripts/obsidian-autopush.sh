@@ -78,7 +78,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 HOME_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel 2>/dev/null || true)"
 
 # Home-checkout guard: only the AI_AUTO home repo collects and pushes centrally.
-if [ -z "${HOME_ROOT}" ] || [ ! -f "${HOME_ROOT}/templates/automation-base/AI_AUTO_TEMPLATE_VERSION" ]; then
+if [ -z "${HOME_ROOT}" ] \
+   || [ ! -f "${HOME_ROOT}/scripts/verify-machinery.sh" ] \
+   || [ ! -d "${HOME_ROOT}/templates/domain-packs" ]; then
   echo "[obsidian-autopush] skip: not the AI_AUTO home checkout"
   exit 0
 fi

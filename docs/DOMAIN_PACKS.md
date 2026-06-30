@@ -1,9 +1,8 @@
 # Domain Packs
 
 Domain packs are optional onboarding reference packs for domain- or
-framework-specific project guidance. They do not replace the generic
-`automation-base` template, and they are never merged into project instructions
-automatically.
+framework-specific project guidance. They do not replace the generic AI_AUTO
+baseline, and they are never merged into project instructions automatically.
 
 Use `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` when creating or changing a pack. This
 file owns lifecycle and application rules; the authoring guide owns pack quality,
@@ -12,9 +11,8 @@ standards.
 
 ## Baseline, Completion Packs, And Domain Packs
 
-- `templates/automation-base/` is the always-installed generic baseline. It owns
-  the common workflow, review gate, operating policy, verification placeholder,
-  and onboarding structure.
+- The global AI_AUTO engine provides the generic baseline. It owns the common
+  workflow, review gate, operating policy, and onboarding structure.
 - `docs/*_COMPLETION.md` files are cross-cutting completion packs. They apply
   when a project has a UI, deployment, security, data, performance, or
   observability requirement.
@@ -22,9 +20,8 @@ standards.
   apply only when local evidence and onboarding answers confirm that the project
   matches the domain.
 
-There is no generic domain pack. Generic guidance belongs in
-`automation-base`; domain packs are for concrete domains or frameworks such as
-Odoo.
+There is no generic domain pack. Generic guidance belongs in the AI_AUTO
+baseline; domain packs are for concrete domains or frameworks such as Odoo.
 
 ## Lifecycle
 

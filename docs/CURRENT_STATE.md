@@ -177,19 +177,13 @@ Result:
 - Claude: approve_with_notes
 - Gemini: skipped by the old default behavior at that time
 
-### Automation template
+### Automation baseline
 
 Completed.
 
-A reusable template exists under:
+The global AI_AUTO engine provides the reusable baseline. It contains:
 
-- templates/automation-base/
-
-It contains:
-
-- repo-local AGENTS.md
-- AI_AUTO_TEMPLATE_VERSION
-- template patch notes
+- generic AGENTS.md
 - workflow documentation
 - automation operating policy, model routing, runtime adapter, session quality,
   interview/plan, Obsidian, incident ops, domain-pack, and AI automation
@@ -208,23 +202,17 @@ It contains:
 
 Current behavior:
 
-- template AGENTS/WORKFLOW defaults are generic and do not assume the ai-lab Flask todo sample
-- `scripts/verify.example.sh` is intentionally unconfigured and exits non-zero after showing onboarding guidance
+- baseline AGENTS/WORKFLOW defaults are generic and do not assume the ai-lab Flask todo sample
+- a project's `scripts/verify.sh` is unconfigured until it is replaced with project-specific checks
 - new projects must define project-specific AGENTS, WORKFLOW, and verify checks before the gate can be treated as ready
-
-### Template installer
-
-Completed.
-
-./scripts/install-automation-template.sh installs the automation template into a target git repository.
+- a project repo carries no vendored framework files
 
 ### Domain packs
 
-Domain-specific standards are separated from the generic `aiinit` template.
+Domain-specific standards are separated from the generic AI_AUTO baseline.
 `docs/DOMAIN_PACKS.md` is the canonical lifecycle and application contract.
-`aiinit` installs the reusable automation baseline into project files and copies
-optional domain packs into `.omx/domain-packs/` as ignored onboarding
-references.
+`aiinit` sets up the AI_AUTO workflow and copies optional domain packs into
+`.omx/domain-packs/` as ignored onboarding references.
 
 Current optional domain packs:
 
@@ -251,7 +239,7 @@ Then it prints the recommended AI handoff request:
 
     프로젝트 초기설정 해줘
 
-The installed template AGENTS.md routes this request to the onboarding workflow:
+The project's AGENTS.md routes this request to the onboarding workflow:
 interview the project owner, inspect existing reference materials, customize
 AGENTS.md, docs/WORKFLOW.md, and scripts/verify.sh, then run automation-doctor,
 verify, and review-gate before reporting.
@@ -296,7 +284,6 @@ Global helper tool sources are tracked in:
 - tools/ai-auto-init
 - tools/ai-home
 - tools/ai-register
-- tools/ai-auto-template-status
 - tools/ai-domain-pack
 - tools/ai-refactor-scan
 - tools/ai-rebuild-plan
@@ -319,7 +306,6 @@ Expected links:
 - ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
 - ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
 - ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
-- ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
 - ~/bin/ai-domain-pack -> ~/workspace/ai-lab/tools/ai-domain-pack
 - ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
 - ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
@@ -440,7 +426,6 @@ For ai-lab itself:
     ai-home
     ai-register
     ai-register --prune
-    ai-auto-template-status
     ai-refactor-scan
     ai-rebuild-plan
     ai-split-plan
@@ -654,7 +639,7 @@ Completed capabilities:
 - Claude-backed review gate
 - explicit single-reviewer and multi-reviewer review summaries
 - reviewer disagreement handling
-- reusable automation template
+- reusable AI_AUTO baseline
 - generic automation doctor
 - global helper command setup
 - aiinit doctor handoff

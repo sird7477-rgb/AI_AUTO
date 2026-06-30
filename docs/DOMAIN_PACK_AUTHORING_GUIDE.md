@@ -126,7 +126,7 @@ Do not put these in reusable packs:
 - credentials, tokens, private URLs, SSH hosts, production IPs, or customer names
 - branch routing, deployment approvals, or access rules for one project
 - commands that require private services unless clearly marked as examples
-- generic baseline automation rules that belong in `automation-base`
+- generic baseline automation rules that belong in the AI_AUTO baseline
 - large prose copied from project-specific docs
 
 Project-specific facts belong in the target repo after interview, not in the

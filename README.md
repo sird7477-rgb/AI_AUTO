@@ -22,17 +22,14 @@ This is not an end-user app, a deployment template, or a framework showcase.
 - pytest coverage in `tests/`
 - Docker image in `Dockerfile`
 - API + Postgres runtime in `docker-compose.yml`
-- Reusable automation template under `templates/automation-base/`
 - Optional domain packs under `templates/domain-packs/`
 - Global helper source commands under `tools/`
 - Codex/OMX workflow artifacts under `.omx/`
 
 ## What This Repository Maintains
 
-- `aiinit` / `ai-auto-init` for installing the automation template into another
-  git repository.
-- `ai-auto-template-status` for comparing a project against the current AI_AUTO
-  template without patching it.
+- `aiinit` / `ai-auto-init` for setting up the AI_AUTO workflow on another
+  git repository (no framework files are vendored into the project).
 - `./scripts/verify.sh` and `./scripts/review-gate.sh` for the local
   verify-review completion loop.
 - Active principal runtime contracts so `codex`, `claude`, or `gemini` can be
@@ -195,7 +192,7 @@ Out of scope:
 - `docs/CURRENT_STATE.md` is the current handoff document for completed automation capabilities, known limitations, and next-stage boundaries.
 - `docs/GLOBAL_TOOLS.md` describes `aiinit`, `workspace-scan`, and bootstrap helper setup.
 - `docs/OBSIDIAN_INTEGRATION.md` describes curated Obsidian note publishing and scoped plain-guide folder pushes.
-- `docs/NEW_PROJECT_GUIDE.md` explains how to apply the generic automation template to another repository.
+- `docs/NEW_PROJECT_GUIDE.md` explains how to set up the AI_AUTO workflow on another repository.
 - `docs/DOMAIN_PACKS.md` explains reusable domain packs and their application lifecycle.
 - `docs/DOMAIN_PACK_AUTHORING_GUIDE.md` defines quality rules for creating or changing domain packs.
 - `docs/MULTI_AI_COLLABORATION.md` documents principal-runtime review rotation, substitute reviewer coverage, degraded-review behavior, and command keywords.
@@ -441,10 +438,7 @@ Optional Codex startup notices can be installed with:
 ./scripts/install-global-files.sh --install-codex-drift-notice
 ```
 
-When an AI_AUTO-managed project is outdated, Codex startup prints an
-`AI_AUTO UPDATE CHECK` block with the project path, version status, latest patch
-note, inspection command, and `action: AI_AUTO 최신 패치 적용해줘`. In the AI_AUTO
-home checkout, the same startup hook can also print an `OBSIDIAN OUTPUT CHECK`
+In the AI_AUTO home checkout, this startup hook prints an `OBSIDIAN OUTPUT CHECK`
 block when validated knowledge drafts are waiting across AI_AUTO and registered
 projects. That notice is read-only. To publish, run `scripts/obsidian-autopush.sh`
 from the home checkout (or say `옵시디언 푸시해줘`). By rule it auto-promotes

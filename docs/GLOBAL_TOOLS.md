@@ -15,23 +15,14 @@ This repository keeps source copies of helper commands that are linked into `~/b
 
 - `aiinit`
   - Short alias for `ai-auto-init`
-  - Installs the automation template into the current git repository by default
+  - Sets up the AI_AUTO workflow in the current git repository by default; no framework files are vendored into the project
   - Accepts an optional target repository path: `aiinit /path/to/repo`
   - Creates `.omx/reviewer-state`
-  - Runs the installed `./scripts/automation-doctor.sh` after installation with the install-time dirty-tree check skipped
+  - Runs `automation-doctor` after setup with the install-time dirty-tree check skipped
 
 - `ai-auto-init`
   - Resolves the ai-lab checkout from the helper symlink target
-  - Runs `scripts/install-automation-template.sh` against the current directory or provided target path
-
-- `ai-auto-template-status`
-  - Compares a project against the current AI_AUTO automation template
-  - Reports installed template version, current template version, overall status, per-managed-file states, ownership, and patch policy
-  - Also reports `domain_packs` drift for packs the project ACTUALLY installed (via `ai-domain-pack status`), so the keyword update workflow surfaces an outdated odoo/other pack even though `ai-template-refresh` never touches `domain-packs/`; a project with no installed packs reports `none installed` and is unaffected
-  - Excludes generated/runtime project files such as `.omx/` artifacts from the managed-file manifest
-  - Use template `docs/PATCH_NOTES.md` first to review version-level changes before patching a project
-  - Does not merge or patch files
-  - With `--record-feedback`, records a sanitized project queue item through the trusted AI_AUTO feedback helper only when drift exists
+  - Sets up the AI_AUTO workflow against the current directory or provided target path
 
 - `ai-domain-pack`
   - Reports or refreshes optional domain-pack references under `.omx/domain-packs/`
@@ -40,11 +31,6 @@ This repository keeps source copies of helper commands that are linked into `~/b
   - Clean managed copies can be updated mechanically, exact-match legacy copies can be adopted, and locally modified, dirty legacy, unreadable, or deliberately removed packs fail closed
   - Never merges pack content into project `AGENTS.md`, `docs/WORKFLOW.md`, or `scripts/verify.sh`
   - Advanced/test-only source overrides may set `AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE`; normal use should read source packs from the AI_AUTO checkout
-
-- `ai-template-refresh`
-  - Re-syncs a project's template-owned files to the current AI_AUTO template using the 3-way drift from `ai-auto-template-status`
-  - Refreshes only `outdated`/`missing` template-owned files; reports and never overwrites `locally_edited`/`conflict` files, `hybrid` guidance (manual review-merge), or `project-owned` files
-  - Dry-run by default; `--apply` is gated to the stable (main) channel and rewrites only the refreshed files' install baseline
 
 AI review context defaults to `REVIEW_CONTEXT_DETAIL=auto`. Small tracked diffs
 use a lightweight diff-centered context; set `REVIEW_CONTEXT_DETAIL=full` for
@@ -62,7 +48,7 @@ reviews that need planning artifacts or full workflow reference file excerpts.
 
 - `ai-rebuild-plan`
   - Read-only rebuild preflight for `리빌드 플랜`, `리빌딩 플랜`, or `rebuild plan` requests
-  - Checks target repo status, automation template status, installed/source domain packs, and refactoring candidates
+  - Checks target repo status, installed/source domain packs, and refactoring candidates
   - Does not modify files and does not start rebuild execution
   - `리빌드 실행`, `리빌딩 실행`, or `rebuild run` must remain a separate execution request backed by an approved plan artifact
 
@@ -108,7 +94,7 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Lists local `.omx/feedback/queue.jsonl` items from `OMX_FEEDBACK_QUEUE_FILE`, the current git root, registered projects, and workspace-discovered repositories
   - Uses the same `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH` setting for workspace discovery
   - Treats missing item status as `open`
-  - `--proposals` shows only template-improvement proposals (items whose `repeat_key` starts with `template-proposal:`). This is the project->home upstream channel: instead of locally editing a template-owned file, a project records `record-feedback --type improvement --repeat-key template-proposal:<slug> --summary ...`, and the home triages them with `feedback-collect --proposals` (which scans registered projects + the workspace by default)
+  - `--proposals` shows only template-improvement proposals (items whose `repeat_key` starts with `template-proposal:`). This is the project->home upstream channel: instead of changing the shared AI_AUTO baseline directly, a project records `record-feedback --type improvement --repeat-key template-proposal:<slug> --summary ...`, and the home triages them with `feedback-collect --proposals` (which scans registered projects + the workspace by default)
 
 - `feedback-resolve`
   - Resolves local feedback queue items by `repeat_key` across the same discovery surface as `feedback-collect`
@@ -186,15 +172,13 @@ reviews that need planning artifacts or full workflow reference file excerpts.
     findings lane retrievable is a tracked backlog item (see
     `plans/AI_AUTO_STRUCTURAL_WEAKNESS_BACKLOG.md`), not current behavior
 
-Repo-local command installed by the automation template:
+Automation diagnostic command:
 
 - `./scripts/automation-doctor.sh`
   - Diagnoses whether the current repository has the expected automation foundation
   - Suggests repair commands by default
   - Applies only safe non-overwriting setup fixes with `--fix`
   - Checks helper symlinks and whether `~/bin` is on PATH when running inside ai-lab
-
-ai-lab ships its own copy at `scripts/automation-doctor.sh`; the template copy is what gets installed into new projects.
 
 ai-lab-only bootstrap command:
 
@@ -210,8 +194,8 @@ ai-lab-only bootstrap command:
   - Creates or repairs safe repo-owned helper symlinks under `~/bin`
   - Adds a managed `AI_AUTO` shell function file under `~/.config/ai-lab` and a small source block to `~/.bashrc`
   - With `--install-codex-drift-notice`, adds an opt-in managed `codex` shell
-    function that prints a read-only AI_AUTO template update notice before
-    calling the real Codex binary
+    function that prints a read-only notice for pending Obsidian/knowledge
+    drafts before calling the real Codex binary
   - With `--install-codex-tmux-auto-entry`, adds support for
     default-on project-scoped tmux auto-entry for interactive terminal `codex`
     calls outside tmux; use `AI_AUTO_CODEX_TMUX_AUTO=0 codex` to opt out
@@ -219,9 +203,6 @@ ai-lab-only bootstrap command:
     auto-entry behavior for `codex`, `claude`, and `agy`; use
     `AI_AUTO_TMUX_AUTO=0` to opt out for all wrappers, or
     `AI_AUTO_CLAUDE_TMUX_AUTO=0` / `AI_AUTO_AGY_TMUX_AUTO=0` for one runtime
-  - When drift is detected, the notice prints the patch-request keyword
-    `AI_AUTO 최신 패치 적용해줘`; project `AGENTS.md` expands that keyword into
-    the full template patch workflow
   - Does not install external programs, configure credentials, run `automation-doctor --fix`, or overwrite non-symlink files
 
 ## Link setup
@@ -233,9 +214,7 @@ Expected links:
     ~/bin/ai-home -> ~/workspace/ai-lab/tools/ai-home
     ~/bin/aiinit -> ~/workspace/ai-lab/tools/ai-auto-init
     ~/bin/ai-register -> ~/workspace/ai-lab/tools/ai-register
-    ~/bin/ai-auto-template-status -> ~/workspace/ai-lab/tools/ai-auto-template-status
     ~/bin/ai-domain-pack -> ~/workspace/ai-lab/tools/ai-domain-pack
-    ~/bin/ai-template-refresh -> ~/workspace/ai-lab/tools/ai-template-refresh
     ~/bin/ai-gstack-contract -> ~/workspace/ai-lab/tools/ai-gstack-contract
     ~/bin/ai-refactor-scan -> ~/workspace/ai-lab/tools/ai-refactor-scan
     ~/bin/ai-rebuild-plan -> ~/workspace/ai-lab/tools/ai-rebuild-plan
@@ -272,9 +251,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/ai-home ~/bin/ai-home
     ln -sf ~/workspace/ai-lab/tools/ai-auto-init ~/bin/aiinit
     ln -sf ~/workspace/ai-lab/tools/ai-register ~/bin/ai-register
-    ln -sf ~/workspace/ai-lab/tools/ai-auto-template-status ~/bin/ai-auto-template-status
     ln -sf ~/workspace/ai-lab/tools/ai-domain-pack ~/bin/ai-domain-pack
-    ln -sf ~/workspace/ai-lab/tools/ai-template-refresh ~/bin/ai-template-refresh
     ln -sf ~/workspace/ai-lab/tools/ai-gstack-contract ~/bin/ai-gstack-contract
     ln -sf ~/workspace/ai-lab/tools/ai-refactor-scan ~/bin/ai-refactor-scan
     ln -sf ~/workspace/ai-lab/tools/ai-rebuild-plan ~/bin/ai-rebuild-plan
@@ -342,36 +319,22 @@ The same managed shell integration adds small convenience functions:
     first available positive integer (`1`, `2`, `3`, ...)
   - Calls with arguments are passed through to the real tmux command unchanged
 
-## Codex Drift Notice
+## Codex Knowledge-Autopush Notice
 
 The normal global install does not replace or shadow `codex`. To opt into a
-template drift notice before Codex starts, run:
+read-only startup notice for pending Obsidian/knowledge drafts, run:
 
     ./scripts/install-global-files.sh --install-codex-drift-notice
 
 This writes `~/.config/ai-lab/codex-drift-notice.sh` and a managed `.bashrc`
 source block. The generated function resolves the real Codex executable at
-install time, checks the current git repository with `ai-auto-template-status`,
-prints a warning to stderr only when the project is customized or outdated, and
-then calls the real Codex binary with the original arguments.
-The warning is printed as an `AI_AUTO UPDATE CHECK` block. It includes
-`action: AI_AUTO 최신 패치 적용해줘`; type that action in Codex to ask the agent to
-run the documented AI_AUTO template patch workflow. The status check is wrapped
-in a short timeout and is skipped when `timeout` is unavailable so ordinary
-Codex startup is not blocked.
-If `ai-auto-template-status` reports `template_patch_enabled: no`, the keyword
-workflow must stop before applying managed-file changes because the current
-AI_AUTO source is experimental or unknown.
-For hybrid files, classify template changes as absorbed, rejected, or deferred;
-for project-owned files, report drift only. If a legitimate template-owned guide
-addition trips only the current guidance diff hard limit, rerun with
-`DOC_BUDGET_TEMPLATE_PATCH=1` and report the warning.
+install time and then calls the real Codex binary with the original arguments.
 
 Disable the notice for a shell command with:
 
     AI_AUTO_CODEX_DRIFT_NOTICE=0 codex
 
-When the same wrapper is invoked from the AI_AUTO home checkout, it also checks
+When the wrapper is invoked from the AI_AUTO home checkout, it checks
 for validated knowledge drafts across AI_AUTO plus registered projects. If
 drafts are pending, it prints a read-only `OBSIDIAN OUTPUT CHECK` block with up
 to ten pending rows, an inspect command, and the publish command. It never
@@ -395,8 +358,8 @@ and `ai-register /path/to/repo` for the current path. Suppress the notice with:
 
     AI_AUTO_KNOWLEDGE_AUTOPUSH_NOTICE=0 codex
 
-The notice path is read-only. It does not run `--record-feedback`, merge
-template files, patch projects, or install a `~/bin/codex` executable.
+The notice path is read-only. It does not merge files, patch projects, or
+install a `~/bin/codex` executable.
 
 The same managed `codex` shell wrapper can optionally support tmux auto-entry:
 

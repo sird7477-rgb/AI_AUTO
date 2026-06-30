@@ -5,9 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_SCRIPT = ROOT / "scripts" / "discover-ai-models.sh"
-TEMPLATE_SCRIPT = ROOT / "templates" / "automation-base" / "scripts" / "discover-ai-models.sh"
 CONTEXT_SCRIPT = ROOT / "scripts" / "collect-review-context.sh"
-TEMPLATE_CONTEXT_SCRIPT = ROOT / "templates" / "automation-base" / "scripts" / "collect-review-context.sh"
 
 # Phase 0 (ST-P1-22) is observe-only: the routing report records the
 # lane-to-class contract per principal but must not change routing behavior or
@@ -26,12 +24,10 @@ CONTRACT_STRINGS = (
 )
 
 
-def test_both_discover_copies_carry_observe_only_lane_contract() -> None:
+def test_discover_carries_observe_only_lane_contract() -> None:
     main_text = MAIN_SCRIPT.read_text(encoding="utf-8")
-    template_text = TEMPLATE_SCRIPT.read_text(encoding="utf-8")
     for needle in CONTRACT_STRINGS:
         assert needle in main_text, f"missing in main script: {needle}"
-        assert needle in template_text, f"missing in template script: {needle}"
 
 
 def _run_discovery(repo: Path) -> str:
@@ -71,7 +67,6 @@ def test_report_renders_lane_block_for_all_three_principals(tmp_path: Path) -> N
 
 
 DOC = ROOT / "docs" / "AI_MODEL_ROUTING.md"
-TEMPLATE_DOC = ROOT / "templates" / "automation-base" / "docs" / "AI_MODEL_ROUTING.md"
 
 # Phase 1 (ST-P1-22): the low_cost_impl lane is a separate, guardrail-gated,
 # non-authoritative bounded lane. docs/AI_MODEL_ROUTING.md is its source of truth.
@@ -86,27 +81,22 @@ LOW_COST_CONTRACT = (
 )
 
 
-def test_low_cost_impl_contract_present_and_synced() -> None:
+def test_low_cost_impl_contract_present() -> None:
     main_text = DOC.read_text(encoding="utf-8")
-    template_text = TEMPLATE_DOC.read_text(encoding="utf-8")
     for needle in LOW_COST_CONTRACT:
         assert needle in main_text, f"missing in docs/AI_MODEL_ROUTING.md: {needle}"
-        assert needle in template_text, f"missing in template doc: {needle}"
 
 
 # Phase 2 (ST-P1-22): evidence-driven tuning guard. Defaults change only on
 # repeated evidence; no global downgrade of the standard/reviewer lanes.
-def test_evidence_driven_tuning_guard_present_and_synced() -> None:
+def test_evidence_driven_tuning_guard_present() -> None:
     main_text = DOC.read_text(encoding="utf-8")
-    template_text = TEMPLATE_DOC.read_text(encoding="utf-8")
     for needle in ("### Evidence-driven tuning", "lane-decisions.tsv",
                    "never globally downgrade", "no default change is warranted"):
         assert needle in main_text, f"missing in docs/AI_MODEL_ROUTING.md: {needle}"
-        assert needle in template_text, f"missing in template doc: {needle}"
 
 
 RECORDER = ROOT / "scripts" / "record-lane-decision.py"
-TEMPLATE_RECORDER = ROOT / "templates" / "automation-base" / "scripts" / "record-lane-decision.py"
 
 
 def _record(log: Path, *args: str) -> subprocess.CompletedProcess:
@@ -226,10 +216,6 @@ def test_lane_decision_rejects_unknown_enum_values(tmp_path: Path) -> None:
     assert result.returncode == 2
 
 
-def test_lane_decision_recorder_copies_are_identical() -> None:
-    assert RECORDER.read_text(encoding="utf-8") == TEMPLATE_RECORDER.read_text(encoding="utf-8")
-
-
 def _run_review_context(repo: Path, principal: str, shape: str) -> str:
     repo.mkdir(parents=True, exist_ok=True)
     (repo / "scripts").mkdir(parents=True, exist_ok=True)
@@ -287,9 +273,8 @@ def test_routing_audit_normalizes_input_shape_case_and_whitespace(tmp_path: Path
     assert "recommended_lane: fast_scan" in audit
 
 
-def test_review_context_audit_present_in_both_copies() -> None:
-    for script in (CONTEXT_SCRIPT, TEMPLATE_CONTEXT_SCRIPT):
-        text = script.read_text(encoding="utf-8")
-        assert "write_model_routing_lane_audit" in text
-        assert "## Model Routing Lane Audit" in text
-        assert "routing_authority: none" in text
+def test_review_context_audit_present() -> None:
+    text = CONTEXT_SCRIPT.read_text(encoding="utf-8")
+    assert "write_model_routing_lane_audit" in text
+    assert "## Model Routing Lane Audit" in text
+    assert "routing_authority: none" in text

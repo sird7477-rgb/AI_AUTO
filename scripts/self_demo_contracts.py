@@ -362,7 +362,7 @@ def diff_scope_classification(paths: list[str]) -> ContractResult:
         if not isinstance(path, str) or not path.strip():
             return ContractResult(False, "invalid_diff_path", {"path": path})
         clean = path.strip()
-        if clean.startswith("templates/automation-base/"):
+        if clean.startswith("templates/"):
             scopes.add("templates")
         elif clean == "AGENTS.md" or clean.endswith("/AGENTS.md"):
             scopes.add("guidance")

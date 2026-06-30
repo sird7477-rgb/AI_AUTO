@@ -130,15 +130,7 @@ for required_path in AGENTS.md docs/WORKFLOW.md scripts/verify.sh scripts/review
 done
 echo
 
-echo "3. Automation template status"
-if [ -x "${AI_LAB_ROOT}/tools/ai-auto-template-status" ]; then
-  "${AI_LAB_ROOT}/tools/ai-auto-template-status" "$git_root" || true
-else
-  echo "- skipped: ai-auto-template-status is not executable"
-fi
-echo
-
-echo "4. Domain pack status"
+echo "3. Domain pack status"
 if [ -x "${AI_LAB_ROOT}/tools/ai-domain-pack" ]; then
   "${AI_LAB_ROOT}/tools/ai-domain-pack" --target "$git_root" status || true
 elif [ -d "${git_root}/.omx/domain-packs" ]; then
@@ -157,7 +149,7 @@ fi
 echo "- required decision: selected / rejected / deferred domain packs must be named in the plan."
 echo
 
-echo "5. Refactor scan"
+echo "4. Refactor scan"
 if [ -x "${AI_LAB_ROOT}/tools/ai-refactor-scan" ]; then
   "${AI_LAB_ROOT}/tools/ai-refactor-scan" --top 10 "$git_root" || true
 else
@@ -165,7 +157,7 @@ else
 fi
 echo
 
-echo "6. Execution gates"
+echo "5. Execution gates"
 echo "- Stop here unless the user explicitly asks for 리빌드 실행 / rebuild run."
 echo "- Before execution: update/validate domain pack assumptions, lock existing behavior with tests or smoke checks, define module boundaries, and state non-goals."
 echo "- Python split option: use ai-split-plan with domain-pack split-rules.json for proposed top-level function/class moves, then review ai-split-dry-run before any ai-split-apply."

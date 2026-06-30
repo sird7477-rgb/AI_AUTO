@@ -810,7 +810,7 @@ def test_diff_scope_classification_maps_paths_to_review_intensity() -> None:
     assert nested_docs.accepted
     assert nested_docs.data["scopes"] == ["docs", "tests"]
 
-    strict = diff_scope_classification(["AGENTS.md", "scripts/verify.sh", "templates/automation-base/AGENTS.md"])
+    strict = diff_scope_classification(["AGENTS.md", "scripts/verify.sh", "templates/domain-packs/odoo/AGENTS.md"])
     assert strict.accepted
     assert strict.data["scopes"] == ["guidance", "scripts", "templates"]
     assert strict.data["review_intensity"] == "strict"

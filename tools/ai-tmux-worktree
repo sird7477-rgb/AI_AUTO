@@ -24,9 +24,7 @@ wid_token() { printf '%s' "${1:-}" | tr -cd '0-9'; }   # '@5' -> '5'
 is_ai_auto_project() {
   local top
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
-  [ -f "$top/AI_AUTO_TEMPLATE_VERSION" ] \
-    || [ -f "$top/templates/automation-base/AI_AUTO_TEMPLATE_VERSION" ] \
-    || [ -f "$top/.omx/tmux-worktree" ]
+  [ -d "$top/templates/domain-packs" ] || [ -d "$top/.omx" ]
 }
 
 # Absolute primary-worktree root for the repo containing $1 (a linked worktree path).

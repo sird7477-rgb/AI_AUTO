@@ -16,13 +16,10 @@ for script in \
   scripts/collect-review-context.sh \
   scripts/docker-config-guard.sh \
   scripts/doc-budget.sh \
-  scripts/refresh-guidance-baseline.sh \
-  scripts/check-template-version.sh \
   scripts/guidance-duplicate-report.sh \
   scripts/discover-ai-models.sh \
   scripts/install-ubuntu-prereqs.sh \
   scripts/install-global-files.sh \
-  scripts/install-automation-template.sh \
   scripts/make-review-prompts.sh \
   scripts/record-feedback.sh \
   scripts/record-project-memory.sh \
@@ -33,32 +30,11 @@ for script in \
   scripts/summarize-ai-reviews.sh \
   scripts/test-review-summary.sh \
   scripts/verify-machinery.sh \
-  scripts/write-session-checkpoint.sh \
-  templates/automation-base/scripts/archive-omx-artifacts.sh \
-  templates/automation-base/scripts/ai-principal-runtime.sh \
-  templates/automation-base/scripts/ai-runtime-adapter.sh \
-  templates/automation-base/scripts/automation-doctor.sh \
-  templates/automation-base/scripts/collect-review-context.sh \
-  templates/automation-base/scripts/docker-config-guard.sh \
-  templates/automation-base/scripts/doc-budget.sh \
-  templates/automation-base/scripts/guidance-duplicate-report.sh \
-  templates/automation-base/scripts/discover-ai-models.sh \
-  templates/automation-base/scripts/make-review-prompts.sh \
-  templates/automation-base/scripts/record-feedback.sh \
-  templates/automation-base/scripts/record-project-memory.sh \
-  templates/automation-base/scripts/resolve-feedback.sh \
-  templates/automation-base/scripts/review-gate.sh \
-  templates/automation-base/scripts/run-ai-reviews.sh \
-  templates/automation-base/scripts/session-lock.sh \
-  templates/automation-base/scripts/summarize-ai-reviews.sh \
-  templates/automation-base/scripts/test-review-summary.sh \
-  templates/automation-base/scripts/verify-machinery.sh \
-  templates/automation-base/scripts/write-session-checkpoint.sh \
-  templates/automation-base/scripts/verify.example.sh
+  scripts/write-session-checkpoint.sh
 do
   bash -n "${script}"
 done
-shellcheck -S warning scripts/*.sh templates/automation-base/scripts/*.sh
+shellcheck -S warning scripts/*.sh
 # Global helper commands in tools/ are extensionless scripts that the
 # scripts/*.sh glob above cannot reach, yet they are the code installed onto
 # other machines. Discover them by shebang so adding, removing, or renaming a
@@ -95,13 +71,6 @@ python3 -m py_compile scripts/record-lane-decision.py
 python3 -m py_compile scripts/micro_work_contracts.py
 python3 -m py_compile tools/ai-domain-pack
 python3 -m py_compile tools/micro-work
-python3 -m py_compile templates/automation-base/scripts/benchmark-command.py
-python3 -m py_compile templates/automation-base/scripts/todo-report.py
-python3 -m py_compile templates/automation-base/scripts/capture-knowledge-drafts.py
-python3 -m py_compile templates/automation-base/scripts/collect-odoo-docs-kb.py
-python3 -m py_compile templates/automation-base/scripts/knowledge-notes.py
-python3 -m py_compile templates/automation-base/scripts/validate-odoo-docs-kb.py
-python3 -m py_compile templates/automation-base/scripts/record-lane-decision.py
 
 echo "[verify] checking secret hygiene..."
 # Secret-bearing files must stay untracked. .gitignore already excludes them,
@@ -285,23 +254,13 @@ if invalid.returncode == 0 or invalid_output.get("reason") != "invalid_json":
 PY
 
 echo "[verify] checking Playwright CDP safety guidance..."
-for ui_completion_doc in \
-  docs/UI_COMPLETION.md \
-  templates/automation-base/docs/UI_COMPLETION.md
-do
-  grep -q "Playwright CDP Access" "${ui_completion_doc}"
-  grep -q "credential-equivalent" "${ui_completion_doc}"
-  grep -q "docs/CHROME_CDP_ACCESS.md" "${ui_completion_doc}"
-done
+grep -q "Playwright CDP Access" docs/UI_COMPLETION.md
+grep -q "credential-equivalent" docs/UI_COMPLETION.md
+grep -q "docs/CHROME_CDP_ACCESS.md" docs/UI_COMPLETION.md
 grep -q "Chrome CDP Access" docs/CHROME_CDP_ACCESS.md
 grep -q "credential-equivalent" docs/CHROME_CDP_ACCESS.md
 grep -q "project-owned wrapper scripts" docs/CHROME_CDP_ACCESS.md
-cmp -s docs/CHROME_CDP_ACCESS.md templates/automation-base/docs/CHROME_CDP_ACCESS.md
-cmp -s docs/OBSIDIAN_INTEGRATION.md templates/automation-base/docs/OBSIDIAN_INTEGRATION.md
-cmp -s docs/PLANNING_VISUALIZATION_GUIDE.md templates/automation-base/docs/PLANNING_VISUALIZATION_GUIDE.md
-cmp -s docs/AI_MODEL_ROUTING.md templates/automation-base/docs/AI_MODEL_ROUTING.md
 grep -q "Delegation Recording Protocol" AGENTS.md
-grep -q "Delegation Recording Protocol" templates/automation-base/AGENTS.md
 
 echo "[verify] checking guidance document budget..."
 # ST-P1-64: auto-derive the completion-scope baseline from validated launcher
@@ -337,24 +296,13 @@ echo "[verify] checking Codex native goal mode boundary guidance..."
   }
   extract_goal_boundary_section docs/SESSION_QUALITY_PLAN.md \
     > "${goal_boundary_tmp}/root.md"
-  extract_goal_boundary_section templates/automation-base/docs/SESSION_QUALITY_PLAN.md \
-    > "${goal_boundary_tmp}/template.md"
   test -s "${goal_boundary_tmp}/root.md"
-  test -s "${goal_boundary_tmp}/template.md"
   grep -qF "Codex Native Goal Mode Boundary" "${goal_boundary_tmp}/root.md"
   grep -qF "State authority matrix" "${goal_boundary_tmp}/root.md"
   grep -qF "AI_AUTO/OMX state" "${goal_boundary_tmp}/root.md"
   grep -qF ".omx/state/session-checkpoint.md" "${goal_boundary_tmp}/root.md"
   grep -qF "update_goal" "${goal_boundary_tmp}/root.md"
-  diff -u "${goal_boundary_tmp}/root.md" "${goal_boundary_tmp}/template.md"
 )
-
-echo "[verify] checking template version + patch-note hygiene..."
-./scripts/check-template-version.sh
-grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" AGENTS.md
-grep -qF "When the user asks \`AI_AUTO 최신 패치 적용해줘\`" templates/automation-base/AGENTS.md
-grep -qF "action: AI_AUTO 최신 패치 적용해줘" docs/GLOBAL_TOOLS.md
-grep -qF "action: AI_AUTO 최신 패치 적용해줘" docs/NEW_PROJECT_GUIDE.md
 
 echo "[verify] testing guidance document budget accounting..."
 (
@@ -368,14 +316,10 @@ echo "[verify] testing guidance document budget accounting..."
 
   git -c init.defaultBranch=main init -q "${tmp_dir}"
   cd "${tmp_dir}"
-  mkdir -p docs templates/automation-base/docs scripts
+  mkdir -p docs scripts
   printf '# Agents\n' > AGENTS.md
   printf '# Workflow\n' > docs/WORKFLOW.md
   printf '# Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
-  printf '# Template Agents\n' > templates/automation-base/AGENTS.md
-  printf '# Template Readme\n' > templates/automation-base/README.md
-  printf '# Template Workflow\n' > templates/automation-base/docs/WORKFLOW.md
-  printf '# Template Policy\n' > templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
   cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
   cp "${repo_root}/scripts/guidance-duplicate-report.sh" scripts/guidance-duplicate-report.sh
   chmod +x scripts/doc-budget.sh
@@ -894,47 +838,6 @@ echo "[verify] testing safe-push race auto-rebase-retry + non-race stop (ST-P1-7
   [ "$(git rev-parse HEAD)" = "${head_before}" ] || { echo "[verify] safe-push: rewrote local history on a non-race"; exit 1; }
 )
 
-echo "[verify] testing ai-auto-template-status domain-pack drift surfacing..."
-(
-  tmp_dir="$(mktemp -d)"
-  cleanup_dp_status_tmp() { rm -rf "${tmp_dir}"; }
-  trap cleanup_dp_status_tmp EXIT
-  status_tool="${repo_root}/tools/ai-auto-template-status"
-  pack_tool="${repo_root}/tools/ai-domain-pack"
-
-  # A project with NO installed packs (the non-Odoo case) -> "none installed", empty JSON.
-  "${status_tool}" "${tmp_dir}" 2>/dev/null | grep -q "^domain_packs: none installed" \
-    || { echo "[verify] template-status did not report 'none installed' for a pack-less project"; exit 1; }
-  "${status_tool}" --json "${tmp_dir}" 2>/dev/null \
-    | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("domain_packs")==[] else 1)' \
-    || { echo "[verify] template-status JSON domain_packs not empty for a pack-less project"; exit 1; }
-
-  # Install the odoo pack -> reported current, needs_attention false.
-  python3 "${pack_tool}" --target "${tmp_dir}" --pack odoo refresh --apply >/dev/null 2>&1
-  "${status_tool}" "${tmp_dir}" 2>/dev/null | grep -q "domain_packs:.*odoo=current" \
-    || { echo "[verify] template-status did not report installed odoo pack as current"; exit 1; }
-  "${status_tool}" --json "${tmp_dir}" 2>/dev/null | python3 -c '
-import json, sys
-ps = {p["pack"]: p for p in (json.load(sys.stdin).get("domain_packs") or [])}
-sys.exit(0 if ps.get("odoo", {}).get("needs_attention") is False else 1)' \
-    || { echo "[verify] template-status JSON did not mark current odoo pack needs_attention=false"; exit 1; }
-
-  # Simulate upstream-moved-on (outdated_clean): drop one file from BOTH the
-  # installed pack and its manifest, so source now has an extra file the install lacks.
-  man="${tmp_dir}/.omx/domain-packs/.manifest/odoo.json"
-  victim="$(python3 -c 'import json,sys; print(sorted(json.load(open(sys.argv[1]))["files"])[0])' "${man}")"
-  rm -f "${tmp_dir}/.omx/domain-packs/odoo/${victim}"
-  python3 -c 'import json,sys; p,v=sys.argv[1],sys.argv[2]; d=json.load(open(p)); d["files"].pop(v,None); json.dump(d,open(p,"w"))' "${man}" "${victim}"
-  "${status_tool}" "${tmp_dir}" 2>/dev/null | grep -q "^domain_pack_action:.*odoo" \
-    || { echo "[verify] template-status did not flag an outdated odoo pack for action"; exit 1; }
-  "${status_tool}" --json "${tmp_dir}" 2>/dev/null | python3 -c '
-import json, sys
-ps = {p["pack"]: p for p in (json.load(sys.stdin).get("domain_packs") or [])}
-o = ps.get("odoo", {})
-sys.exit(0 if o.get("state") == "outdated_clean" and o.get("needs_attention") is True else 1)' \
-    || { echo "[verify] template-status JSON did not mark outdated odoo pack needs_attention=true"; exit 1; }
-)
-
 echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -991,155 +894,11 @@ echo "[verify] testing guidance document budget missing-file tolerance..."
   grep -q "guidance markdown total lines: 0" "${tmp_dir}/budget-missing.out"
 )
 
-echo "[verify] testing guidance budget inherited-unchanged baseline exclusion..."
-(
-  tmp_dir="$(mktemp -d)"
-
-  cleanup_doc_budget_baseline_tmp() {
-    rm -rf "${tmp_dir}"
-  }
-
-  trap cleanup_doc_budget_baseline_tmp EXIT
-
-  git -c init.defaultBranch=main init -q "${tmp_dir}"
-  cd "${tmp_dir}"
-  mkdir -p docs scripts .ai-auto
-  printf '# Agents\n' > AGENTS.md
-  # A large inherited doc and a smaller project-authored doc.
-  : > docs/INHERITED.md
-  for i in $(seq 1 500); do printf 'inherited guidance line %s\n' "$i" >> docs/INHERITED.md; done
-  : > docs/PROJECT_OWNED.md
-  for i in $(seq 1 100); do printf 'project guidance line %s\n' "$i" >> docs/PROJECT_OWNED.md; done
-  cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
-  chmod +x scripts/doc-budget.sh
-  # Baseline records the inherited docs (AGENTS.md + INHERITED.md) as the
-  # installer would; the project-authored doc is intentionally absent from it.
-  {
-    echo "# AI_AUTO guidance baseline"
-    sha256sum AGENTS.md docs/INHERITED.md
-  } > .ai-auto/guidance-baseline.sha256
-  git add .
-  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed baseline fixture"
-
-  # Inherited-unchanged docs are excluded from the absolute total; only the
-  # project-authored 100 lines are budgeted.
-  ./scripts/doc-budget.sh > "${tmp_dir}/budget-baseline.out"
-  grep -q "AGENTS.md lines: inherited unchanged (skipped" "${tmp_dir}/budget-baseline.out"
-  grep -q "excluded 2 inherited-unchanged docs (501 lines)" "${tmp_dir}/budget-baseline.out"
-  grep -q "primary guidance markdown total lines: 100" "${tmp_dir}/budget-baseline.out"
-
-  # Editing the inherited doc breaks the hash: it re-enters the absolute budget
-  # (601 = edited INHERITED 501 + project 100; AGENTS.md stays excluded).
-  printf 'local edit\n' >> docs/INHERITED.md
-  ./scripts/doc-budget.sh > "${tmp_dir}/budget-baseline-edited.out"
-  grep -q "primary guidance markdown total lines: 601" "${tmp_dir}/budget-baseline-edited.out"
-  git checkout -q -- docs/INHERITED.md
-
-  # No baseline file -> nothing is excluded (current behavior preserved):
-  # AGENTS 1 + INHERITED 500 + project 100 = 601.
-  rm -f .ai-auto/guidance-baseline.sha256
-  ./scripts/doc-budget.sh > "${tmp_dir}/budget-baseline-absent.out"
-  grep -q "primary guidance markdown total lines: 601" "${tmp_dir}/budget-baseline-absent.out"
-  if grep -q "inherited-unchanged docs" "${tmp_dir}/budget-baseline-absent.out"; then
-    echo "[verify] doc-budget excluded docs without a baseline file"
-    exit 1
-  fi
-)
-
 grep -q "stage-2 duplicate report only when the user asks" scripts/doc-budget.sh
-grep -q "stage-2 duplicate report only when the user asks" templates/automation-base/scripts/doc-budget.sh
 grep -q "DOC_BUDGET_TEMPLATE_PATCH=1" scripts/doc-budget.sh
-grep -q "DOC_BUDGET_TEMPLATE_PATCH=1" templates/automation-base/scripts/doc-budget.sh
 grep -q "absorbed, rejected, or deferred" AGENTS.md
-grep -q "absorbed, rejected, or deferred" templates/automation-base/AGENTS.md
 grep -q "Guidance Budget Escalation" docs/AUTOMATION_OPERATING_POLICY.md
-grep -q "Guidance Budget Escalation" templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
-grep -q "Stage 2 is a read-only duplicate or consolidation" templates/automation-base/README.md
 grep -q "Tool Adoption Before Custom Development" docs/AUTOMATION_OPERATING_POLICY.md
-grep -q "Tool Adoption Before Custom Development" templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md
-
-echo "[verify] testing template version bump-on-change gate..."
-(
-  tmp_dir="$(mktemp -d)"
-
-  cleanup_ctv_tmp() {
-    rm -rf "${tmp_dir}"
-  }
-
-  trap cleanup_ctv_tmp EXIT
-
-  git -c init.defaultBranch=main init -q "${tmp_dir}"
-  cd "${tmp_dir}"
-  mkdir -p scripts templates/automation-base/docs templates/automation-base/scripts
-  cp "${repo_root}/scripts/check-template-version.sh" scripts/check-template-version.sh
-  chmod +x scripts/check-template-version.sh
-  printf '1.0.0\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
-  printf '# AI_AUTO Patch Notes\n\n## 1.0.0\n\n- seed\n' > templates/automation-base/docs/PATCH_NOTES.md
-  printf '# sample\n' > templates/automation-base/scripts/sample.sh
-  git add .
-  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed template version fixture"
-
-  # On the base branch there is no diff to measure; consistency holds -> OK.
-  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-base.out"
-  grep -q "OK" "${tmp_dir}/ctv-base.out"
-
-  # A template-owned change on a branch WITHOUT a version bump must fail.
-  git checkout -q -b feature
-  printf '# sample changed\n' > templates/automation-base/scripts/sample.sh
-  git add templates/automation-base/scripts/sample.sh
-  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "change template without bump"
-  if ./scripts/check-template-version.sh > "${tmp_dir}/ctv-nobump.out" 2>&1; then
-    echo "[verify] template gate accepted a template change without a version bump"
-    exit 1
-  fi
-  grep -q "without a version bump" "${tmp_dir}/ctv-nobump.out"
-
-  # Bumping the version + adding a matching patch-note heading clears the gate.
-  printf '1.0.1\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
-  printf '# AI_AUTO Patch Notes\n\n## 1.0.1\n\n- changed sample\n\n## 1.0.0\n\n- seed\n' > templates/automation-base/docs/PATCH_NOTES.md
-  git add -A
-  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "bump version + patch note"
-  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-bumped.out"
-  grep -q "OK" "${tmp_dir}/ctv-bumped.out"
-
-  # A domain-pack change (also shipped) must gate on a bump too. Branch fresh off
-  # main so the earlier automation-base bump does not mask it.
-  git checkout -q main
-  git checkout -q -b pack-feature
-  mkdir -p templates/domain-packs/demo
-  printf '# pack\n' > templates/domain-packs/demo/tool.sh
-  git add -A
-  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "change domain pack without bump"
-  if ./scripts/check-template-version.sh > "${tmp_dir}/ctv-pack-nobump.out" 2>&1; then
-    echo "[verify] template gate accepted a domain-pack change without a version bump"
-    exit 1
-  fi
-  grep -q "without a version bump" "${tmp_dir}/ctv-pack-nobump.out"
-  printf '1.0.1\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
-  printf '# AI_AUTO Patch Notes\n\n## 1.0.1\n\n- pack\n\n## 1.0.0\n\n- seed\n' > templates/automation-base/docs/PATCH_NOTES.md
-  git add -A
-  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "bump for domain pack"
-  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-pack-bumped.out"
-  grep -q "OK" "${tmp_dir}/ctv-pack-bumped.out"
-
-  # Version file out of sync with the top patch-note heading must fail (consistency).
-  printf '9.9.9\n' > templates/automation-base/AI_AUTO_TEMPLATE_VERSION
-  if ./scripts/check-template-version.sh > "${tmp_dir}/ctv-inconsistent.out" 2>&1; then
-    echo "[verify] template gate accepted a version/patch-note mismatch"
-    exit 1
-  fi
-  grep -q "must match the top" "${tmp_dir}/ctv-inconsistent.out"
-  git checkout -q -- templates/automation-base/AI_AUTO_TEMPLATE_VERSION
-
-  # A non-template change needs no bump -> passes.
-  git checkout -q main
-  git checkout -q -b docs-only
-  printf 'hello\n' > README.md
-  git add README.md
-  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "non-template change"
-  ./scripts/check-template-version.sh > "${tmp_dir}/ctv-nontemplate.out"
-  grep -q "OK" "${tmp_dir}/ctv-nontemplate.out"
-)
 
 echo "[verify] testing Stage 2 guidance duplicate reporter fallback..."
 (
@@ -4057,40 +3816,6 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   ! grep -q "UI_COMPLETION.md" "${tmp_dir}/doctor.out"
 )
 
-echo "[verify] testing automation-doctor off-manifest shadow detection..."
-(
-  shadow_tmp="$(mktemp -d)"
-  trap 'rm -rf "${shadow_tmp}"' EXIT
-  shadow_target="${shadow_tmp}/proj"
-  shadow_bin="${shadow_tmp}/bin"
-  mkdir -p "${shadow_bin}"
-  git -c init.defaultBranch=main init -q "${shadow_target}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
-    "${repo_root}/scripts/install-automation-template.sh" "${shadow_target}" >/dev/null 2>&1
-  ln -s "${repo_root}/tools/ai-auto-template-status" "${shadow_bin}/ai-auto-template-status"
-  # off-manifest shadow: a home script name (verify-machinery.sh is NOT installed) hand-copied
-  # in -> the literal jw_dev failure class the version gate cannot see
-  printf '#!/usr/bin/env bash\necho stale\n' > "${shadow_target}/scripts/verify-machinery.sh"
-  # a project's own script whose name is not a home name -> must NOT be flagged
-  printf '#!/usr/bin/env bash\necho mine\n' > "${shadow_target}/scripts/my-own-thing.sh"
-  doctor_out="$( cd "${shadow_target}" && PATH="${shadow_bin}:${PATH}" \
-    bash scripts/automation-doctor.sh 2>&1 || true )"
-  printf '%s\n' "${doctor_out}" | grep -q "off-manifest shadow.*scripts/verify-machinery.sh" \
-    || { echo "[verify] doctor did not flag an off-manifest shadow of a home script"; exit 1; }
-  if printf '%s\n' "${doctor_out}" | grep -q "off-manifest shadow.*my-own-thing.sh"; then
-    echo "[verify] doctor wrongly flagged a project's own non-home script"; exit 1
-  fi
-  if printf '%s\n' "${doctor_out}" | grep -q "off-manifest shadow.*scripts/review-gate.sh"; then
-    echo "[verify] doctor wrongly flagged a managed file as an off-manifest shadow"; exit 1
-  fi
-  # the AI_AUTO source checkout must skip the shadow check entirely (it legitimately has
-  # every home script)
-  src_out="$( cd "${repo_root}" && bash scripts/automation-doctor.sh 2>&1 || true )"
-  if printf '%s\n' "${src_out}" | grep -q "off-manifest shadow"; then
-    echo "[verify] doctor ran the off-manifest shadow check in the source checkout"; exit 1
-  fi
-)
-
 echo "[verify] testing automation-doctor legacy pointer target warning..."
 (
   tmp_dir="$(mktemp -d)"
@@ -4360,83 +4085,6 @@ echo "[verify] testing review-gate defers (exit 75, no blocked verdict) when its
   fi
 )
 
-echo "[verify] testing review-gate downstream template-staleness gate..."
-(
-  stale_tmp="$(mktemp -d)"
-  cleanup_stale_tmp() { rm -rf "${stale_tmp}"; }
-  trap cleanup_stale_tmp EXIT
-  stale_target="${stale_tmp}/proj"
-  stale_bin="${stale_tmp}/bin"
-  mkdir -p "${stale_bin}"
-  git -c init.defaultBranch=main init -q "${stale_target}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
-    "${repo_root}/scripts/install-automation-template.sh" "${stale_target}" >/dev/null 2>&1
-  # the global status helper resolves (through its own symlink) to THIS checkout's template
-  ln -s "${repo_root}/tools/ai-auto-template-status" "${stale_bin}/ai-auto-template-status"
-  # make one template-owned file outdated: installed == baseline != source (upstream moved on)
-  printf '\n# OLD\n' >> "${stale_target}/scripts/review-gate.sh"
-  python3 - "${stale_target}/.ai-auto/template-manifest.json" \
-    "$(sha256sum "${stale_target}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
-import json, sys
-m = json.load(open(sys.argv[1]))
-m["files"]["scripts/review-gate.sh"] = sys.argv[2]
-json.dump(m, open(sys.argv[1], "w"))
-PYEOF
-
-  run_stale_gate() {  # $1 = AI_AUTO_TEMPLATE_STALENESS value
-    rm -f "${stale_target}"/.omx/review-results/review-verdict-*.md
-    ( cd "${stale_target}" && set +e
-      PATH="${stale_bin}:${PATH}" AI_AUTO_TEMPLATE_STALENESS="$1" \
-        AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-        bash scripts/review-gate.sh > "${stale_tmp}/gate.out" 2>&1
-      echo "$?" > "${stale_tmp}/gate.exit" )
-  }
-  stale_verdict_reason() {
-    local v
-    v="$(ls -t "${stale_target}"/.omx/review-results/review-verdict-*.md 2>/dev/null | head -1)"
-    [ -n "${v}" ] && sed -n 's/^- reason: //p' "${v}" | head -1
-  }
-
-  # block: enforce -> exit 6 and a template_staleness blocked verdict (verify/panel not reached)
-  run_stale_gate block
-  [ "$(cat "${stale_tmp}/gate.exit")" = "6" ] \
-    || { echo "[verify] staleness block did not exit 6"; exit 1; }
-  stale_verdict_reason | grep -q "template_staleness" \
-    || { echo "[verify] staleness block did not write a template_staleness verdict"; exit 1; }
-
-  # warn (default): surface but do NOT block; the gate proceeds and then blocks on the
-  # placeholder verify.sh (verify_failed), proving staleness itself did not gate
-  run_stale_gate warn
-  grep -q "TEMPLATE STALENESS" "${stale_tmp}/gate.out" \
-    || { echo "[verify] staleness warn did not surface the warning"; exit 1; }
-  if stale_verdict_reason | grep -q "template_staleness"; then
-    echo "[verify] staleness warn wrongly blocked the gate"; exit 1
-  fi
-
-  # off: silent, no staleness output at all
-  run_stale_gate off
-  if grep -q "TEMPLATE STALENESS" "${stale_tmp}/gate.out"; then
-    echo "[verify] staleness off was not silent"; exit 1
-  fi
-
-  # fail-open: the status helper is present but the home template is unreachable (exits
-  # non-zero) -> skip without blocking, even in block mode
-  fail_bin="${stale_tmp}/failbin"
-  mkdir -p "${fail_bin}"
-  printf '#!/usr/bin/env bash\nexit 1\n' > "${fail_bin}/ai-auto-template-status"
-  chmod +x "${fail_bin}/ai-auto-template-status"
-  ( cd "${stale_target}" && set +e
-    rm -f .omx/review-results/review-verdict-*.md
-    PATH="${fail_bin}:${PATH}" AI_AUTO_TEMPLATE_STALENESS=block \
-      bash scripts/review-gate.sh > "${stale_tmp}/failopen.out" 2>&1
-    true )
-  grep -q "fail-open" "${stale_tmp}/failopen.out" \
-    || { echo "[verify] staleness did not fail open when the home template was unreachable"; exit 1; }
-  if stale_verdict_reason | grep -q "template_staleness"; then
-    echo "[verify] staleness blocked despite an unreachable home (should fail open)"; exit 1
-  fi
-)
-
 echo "[verify] testing review-gate stale-disabled-reviewer warning..."
 (
   dr_tmp="$(mktemp -d)"
@@ -4608,21 +4256,6 @@ SH
   # (the harness stub writes the sentinel only when the gate actually invokes it).
   test -f "${tmp_dir}/called-machinery"
   ! grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
-
-  # #3 (Codex review): a hook-only change (templates/automation-base/hooks/**) must
-  # ALSO trigger machinery -- hooks are machinery surface (verify-machinery has
-  # dedicated hook tests), so a hook-only regression must not bypass the harness.
-  # Revert the scripts change first so this scenario is genuinely hook-only.
-  git checkout -q -- scripts/changed.sh
-  mkdir -p templates/automation-base/hooks
-  printf '#!/usr/bin/env bash\necho baseline-hook\n' > templates/automation-base/hooks/pre-commit
-  git add templates/automation-base/hooks/pre-commit
-  git commit -q -m hook-baseline
-  rm -f "${tmp_dir}/called-machinery"
-  printf '#!/usr/bin/env bash\necho changed-hook\n' > templates/automation-base/hooks/pre-commit
-  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
-    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-hook.out"
-  test -f "${tmp_dir}/called-machinery"
 )
 
 echo "[verify] testing knowledge note helper..."
@@ -5459,9 +5092,8 @@ echo "[verify] testing obsidian-autopush shareable-only safe push..."
   home="${tmp_dir}/home"
   vault="${tmp_dir}/vault/AI_AUTO"
   registry="${tmp_dir}/no-registry.tsv"
-  mkdir -p "${home}/tools" "${home}/scripts" "${home}/templates/automation-base" "${vault}"
+  mkdir -p "${home}/tools" "${home}/scripts" "${vault}"
   git -c init.defaultBranch=main init -q "${home}"
-  echo "2026.06.02.0" > "${home}/templates/automation-base/AI_AUTO_TEMPLATE_VERSION"
   cp "${repo_root}/tools/knowledge-collect" "${home}/tools/knowledge-collect"
   cp "${repo_root}/scripts/knowledge-notes.py" "${home}/scripts/knowledge-notes.py"
   cp "${repo_root}/scripts/obsidian-autopush.sh" "${home}/scripts/obsidian-autopush.sh"
@@ -5517,9 +5149,8 @@ echo "[verify] testing obsidian-autopush shareable-only safe push..."
   # (e) A private-only draft set leaves the vault (and its index) untouched.
   empty_home="${tmp_dir}/empty-home"
   empty_vault="${tmp_dir}/empty-vault/AI_AUTO"
-  mkdir -p "${empty_home}/tools" "${empty_home}/scripts" "${empty_home}/templates/automation-base" "${empty_vault}"
+  mkdir -p "${empty_home}/tools" "${empty_home}/scripts" "${empty_vault}"
   git -c init.defaultBranch=main init -q "${empty_home}"
-  echo "2026.06.02.0" > "${empty_home}/templates/automation-base/AI_AUTO_TEMPLATE_VERSION"
   cp "${repo_root}/tools/knowledge-collect" "${empty_home}/tools/knowledge-collect"
   cp "${repo_root}/scripts/knowledge-notes.py" "${empty_home}/scripts/knowledge-notes.py"
   cp "${repo_root}/scripts/obsidian-autopush.sh" "${empty_home}/scripts/obsidian-autopush.sh"
@@ -5544,9 +5175,8 @@ echo "[verify] testing obsidian-autopush shareable-only safe push..."
   # stays local_private and is not published.
   promo_home="${tmp_dir}/promo-home"
   promo_vault="${tmp_dir}/promo-vault/AI_AUTO"
-  mkdir -p "${promo_home}/tools" "${promo_home}/scripts" "${promo_home}/templates/automation-base" "${promo_vault}"
+  mkdir -p "${promo_home}/tools" "${promo_home}/scripts" "${promo_vault}"
   git -c init.defaultBranch=main init -q "${promo_home}"
-  echo "2026.06.02.0" > "${promo_home}/templates/automation-base/AI_AUTO_TEMPLATE_VERSION"
   cp "${repo_root}/tools/knowledge-collect" "${promo_home}/tools/knowledge-collect"
   cp "${repo_root}/scripts/knowledge-notes.py" "${promo_home}/scripts/knowledge-notes.py"
   cp "${repo_root}/scripts/obsidian-autopush.sh" "${promo_home}/scripts/obsidian-autopush.sh"
@@ -5779,117 +5409,11 @@ echo "[verify] testing feedback-collect --proposals upstream-channel filter..."
     || { echo "[verify] feedback-collect without --proposals dropped a regular item"; exit 1; }
 )
 
-echo "[verify] testing automation template installer..."
+echo "[verify] testing run-ai-reviews transient-disable auto-expiry (P3)..."
 (
   tmp_dir="$(mktemp -d)"
-
-  cleanup_installer_tmp() {
-    rm -rf "${tmp_dir}"
-  }
-
-  trap cleanup_installer_tmp EXIT
-
-  target_dir="${tmp_dir}/target"
-  installer_output="${tmp_dir}/installer.out"
-  git -c init.defaultBranch=main init -q "${target_dir}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" > "${installer_output}"
-  test -x "${target_dir}/scripts/archive-omx-artifacts.sh"
-  test -x "${target_dir}/scripts/ai-principal-runtime.sh"
-  test -x "${target_dir}/scripts/ai-runtime-adapter.sh"
-  test -x "${target_dir}/scripts/benchmark-command.py"
-  test -x "${target_dir}/scripts/todo-report.py"
-  test -x "${target_dir}/scripts/docker-config-guard.sh"
-  test -x "${target_dir}/scripts/discover-ai-models.sh"
-  test -x "${target_dir}/scripts/doc-budget.sh"
-  test -x "${target_dir}/scripts/guidance-duplicate-report.sh"
-  test -x "${target_dir}/scripts/capture-knowledge-drafts.py"
-  test -x "${target_dir}/scripts/knowledge-notes.py"
-  test -x "${target_dir}/scripts/record-feedback.sh"
-  test -x "${target_dir}/scripts/record-project-memory.sh"
-  test -x "${target_dir}/scripts/run-ai-reviews.sh"
-  test -x "${target_dir}/scripts/write-session-checkpoint.sh"
-  test -x "${target_dir}/.git/hooks/pre-commit"
-  test -x "${target_dir}/.git/hooks/post-commit"
-  # worktree-safe: the installed pre-commit must clear inherited GIT_* so test
-  # git subprocesses cannot corrupt the shared common git dir across worktrees.
-  grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/pre-commit"
-  grep -q "unset GIT_DIR" "${target_dir}/.git/hooks/post-commit"
-  grep -q "knowledge-capture harvest --write" "${target_dir}/.git/hooks/post-commit"
-  # Linked-worktree shape: a worktree's .git is a FILE and hooks live in the
-  # shared common dir. The installer must accept it (rev-parse, not test -d .git)
-  # and land the worktree-safe hooks on the resolved hooks path.
-  wt_root="${tmp_dir}/wtrepo"
-  git -c init.defaultBranch=main init -q "${wt_root}"
-  git -C "${wt_root}" -c user.email=ai@auto.local -c user.name=ai commit -q --allow-empty -m init
-  wt_linked="${tmp_dir}/wtrepo-linked"
-  git -C "${wt_root}" worktree add -q "${wt_linked}"
-  test -f "${wt_linked}/.git"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${wt_linked}" >/dev/null
-  wt_hooks="$(git -C "${wt_linked}" rev-parse --git-path hooks)"
-  case "${wt_hooks}" in /*) : ;; *) wt_hooks="${wt_linked}/${wt_hooks}" ;; esac
-  test -x "${wt_hooks}/pre-commit"
-  grep -q "unset GIT_DIR" "${wt_hooks}/pre-commit"
-  # Fail-closed: a pre-existing non-AI_AUTO hook must be left untouched (never
-  # clobbered), while a hook slot with no pre-existing hook is still installed.
-  fc_dir="${tmp_dir}/failclosed"
-  git -c init.defaultBranch=main init -q "${fc_dir}"
-  fc_hooks="$(git -C "${fc_dir}" rev-parse --git-path hooks)"
-  case "${fc_hooks}" in /*) : ;; *) fc_hooks="${fc_dir}/${fc_hooks}" ;; esac
-  mkdir -p "${fc_hooks}"
-  printf '#!/usr/bin/env bash\n# project custom gate\nexit 0\n' > "${fc_hooks}/pre-commit"
-  chmod +x "${fc_hooks}/pre-commit"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${fc_dir}" >/dev/null 2>&1
-  grep -q "project custom gate" "${fc_hooks}/pre-commit"
-  ! grep -q "unset GIT_DIR" "${fc_hooks}/pre-commit"
-  test -x "${fc_hooks}/post-commit"
-  grep -q "unset GIT_DIR" "${fc_hooks}/post-commit"
-  # The pre-commit hook must FAIL CLOSED when a runner is present and tests fail
-  # (proves it actually runs the verification, not just that the file installed),
-  # and must keep a warn+defer branch for the genuine no-runner case rather than
-  # silently passing tests it never ran.
-  hr_dir="${tmp_dir}/hookrun"
-  git -c init.defaultBranch=main init -q "${hr_dir}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${hr_dir}" >/dev/null 2>&1
-  hr_hooks="$(git -C "${hr_dir}" rev-parse --git-path hooks)"
-  case "${hr_hooks}" in /*) : ;; *) hr_hooks="${hr_dir}/${hr_hooks}" ;; esac
-  fakebin="${tmp_dir}/fakebin"
-  mkdir -p "${fakebin}"
-  printf '#!/usr/bin/env bash\nexit 1\n' > "${fakebin}/pytest"
-  chmod +x "${fakebin}/pytest"
-  if ( cd "${hr_dir}" && PATH="${fakebin}:${PATH}" "${hr_hooks}/pre-commit" ) >/dev/null 2>&1; then
-    echo "[verify] pre-commit hook did not fail closed when the test runner failed"
-    exit 1
-  fi
-  grep -q "Not blocking the commit" "${hr_hooks}/pre-commit"
-  # exit-5 fix: pytest exit 5 == "no tests collected" is NOT a failure; a test-less
-  # install/repo must commit. A fakebin pytest that exits 5 -> the hook succeeds.
-  printf '#!/usr/bin/env bash\nexit 5\n' > "${fakebin}/pytest"
-  if ! ( cd "${hr_dir}" && PATH="${fakebin}:${PATH}" "${hr_hooks}/pre-commit" ) >/dev/null 2>&1; then
-    echo "[verify] pre-commit hook blocked a test-less repo (pytest exit 5)"
-    exit 1
-  fi
-  # #3: when a machinery harness is present AND a scripts/ change is staged, the
-  # pre-commit hook runs the harness (source-repo-only path; verify-machinery.sh is
-  # not installed into derived projects, so the guard skips it there). Stub the
-  # harness to a sentinel; staging a scripts/ change must invoke it.
-  printf '#!/usr/bin/env bash\nset -euo pipefail\necho machinery > "%s/hr-machinery-ran"\n' "${tmp_dir}" > "${hr_dir}/scripts/verify-machinery.sh"
-  chmod +x "${hr_dir}/scripts/verify-machinery.sh"
-  ( cd "${hr_dir}" && git add scripts/verify-machinery.sh && "${hr_hooks}/pre-commit" ) >/dev/null 2>&1
-  test -f "${tmp_dir}/hr-machinery-ran"
-  rm -f "${tmp_dir}/hr-machinery-ran"
-  # #3 (Codex review): a hook-only staged change (templates/automation-base/hooks/**)
-  # must ALSO run the harness -- the harness stub remains present from above.
-  ( cd "${hr_dir}" && git reset -q && mkdir -p templates/automation-base/hooks \
-      && printf '# changed hook\n' > templates/automation-base/hooks/pre-commit \
-      && git add templates/automation-base/hooks/pre-commit && "${hr_hooks}/pre-commit" ) >/dev/null 2>&1
-  test -f "${tmp_dir}/hr-machinery-ran"
-  rm -f "${tmp_dir}/hr-machinery-ran"
-  # negative: with the harness present but NO scripts/ change staged, the hook runs
-  # plain pytest (not the harness). Reset the index, stage a docs-only change.
-  ( cd "${hr_dir}" && git reset -q && mkdir -p docs && printf 'x\n' > docs/n.md && git add docs/n.md \
-      && PATH="${fakebin}:${PATH}" "${hr_hooks}/pre-commit" ) >/dev/null 2>&1 || true
-  test ! -f "${tmp_dir}/hr-machinery-ran"
-  ( cd "${hr_dir}" && git reset -q )
+  cleanup_revexpire_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_revexpire_tmp EXIT
   # P3: transient reviewer disables (usage_limit/network) auto-expire after the
   # cooldown so the lane self-heals; persistent and still-fresh disables are kept.
   rar="${PWD}/scripts/run-ai-reviews.sh"
@@ -5906,356 +5430,6 @@ echo "[verify] testing automation template installer..."
   printf 'reviewer=claude\ndisabled_at=%s\nreason=usage_limit\ndisable_class=transient\n' "${rs_now}" > "${rs}/claude.disabled"
   ( cd "${rs_root}" && AI_REVIEWS_EXPIRE_ONLY=1 REVIEW_STATE_DIR=.omx/reviewer-state REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS=1800 bash "${rar}" >/dev/null 2>&1 )
   test -f "${rs}/claude.disabled"
-  test -f "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
-  test -f "${target_dir}/docs/CHROME_CDP_ACCESS.md"
-  test -f "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
-  test -f "${target_dir}/docs/research/AI_AUTOMATION_TRENDS.md"
-  test -f "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
-  test -f "${target_dir}/docs/AI_PRINCIPAL_RUNTIMES.md"
-  test -f "${target_dir}/docs/AI_MODEL_ROUTING.md"
-  test -f "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  test -f "${target_dir}/docs/DATA_COMPLETION.md"
-  test -f "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
-  test -f "${target_dir}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-  test -f "${target_dir}/docs/DOMAIN_PACKS.md"
-  test -f "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
-  test -f "${target_dir}/docs/INCIDENT_OPS.md"
-  test -f "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
-  test -f "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
-  test -f "${target_dir}/docs/PATCH_NOTES.md"
-  test -f "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
-  test -f "${target_dir}/docs/PLANNING_VISUALIZATION_GUIDE.md"
-  test -f "${target_dir}/docs/SECURITY_COMPLETION.md"
-  test -f "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
-  test -f "${target_dir}/docs/UI_COMPLETION.md"
-  grep -q "VERIFY_TEMPLATE_UNCONFIGURED""=1" "${target_dir}/scripts/verify.sh"
-  grep -q "scripts/doc-budget.sh" "${target_dir}/scripts/verify.sh"
-  ! grep -q "guidance-duplicate-report.sh" "${target_dir}/scripts/verify.sh"
-  cmp -s "templates/automation-base/AI_AUTO_TEMPLATE_VERSION" "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
-  # The install-time guidance baseline is written, tracked (not git-excluded), and
-  # records the copied guidance docs. A freshly installed project's guidance is
-  # byte-identical to the template, so doc-budget excludes all of it: the absolute
-  # primary total is 0 until the project customizes a doc.
-  test -f "${target_dir}/.ai-auto/guidance-baseline.sha256"
-  ! grep -Eq '^[.]ai-auto/?$' "${target_dir}/.git/info/exclude"
-  grep -q "  AGENTS.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
-  grep -q "  docs/WORKFLOW.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
-  # Install-time base-file manifest: version + per-file sha of every managed file AS
-  # INSTALLED (the 3-way-diff baseline). Tracked under .ai-auto/.
-  test -f "${target_dir}/.ai-auto/template-manifest.json"
-  python3 - "${target_dir}/.ai-auto/template-manifest.json" "${target_dir}" <<'PYEOF'
-import json, sys, os, hashlib
-m = json.load(open(sys.argv[1]))
-tgt = sys.argv[2]
-assert m.get("template_version"), "no template_version"
-assert isinstance(m.get("files"), dict) and m["files"], "no files map"
-for key in ("AGENTS.md", "scripts/review-gate.sh", "scripts/verify.sh"):
-    assert key in m["files"], f"manifest missing {key}"
-bad = []
-for path, sha in m["files"].items():
-    p = os.path.join(tgt, path)
-    if not os.path.isfile(p):
-        bad.append(("missing", path)); continue
-    if hashlib.sha256(open(p, "rb").read()).hexdigest() != sha:
-        bad.append(("mismatch", path))
-assert not bad, f"baseline sha mismatches vs installed files: {bad}"
-PYEOF
-  # the recorded version equals the installed version file
-  grep -q "\"template_version\": \"$(sed -n '1p' "${target_dir}/AI_AUTO_TEMPLATE_VERSION")\"" \
-    "${target_dir}/.ai-auto/template-manifest.json"
-  # Commit the installed tree so the branch-cumulative lane sees it as base (the
-  # bulk install is not unreviewed new guidance); the absolute lane then excludes
-  # every inherited doc, so the primary total is 0 until the project customizes.
-  (
-    cd "${target_dir}"
-    git add -A
-    git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "install automation template"
-    ./scripts/doc-budget.sh > "${tmp_dir}/target-budget.out"
-  )
-  grep -q "inherited-unchanged docs" "${tmp_dir}/target-budget.out"
-  grep -q "primary guidance markdown total lines: 0" "${tmp_dir}/target-budget.out"
-  # Customizing a doc and refreshing the baseline drops it from the inherited set,
-  # so it re-enters the absolute budget (the template-update refresh path).
-  printf '\nproject custom guidance line\n' >> "${target_dir}/docs/WORKFLOW.md"
-  ./scripts/refresh-guidance-baseline.sh "${target_dir}" > "${tmp_dir}/baseline-refresh.out"
-  grep -q "customized/absent docs left budgeted: 1" "${tmp_dir}/baseline-refresh.out"
-  ! grep -q "  docs/WORKFLOW.md$" "${target_dir}/.ai-auto/guidance-baseline.sha256"
-  ( cd "${target_dir}" && ./scripts/doc-budget.sh > "${tmp_dir}/target-budget-customized.out" || true )
-  grep -q "docs/WORKFLOW.md lines: " "${tmp_dir}/target-budget-customized.out"
-  git -C "${target_dir}" checkout -q -- docs/WORKFLOW.md
-  ./scripts/refresh-guidance-baseline.sh "${target_dir}" > /dev/null
-  grep -q "role-first" "${target_dir}/docs/AI_MODEL_ROUTING.md"
-  grep -q "Chrome CDP Access" "${target_dir}/docs/CHROME_CDP_ACCESS.md"
-  grep -q "Agent Identity" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
-  grep -q "Tool Permission Registry" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
-  grep -q "Kill Switch And Revoke" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
-  grep -q "Recurring Trend Report" "${target_dir}/docs/AI_AUTOMATION_TREND_HARDENING.md"
-  grep -q "AI Automation Trend Research" "${target_dir}/docs/research/AI_AUTOMATION_TRENDS.md"
-  grep -q "AI 런타임 어댑터" "${target_dir}/docs/AI_RUNTIME_ADAPTERS.md"
-  grep -q "AI Principal Runtimes" "${target_dir}/docs/AI_PRINCIPAL_RUNTIMES.md"
-  grep -q "principal claude -> reviewers gemini, codex" "${target_dir}/docs/AI_PRINCIPAL_RUNTIMES.md"
-  grep -q "Review Intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "module boundaries" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "Auxiliary Rebuild Tool Gates" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "Data Completion Pack" "${target_dir}/docs/DATA_COMPLETION.md"
-  grep -q "Deployment Completion Pack" "${target_dir}/docs/DEPLOYMENT_COMPLETION.md"
-  grep -q "Domain Pack Authoring Guide" "${target_dir}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-  grep -q "Forbidden Content" "${target_dir}/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-  grep -q "There is no generic domain pack" "${target_dir}/docs/DOMAIN_PACKS.md"
-  grep -q "DOMAIN_PACK_AUTHORING_GUIDE.md" "${target_dir}/docs/DOMAIN_PACKS.md"
-  grep -q "decision width" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
-  grep -q "ready_to_execute" "${target_dir}/docs/INTERVIEW_PLAN_LAYER.md"
-  grep -q "Incident Ops For Dry-run And Field-test" "${target_dir}/docs/INCIDENT_OPS.md"
-  grep -q "Observability Completion Pack" "${target_dir}/docs/OBSERVABILITY_COMPLETION.md"
-  grep -q "Obsidian Knowledge Operations" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
-  grep -q "External SSD Migration Runbook" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
-  grep -q 'Do not copy `.omx` wholesale' "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
-  grep -q "capture-knowledge-drafts.py" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
-  grep -q "scripts/knowledge-notes.py" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
-  grep -q "Project repositories and the Obsidian vault may live on an external SSD" "${target_dir}/docs/OBSIDIAN_INTEGRATION.md"
-  grep -q "AI_AUTO Patch Notes" "${target_dir}/docs/PATCH_NOTES.md"
-  grep -q "Performance Completion Pack" "${target_dir}/docs/PERFORMANCE_COMPLETION.md"
-  grep -q "Planning Visualization Guide" "${target_dir}/docs/PLANNING_VISUALIZATION_GUIDE.md"
-  grep -q "Vector wireframe fidelity" "${target_dir}/docs/PLANNING_VISUALIZATION_GUIDE.md"
-  grep -q "Security Completion Pack" "${target_dir}/docs/SECURITY_COMPLETION.md"
-  grep -q "Session Quality Plan" "${target_dir}/docs/SESSION_QUALITY_PLAN.md"
-  grep -q "UI Completion Pack" "${target_dir}/docs/UI_COMPLETION.md"
-  grep -q "Design Quality Gate" "${target_dir}/docs/UI_COMPLETION.md"
-  grep -q "docs/CHROME_CDP_ACCESS.md" "${target_dir}/docs/UI_COMPLETION.md"
-  grep -q "UI가 필요하면" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "Subagent Utilization" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "Onboarding Interview Structure" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "Native subagents" "${target_dir}/docs/AI_MODEL_ROUTING.md"
-  grep -q "서브에이전트 사용 기준" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "Do not present guesses" "${target_dir}/AGENTS.md"
-  grep -q "review intensity" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "resource-aware parallelism" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "Planning And Interview Escalation" "${target_dir}/AGENTS.md"
-  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${target_dir}/AGENTS.md"
-  grep -q "template_patch_enabled: no" "${target_dir}/AGENTS.md"
-  grep -q "Codemod apply" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q '`none`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q '`light`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q '`standard`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q '`deep`' "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "applicable completion packs from" "${target_dir}/AGENTS.md"
-  grep -Eq '^[.]omx/?$' "${target_dir}/.git/info/exclude"
-  grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
-  grep -q "delete unused" "${target_dir}/docs/AUTOMATION_OPERATING_POLICY.md"
-  grep -q "docs/DOMAIN_PACKS.md" "templates/automation-base/README.md"
-  grep -q "docs/AI_AUTOMATION_TREND_HARDENING.md" "templates/automation-base/README.md"
-  grep -q "docs/AI_PRINCIPAL_RUNTIMES.md" "templates/automation-base/README.md"
-  grep -q "docs/research/AI_AUTOMATION_TRENDS.md" "templates/automation-base/README.md"
-  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/README.md"
-  grep -q "docs/OBSIDIAN_INTEGRATION.md" "templates/automation-base/README.md"
-  grep -q "docs/PLANNING_VISUALIZATION_GUIDE.md" "templates/automation-base/README.md"
-  grep -q "scripts/docker-config-guard.sh" "templates/automation-base/README.md"
-  grep -q "scripts/capture-knowledge-drafts.py" "templates/automation-base/README.md"
-  grep -q "scripts/knowledge-notes.py" "templates/automation-base/README.md"
-  grep -q "Obsidian is only a sanitized knowledge store" "templates/automation-base/README.md"
-  grep -q "Review intensity" "templates/automation-base/README.md"
-  grep -q "Subagents" "templates/automation-base/README.md"
-  grep -q "Planning/interview intensity" "templates/automation-base/README.md"
-  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "templates/automation-base/README.md"
-  grep -q "Operational readiness" "templates/automation-base/README.md"
-  grep -q "Incident Ops" "templates/automation-base/README.md"
-  grep -q "heartbeat/quiet/active" "templates/automation-base/README.md"
-  grep -q "sandbox-vs-real-network evidence" "templates/automation-base/README.md"
-  grep -q "Plan management" "templates/automation-base/README.md"
-  grep -q "Spec/design alignment" "templates/automation-base/README.md"
-  grep -q "User-facing report language" "templates/automation-base/README.md"
-  grep -q "Guidance context budget" "templates/automation-base/README.md"
-  grep -q "ai-auto-template-status" "templates/automation-base/README.md"
-  grep -q "template_patch_enabled: no" "templates/automation-base/README.md"
-  grep -q "unused completion pack" "templates/automation-base/README.md"
-  grep -q "docs/DOMAIN_PACKS.md" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "review intensity" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "서브에이전트 사용 기준" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "플랜/인터뷰 강도 기준" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "none/light/standard/deep" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "Incident Ops 감시/장애대응/주기보고 기준" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "spec/design alignment 기준" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "사용자 보고를 쉬운 한국어" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "Template Status Comparison" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "template_patch_enabled: no" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "ai-auto-template-status" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "rejected as non-goals" "docs/NEW_PROJECT_GUIDE.md"
-  grep -q "프로젝트 초기설정 해줘" "${installer_output}"
-  grep -q "docs/\\*_COMPLETION.md" "${installer_output}"
-  grep -q "docs/DOMAIN_PACKS.md" "${installer_output}"
-  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${installer_output}"
-  grep -q ".omx/domain-packs/에 설치된 도메인팩" "${installer_output}"
-  grep -q "서브에이전트 사용 기준" "${installer_output}"
-  grep -q "플랜/인터뷰 강도 기준" "${installer_output}"
-  grep -q "fail-closed 기준" "${installer_output}"
-  grep -q "sandbox-vs-real-network evidence 기준" "${installer_output}"
-  grep -q "Incident Ops 감시/주기보고 기준" "${installer_output}"
-  grep -q "plan index/TODO reconciliation 기준" "${installer_output}"
-  grep -q "spec/design alignment 기준" "${installer_output}"
-  grep -q "사용자 보고를 쉬운 한국어" "${installer_output}"
-  grep -q "linked docs 분리 기준" "${installer_output}"
-  grep -q '`none`' "${target_dir}/docs/WORKFLOW.md"
-  grep -q '`light`' "${target_dir}/docs/WORKFLOW.md"
-  grep -q '`standard`' "${target_dir}/docs/WORKFLOW.md"
-  grep -q '`deep`' "${target_dir}/docs/WORKFLOW.md"
-  grep -q "sandbox-vs-real-network evidence" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "Incident Ops 기준을 확인한다" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "Incident Ops 정책" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "heartbeat, quiet, active-incident 보고" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "plan index/TODO reconciliation" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "기획서/사양서/설계자료" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "쉬운 한국어" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "linked docs" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "ai-context-pack" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "advisory/fail-open" "${target_dir}/docs/WORKFLOW.md"
-  test ! -e "${target_dir}/templates/domain-packs/odoo/README.md"
-  test -f "${target_dir}/.omx/domain-packs/odoo/README.md"
-  grep -q "Optional domain packs installed for onboarding reference" "${installer_output}"
-
-  "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-current.out"
-  grep -q "status: current" "${tmp_dir}/template-status-current.out"
-  # --json: machine-readable per-file ownership/state for the downstream staleness gate.
-  "${repo_root}/tools/ai-auto-template-status" --json "${target_dir}" > "${tmp_dir}/template-status.json"
-  python3 - "${tmp_dir}/template-status.json" <<'PYEOF'
-import json, sys
-d = json.load(open(sys.argv[1]))
-assert d["status"] in ("current", "customized_or_outdated", "missing_version", "source_checkout"), d["status"]
-assert isinstance(d.get("files"), list) and d["files"], "no files array"
-sample = d["files"][0]
-assert {"state", "path", "ownership", "patch_policy"} <= set(sample), sample
-assert any(f["ownership"] == "template-owned" for f in d["files"]), "no template-owned file"
-assert any(f["ownership"] == "project-owned" for f in d["files"]), "no project-owned file"
-assert {"managed_files", "same", "different", "missing"} <= set(d["counts"]), d["counts"]
-assert "installed_version" in d and "current_version" in d
-PYEOF
-  # a template-owned edit is reported different with its ownership intact (gate keys on this)
-  printf '\n# tampered\n' >> "${target_dir}/scripts/review-gate.sh"
-  "${repo_root}/tools/ai-auto-template-status" --json "${target_dir}" > "${tmp_dir}/template-status-drift.json"
-  python3 - "${tmp_dir}/template-status-drift.json" <<'PYEOF'
-import json, sys
-d = json.load(open(sys.argv[1]))
-rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"]
-assert rg and rg[0]["state"] == "different" and rg[0]["ownership"] == "template-owned", rg
-# 3-way: a project edit (installed != baseline, source == baseline) is locally_edited, NOT
-# a stale-behind ("outdated"). The gate must warn on this, not block.
-assert rg[0]["drift"] == "locally_edited", rg[0]
-assert d["status"] == "customized_or_outdated", d["status"]
-PYEOF
-  # 3-way "outdated" (home moved on, no local edit): rebaseline the manifest to the installed
-  # file's current sha so installed == baseline while source != installed -> drift=outdated.
-  python3 - "${target_dir}/.ai-auto/template-manifest.json" \
-    "$(sha256sum "${target_dir}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
-import json, sys
-m = json.load(open(sys.argv[1]))
-m["files"]["scripts/review-gate.sh"] = sys.argv[2]
-json.dump(m, open(sys.argv[1], "w"))
-PYEOF
-  "${repo_root}/tools/ai-auto-template-status" --json "${target_dir}" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"][0]
-assert rg["drift"] == "outdated", rg
-'
-  # exact restore of file AND baseline manifest so the shared target_dir is unpolluted
-  cp "${repo_root}/templates/automation-base/scripts/review-gate.sh" "${target_dir}/scripts/review-gate.sh"
-  python3 - "${target_dir}/.ai-auto/template-manifest.json" \
-    "$(sha256sum "${target_dir}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
-import json, sys
-m = json.load(open(sys.argv[1]))
-m["files"]["scripts/review-gate.sh"] = sys.argv[2]
-json.dump(m, open(sys.argv[1], "w"))
-PYEOF
-  grep -q "template_source_branch:" "${tmp_dir}/template-status-current.out"
-  grep -q "template_source_channel:" "${tmp_dir}/template-status-current.out"
-  grep -q "template_patch_enabled:" "${tmp_dir}/template-status-current.out"
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-main.out"
-  grep -q "template_source_branch: main" "${tmp_dir}/template-status-main.out"
-  grep -q "template_source_channel: stable" "${tmp_dir}/template-status-main.out"
-  grep -q "template_patch_enabled: yes" "${tmp_dir}/template-status-main.out"
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/runtime-adapters "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-exp.out"
-  grep -q "template_source_branch: exp/runtime-adapters" "${tmp_dir}/template-status-exp.out"
-  grep -q "template_source_channel: experimental" "${tmp_dir}/template-status-exp.out"
-  grep -q "template_patch_enabled: no" "${tmp_dir}/template-status-exp.out"
-  grep -q "template_patch_block_reason: experimental_source_branch" "${tmp_dir}/template-status-exp.out"
-  grep -q "docs/INTERVIEW_PLAN_LAYER.md" "${tmp_dir}/template-status-current.out"
-  grep -q "docs/AI_AUTOMATION_TREND_HARDENING.md" "${tmp_dir}/template-status-current.out"
-  grep -q "docs/research/AI_AUTOMATION_TRENDS.md" "${tmp_dir}/template-status-current.out"
-  grep -q "docs/AI_RUNTIME_ADAPTERS.md" "${tmp_dir}/template-status-current.out"
-  grep -q "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "${tmp_dir}/template-status-current.out"
-  grep -q "docs/PATCH_NOTES.md" "${tmp_dir}/template-status-current.out"
-  grep -q "docs/OBSIDIAN_INTEGRATION.md" "${tmp_dir}/template-status-current.out"
-  grep -q "docs/PLANNING_VISUALIZATION_GUIDE.md" "${tmp_dir}/template-status-current.out"
-  grep -q $'STATE\tPATH\tTEMPLATE_PATH\tOWNERSHIP\tPATCH_POLICY' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md\tdocs/DOMAIN_PACK_AUTHORING_GUIDE.md' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/CHROME_CDP_ACCESS.md\tdocs/CHROME_CDP_ACCESS.md' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/AI_AUTOMATION_TREND_HARDENING.md\tdocs/AI_AUTOMATION_TREND_HARDENING.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/research/AI_AUTOMATION_TRENDS.md\tdocs/research/AI_AUTOMATION_TRENDS.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/AI_RUNTIME_ADAPTERS.md\tdocs/AI_RUNTIME_ADAPTERS.md' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/DOMAIN_PACKS.md\tdocs/DOMAIN_PACKS.md' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tscripts/ai-runtime-adapter.sh\tscripts/ai-runtime-adapter.sh\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/PATCH_NOTES.md\tdocs/PATCH_NOTES.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/OBSIDIAN_INTEGRATION.md\tdocs/OBSIDIAN_INTEGRATION.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tdocs/PLANNING_VISUALIZATION_GUIDE.md\tdocs/PLANNING_VISUALIZATION_GUIDE.md\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tscripts/benchmark-command.py\tscripts/benchmark-command.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tscripts/todo-report.py\tscripts/todo-report.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tscripts/capture-knowledge-drafts.py\tscripts/capture-knowledge-drafts.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tscripts/knowledge-notes.py\tscripts/knowledge-notes.py\ttemplate-owned\tupdate' "${tmp_dir}/template-status-current.out"
-  grep -q $'same\tscripts/verify.sh\tscripts/verify.example.sh\tproject-owned\tinspect-only' "${tmp_dir}/template-status-current.out"
-
-  printf '\nproject-specific customization\n' >> "${target_dir}/docs/WORKFLOW.md"
-  "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-drift.out"
-  grep -q "status: customized_or_outdated" "${tmp_dir}/template-status-drift.out"
-  grep -q $'different\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md' "${tmp_dir}/template-status-drift.out"
-  grep -q $'different\tdocs/WORKFLOW.md\tdocs/WORKFLOW.md\thybrid\treview-merge' "${tmp_dir}/template-status-drift.out"
-  test ! -e "${target_dir}/.omx/feedback/queue.jsonl"
-
-  "${repo_root}/tools/ai-auto-template-status" --record-feedback "${target_dir}" > "${tmp_dir}/template-status-feedback.out"
-  grep -q "feedback: recorded automation-template:update-available" "${tmp_dir}/template-status-feedback.out"
-  grep -q '"repeat_key": "automation-template:update-available"' "${target_dir}/.omx/feedback/queue.jsonl"
-
-  rm "${target_dir}/AI_AUTO_TEMPLATE_VERSION"
-  "${repo_root}/tools/ai-auto-template-status" "${target_dir}" > "${tmp_dir}/template-status-missing-version.out"
-  grep -q "status: missing_version" "${tmp_dir}/template-status-missing-version.out"
-)
-
-echo "[verify] testing post-commit auto-harvests Finding-trailered commits..."
-(
-  pc_tmp="$(mktemp -d)"
-  trap 'rm -rf "${pc_tmp}"' EXIT
-  pc_dir="${pc_tmp}/proj"
-  git -c init.defaultBranch=main init -q "${pc_dir}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${pc_dir}" >/dev/null 2>&1
-  pc_hooks="$(git -C "${pc_dir}" rev-parse --git-path hooks)"
-  case "${pc_hooks}" in /*) : ;; *) pc_hooks="${pc_dir}/${pc_hooks}" ;; esac
-  test -x "${pc_hooks}/post-commit"
-  (
-    cd "${pc_dir}"
-    git config user.email v@e.invalid
-    git config user.name V
-    git add -A
-    git commit -q --no-verify -m "feat: x
-
-Finding: normalize a trailing slash before matching a Windows path
-Finding-Evidence: verify-machinery post-commit fixture
-Finding-Scope: any WSL or Windows path comparison" 2>/dev/null
-    # explicit run with knowledge-capture on PATH harvests the trailered finding
-    PATH="${repo_root}/tools:${PATH}" "${pc_hooks}/post-commit" >/dev/null 2>&1 || true
-    grep -rqE "trailing slash" .omx/knowledge/drafts/ 2>/dev/null \
-      || { echo "[verify] post-commit did not harvest a Finding-trailered commit"; exit 1; }
-    # a commit WITHOUT a Finding: trailer harvests nothing new (no-op + dedup)
-    count_a="$(find .omx/knowledge/drafts -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-    printf 'x\n' > nf.txt
-    git add -A
-    git commit -q --no-verify -m "chore: no finding trailer here" 2>/dev/null
-    PATH="${repo_root}/tools:${PATH}" "${pc_hooks}/post-commit" >/dev/null 2>&1 || true
-    count_b="$(find .omx/knowledge/drafts -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-    test "${count_a}" = "${count_b}" \
-      || { echo "[verify] post-commit harvested a draft from a no-trailer commit"; exit 1; }
-  )
 )
 
 echo "[verify] testing knowledge harvest from a linked worktree lands in the primary checkout..."
@@ -6286,29 +5460,6 @@ Finding-Scope: any knowledge harvest invoked inside a linked git worktree" )
     echo "[verify] worktree harvest wrote into the ephemeral worktree .omx instead of the primary"
     exit 1
   fi
-)
-
-echo "[verify] testing automation template experimental source guard..."
-(
-  tmp_dir="$(mktemp -d)"
-
-  cleanup_template_guard_tmp() {
-    rm -rf "${tmp_dir}"
-  }
-
-  trap cleanup_template_guard_tmp EXIT
-
-  target_dir="${tmp_dir}/target"
-  git -c init.defaultBranch=main init -q "${target_dir}"
-  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/runtime-adapters ./scripts/install-automation-template.sh "${target_dir}" > "${tmp_dir}/guard.out" 2>&1; then
-    echo "[verify] install-automation-template accepted experimental source without override"
-    exit 1
-  fi
-  grep -q "Refusing to install automation template from a non-stable AI_AUTO source" "${tmp_dir}/guard.out"
-  grep -q "source_branch: exp/runtime-adapters" "${tmp_dir}/guard.out"
-  grep -q "source_channel: experimental" "${tmp_dir}/guard.out"
-  grep -q "manual review-only merge" "${tmp_dir}/guard.out"
-  test ! -e "${target_dir}/AGENTS.md"
 )
 
 echo "[verify] checking optional domain pack structure..."
@@ -6377,137 +5528,26 @@ PY
   ( cd "${mf_tmp}" && python3 "${mf_screen}" --all --no-strict > "${mf_tmp}/out3" 2>&1 )
   grep -q "MISSING file" "${mf_tmp}/out3"
 )
-echo "[verify] testing odoo pre-push runs the manifest screen with ODOO_HARNESS_DIR unset..."
-(
-  mfi_tmp="$(mktemp -d)"
-  trap 'rm -rf "${mfi_tmp}"' EXIT
-  target="${mfi_tmp}/proj"
-  git -c init.defaultBranch=main init -q "${target}"
-  mkdir -p "${target}/custom-addons/mod_a/data"
-  : > "${target}/custom-addons/mod_a/__manifest__.py"
-  # Install the template -> installs the odoo pre-push hook AND co-installs the
-  # docker-free manifest screen next to it (so it runs without ODOO_HARNESS_DIR).
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target}" >/dev/null 2>&1
-  test -x "${target}/.githooks/pre-push"
-  test -f "${target}/.githooks/check-manifest-files.py"
-  (
-    cd "${target}"
-    git add -A
-    git -c user.email=v@e.invalid -c user.name=V commit -q -m baseline
-    git checkout -q -b feature
-    cat > custom-addons/mod_a/__manifest__.py <<'PY'
-# -*- coding: utf-8 -*-
-{'name': 'Mod A', 'data': ['data/missing.xml'], 'installable': True}
-PY
-    git add -A
-    git -c user.email=v@e.invalid -c user.name=V commit -q -m "add manifest"
-    # Installed hook with ODOO_HARNESS_DIR explicitly UNSET: the co-installed manifest
-    # screen must STILL fire and block the missing data file -- the exact harness-unset
-    # gap Codex flagged. Feed a realistic pre-push ref line (git's stdin format) so the
-    # hook resolves the pushed module from the actual refs, not a guessed integration
-    # base (the no-local-main / branch=master|18.0 fragility Codex flagged).
-    mfi_zero=0000000000000000000000000000000000000000
-    mfi_push() { printf 'refs/heads/feature %s refs/heads/feature %s\n' "$(git rev-parse HEAD)" "${mfi_zero}"; }
-    if mfi_push | env -u ODOO_HARNESS_DIR ./.githooks/pre-push > "${mfi_tmp}/hook.out" 2>&1; then
-      echo "[verify] odoo pre-push did not block a missing manifest file with ODOO_HARNESS_DIR unset"
-      cat "${mfi_tmp}/hook.out"; exit 1
-    fi
-    grep -q "data/missing.xml" "${mfi_tmp}/hook.out"
-    grep -q "references a missing file" "${mfi_tmp}/hook.out"
-    # Create the file -> the screen passes; with the harness still unset the hook then
-    # skips loudly (NOT VALIDATED) and exits 0 (does not block on the screen).
-    : > custom-addons/mod_a/data/missing.xml
-    git add -A
-    git -c user.email=v@e.invalid -c user.name=V commit -q -m fix
-    mfi_push | env -u ODOO_HARNESS_DIR ./.githooks/pre-push > "${mfi_tmp}/hook2.out" 2>&1
-    grep -q "ODOO_HARNESS_DIR not set" "${mfi_tmp}/hook2.out"
-  )
-)
-grep -q "도메인팩" "templates/automation-base/docs/WORKFLOW.md"
-grep -q "There is no generic domain pack" "templates/automation-base/docs/DOMAIN_PACKS.md"
-grep -q "Domain Pack Authoring Guide" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-grep -q "Interview Design" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-grep -q "Forbidden Content" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-grep -q "split-rules.json" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-cmp -s "docs/DOMAIN_PACKS.md" "templates/automation-base/docs/DOMAIN_PACKS.md"
-cmp -s "docs/DOMAIN_PACK_AUTHORING_GUIDE.md" "templates/automation-base/docs/DOMAIN_PACK_AUTHORING_GUIDE.md"
-grep -q "Deployment Completion Pack" "templates/automation-base/docs/DEPLOYMENT_COMPLETION.md"
-grep -q "Security Completion Pack" "templates/automation-base/docs/SECURITY_COMPLETION.md"
-grep -q "Data Completion Pack" "templates/automation-base/docs/DATA_COMPLETION.md"
-grep -q "Performance Completion Pack" "templates/automation-base/docs/PERFORMANCE_COMPLETION.md"
-grep -q "Observability Completion Pack" "templates/automation-base/docs/OBSERVABILITY_COMPLETION.md"
-grep -q "UI Completion Pack" "templates/automation-base/docs/UI_COMPLETION.md"
-grep -q "Design Quality Gate" "templates/automation-base/docs/UI_COMPLETION.md"
-grep -q "avoid nested cards" "templates/automation-base/docs/UI_COMPLETION.md"
-grep -q "Incident Ops For Dry-run And Field-test" "templates/automation-base/docs/INCIDENT_OPS.md"
-grep -q "Obsidian Knowledge Operations" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
-grep -q "External SSD Migration Runbook" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
-grep -q 'Do not copy `.omx` wholesale' "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
-grep -q "Periodic Status Reporting" "templates/automation-base/docs/INCIDENT_OPS.md"
-grep -q "Incident Ops During Dry-run And Field-test" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
-grep -q "doc-budget.sh" "templates/automation-base/README.md"
-grep -q "guidance-duplicate-report.sh" "templates/automation-base/README.md"
 test -x "scripts/doc-budget.sh"
-test -x "templates/automation-base/scripts/doc-budget.sh"
 test -x "scripts/guidance-duplicate-report.sh"
-test -x "templates/automation-base/scripts/guidance-duplicate-report.sh"
 test -x "scripts/benchmark-command.py"
-test -x "templates/automation-base/scripts/benchmark-command.py"
 test -x "scripts/todo-report.py"
-test -x "templates/automation-base/scripts/todo-report.py"
 test -x "scripts/capture-knowledge-drafts.py"
-test -x "templates/automation-base/scripts/capture-knowledge-drafts.py"
 test -x "scripts/collect-odoo-docs-kb.py"
-test -x "templates/automation-base/scripts/collect-odoo-docs-kb.py"
 test -x "scripts/knowledge-notes.py"
-test -x "templates/automation-base/scripts/knowledge-notes.py"
 test -x "scripts/validate-odoo-docs-kb.py"
-test -x "templates/automation-base/scripts/validate-odoo-docs-kb.py"
 grep -q "Post-Code Spec/Design Alignment" "docs/AUTOMATION_OPERATING_POLICY.md"
-grep -q "Post-Code Spec/Design Alignment" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "User-Facing Report Language" "docs/AUTOMATION_OPERATING_POLICY.md"
-grep -q "User-Facing Report Language" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
 grep -q "기획서/사양서/설계자료" "docs/WORKFLOW.md"
-grep -q "기획서/사양서/설계자료" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "설계자료 대조 결과: aligned, updated, not applicable, or blocked" "docs/WORKFLOW.md"
-grep -q "설계자료 대조 결과: aligned, updated, not applicable, or blocked" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "classify the result as aligned, updated, not applicable, or blocked" "docs/PLANNING_VISUALIZATION_GUIDE.md"
 grep -q "쉬운 한국어" "docs/WORKFLOW.md"
-grep -q "쉬운 한국어" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "plan artifact's Goal" "docs/INTERVIEW_PLAN_LAYER.md"
-grep -q "plan artifact's Goal" "templates/automation-base/docs/INTERVIEW_PLAN_LAYER.md"
-grep -q "field-test incident evidence" "templates/automation-base/docs/UI_COMPLETION.md"
-grep -q "detailed UI behavior verification requests" "templates/automation-base/docs/UI_COMPLETION.md"
-grep -q "validate-<guide-folder>.py" "templates/automation-base/docs/OBSIDIAN_INTEGRATION.md"
 ./scripts/validate-odoo-kb.py
 if [ -n "${AI_AUTO_ODOO_DOCS_KB_PATH:-}" ]; then
   ./scripts/validate-odoo-docs-kb.py "${AI_AUTO_ODOO_DOCS_KB_PATH}"
 fi
-grep -q "Approval Friction" "templates/automation-base/docs/AUTOMATION_OPERATING_POLICY.md"
-grep -q "실패 패턴 피드백" "templates/automation-base/docs/WORKFLOW.md"
 grep -q "필요한 완료팩" "docs/NEW_PROJECT_GUIDE.md"
-
-echo "[verify] testing domain pack copy preserves existing references..."
-(
-  tmp_dir="$(mktemp -d)"
-
-  cleanup_domain_pack_tmp() {
-    rm -rf "${tmp_dir}"
-  }
-
-  trap cleanup_domain_pack_tmp EXIT
-
-  target_dir="${tmp_dir}/target"
-  git -c init.defaultBranch=main init -q "${target_dir}"
-  mkdir -p "${target_dir}/.omx/domain-packs/odoo"
-  printf 'keep me\n' > "${target_dir}/.omx/domain-packs/odoo/README.md"
-
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
-
-  grep -q "keep me" "${target_dir}/.omx/domain-packs/odoo/README.md"
-  test -f "${target_dir}/.omx/domain-packs/.manifest/browser-macro.json"
-  test ! -f "${target_dir}/.omx/domain-packs/.manifest/odoo.json"
-)
 
 echo "[verify] testing domain pack status and refresh helper..."
 (
@@ -6521,7 +5561,13 @@ echo "[verify] testing domain pack status and refresh helper..."
 
   target_dir="${tmp_dir}/target"
   git -c init.defaultBranch=main init -q "${target_dir}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" >/dev/null
+  # Base guidance/scripts a domain-pack refresh must never touch (a managed odoo
+  # install via ai-domain-pack replaces the deleted template installer here).
+  mkdir -p "${target_dir}/docs" "${target_dir}/scripts"
+  printf '# Agents\n' > "${target_dir}/AGENTS.md"
+  printf '# Workflow\n' > "${target_dir}/docs/WORKFLOW.md"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${target_dir}/scripts/verify.sh"
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${target_dir}" --pack odoo refresh --apply >/dev/null
 
   AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${target_dir}" --pack odoo status > "${tmp_dir}/domain-current.out"
   grep -q $'current\todoo' "${tmp_dir}/domain-current.out"
@@ -6580,7 +5626,7 @@ echo "[verify] testing domain pack status and refresh helper..."
 
   removed_dir="${tmp_dir}/removed"
   git -c init.defaultBranch=main init -q "${removed_dir}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${removed_dir}" >/dev/null
+  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${removed_dir}" --pack odoo refresh --apply >/dev/null
   rm -rf "${removed_dir}/.omx/domain-packs/odoo"
   AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${removed_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-removed.out"
   grep -q $'deliberately_removed\todoo' "${tmp_dir}/domain-removed.out"
@@ -6588,7 +5634,6 @@ echo "[verify] testing domain pack status and refresh helper..."
 
   guarded_dir="${tmp_dir}/guarded"
   git -c init.defaultBranch=main init -q "${guarded_dir}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${guarded_dir}" >/dev/null
   if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/source-packs" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/domain-pack ./tools/ai-domain-pack --target "${guarded_dir}" --pack odoo refresh --apply > "${tmp_dir}/domain-branch-guard.out" 2>&1; then
     echo "[verify] ai-domain-pack refreshed from an experimental source branch"
     exit 1
@@ -6610,200 +5655,6 @@ echo "[verify] testing domain pack status and refresh helper..."
   grep -q $'invalid_pack_name\t../odoo' "${tmp_dir}/domain-traversal-pack.out"
   test ! -e "${guarded_dir}/.omx/odoo"
   test ! -e "${guarded_dir}/.omx/domain-packs/.manifest/../odoo.json"
-)
-
-echo "[verify] testing ai-template-refresh re-sync contract..."
-(
-  rt_tmp="$(mktemp -d)"
-  trap 'rm -rf "${rt_tmp}"' EXIT
-  rt_target="${rt_tmp}/proj"
-  git -c init.defaultBranch=main init -q "${rt_target}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
-    "${repo_root}/scripts/install-automation-template.sh" "${rt_target}" >/dev/null 2>&1
-
-  # Primary install path: invoked through the ~/bin symlink, the tool must resolve its own
-  # location THROUGH the symlink so TEMPLATE_DIR points at the checkout, not ~/templates. A
-  # naive dirname(BASH_SOURCE) would make it silently find no source and exit 0 with nothing
-  # applied. Run the link from an unrelated cwd against the fresh install (all in_sync).
-  ln -s "${repo_root}/tools/ai-template-refresh" "${rt_tmp}/ai-template-refresh-link"
-  if ! ( cd "${rt_tmp}" && AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-      "${rt_tmp}/ai-template-refresh-link" "${rt_target}" > "${rt_tmp}/symlink.out" ); then
-    echo "[verify] ai-template-refresh errored when invoked via a symlink (template unresolved)"; exit 1
-  fi
-  grep -q "nothing to refresh" "${rt_tmp}/symlink.out" \
-    || { echo "[verify] ai-template-refresh via symlink did not resolve the template"; exit 1; }
-
-  # outdated: installed == baseline but != source (upstream moved on, no local edit)
-  printf '\n# OLD\n' >> "${rt_target}/scripts/review-gate.sh"
-  python3 - "${rt_target}/.ai-auto/template-manifest.json" \
-    "$(sha256sum "${rt_target}/scripts/review-gate.sh" | awk '{print $1}')" <<'PYEOF'
-import json, sys
-m = json.load(open(sys.argv[1]))
-m["files"]["scripts/review-gate.sh"] = sys.argv[2]
-json.dump(m, open(sys.argv[1], "w"))
-PYEOF
-  # locally_edited: project edited a template-owned file, baseline left untouched
-  printf '\n# LOCAL\n' >> "${rt_target}/scripts/automation-doctor.sh"
-
-  # dry run classifies but writes nothing
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-    "${repo_root}/tools/ai-template-refresh" "${rt_target}" > "${rt_tmp}/dry.out"
-  grep -q "outdated  scripts/review-gate.sh" "${rt_tmp}/dry.out"
-  grep -q "locally_edited  scripts/automation-doctor.sh" "${rt_tmp}/dry.out"
-  grep -q "# OLD" "${rt_target}/scripts/review-gate.sh"   # dry run did not refresh
-
-  # --apply is gated to the stable channel (text and --json paths share the exit contract)
-  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/x \
-      "${repo_root}/tools/ai-template-refresh" --apply "${rt_target}" >/dev/null 2>&1; then
-    echo "[verify] ai-template-refresh --apply did not refuse an experimental source"; exit 1
-  fi
-  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=exp/x \
-      "${repo_root}/tools/ai-template-refresh" --apply --json "${rt_target}" >/dev/null 2>&1; then
-    echo "[verify] ai-template-refresh --apply --json returned success for a refused apply"; exit 1
-  fi
-
-  # apply on stable: refresh outdated, preserve locally_edited
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-    "${repo_root}/tools/ai-template-refresh" --apply "${rt_target}" > "${rt_tmp}/apply.out"
-  cmp -s "${rt_target}/scripts/review-gate.sh" \
-    "${repo_root}/templates/automation-base/scripts/review-gate.sh" \
-    || { echo "[verify] ai-template-refresh did not refresh an outdated template-owned file"; exit 1; }
-  grep -q "# LOCAL" "${rt_target}/scripts/automation-doctor.sh" \
-    || { echo "[verify] ai-template-refresh overwrote a locally_edited file"; exit 1; }
-
-  # the refreshed file is now in_sync; the local edit stays locally_edited (its baseline was
-  # NOT rewritten) so a second refresh cannot reclassify it as outdated and clobber it
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-    "${repo_root}/tools/ai-auto-template-status" --json "${rt_target}" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-def drift(p): return [f for f in d["files"] if f["path"] == p][0]["drift"]
-assert drift("scripts/review-gate.sh") == "in_sync", drift("scripts/review-gate.sh")
-assert drift("scripts/automation-doctor.sh") == "locally_edited", drift("scripts/automation-doctor.sh")
-'
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-    "${repo_root}/tools/ai-template-refresh" --apply "${rt_target}" >/dev/null
-  grep -q "# LOCAL" "${rt_target}/scripts/automation-doctor.sh" \
-    || { echo "[verify] ai-template-refresh clobbered a local edit on a second refresh"; exit 1; }
-)
-
-echo "[verify] testing ai-template-refresh --adopt-baseline (pre-0b convergence)..."
-(
-  ab_tmp="$(mktemp -d)"
-  trap 'rm -rf "${ab_tmp}"' EXIT
-  ab_target="${ab_tmp}/proj"
-  mkdir -p "${ab_target}"
-  # simulate a clean PRE-0b install: lay down the committed HEAD template with NO .ai-auto
-  # manifest (the state every project installed before the install-manifest shipped)
-  git -C "${repo_root}" archive HEAD templates/automation-base \
-    | tar -x -C "${ab_target}" --strip-components=2
-  mv "${ab_target}/scripts/verify.example.sh" "${ab_target}/scripts/verify.sh" 2>/dev/null || true
-  test ! -f "${ab_target}/.ai-auto/template-manifest.json"
-
-  # adopt reconstructs the baseline from the template at the project's installed version
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-    "${repo_root}/tools/ai-template-refresh" --adopt-baseline "${ab_target}" >/dev/null 2>&1
-  test -f "${ab_target}/.ai-auto/template-manifest.json" \
-    || { echo "[verify] --adopt-baseline did not write a manifest"; exit 1; }
-  python3 - "${ab_target}/.ai-auto/template-manifest.json" <<'PYEOF'
-import json, sys
-m = json.load(open(sys.argv[1]))
-assert m.get("template_version"), "no template_version"
-assert isinstance(m.get("files"), dict) and m["files"], "no files"
-assert "adopt" in str(m.get("generated_by", "")), m.get("generated_by")
-PYEOF
-
-  # CRUX: a local edit after adoption is locally_edited (protected), NOT outdated -- so the
-  # next refresh cannot clobber it (the jw_dev doc-budget.sh failure this whole feature fixes)
-  printf '\n# local edit\n' >> "${ab_target}/scripts/review-gate.sh"
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-    "${repo_root}/tools/ai-auto-template-status" --json "${ab_target}" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-rg = [f for f in d["files"] if f["path"] == "scripts/review-gate.sh"][0]
-# Diverged from the adopted baseline -> protected. locally_edited (source still == baseline) OR
-# conflict (when the live template source ALSO moved vs the adopted version, e.g. a commit that
-# itself edits review-gate.sh). Both land in the not-refreshed/conflict bucket; both are safe.
-assert rg["drift"] in ("locally_edited", "conflict"), rg
-'
-  AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-    "${repo_root}/tools/ai-template-refresh" --json "${ab_target}" 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-assert "scripts/review-gate.sh" in d["conflicts"], d["conflicts"]
-assert "scripts/review-gate.sh" not in d["would_refresh"], d["would_refresh"]
-'
-
-  # adoption refuses to clobber an already-present baseline
-  if AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main \
-      "${repo_root}/tools/ai-template-refresh" --adopt-baseline "${ab_target}" >/dev/null 2>&1; then
-    echo "[verify] --adopt-baseline overwrote an existing manifest"; exit 1
-  fi
-)
-
-echo "[verify] testing automation template conflict guidance..."
-(
-  tmp_dir="$(mktemp -d)"
-
-  cleanup_installer_conflict_tmp() {
-    rm -rf "${tmp_dir}"
-  }
-
-  trap cleanup_installer_conflict_tmp EXIT
-
-  target_dir="${tmp_dir}/target"
-  conflict_output="${tmp_dir}/conflict.out"
-  git -c init.defaultBranch=main init -q "${target_dir}"
-  printf '# Existing instructions\n' > "${target_dir}/AGENTS.md"
-
-  if AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 ./scripts/install-automation-template.sh "${target_dir}" > "${conflict_output}"; then
-    echo "[verify] installer unexpectedly overwrote existing automation file"
-    exit 1
-  fi
-
-  grep -q "Refusing to overwrite existing files" "${conflict_output}"
-  grep -q "기존 프로젝트에 자동화 기반을 병합 도입해줘" "${conflict_output}"
-  grep -q "# Existing instructions" "${target_dir}/AGENTS.md"
-)
-
-echo "[verify] testing aiinit wrapper onboarding handoff..."
-(
-  tmp_dir="$(mktemp -d)"
-
-  cleanup_aiinit_tmp() {
-    rm -rf "${tmp_dir}"
-  }
-
-  trap cleanup_aiinit_tmp EXIT
-
-  target_dir="${tmp_dir}/target"
-  aiinit_output="${tmp_dir}/aiinit.out"
-  registry_file="${tmp_dir}/projects.tsv"
-  git -c init.defaultBranch=main init -q "${target_dir}"
-  AI_AUTO_ALLOW_EXPERIMENTAL_TEMPLATE_SOURCE=1 \
-  AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" \
-    ./tools/ai-auto-init "${target_dir}" > "${aiinit_output}"
-  grep -q "프로젝트 초기설정 해줘" "${aiinit_output}"
-  grep -q "docs/\\*_COMPLETION.md" "${aiinit_output}"
-  grep -q "docs/DOMAIN_PACKS.md" "${aiinit_output}"
-  grep -q ".omx/domain-packs/에 설치된 도메인팩" "${aiinit_output}"
-  grep -q "서브에이전트 사용 기준" "${aiinit_output}"
-  grep -q "플랜/인터뷰 강도 기준" "${aiinit_output}"
-  grep -q "fail-closed 기준" "${aiinit_output}"
-  grep -q "sandbox-vs-real-network evidence 기준" "${aiinit_output}"
-  grep -q "Incident Ops" "${aiinit_output}"
-  grep -q "plan index/TODO" "${aiinit_output}"
-  grep -q "spec/design alignment" "${aiinit_output}"
-  grep -q "사용자 보고를 쉬운 한국어" "${aiinit_output}"
-  grep -q "linked docs 분리 기준" "${aiinit_output}"
-  grep -q "Project registered" "${aiinit_output}"
-  grep -q "프로젝트 초기설정 해줘" "${target_dir}/AGENTS.md"
-  grep -q "sandbox-vs-real-network" "${target_dir}/AGENTS.md"
-  grep -q "Incident Ops" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "plan index/TODO reconciliation" "${target_dir}/docs/WORKFLOW.md"
-  grep -q "spec/design alignment" "${target_dir}/AGENTS.md"
-  grep -q "plain Korean" "${target_dir}/AGENTS.md"
-  grep -q "$(cd "${target_dir}" && pwd -P)" "${registry_file}"
 )
 
 echo "[verify] testing ai-register and workspace-scan registry integration..."
@@ -6970,7 +5821,6 @@ echo "[verify] testing global helper link repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
-  ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
   ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
@@ -6994,7 +5844,6 @@ echo "[verify] testing global helper link repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
-  test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
@@ -7100,137 +5949,6 @@ echo "[verify] testing AI_AUTO shell function unmanaged-file conflict..."
     exit 1
   fi
   grep -q "user owned" "${tmp_home}/.config/ai-lab/AI_AUTO.sh"
-)
-
-echo "[verify] testing opt-in codex drift notice shell function..."
-(
-  tmp_home="$(mktemp -d)"
-
-  cleanup_codex_drift_tmp() {
-    rm -rf "${tmp_home}"
-  }
-
-  trap cleanup_codex_drift_tmp EXIT
-
-  fake_bin="${tmp_home}/fake-bin"
-  repo_dir="${tmp_home}/project"
-  mkdir -p "${fake_bin}" "${repo_dir}/subdir"
-
-  cat > "${fake_bin}/codex" <<'STUB'
-#!/usr/bin/env bash
-stdin_content="$(cat)"
-printf 'real codex'
-for arg in "$@"; do
-  printf ' <%s>' "$arg"
-done
-printf '\n'
-printf 'stdin <%s>\n' "$stdin_content"
-printf 'real codex stderr\n' >&2
-exit "${CODEX_STUB_EXIT:-7}"
-STUB
-
-  cat > "${fake_bin}/ai-auto-template-status" <<'STUB'
-#!/usr/bin/env bash
-status="${AI_AUTO_TEMPLATE_STATUS_STUB:-customized_or_outdated}"
-printf 'AI_AUTO Template Status\n'
-printf 'target: %s\n' "${1:-}"
-printf 'installed_version: old\n'
-printf 'current_version: new\n'
-printf 'status: %s\n' "$status"
-STUB
-
-  chmod +x "${fake_bin}/codex" "${fake_bin}/ai-auto-template-status"
-  git -C "${repo_dir}" init -q
-  printf 'old\n' > "${repo_dir}/AI_AUTO_TEMPLATE_VERSION"
-
-  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
-  grep -q "AI_AUTO codex drift notice integration" "${tmp_home}/.bashrc"
-  grep -q "Managed by AI_AUTO install-global-files.sh codex drift notice" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
-  grep -q "${fake_bin}/codex" "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
-  grep -q '^  local tmux_auto_default=0$' "${tmp_home}/.config/ai-lab/codex-drift-notice.sh"
-
-  set +e
-  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex --alpha "two words"' \
-    > "${tmp_home}/codex.out" 2> "${tmp_home}/codex.err"
-  codex_status=$?
-  set -e
-  test "$codex_status" -eq 7
-  grep -q "real codex <--alpha> <two words>" "${tmp_home}/codex.out"
-  grep -q "stdin <>" "${tmp_home}/codex.out"
-  grep -q "real codex stderr" "${tmp_home}/codex.err"
-  grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex.err"
-  grep -q "state: update_available" "${tmp_home}/codex.err"
-  grep -q "status: customized_or_outdated" "${tmp_home}/codex.err"
-  grep -q "latest patch note:" "${tmp_home}/codex.err"
-  grep -q "review notes: .*templates/automation-base/docs/PATCH_NOTES.md" "${tmp_home}/codex.err"
-  grep -q "action: AI_AUTO 최신 패치 적용해줘" "${tmp_home}/codex.err"
-
-  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    CODEX_STUB_EXIT=0 \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex first; codex second' \
-    > "${tmp_home}/codex-once.out" 2> "${tmp_home}/codex-once.err"
-  grep -q "real codex <first>" "${tmp_home}/codex-once.out"
-  grep -q "real codex <second>" "${tmp_home}/codex-once.out"
-  test "$(grep -c "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-once.err")" -eq 1
-
-  printf 'input stream\n' | HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    CODEX_STUB_EXIT=0 \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex --stdin-check' \
-    > "${tmp_home}/codex-stdin.out" 2> "${tmp_home}/codex-stdin.err"
-  grep -q "real codex <--stdin-check>" "${tmp_home}/codex-stdin.out"
-  grep -q "stdin <input stream>" "${tmp_home}/codex-stdin.out"
-  grep -q "real codex stderr" "${tmp_home}/codex-stdin.err"
-
-  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    AI_AUTO_CODEX_DRIFT_NOTICE=0 CODEX_STUB_EXIT=0 \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
-    > "${tmp_home}/codex-disabled.out" 2> "${tmp_home}/codex-disabled.err"
-  grep -q "real codex" "${tmp_home}/codex-disabled.out"
-  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-disabled.err"; then
-    echo "[verify] codex drift notice ignored AI_AUTO_CODEX_DRIFT_NOTICE=0"
-    exit 1
-  fi
-
-  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    AI_AUTO_TEMPLATE_STATUS_STUB=current CODEX_STUB_EXIT=0 \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
-    > "${tmp_home}/codex-current.out" 2> "${tmp_home}/codex-current.err"
-  grep -q "real codex" "${tmp_home}/codex-current.out"
-  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-current.err"; then
-    echo "[verify] codex drift notice printed for current template"
-    exit 1
-  fi
-
-  rm "${repo_dir}/AI_AUTO_TEMPLATE_VERSION"
-  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" REPO_DIR="${repo_dir}" \
-    CODEX_STUB_EXIT=0 \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$REPO_DIR"; codex' \
-    > "${tmp_home}/codex-no-version.out" 2> "${tmp_home}/codex-no-version.err"
-  grep -q "real codex" "${tmp_home}/codex-no-version.out"
-  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-no-version.err"; then
-    echo "[verify] codex drift notice printed without AI_AUTO_TEMPLATE_VERSION"
-    exit 1
-  fi
-
-  HOME="${tmp_home}" PATH="${fake_bin}:${tmp_home}/bin:${PATH}" CODEX_STUB_EXIT=0 \
-    bash -c '. "$HOME/.config/ai-lab/codex-drift-notice.sh"; cd "$HOME"; codex' \
-    > "${tmp_home}/codex-outside-git.out" 2> "${tmp_home}/codex-outside-git.err"
-  grep -q "real codex" "${tmp_home}/codex-outside-git.out"
-  if grep -q "===== AI_AUTO UPDATE CHECK =====" "${tmp_home}/codex-outside-git.err"; then
-    echo "[verify] codex drift notice printed outside git repository"
-    exit 1
-  fi
-
-  HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null
-  test "$(grep -c "AI_AUTO codex drift notice integration" "${tmp_home}/.bashrc")" -eq 2
-
-  printf '%s\n' "# >>> AI_AUTO codex drift notice integration >>>" "preserve me" > "${tmp_home}/.bashrc"
-  if HOME="${tmp_home}" PATH="${fake_bin}:${PATH}" ./scripts/install-global-files.sh --install-codex-drift-notice >/dev/null 2>&1; then
-    echo "[verify] install-global-files edited unbalanced codex drift notice markers"
-    exit 1
-  fi
-  grep -q "preserve me" "${tmp_home}/.bashrc"
 )
 
 echo "[verify] testing codex drift notice unmanaged-file conflict..."
@@ -7581,7 +6299,6 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
-  ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
   ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
@@ -7605,7 +6322,6 @@ echo "[verify] testing bootstrap --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
-  test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
@@ -7639,7 +6355,6 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   ln -s "${tmp_home}/old-checkout/tools/ai-home" "${tmp_home}/bin/ai-home"
   ln -s "${tmp_home}/old-checkout/tools/ai-auto-init" "${tmp_home}/bin/aiinit"
   ln -s "${tmp_home}/old-checkout/tools/ai-register" "${tmp_home}/bin/ai-register"
-  ln -s "${tmp_home}/old-checkout/tools/ai-auto-template-status" "${tmp_home}/bin/ai-auto-template-status"
   ln -s "${tmp_home}/old-checkout/tools/ai-domain-pack" "${tmp_home}/bin/ai-domain-pack"
   ln -s "${tmp_home}/old-checkout/tools/ai-gstack-contract" "${tmp_home}/bin/ai-gstack-contract"
   ln -s "${tmp_home}/old-checkout/tools/ai-refactor-scan" "${tmp_home}/bin/ai-refactor-scan"
@@ -7663,7 +6378,6 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/ai-home")" = "$(pwd)/tools/ai-home"
   test "$(readlink "${tmp_home}/bin/aiinit")" = "$(pwd)/tools/ai-auto-init"
   test "$(readlink "${tmp_home}/bin/ai-register")" = "$(pwd)/tools/ai-register"
-  test "$(readlink "${tmp_home}/bin/ai-auto-template-status")" = "$(pwd)/tools/ai-auto-template-status"
   test "$(readlink "${tmp_home}/bin/ai-domain-pack")" = "$(pwd)/tools/ai-domain-pack"
   test "$(readlink "${tmp_home}/bin/ai-gstack-contract")" = "$(pwd)/tools/ai-gstack-contract"
   test "$(readlink "${tmp_home}/bin/ai-refactor-scan")" = "$(pwd)/tools/ai-refactor-scan"
@@ -7680,66 +6394,6 @@ echo "[verify] testing automation-doctor --fix global helper repair..."
   test "$(readlink "${tmp_home}/bin/knowledge-collect")" = "$(pwd)/tools/knowledge-collect"
   test "$(readlink "${tmp_home}/bin/workspace-scan")" = "$(pwd)/tools/workspace-scan"
 )
-
-echo "[verify] checking automation template sync..."
-for doc in \
-  AI_AUTOMATION_TREND_HARDENING.md \
-  AI_MODEL_ROUTING.md \
-  AI_RUNTIME_ADAPTERS.md \
-  AUTOMATION_OPERATING_POLICY.md \
-  OBSIDIAN_INTEGRATION.md
-do
-  if ! diff -u "docs/${doc}" "templates/automation-base/docs/${doc}"; then
-    echo "[verify] automation doc copies are out of sync: ${doc}"
-    echo "[verify] sync docs/${doc} and templates/automation-base/docs/${doc}, then rerun"
-    exit 1
-  fi
-done
-if ! diff -u \
-  "docs/research/AI_AUTOMATION_TRENDS.md" \
-  "templates/automation-base/docs/research/AI_AUTOMATION_TRENDS.md"; then
-  echo "[verify] automation doc copies are out of sync: docs/research/AI_AUTOMATION_TRENDS.md"
-  exit 1
-fi
-
-for script in \
-  automation-doctor.sh \
-  archive-omx-artifacts.sh \
-  ai-runtime-adapter.sh \
-  benchmark-command.py \
-  todo-report.py \
-  capture-knowledge-drafts.py \
-  collect-odoo-docs-kb.py \
-  collect-review-context.sh \
-  doc-budget.sh \
-  guidance-duplicate-report.sh \
-  discover-ai-models.sh \
-  knowledge-notes.py \
-  make-review-prompts.sh \
-  record-feedback.sh \
-  record-lane-decision.py \
-  record-project-memory.sh \
-  resolve-feedback.sh \
-  validate-odoo-docs-kb.py \
-  review-gate.sh \
-  run-ai-reviews.sh \
-  session-lock.sh \
-  summarize-ai-reviews.sh \
-  test-review-summary.sh \
-  verify-machinery.sh \
-  write-session-checkpoint.sh
-do
-  if [ ! -f "scripts/${script}" ] || [ ! -f "templates/automation-base/scripts/${script}" ]; then
-    echo "[verify] automation script copy is missing: ${script}"
-    exit 1
-  fi
-
-  if ! diff -u "scripts/${script}" "templates/automation-base/scripts/${script}"; then
-    echo "[verify] automation script copies are out of sync: ${script}"
-    echo "[verify] sync scripts/${script} and templates/automation-base/scripts/${script}, then rerun"
-    exit 1
-  fi
-done
 
 echo "[verify] running ai-lab bootstrap check..."
 ./scripts/bootstrap-ai-lab.sh
