@@ -515,7 +515,7 @@ set -e
 if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
    && [ -f "$AH/verify-machinery.sh" ] \
    && [ "$(git rev-parse --show-toplevel 2>/dev/null)" -ef "$(dirname "$AH")" ]; then
-  if { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
+  if { review_git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
        | grep -Eq '^(scripts/|hooks/)'; then
     echo "[gate] automation scripts changed; running machinery-scope verify..."
     set +e

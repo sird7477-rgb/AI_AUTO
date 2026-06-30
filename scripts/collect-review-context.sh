@@ -23,8 +23,10 @@ mkdir -p "${OUT_DIR}"
 # (review-gate.sh), so every patch-producing git call here must be inert to a project-local
 # `.gitattributes` + `.git/config` external-diff/textconv/clean driver (an in-repo RCE that env
 # scrubbing cannot reach). review_git is single-sourced in scripts/git-harden.sh; callers add
-# --no-ext-diff/--no-textconv. The name-only/--stat/--quiet/--exit-code calls do NOT exec a
-# driver (verified) and stay as plain git.
+# --no-ext-diff/--no-textconv. The name-only/--stat/--quiet/--exit-code WORKTREE calls DO run the
+# in-repo `.gitattributes` clean filter (R9b finding) and are now ALSO routed through review_git,
+# whose central `--attr-source=<empty-tree>` disarms it; only the `--cached` (tree-vs-index) calls,
+# which read no worktree blob, stay as plain git.
 CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=scripts/git-harden.sh
 . "${AI_AUTO_GIT_HARDEN_SH:-${CRC_DIR}/git-harden.sh}"
@@ -35,7 +37,7 @@ has_worktree_diff() {
 
 has_unstaged_diff() {
   local status
-  if git diff --quiet --exit-code >/dev/null 2>&1; then
+  if review_git diff --quiet --exit-code >/dev/null 2>&1; then
     return 1
   else
     status="$?"
@@ -120,7 +122,7 @@ write_diff_stat() {
       echo "### Unstaged Diff Stat"
       echo
       echo '```text'
-      git diff --stat
+      review_git diff --stat
       echo '```'
       echo
     fi
@@ -367,7 +369,7 @@ write_diff_scope_summary() {
   local files scopes active_lenses lens_count gate_policy integrator_required
   files="$(
     {
-      git diff --name-only 2>/dev/null || true
+      review_git diff --name-only 2>/dev/null || true
       git diff --cached --name-only 2>/dev/null || true
       git ls-files --others --exclude-standard 2>/dev/null || true
     } | sort -u
@@ -448,7 +450,7 @@ write_tree_churn_audit() {
 tracked_review_scope_allowlist() {
   local file
   {
-    git diff --name-only 2>/dev/null || true
+    review_git diff --name-only 2>/dev/null || true
     git diff --cached --name-only 2>/dev/null || true
   } | sort -u | while IFS= read -r file; do
     [ -n "${file}" ] || continue
@@ -638,7 +640,7 @@ write_phase_scope_guard() {
   deferred_records="$(split_csv_lines "${PHASE_SCOPE_DEFERRED_RECORDS:-}")"
   changed="$(
     {
-      git diff --name-only 2>/dev/null || true
+      review_git diff --name-only 2>/dev/null || true
       git diff --cached --name-only 2>/dev/null || true
       git ls-files --others --exclude-standard 2>/dev/null || true
     } | sort -u
@@ -749,7 +751,7 @@ write_completion_pack_routing_audit() {
 
   changed="$(
     {
-      git diff --name-only 2>/dev/null || true
+      review_git diff --name-only 2>/dev/null || true
       git diff --cached --name-only 2>/dev/null || true
       git ls-files --others --exclude-standard 2>/dev/null || true
     } | sort -u
@@ -851,7 +853,7 @@ write_visual_artifact_audit() {
   reviewed_specs="$(split_csv_lines "${VISUAL_HUMAN_REVIEWED_SPECS:-}")"
   changed="$(
     {
-      git diff --name-only 2>/dev/null || true
+      review_git diff --name-only 2>/dev/null || true
       git diff --cached --name-only 2>/dev/null || true
       git ls-files --others --exclude-standard 2>/dev/null || true
     } | sort -u

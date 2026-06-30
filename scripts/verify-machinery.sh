@@ -7384,14 +7384,19 @@ for f in sorted(targets):
             for need in ("--no-ext-diff", "--no-textconv"):
                 if need not in line:
                     violations.append("%s: patch-producing `git %s` MISSING %s: %s" % (loc, sub, need, s))
-        # rule 3: clean-filter on a WORKTREE `git diff` in a DOMAIN-PACK validator (the untrusted-
-        # project-facing layer). git runs the in-repo clean filter to DETECT a change even for
-        # --name-only, so name-only worktree diffs are NOT exempt here. A worktree diff = `git diff`
-        # that is not --cached/--staged, not --no-index, and not a `..`/`...` range (tree-vs-tree).
-        if is_dp and sub == "diff" and not noindex \
+        # rule 3: clean-filter on a WORKTREE `git diff` ANYWHERE in the tree -- DOMAIN-PACK
+        # validators AND the ENGINE trust-path (scripts/ hooks/ tools/). git runs the in-repo clean
+        # filter to DETECT a change even for --name-only/--stat/--quiet, so those are NOT exempt
+        # here. A worktree diff = `git diff` that is not --cached/--staged, not --no-index, and not
+        # a `..`/`...` range (tree-vs-tree). It is hardened by EITHER a literal --attr-source=
+        # (domain-pack validators, which have no wrapper) OR routing through `review_git` (the
+        # engine wrapper in scripts/git-harden.sh, which injects --attr-source=<empty-tree>
+        # centrally). is_dp is no longer a gate: the requirement is uniform tree-wide.
+        if sub == "diff" and not noindex \
                 and "--cached" not in line and "--staged" not in line and ".." not in line:
-            if "--attr-source=" not in line:
-                violations.append("%s: worktree `git diff` (clean-filter RCE vector) MISSING --attr-source=<empty-tree>: %s" % (loc, s))
+            via_review_git = "review_git" in m.group(0)
+            if "--attr-source=" not in line and not via_review_git:
+                violations.append("%s: worktree `git diff` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
 if violations:
     sys.stderr.write("R9-DRIFT VIOLATIONS:\n")
     for v in violations:
@@ -7420,6 +7425,52 @@ PYEOF
   printf 'git -C "$P" --attr-source="$ET" diff --name-only HEAD\n' > "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness/ok.sh"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     || { echo "[verify] R9-DRIFT: control b3 (correctly hardened diff) FALSE-POSITIVED — guard is too strict"; exit 1; }
+  # b4: ENGINE (scripts/) raw worktree name-only diff with NO --attr-source and NOT via review_git
+  # -> the now-TREE-WIDE rule 3 must fire (proves engine scope is no longer exempt — the R9b fix).
+  rm -f "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness/ok.sh"
+  printf 'git diff --name-only 2>/dev/null || true\n' > "${tmp_dir}/fake/scripts/engine-bad.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b4 (un-hardened ENGINE worktree name-only diff) NOT caught — tree-wide rule is vacuous"; exit 1; }
+  # b5: the SAME engine worktree diff routed through review_git (central-wrapper hardening) MUST
+  # pass (proves the review_git exemption is the real mechanism, not a blanket pass).
+  printf 'review_git diff --name-only 2>/dev/null || true\n' > "${tmp_dir}/fake/scripts/engine-bad.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b5 (engine worktree diff via review_git) FALSE-POSITIVED — wrapper exemption broken"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/engine-bad.sh"
+)
+
+echo "[verify] testing R9b-ENGINE-RCE (in-repo .gitattributes clean filter must NOT execute via the ENGINE collector's WORKTREE diff path: collect-review-context.sh worktree diffs are review_git-wrapped with central --attr-source=<empty-tree>; engine analog of R9-VALIDATOR-RCE)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  collector="${repo_root}/scripts/collect-review-context.sh"
+  harden="${repo_root}/scripts/git-harden.sh"
+  test -s "${collector}" || { echo "[verify] R9b-ENGINE-RCE: collector not found"; exit 1; }
+  test -s "${harden}"    || { echo "[verify] R9b-ENGINE-RCE: git-harden.sh not found"; exit 1; }
+  mk_evil() {  # repo: TRACKED file + in-repo .gitattributes binding a CLEAN filter; worktree-modified
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'base\n' > a.txt; git add a.txt; git commit -qm init
+      git config filter.evil.clean "touch ${tmp_dir}/PWNED_CLEAN; cat"   # clean filter driver (RCE)
+      printf 'a.txt filter=evil\n' > .gitattributes                      # in-repo binding
+      printf 'base\nchanged\n' > a.txt )                                 # worktree delta to diff
+  }
+  # HARDENED: the REAL collector. Its very first git work (has_unstaged_diff -> review_git diff
+  # --quiet) plus the --name-only/--stat worktree diffs run review_git, which now injects
+  # --attr-source=<empty-tree> -> the in-repo clean filter is NOT consulted -> NO payload.
+  proj="${tmp_dir}/proj"; mk_evil "${proj}"
+  ( cd "${proj}"; AI_AUTO_GIT_HARDEN_SH="${harden}" OUT_DIR="${tmp_dir}/rc" bash "${collector}" >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED_CLEAN" \
+    || { echo "[verify] R9b-ENGINE-RCE: in-repo clean filter EXECUTED via engine worktree diff (RCE)"; exit 1; }
+  # POSITIVE CONTROL: strip --attr-source from the wrapper -> review_git no longer disarms the
+  # clean filter (--no-ext-diff/--no-textconv do NOT touch `clean`) -> the SAME repo MUST fire
+  # PWNED_CLEAN, proving the negative is non-vacuous.
+  ctl_harden="${tmp_dir}/git-harden-ctl.sh"
+  sed -E 's/--attr-source="\$\{_REVIEW_GIT_ATTR_NONE\}" //' "${harden}" > "${ctl_harden}"
+  proj2="${tmp_dir}/proj2"; mk_evil "${proj2}"
+  ( cd "${proj2}"; AI_AUTO_GIT_HARDEN_SH="${ctl_harden}" OUT_DIR="${tmp_dir}/rc2" bash "${collector}" >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_CLEAN" \
+    || { echo "[verify] R9b-ENGINE-RCE: control (no --attr-source) inert — fixture would not catch the clean-filter drift"; exit 1; }
 )
 
 echo "[verify] testing R8-safety (filter-clean RCE on the untracked-content path: in-repo .gitattributes filter + .git/config clean must NOT execute via collect-review-context.sh:1400 --no-index content read)..."

@@ -22,8 +22,12 @@
 # clean/smudge FILTER is NOT closed by `--no-ext-diff`/`--no-textconv` alone: a worktree-vs-tree
 # `git diff <base> -- <path>` still runs the in-repo `.gitattributes` clean filter through both
 # flags. So the call-site defense is:
-#   - engine review_git:       `-c diff.external= --no-ext-diff --no-textconv`, plus `--no-filters`
-#                              on the `--no-index` content read (the only filter-reachable form there);
+#   - engine review_git:       `--attr-source=<empty-tree> -c diff.external= --no-ext-diff
+#                              --no-textconv`, plus `--no-filters` on the `--no-index` content read.
+#                              The central `--attr-source` (in scripts/git-harden.sh) closes the
+#                              worktree clean-filter RCE for EVERY engine worktree diff routed
+#                              through review_git (incl. `--name-only`/`--stat`/`--quiet`), not just
+#                              the patch-producing ones — the two flags alone do NOT disarm `clean`;
 #   - odoo QC python validators + validate-warm worktree diffs: `--attr-source=<empty-tree>
 #                              --no-ext-diff --no-textconv` (attr-source ignores the in-repo
 #                              `.gitattributes` so clean/smudge/textconv/diff attribute drivers

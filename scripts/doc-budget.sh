@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Empty-tree OID (repo hash algo; sha1 constant fallback) for `git --attr-source=<empty-tree>`:
+# the `git diff --numstat <base_ref>` calls below read the WORKTREE side, where an in-repo
+# `.gitattributes` clean/textconv/external driver would otherwise execute. `--attr-source` reads
+# attributes from the empty tree, neutralizing the clean-filter RCE vector uniformly.
+DOC_BUDGET_ATTR_NONE="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+
 STRICT="${DOC_BUDGET_STRICT:-0}"
 TEMPLATE_PATCH_MODE="${DOC_BUDGET_TEMPLATE_PATCH:-0}"
 TEMPLATE_PATCH_REASON="${DOC_BUDGET_TEMPLATE_PATCH_REASON:-}"
@@ -173,7 +179,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     set +f
   fi
 
-  diff_numstat="$(git diff --numstat "${base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
+  diff_numstat="$(git --attr-source="${DOC_BUDGET_ATTR_NONE}" diff --no-ext-diff --no-textconv --numstat "${base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
   diff_added="$(printf '%s\n' "${diff_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   diff_removed="$(printf '%s\n' "${diff_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   untracked_added="$(
@@ -204,7 +210,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if [ -z "${completion_base_ref}" ]; then
       fail "DOC_BUDGET_COMPLETION_BASE_REF=${COMPLETION_BASE_REF} could not be resolved"
     else
-      completion_numstat="$(git diff --numstat "${completion_base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
+      completion_numstat="$(git --attr-source="${DOC_BUDGET_ATTR_NONE}" diff --no-ext-diff --no-textconv --numstat "${completion_base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
       completion_added="$(printf '%s\n' "${completion_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
       completion_removed="$(printf '%s\n' "${completion_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
       completion_added=$((completion_added + untracked_added))
@@ -226,7 +232,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   label_pathspecs=(
     ':(glob)**/*.plan.md' ':(glob)**/*.spec.md' ':(glob)*.plan.md' ':(glob)*.spec.md'
   )
-  label_numstat="$(git diff --numstat "${base_ref}" -- "${label_pathspecs[@]}" 2>/dev/null || true)"
+  label_numstat="$(git --attr-source="${DOC_BUDGET_ATTR_NONE}" diff --no-ext-diff --no-textconv --numstat "${base_ref}" -- "${label_pathspecs[@]}" 2>/dev/null || true)"
   label_added="$(printf '%s\n' "${label_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   label_removed="$(printf '%s\n' "${label_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   label_untracked_added="$(
