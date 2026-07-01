@@ -114,9 +114,12 @@ else
   echo "- branch: detached or unavailable"
 fi
 
-if [ -n "$(git -C "$git_root" status --short)" ]; then
+# --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean-filter driver
+# that `git status` would otherwise run on a stat-dirty tracked blob of the target repo (RCE).
+_et="$(git -C "$git_root" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+if [ -n "$(git -C "$git_root" --attr-source="$_et" status --short)" ]; then
   echo "- worktree: dirty"
-  git -C "$git_root" status --short
+  git -C "$git_root" --attr-source="$_et" status --short
 else
   echo "- worktree: clean"
 fi

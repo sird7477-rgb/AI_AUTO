@@ -22,6 +22,8 @@ Or against another directory:
 - detects the project domain (advisory, via `ai-project-profile`);
 - de-pollutes any framework files left from the old copy model: a tracked file
   byte-identical to the global pristine is `git rm`'d (staged, not committed);
+  a retired vendored file the engine no longer ships (e.g. `docs/PATCH_NOTES.md`,
+  `AI_AUTO_TEMPLATE_VERSION`) is recognized by its content marker and also `git rm`'d;
   a modified or symlinked one is LEFT and REPORTED.
 
 It never vendors framework files, never auto-commits, and aborts without changes

@@ -76,3 +76,6 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - R10 blue 70fd6e5: drift-guard matcher hardened vs if/for/eval/xargs/python-concat evasion + controls. 50 sites all hardened, both gates green 237/1.
 - CLEANUP: removed [diff.evil2] from shared /root/workspace/ai-lab/.git/config + all markers. all configs CLEAN.
 - R11 red dispatched (final gauntlet). HEAD 70fd6e5. If R11+R12 both clean -> 2 consecutive dry -> DONE.
+- R11 red: safety LOW (guard prefix latent); minimality MED (PATCH_NOTES orphan -> goal#1 gap); holistic HIGH (D1 ai-auto setup clean-filter RCE, live) + MED (D2 guard blind to extensionless launchers, MASKED D1). NOT dry.
+- R11 blue aa51a76: is_text scans shebang/extensionless -> guard covers 27 tools/ launchers; setup diffs+git rm routed via review_git --attr-source (D1 closed, positive control); knowledge-capture hardened; retired-file (PATCH_NOTES marker) de-pollution meets goal#1; guard command-prefix hardened. 55 sites all hardened, both gates green 237/1.
+- git-exec class closed across engine+domain-pack+tools (55 sites, guard covers all file types incl extensionless). R12 red dispatched (final gauntlet #2). dry-count=0.

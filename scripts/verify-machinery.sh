@@ -7178,7 +7178,7 @@ echo "[verify] testing git-exec-env scrub SINGLE-SOURCE (F1: one list, no four-c
     || { echo "[verify] F1: GIT_TRACE*/GIT_TEMPLATE_DIR not scrubbed by git-scrub.sh (got '${out}')"; exit 1; }
 )
 
-echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/config core.fsmonitor INERT for EVERY worktree-scanning git call — e.g. collect-review-context.sh:17 'git status' at module load, run BEFORE git-harden/review_git is even sourced)..."
+echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/config core.fsmonitor INERT for EVERY worktree-scanning git call — e.g. the collector's PLAIN 'git ls-files --others' scans, which are NOT routed through review_git and so depend on this process-wide env pin, not the per-call --attr-source)..."
 (
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
@@ -7208,8 +7208,9 @@ echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/c
   }
   # (1) HARDENED: source git-scrub.sh exactly as the engine launcher/hooks do BEFORE the
   # collector runs. The env GIT_CONFIG_* override pins core.fsmonitor empty (higher precedence
-  # than repo-local .git/config), so the module-load `git status --porcelain` (line 17, plain
-  # git, before git-harden is sourced) and every later worktree scan are inert.
+  # than repo-local .git/config), so EVERY worktree scan is inert — including the collector's
+  # PLAIN `git ls-files --others` calls, which are not wrapped by review_git and so rely on this
+  # process-wide pin rather than the per-call --attr-source that hardens the `git status` path.
   proj="${tmp_dir}/proj"; mk_poisoned "${proj}"
   # shellcheck disable=SC1090  # dynamic source of the engine git-scrub.sh under test
   ( cd "${proj}"; . "${scrub}"; OUT_DIR="${tmp_dir}/rc" bash "${collector}" >/dev/null 2>&1 || true )
@@ -7217,8 +7218,9 @@ echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/c
     || { echo "[verify] R7-F1: in-repo core.fsmonitor EXECUTED despite the git-scrub chokepoint (RCE)"; exit 1; }
   # Positive control: source git-scrub with the defensive override REMOVED (the pre-fix process —
   # env UNSET alone CANNOT reach an in-repo .git/config). The SAME poisoned repo MUST now fire
-  # core.fsmonitor at the module-load git status, proving the negative above is non-vacuous AND
-  # that the config-override export (not the env unset) is the load-bearing defense.
+  # core.fsmonitor at the collector's first plain worktree-scanning git call (e.g. `git ls-files
+  # --others`), proving the negative above is non-vacuous AND that the config-override export
+  # (not the env unset) is the load-bearing defense.
   ctl_scrub="${tmp_dir}/git-scrub-noexport.sh"
   sed '/R7-F1 defensive config override (BEGIN)/,/R7-F1 defensive config override (END)/d' "${scrub}" > "${ctl_scrub}"
   proj2="${tmp_dir}/proj2"; mk_poisoned "${proj2}"
@@ -7361,10 +7363,20 @@ def is_text(f):
 # list-literal token on a git-signal line -- catches argv built by `+`-concatenation
 # (`GIT + ["diff",...]`, `["git"]+flags+["diff",...]`) where "git" and "diff" aren't
 # adjacent literals. The git-signal gate (applied below) keeps non-git lists unscanned.
+# SUBS: the worktree-side clean/smudge-filter-running subcommands. diff/show/log/blame are the
+# patch/content readers (rules 1-2, and diff worktree rule 3). status/checkout/restore/reset/
+# stash/apply/archive/cat-file (rule 4) ALSO run the in-repo `.gitattributes`+`.git/config`
+# filter driver on worktree blobs — `git status` runs `filter.<x>.clean` on a stat-dirty
+# tracked file (R12 RCE), the write-side (checkout/restore/reset --hard/stash/apply) runs
+# smudge, archive runs export filters, cat-file --filters runs clean. So EACH is scanned and
+# (rule 4) required to carry --attr-source or review_git. `add`/`ls-files` are DELIBERATELY
+# excluded: no shipped `git add` invocation exists (it appears only as suggestion TEXT, which
+# would false-positive), and `git ls-files --others` lists untracked NAMES and runs no filter.
+SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file'
 INVOKE = re.compile(
-    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:then|do|else|elif|eval|xargs)\b[^;#]*?\s)\s*(?:(?:sudo|env|command|time|nohup|exec|builtin)\s+)*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(diff|show|log|blame)(?![\w.=-]))'
-    r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(diff|show|log|blame)"\s*,?)'
-    r'|(?:\[(?:[^\]]*,)?\s*"(diff|show|log|blame)")'
+    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:then|do|else|elif|eval|xargs)\b[^;#]*?\s)\s*(?:(?:sudo|env|command|time|nohup|exec|builtin)\s+)*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
+    r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(' + SUBS + r')"\s*,?)'
+    r'|(?:\[(?:[^\]]*,)?\s*"(' + SUBS + r')")'
 )
 NONPATCH = ("--name-only", "--name-status", "--stat", "--shortstat", "--numstat", "--quiet", "--no-patch", "--check")
 violations = []
@@ -7427,12 +7439,23 @@ for f in sorted(targets):
             via_review_git = "review_git" in m.group(0)
             if "--attr-source=" not in line and not via_review_git:
                 violations.append("%s: worktree `git diff` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
+        # rule 4 (R12): OTHER worktree clean/smudge-filter-running subcommands. Unlike `git diff`
+        # there is NO --cached/range escape — EVERY `git status` (and checkout/restore/reset/
+        # stash/apply/archive/cat-file) over the project runs the in-repo `.gitattributes`+
+        # `.git/config` filter driver on a worktree blob, so each MUST carry --attr-source=<empty-
+        # tree> or route through review_git. This closes the R12 `git status` clean-filter RCE
+        # (collect-review-context/automation-doctor/write-session-checkpoint) and pre-empts any
+        # FUTURE site of the currently-zero-site subcommands.
+        if sub in ("status", "checkout", "restore", "reset", "stash", "apply", "archive", "cat-file"):
+            via_review_git = "review_git" in m.group(0)
+            if "--attr-source=" not in line and not via_review_git:
+                violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
 if violations:
     sys.stderr.write("R9-DRIFT VIOLATIONS:\n")
     for v in violations:
         sys.stderr.write("  " + v + "\n")
     sys.exit(1)
-print("R9-DRIFT OK: %d git diff/show/log/blame site(s) scanned, all hardened" % scanned)
+print("R9-DRIFT OK: %d git diff/show/log/blame/status(+checkout/restore/reset/stash/apply/archive/cat-file) site(s) scanned, all hardened" % scanned)
 PYEOF
   # (a) the real shipped tree MUST pass.
   out="$( python3 "${guard}" "${repo_root}" 2>&1 )" \
@@ -7545,6 +7568,38 @@ PYEOF
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     || { echo "[verify] R9-DRIFT: control b9-hardened (env-prefixed via --attr-source) FALSE-POSITIVED"; exit 1; }
   rm -f "${tmp_dir}/fake/scripts/b9.sh"
+  # b10 (R12): the guard now SCANS `git status` and REQUIRES --attr-source/review_git — every
+  # `git status` over the project runs the in-repo clean filter (no --cached/range escape), so an
+  # un-hardened one is the R12 RCE. An un-hardened ENGINE `git status --porcelain` MUST fire rule 4.
+  printf 'git status --porcelain 2>/dev/null || true\n' > "${tmp_dir}/fake/scripts/b10.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b10 (un-hardened git status) NOT caught — guard blind to status clean-filter RCE (R12 regression)"; exit 1; }
+  # b10-hardened-A: routed through review_git (engine wrapper) MUST pass.
+  printf 'review_git status --porcelain 2>/dev/null || true\n' > "${tmp_dir}/fake/scripts/b10.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b10-hardened-A (git status via review_git) FALSE-POSITIVED"; exit 1; }
+  # b10-hardened-B: an inline --attr-source (global option before `status`) MUST pass.
+  printf 'git --attr-source="$ET" status --short\n' > "${tmp_dir}/fake/scripts/b10.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b10-hardened-B (git status via inline --attr-source) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b10.sh"
+  # b11 (R12 defensive): a FUTURE un-hardened worktree clean/smudge subcommand (checkout/restore/
+  # reset/stash/apply/archive/cat-file) — currently ZERO shipped sites — MUST be caught by rule 4.
+  for _b11 in \
+      'git checkout -- some/file' \
+      'git restore some/file' \
+      'git stash push' \
+      'git archive HEAD' \
+      'git cat-file --filters HEAD:some/file'; do
+    printf '%s\n' "${_b11}" > "${tmp_dir}/fake/scripts/b11.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b11 (future un-hardened worktree-filter subcommand) NOT caught: ${_b11}"; exit 1; }
+  done
+  # b11-hardened: the same subcommand routed through review_git MUST pass (no false-positive).
+  printf 'review_git checkout -- some/file\n' > "${tmp_dir}/fake/scripts/b11.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b11-hardened (worktree-filter subcommand via review_git) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b11.sh"
 )
 
 echo "[verify] testing R11-SETUP-RCE (D1: 'ai-auto setup' on a HOSTILE project must NOT execute an in-repo .gitattributes-bound filter.<x>.clean driver via its de-pollution WORKTREE 'git diff --quiet' probes; the diffs are review_git-wrapped with central --attr-source=<empty-tree>)..."
@@ -7591,31 +7646,43 @@ echo "[verify] testing R11-SETUP-RCE (D1: 'ai-auto setup' on a HOSTILE project m
     || { echo "[verify] R11-SETUP-RCE: control (raw git diff, no --attr-source) inert — fixture would not catch the setup clean-filter RCE"; exit 1; }
 )
 
-echo "[verify] testing R11-1 (retired-framework de-pollution: a tracked docs/PATCH_NOTES.md carrying the '# AI_AUTO Patch Notes' marker but with NO engine pristine is git-rm'd by 'ai-auto setup'; a same-named project-authored file WITHOUT the marker is KEPT)..."
+echo "[verify] testing R11-1/R12-min (retired-framework de-pollution: BOTH retired vendored files with NO engine pristine — docs/PATCH_NOTES.md (marker '# AI_AUTO Patch Notes') AND AI_AUTO_TEMPLATE_VERSION (version-string first line) — are git-rm'd by 'ai-auto setup'; same-named project-authored files WITHOUT the marker are KEPT)..."
 (
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
   launcher="${repo_root}/tools/ai-auto"
   test ! -e "${repo_root}/docs/PATCH_NOTES.md" \
     || { echo "[verify] R11-1: engine now SHIPS docs/PATCH_NOTES.md — the retired-marker path must be re-checked"; exit 1; }
-  # (1) marker-bearing retired vendored copy -> STAGED for removal.
+  test ! -e "${repo_root}/AI_AUTO_TEMPLATE_VERSION" \
+    || { echo "[verify] R12-min: engine now SHIPS AI_AUTO_TEMPLATE_VERSION — the retired-marker path must be re-checked (it would then need a pristine, not the retired branch)"; exit 1; }
+  # (1) BOTH marker-bearing retired vendored copies -> STAGED for removal in the same setup.
   proj="${tmp_dir}/proj"; mkdir -p "${proj}/docs"
   ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
     printf '# AI_AUTO Patch Notes\n\nlegacy vendored content\n' > docs/PATCH_NOTES.md
-    git add docs/PATCH_NOTES.md; git commit -qm init )
+    printf '2026.06.30.6\n' > AI_AUTO_TEMPLATE_VERSION
+    git add docs/PATCH_NOTES.md AI_AUTO_TEMPLATE_VERSION; git commit -qm init )
   ( cd "${proj}"; bash "${launcher}" setup >/dev/null 2>&1 || true )
   ( cd "${proj}"; git diff --cached --name-status ) | grep -qE '^D[[:space:]]+docs/PATCH_NOTES.md$' \
     || { echo "[verify] R11-1: retired marker-bearing docs/PATCH_NOTES.md was NOT staged for removal"; exit 1; }
-  # (2) project-authored same-name file (NO AI_AUTO marker) -> KEPT, untouched.
+  ( cd "${proj}"; git diff --cached --name-status ) | grep -qE '^D[[:space:]]+AI_AUTO_TEMPLATE_VERSION$' \
+    || { echo "[verify] R12-min: retired AI_AUTO_TEMPLATE_VERSION (version-string marker) was NOT staged for removal — goal #1 still fails"; exit 1; }
+  # (2) project-authored same-name files WITHOUT the marker -> KEPT, untouched. For
+  # AI_AUTO_TEMPLATE_VERSION the safety guard is the version-string first line: a same-named file
+  # whose first line is NOT a version (a human's note) must be KEPT (proves the marker is load-bearing).
   proj2="${tmp_dir}/proj2"; mkdir -p "${proj2}/docs"
   ( cd "${proj2}"; git init -q; git config user.email t@e.x; git config user.name T
     printf '# My Project Patch Notes\n\nmine\n' > docs/PATCH_NOTES.md
-    git add docs/PATCH_NOTES.md; git commit -qm init )
+    printf 'not a version — my own file\n' > AI_AUTO_TEMPLATE_VERSION
+    git add docs/PATCH_NOTES.md AI_AUTO_TEMPLATE_VERSION; git commit -qm init )
   ( cd "${proj2}"; bash "${launcher}" setup >/dev/null 2>&1 || true )
   ( cd "${proj2}"; git diff --cached --name-status ) | grep -q 'docs/PATCH_NOTES.md' \
     && { echo "[verify] R11-1: project-authored docs/PATCH_NOTES.md (no AI_AUTO marker) was WRONGLY removed"; exit 1; }
+  ( cd "${proj2}"; git diff --cached --name-status ) | grep -q 'AI_AUTO_TEMPLATE_VERSION' \
+    && { echo "[verify] R12-min: project-authored AI_AUTO_TEMPLATE_VERSION (non-version first line) was WRONGLY removed — version-string guard too loose"; exit 1; }
   ( cd "${proj2}"; git ls-files --error-unmatch docs/PATCH_NOTES.md >/dev/null 2>&1 ) \
     || { echo "[verify] R11-1: project-authored docs/PATCH_NOTES.md vanished (must be kept)"; exit 1; }
+  ( cd "${proj2}"; git ls-files --error-unmatch AI_AUTO_TEMPLATE_VERSION >/dev/null 2>&1 ) \
+    || { echo "[verify] R12-min: project-authored AI_AUTO_TEMPLATE_VERSION vanished (must be kept)"; exit 1; }
 )
 
 echo "[verify] testing R9b-ENGINE-RCE (in-repo .gitattributes clean filter must NOT execute via the ENGINE collector's WORKTREE diff path: collect-review-context.sh worktree diffs are review_git-wrapped with central --attr-source=<empty-tree>; engine analog of R9-VALIDATOR-RCE)..."

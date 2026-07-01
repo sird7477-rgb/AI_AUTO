@@ -46,7 +46,12 @@ unset _gcv 2>/dev/null || true
 # `core.fsmonitor` living in a malicious project's IN-REPO `.git/config` is a code-exec
 # vector that fires on EVERY worktree-scanning git call (`git status`, `git ls-files`,
 # `git diff --name-only/--quiet/--stat`) — not just the patch-producing calls routed
-# through review_git(). The env unset above CANNOT reach an in-repo config. But env
+# through review_git(). NOTE: this env pin closes ONLY the fsmonitor exec vector. The
+# SEPARATE in-repo `.gitattributes` + `.git/config` CLEAN-filter vector on those same
+# worktree-scanning calls (notably `git status`, which runs `filter.<x>.clean` on a
+# stat-dirty tracked blob) is NOT closed here — it is neutralized at the call site by
+# `--attr-source=<empty-tree>` (review_git in scripts/git-harden.sh), never by this env.
+# The env unset above CANNOT reach an in-repo config. But env
 # GIT_CONFIG_* has HIGHER precedence than repo-local `.git/config`, so after the
 # anti-injection unset we re-export a CONTROLLED pair that pins `core.fsmonitor` EMPTY for
 # every git call in this process AND its children. `core.fsmonitor=''` == disabled, so it

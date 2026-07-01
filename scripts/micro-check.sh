@@ -46,6 +46,10 @@ if [ ! -f "${FILE}" ]; then
 fi
 
 changed_args=()
+# --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean-filter driver
+# that `git status` would otherwise run on a stat-dirty tracked blob (RCE). Precomputed into a var
+# (not inline `$(...)`) so it is self-contained AND visible to the R9-DRIFT status guard.
+_et="$(git -C "${REPO_ROOT}" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
 # Parse porcelain robustly: strip the 2-char XY status + space, take the
 # post-rename path ("old -> new" -> new), and keep spaces in filenames.
 while IFS= read -r line; do
@@ -59,6 +63,6 @@ while IFS= read -r line; do
   path="${path%\"}"; path="${path#\"}"
   [ -n "${path}" ] || continue
   changed_args+=(--changed "${path}")
-done < <(git -C "${REPO_ROOT}" -c core.quotepath=false status --porcelain 2>/dev/null)
+done < <(git -C "${REPO_ROOT}" --attr-source="$_et" -c core.quotepath=false status --porcelain 2>/dev/null)
 
 exec python3 "${MICRO_WORK}" validate "${FILE}" "${changed_args[@]}"

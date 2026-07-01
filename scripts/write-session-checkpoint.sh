@@ -60,8 +60,14 @@ compact_value() {
 write_git_status() {
   local status_output
   local total_lines
+  local _et
 
-  status_output="$(git status --short)"
+  # --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean-filter driver
+  # that `git status` would otherwise run on a stat-dirty tracked blob (RCE). Precomputed into a
+  # var (not inline `$(...)`) so it is self-contained (no git-harden.sh sibling needed) AND visible
+  # to the R9-DRIFT status guard.
+  _et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+  status_output="$(git --attr-source="$_et" status --short)"
   if [ -z "$status_output" ]; then
     echo "  clean"
     return 0

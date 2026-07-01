@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# git-harden.sh MUST be sourced FIRST: the module-load `git status --porcelain` below runs
+# during `ai-auto gate` over a potentially hostile project, so review_git (whose central
+# --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean filter)
+# has to be defined before that first worktree-reading git call executes.
+CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=scripts/git-harden.sh
+. "${AI_AUTO_GIT_HARDEN_SH:-${CRC_DIR}/git-harden.sh}"
+
 OUT_DIR="${OUT_DIR:-.omx/review-context}"
 INCLUDE_UNTRACKED_CONTENT="${INCLUDE_UNTRACKED_CONTENT:-0}"
 MAX_UNTRACKED_BYTES="${MAX_UNTRACKED_BYTES:-102400}"
@@ -14,7 +22,7 @@ REVIEW_UNTRACKED_ALLOWLIST="${REVIEW_UNTRACKED_ALLOWLIST:-}"
 REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
-REPO_STATUS_BEFORE_CONTEXT="${REPO_STATUS_BEFORE_CONTEXT-$(git status --porcelain 2>/dev/null || true)}"
+REPO_STATUS_BEFORE_CONTEXT="${REPO_STATUS_BEFORE_CONTEXT-$(review_git status --porcelain 2>/dev/null || true)}"
 OUT_FILE="${OUT_DIR}/latest-review-context.md"
 
 mkdir -p "${OUT_DIR}"
@@ -26,10 +34,8 @@ mkdir -p "${OUT_DIR}"
 # --no-ext-diff/--no-textconv. The name-only/--stat/--quiet/--exit-code WORKTREE calls DO run the
 # in-repo `.gitattributes` clean filter (R9b finding) and are now ALSO routed through review_git,
 # whose central `--attr-source=<empty-tree>` disarms it; only the `--cached` (tree-vs-index) calls,
-# which read no worktree blob, stay as plain git.
-CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-# shellcheck source=scripts/git-harden.sh
-. "${AI_AUTO_GIT_HARDEN_SH:-${CRC_DIR}/git-harden.sh}"
+# which read no worktree blob, stay as plain git. (review_git is sourced at the TOP of this
+# script — see the header — so it is defined before the module-load `git status` on line 24.)
 
 has_worktree_diff() {
   has_unstaged_diff || has_staged_diff
@@ -423,7 +429,7 @@ write_diff_scope_summary() {
 
 write_tree_churn_audit() {
   local current_status before_untracked current_untracked new_untracked
-  current_status="$(git status --porcelain 2>/dev/null || true)"
+  current_status="$(review_git status --porcelain 2>/dev/null || true)"
 
   echo "audit_status: report_only"
   if [ "${current_status}" = "${REPO_STATUS_BEFORE_CONTEXT}" ]; then
@@ -1223,7 +1229,7 @@ write_micro_work_audit() {
     return 0
   fi
   local changed
-  changed="$(git -c core.quotepath=false status --porcelain 2>/dev/null || true)"
+  changed="$(review_git -c core.quotepath=false status --porcelain 2>/dev/null || true)"
   MICRO_WORK_CHANGED="${changed}" python3 - "${file}" <<'PY'
 import json, os, sys
 path = sys.argv[1]
@@ -1316,7 +1322,7 @@ fi
   echo "## Git Status"
   echo
   echo '```text'
-  git status --short
+  review_git status --short
   echo '```'
   echo
   echo "## Diff Stat"

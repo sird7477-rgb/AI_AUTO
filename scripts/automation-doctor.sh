@@ -493,11 +493,15 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
     exit 1
   fi
 
+  # --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean-filter driver
+  # that `git status` would otherwise run on a stat-dirty tracked blob (RCE). Precomputed into a
+  # var (not inline `$(...)`) so it is self-contained AND visible to the R9-DRIFT status guard.
+  _et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
   if [ "$SKIP_DIRTY_CHECK" = "1" ]; then
     say_skip "working tree dirty check skipped (DOCTOR_SKIP_DIRTY_CHECK=1)"
-  elif [ -n "$(git status --short 2>/dev/null)" ]; then
+  elif [ -n "$(git --attr-source="$_et" status --short 2>/dev/null)" ]; then
     say_warn "working tree has uncommitted changes"
-    suggest "git status --short"
+    suggest "inspect with: git status --short"
   else
     say_pass "working tree is clean"
   fi
