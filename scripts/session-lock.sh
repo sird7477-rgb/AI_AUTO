@@ -40,17 +40,24 @@ _session_lock_ttl() {
   printf '%s' "$t"
 }
 
-# Expired iff acquired_at parses AND its age exceeds the TTL (and TTL>0). A missing/garbage
-# acquired_at is NOT treated as expired (falls back to PID-liveness), so we never reclaim a
-# fresh lock instantly — only genuinely aged ones.
+# Expired iff acquired_at is present AND (its age exceeds the TTL, OR its age is implausible:
+# NEGATIVE / future-dated, OR present-but-unparseable) — all with TTL>0. A future acquired_at
+# (clock roll-back, or a forged/planted lock) yields a NEGATIVE age that can never exceed the
+# TTL, so without this clamp a future-dated always-alive holder_pid (e.g. planted holder_pid=1)
+# would wedge the tree FOREVER, defeating the very TTL added to close that wedge. Clamping an
+# implausible age to STALE routes it through the race-safe reclaim instead. A MISSING/empty
+# acquired_at is still NOT expired (falls back to PID-liveness), so pre-TTL locks and a genuine
+# fresh legit lock (whose acquired_at ≈ now, age ≈ 0) are never reclaimed instantly.
 _session_lock_expired() {
-  local at="$1" ttl="$2" ts now
+  local at="$1" ttl="$2" ts now age
   [ "$ttl" -gt 0 ] 2>/dev/null || return 1
   [ -n "$at" ] || return 1
-  ts="$(date -d "$at" +%s 2>/dev/null)" || return 1
-  [ -n "$ts" ] || return 1
+  ts="$(date -d "$at" +%s 2>/dev/null)" || return 0   # present but unparseable -> STALE
+  [ -n "$ts" ] || return 0                             # ditto
   now="$(date +%s)"
-  [ "$((now - ts))" -gt "$ttl" ]
+  age=$((now - ts))
+  [ "$age" -lt 0 ] && return 0                         # future-dated (clock skew/forged) -> STALE
+  [ "$age" -gt "$ttl" ]
 }
 
 # LOW: sweep obviously-orphaned reclaim temps left by a SIGKILL between mktemp and ln. Only

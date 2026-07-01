@@ -961,6 +961,23 @@ echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
     session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
   [ "${_rc}" -eq 75 ] || { echo "[verify] session-lock/TTL: live foreign within TTL not deferred (got ${_rc})"; exit 1; }
 
+  # TTL clock-skew wedge (R18): a FUTURE-dated acquired_at makes age = now - ts NEGATIVE, so it
+  # can NEVER exceed the TTL. Combined with a forged always-alive holder_pid (pid=1), the pre-clamp
+  # `_session_lock_expired` treats it as fresh -> wedges at 75 FOREVER, even past the TTL. The clamp
+  # must treat an implausible (negative/future) age as STALE and RECLAIM it (acquire -> 0). Pre-fix
+  # this returns 75 -> revert fails. now+10h forces a large negative age; pid=1 is always alive.
+  printf 'holder_pid=1\nholder_session=other@host\nholder_op=x\nacquired_at=%s\n' \
+    "$(date -Iseconds -d '10 hours')" > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_SESSION_LOCK_TTL_SECONDS=2 AI_AUTO_SESSION_ID="self@host" \
+    session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock/skew: future-dated always-alive lock not reclaimed, wedged at ${_rc}"; exit 1; }
+  # ... and the clamp must NOT steal a genuinely fresh live-foreign lock (acquired_at = now): -> 75.
+  printf 'holder_pid=%s\nholder_session=other@host\nholder_op=x\nacquired_at=%s\n' \
+    "${held_pid}" "$(date -Iseconds)" > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_SESSION_LOCK_TTL_SECONDS=3600 AI_AUTO_SESSION_ID="self@host" \
+    session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 75 ] || { echo "[verify] session-lock/skew: fresh live-foreign lock stolen by clamp (got ${_rc})"; exit 1; }
+
   # Reclaim race (CRITICAL): N>=8 DISTINCT sessions all reclaiming ONE pre-planted STALE (dead-pid)
   # lock must yield EXACTLY ONE holder. The old blind rm+ln reclaim let 2-7 racers `ln` into each
   # other's gap and all win (~100/250). Barrier -> simultaneity; the winner sleeps briefly so its
@@ -7434,6 +7451,98 @@ echo "[verify] testing BLUE-R17-BROKEN-SANDBOX (automation-doctor distinguishes 
   true
 )
 
+echo "[verify] testing BLUE-R18-BROKEN-SANDBOX-NONREPO-GATE (review-gate warn_broken_git_sandbox must NOT fire the 'sandbox broken / do NOT git init' panic on a PLAIN non-repo — only on a repo-PRESENT-but-git-FAILING dir)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # `git rev-parse --is-inside-work-tree` exits 128 for BOTH a corrupt sandbox AND a plain non-repo,
+  # so the pre-fix diagnostic printed the actively-wrong "do NOT git init" panic advice on a LEGIT
+  # non-repo. Extract the LIVE function and assert it distinguishes by an actual `.git` presence.
+  fn="${tmp_dir}/fn.sh"
+  sed -n '/# >>> blue-r18-broken-sandbox/,/# <<< blue-r18-broken-sandbox/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${fn}"
+  test -s "${fn}" || { echo "[verify] BLUE-R18-BROKEN-SANDBOX-NONREPO-GATE: could not extract warn_broken_git_sandbox"; exit 1; }
+  # (1) PLAIN non-repo: no `.git` anywhere up-tree; real healthy git present -> must stay SILENT
+  # (NON-VACUOUS: reverting the fix makes this branch print the panic and the assertion below fails).
+  nonrepo="${tmp_dir}/plain"; mkdir -p "${nonrepo}"
+  out1="${tmp_dir}/out1"
+  # shellcheck source=/dev/null
+  ( cd "${nonrepo}"; . "${fn}"; warn_broken_git_sandbox ) >/dev/null 2>"${out1}" || true
+  grep -Eq 'sandbox/environment is broken|do .NOT. .git init.|GIT PRESENT BUT FAILING' "${out1}" \
+    && { echo "[verify] BLUE-R18-BROKEN-SANDBOX-NONREPO-GATE: panic diagnostic MISFIRED on a plain non-repo"; cat "${out1}"; exit 1; }
+  # (2) repo PRESENT but git FAILING: a `.git` file pointing at a nonexistent gitdir -> rev-parse
+  # exits 128 yet `.git` exists -> MUST emit the broken-sandbox diagnostic.
+  brk="${tmp_dir}/broken"; mkdir -p "${brk}"; printf 'gitdir: /nonexistent-xyz\n' > "${brk}/.git"
+  out2="${tmp_dir}/out2"
+  # shellcheck source=/dev/null
+  ( cd "${brk}"; . "${fn}"; warn_broken_git_sandbox ) >/dev/null 2>"${out2}" || true
+  grep -Eq 'GIT PRESENT BUT FAILING|sandbox/environment is broken' "${out2}" \
+    || { echo "[verify] BLUE-R18-BROKEN-SANDBOX-NONREPO-GATE: repo-present-but-failing did NOT emit the diagnostic"; cat "${out2}"; exit 1; }
+  true
+)
+
+echo "[verify] testing BLUE-R18-PROVENANCE-BLINDBITS (an assume-unchanged/skip-worktree bit makes git blind to a malicious edit; the gate must force a FULL review, never a carried-forward skip; a clean tree still skips)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # `git update-index --assume-unchanged FILE` hides a later edit: diff/ls-files omit it, the
+  # provenance hash collapses to the prior clean value and review_provenance_decision returns `skip`
+  # on UNREVIEWED content. The R18 override detects any `git ls-files -v` blind bit (lowercase / `S`)
+  # and forces `full`. Assert: FIXED (shared + R17 + R18) decides `full`; CONTROL (shared + R17 only)
+  # false-skips -> `skip` (proving the fixture is non-vacuous); healthy tree still skips.
+  blk="${tmp_dir}/blk.sh"; r17="${tmp_dir}/r17.sh"; r18="${tmp_dir}/r18.sh"
+  sed -n '/# >>> review-provenance-shared/,/# <<< review-provenance-shared/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${blk}"
+  sed -n '/# >>> blue-r17-provenance-failclosed/,/# <<< blue-r17-provenance-failclosed/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r17}"
+  sed -n '/# >>> blue-r18-provenance-blindbits/,/# <<< blue-r18-provenance-blindbits/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r18}"
+  test -s "${blk}" && test -s "${r17}" && test -s "${r18}" \
+    || { echo "[verify] BLUE-R18-PROVENANCE: could not extract shared block + R17 + R18 overrides"; exit 1; }
+  mk_repo() {
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf '.omx/\n' > .gitignore; git add .gitignore
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init )
+  }
+  # (1) FIXED: shared + R17 + R18.
+  proj="${tmp_dir}/proj"; mk_repo "${proj}"
+  decide_fixed() {
+    ( cd "${proj}"
+      export REVIEW_STATE_DIR="${proj}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      # shellcheck source=/dev/null
+      . "${blk}"
+      # shellcheck source=/dev/null
+      . "${r17}"
+      # shellcheck source=/dev/null
+      . "${r18}"
+      "$@" )
+  }
+  decide_fixed review_provenance_record
+  test "$(decide_fixed review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R18-PROVENANCE: fixed override broke the healthy exact-match skip (optimization regressed)"; exit 1; }
+  ( cd "${proj}"; git update-index --assume-unchanged a.txt; printf 'evil-payload\n' >> a.txt )
+  test "$(decide_fixed review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R18-PROVENANCE: assume-unchanged + malicious edit did NOT force a full re-review (still false-skips)"; exit 1; }
+  # (2) CONTROL: shared + R17 ONLY (pre-R18). The SAME blind edit MUST false-skip -> non-vacuous.
+  proj2="${tmp_dir}/proj2"; mk_repo "${proj2}"
+  decide_ctl() {
+    ( cd "${proj2}"
+      export REVIEW_STATE_DIR="${proj2}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      # shellcheck source=/dev/null
+      . "${blk}"
+      # shellcheck source=/dev/null
+      . "${r17}"
+      "$@" )
+  }
+  decide_ctl review_provenance_record
+  ( cd "${proj2}"; git update-index --assume-unchanged a.txt; printf 'evil-payload\n' >> a.txt )
+  test "$(decide_ctl review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R18-PROVENANCE: control (pre-R18) did NOT false-skip — fixture is vacuous"; exit 1; }
+)
+
 echo "[verify] testing BLUE-R17-DOCTOR-HYGIENE (a fake codex profile with a NON-directory writable_root — a socket — makes the doctor WARN 'will PANIC codex'; a directory writable_root does not)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -7455,6 +7564,140 @@ echo "[verify] testing BLUE-R17-DOCTOR-HYGIENE (a fake codex profile with a NON-
   # Control (non-vacuous): the DIRECTORY writable_root (/run) must NOT be flagged.
   grep -Eiq "writable_root '/run' is not a directory" "${out}" \
     && { echo "[verify] BLUE-R17-DOCTOR-HYGIENE: a directory writable_root was wrongly flagged — check over-warns"; exit 1; }
+  true
+)
+
+echo "[verify] testing BLUE-R18-DOCTOR-SLOWFS-ADVICE (the /mnt drvfs slow-FS advisory NEVER tells the user to relocate — this environment is preserved — and emits the verified levers: core.untrackedCache, a MAPPED/NETWORK(SMB)-drive check, and a Windows Defender exclusion; the /mnt/wsl tmpfs false-positive is excluded)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # BEHAVIORAL when a real Windows/drvfs mount is writable here (this tool's native WSL env);
+  # otherwise fall back to a precise SOURCE assertion so the check is never vacuous. ROOT is
+  # pwd, so the classifier can only be exercised from an actual /mnt/<letter> path.
+  mnt_proj=""
+  for base in /mnt/c /mnt/d /mnt/z; do
+    if [ -d "${base}" ] && cand="$(mktemp -d "${base}/blue-r18-slowfs.XXXXXX" 2>/dev/null)"; then
+      mnt_proj="${cand}"; break
+    fi
+  done
+  if [ -n "${mnt_proj}" ]; then
+    out="${tmp_dir}/doctor.out"
+    ( cd "${mnt_proj}"; HOME="${tmp_dir}/home" DOCTOR_SKIP_DIRTY_CHECK=1 \
+        bash "${repo_root}/scripts/automation-doctor.sh" --project > "${out}" 2>&1 || true )
+    rm -rf "${mnt_proj}" 2>/dev/null || true
+    grep -Eiq 'git operations will be SLOW' "${out}" \
+      || { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE: doctor did NOT emit the slow-FS advisory on a /mnt drvfs path"; cat "${out}"; exit 1; }
+    grep -Eiq 'move|relocate|linux-native' "${out}" \
+      && { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE: advisory tells the user to RELOCATE (the FORBIDDEN action); this environment is preserved"; cat "${out}"; exit 1; }
+    grep -q 'untrackedCache' "${out}" \
+      || { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE: advisory missing the core.untrackedCache lever"; cat "${out}"; exit 1; }
+    grep -Eiq 'network|SMB' "${out}" \
+      || { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE: advisory missing the mapped/network(SMB) drive check"; cat "${out}"; exit 1; }
+    grep -q 'Defender' "${out}" \
+      || { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE: advisory missing the Windows Defender exclusion lever"; cat "${out}"; exit 1; }
+  else
+    # SOURCE fallback (portable, still non-vacuous): grade ONLY the output-producing lines of the
+    # slow-FS case block (say_warn / suggest / _slowfs_msg=), never the comments.
+    block="$(awk '/# \(c\) slow-FS/{f=1} f{print} f&&/^esac/{exit}' "${repo_root}/scripts/automation-doctor.sh")"
+    advice="$(printf '%s\n' "${block}" | grep -E '^[[:space:]]*(suggest |say_warn |_slowfs_msg=)')"
+    printf '%s\n' "${advice}" | grep -Eiq 'move|relocate|linux-native' \
+      && { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE(src): advisory text contains a relocation lever (FORBIDDEN)"; exit 1; }
+    printf '%s\n' "${advice}" | grep -q 'untrackedCache' \
+      || { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE(src): missing core.untrackedCache lever"; exit 1; }
+    printf '%s\n' "${advice}" | grep -Eiq 'network|SMB' \
+      || { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE(src): missing mapped/network(SMB) drive check"; exit 1; }
+    printf '%s\n' "${advice}" | grep -q 'Defender' \
+      || { echo "[verify] BLUE-R18-DOCTOR-SLOWFS-ADVICE(src): missing Windows Defender exclusion lever"; exit 1; }
+  fi
+  true
+)
+
+echo "[verify] testing BLUE-R18-WRITABLE-ROOTS-DOS (a large/unterminated codex *.config.toml can NOT hang the doctor: the writable_roots parse is timeout+byte+line+element bounded — the old un-timed awk|grep|while[-e] pipeline runs >60s on this fixture and blows a 30s cap)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  home="${tmp_dir}/home"; mkdir -p "${home}/.codex"
+  # ~29 MB, 1,000,000 element lines, NO closing ']' (unterminated). The OLD parser reads the whole
+  # file, greps out 1M tokens, and runs `[ -e ]` on each -> ~75s (measured). The NEW parser caps
+  # bytes/lines/elements and wraps the parse in `timeout`, so it returns near-instantly. Generated
+  # with a single awk (no `yes|head`, which would raise SIGPIPE and, under pipefail, abort here).
+  awk 'BEGIN { printf "writable_roots = [\n"; for (i = 0; i < 1000000; i++) print "  \"/nonexistent/blue-r18-dos\"," }' \
+    > "${home}/.codex/dos.config.toml"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"; ( cd "${proj}"; git init -q )
+  out="${tmp_dir}/doctor.out"
+  rc=0
+  ( cd "${proj}"; HOME="${home}" DOCTOR_SKIP_DIRTY_CHECK=1 \
+      timeout 30 bash "${repo_root}/scripts/automation-doctor.sh" --project > "${out}" 2>&1 ) || rc=$?
+  [ "${rc}" -eq 124 ] \
+    && { echo "[verify] BLUE-R18-WRITABLE-ROOTS-DOS: doctor HUNG (>30s) on a large/unterminated config — writable_roots parse is not bounded"; exit 1; }
+  true
+)
+
+echo "[verify] testing BLUE-R18-WRITABLE-ROOTS-TOML (the writable_roots parser is TOML-aware: a SINGLE-quoted socket is flagged, a COMMENTED socket line is NOT, and a ']' inside an earlier quoted value does not truncate the scan and hide a later socket)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  home="${tmp_dir}/home"; mkdir -p "${home}/.codex"
+  sock="${home}/.codex/docker.sock"
+  python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "${sock}" 2>/dev/null || true
+  test -S "${sock}" || { echo "[verify] BLUE-R18-WRITABLE-ROOTS-TOML: could not create a unix socket fixture"; exit 1; }
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"; ( cd "${proj}"; git init -q )
+  run_doctor() { ( cd "${proj}"; HOME="${home}" DOCTOR_SKIP_DIRTY_CHECK=1 \
+      bash "${repo_root}/scripts/automation-doctor.sh" --project 2>&1 || true ); }
+
+  # (a) SINGLE-quoted socket IS flagged (OLD grep -oE '"[^"]+"' matched double quotes only).
+  printf "[sandbox_workspace_write]\nwritable_roots = ['%s']\n" "${sock}" > "${home}/.codex/single.config.toml"
+  out="$(run_doctor)"
+  printf '%s\n' "${out}" | grep -Fq "writable_root '${sock}' is not a directory" \
+    || { echo "[verify] BLUE-R18-WRITABLE-ROOTS-TOML(a): a SINGLE-quoted socket writable_root was NOT flagged"; printf '%s\n' "${out}"; exit 1; }
+  rm -f "${home}/.codex/single.config.toml"
+
+  # (b) COMMENTED socket line is NOT flagged (OLD had no comment stripping).
+  printf "[sandbox_workspace_write]\n# writable_roots = [\"%s\"]\n" "${sock}" > "${home}/.codex/comment.config.toml"
+  out="$(run_doctor)"
+  printf '%s\n' "${out}" | grep -Fq "writable_root '${sock}' is not a directory" \
+    && { echo "[verify] BLUE-R18-WRITABLE-ROOTS-TOML(b): a COMMENTED writable_roots line was wrongly flagged"; printf '%s\n' "${out}"; exit 1; }
+  rm -f "${home}/.codex/comment.config.toml"
+
+  # (c) a ']' inside an EARLIER quoted value must not truncate the scan and hide a LATER socket
+  #     (OLD awk 'f&&/]/{exit}' bailed at the first ']' anywhere on a line).
+  { printf '[sandbox_workspace_write]\n'
+    printf 'writable_roots = [\n  "/some/weird]path",\n  "%s",\n]\n' "${sock}"; } > "${home}/.codex/bracket.config.toml"
+  out="$(run_doctor)"
+  printf '%s\n' "${out}" | grep -Fq "writable_root '${sock}' is not a directory" \
+    || { echo "[verify] BLUE-R18-WRITABLE-ROOTS-TOML(c): a ']' inside an earlier quoted value truncated the scan and hid a later socket"; printf '%s\n' "${out}"; exit 1; }
+  true
+)
+
+echo "[verify] testing BLUE-R18-BROKEN-SANDBOX-NONREPO-DOCTOR (the broken-sandbox diagnostic distinguishes a repo-present-but-git-failing case from a plain NON-repo: a legit non-repo with a healthy git gets 'not a git repository' and NOT the panic/'do NOT git init' advice; a dir where a repo EXISTS but git fails DOES get the sandbox-broken diagnostic)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  # (a) plain NON-repo, HEALTHY (real) git: rev-parse exits 128 with no .git present -> the OLD
+  #     `-ge 100` branch WRONGLY fired the "PRESENT but FAILING / sandbox broken" advice on a
+  #     clean missing repo. It must now be the normal "not a git repository".
+  nonrepo="${tmp_dir}/plain"; mkdir -p "${nonrepo}"
+  outa="${tmp_dir}/plain.out"
+  ( cd "${nonrepo}"; HOME="${tmp_dir}/home" bash "${repo_root}/scripts/automation-doctor.sh" --project > "${outa}" 2>&1 || true )
+  grep -Eiq 'PRESENT but FAILING|sandbox/environment is broken|broken repo/sandbox' "${outa}" \
+    && { echo "[verify] BLUE-R18-BROKEN-SANDBOX-NONREPO-DOCTOR(a): a plain non-repo was WRONGLY flagged as a broken sandbox"; cat "${outa}"; exit 1; }
+  grep -Eq '^\[fail\] current directory is not a git repository$' "${outa}" \
+    || { echo "[verify] BLUE-R18-BROKEN-SANDBOX-NONREPO-DOCTOR(a): a plain non-repo did NOT get the normal 'not a git repository' handling"; cat "${outa}"; exit 1; }
+
+  # (b) repo PRESENT (.git exists) but git FAILING (fake git exits 128) -> sandbox-broken
+  #     diagnostic, and NEVER the destructive 'git init'.
+  mkdir -p "${tmp_dir}/bin"
+  printf '#!/usr/bin/env bash\necho "fatal: broken repository" >&2\nexit 128\n' > "${tmp_dir}/bin/git"
+  chmod +x "${tmp_dir}/bin/git"
+  brepo="${tmp_dir}/brepo"; mkdir -p "${brepo}/.git"
+  outb="${tmp_dir}/brepo.out"
+  ( cd "${brepo}"; PATH="${tmp_dir}/bin:${PATH}" HOME="${tmp_dir}/home" \
+      bash "${repo_root}/scripts/automation-doctor.sh" --project > "${outb}" 2>&1 || true )
+  grep -Eiq 'PRESENT but FAILING|broken repo/sandbox|sandbox/environment is broken' "${outb}" \
+    || { echo "[verify] BLUE-R18-BROKEN-SANDBOX-NONREPO-DOCTOR(b): a repo-present-but-git-failing dir did NOT get the sandbox-broken diagnostic"; cat "${outb}"; exit 1; }
+  grep -Eq '^  git init$' "${outb}" \
+    && { echo "[verify] BLUE-R18-BROKEN-SANDBOX-NONREPO-DOCTOR(b): doctor suggested the destructive 'git init' on a broken repo"; exit 1; }
   true
 )
 

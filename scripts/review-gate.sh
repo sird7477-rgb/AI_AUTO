@@ -216,22 +216,54 @@ review_provenance_hash() {
 }
 # <<< blue-r17-provenance-failclosed <<<
 
+# >>> blue-r18-provenance-blindbits >>>
+# MED fail-closed override: `git update-index --assume-unchanged` / `--skip-worktree` on a TRACKED
+# file makes git BLIND to a later (malicious) edit — `diff` / `ls-files` omit it, so the provenance
+# hash COLLAPSES to the prior clean value and review_provenance_decision returns `skip` on UNREVIEWED
+# content. The R17 override targets a corrupt INDEX; here the index is perfectly VALID, just flagged,
+# so it does not catch this. `git ls-files -v` tags such a file with a LOWERCASE letter
+# (assume-unchanged, e.g. `h`) or `S` (skip-worktree); if ANY tracked file carries such a bit the
+# hash cannot be trusted, so emit NOTHING (empty output != any prior approval => FULL review, never a
+# carried-forward skip). Routed through review_git (drift-guard: no bare `git`). A HEALTHY tree with
+# no such bits delegates to the unchanged algorithm, preserving the R2 exact-match skip optimization.
+# Lives OUTSIDE the shared block so it stays byte-identical with summarize-ai-reviews.sh; layers on
+# top of the R17 override (chain: blindbits -> failclosed -> shared).
+eval "$(declare -f review_provenance_hash | sed '1s/^review_provenance_hash /_review_provenance_hash_preblind /')"
+review_provenance_hash() {
+  if review_git ls-files -v 2>/dev/null | grep -Eq '^([[:lower:]]|S) '; then
+    return 1
+  fi
+  _review_provenance_hash_preblind
+}
+# <<< blue-r18-provenance-blindbits <<<
+
 # Broken-sandbox vs missing-repo diagnostic (HIGH). Distinguish "git ABSENT" from "git PRESENT
 # but every call FATAL" (the codex >=0.142.4 panic exits 101; a corrupt env exits >=128). The
 # provenance/root probes swallow git stderr (2>/dev/null) and silently mis-root to $PWD, so a
 # broken sandbox looks like the agent ignoring guidelines. Surface it LOUDLY at gate start; never
 # blocks (fail-closed provenance + verify already handle the coverage).
+# >>> blue-r18-broken-sandbox >>>
+# LOW FIX: `git rev-parse --is-inside-work-tree` exits 128 for BOTH a corrupt/broken sandbox AND a
+# plain NON-git dir, so the old unconditional message fired the PANIC branch ("do NOT git init") on
+# a LEGIT non-repo — actively-wrong advice. Only a repo that ACTUALLY EXISTS but whose git ops fail
+# is the broken-sandbox class: rev-parse having FAILED, a `.git` still present in cwd (a FILESYSTEM
+# check — git itself is what is failing — at the gate's invocation root, where `.git` lives) means
+# it is corrupt/unusable OR git is broken. A plain non-repo (no `.git`) gets normal non-repo handling
+# (silent): erring toward silence is the safe side (the diagnostic never blocks; provenance still
+# fails closed), and it avoids a stray ancestor `.git` false-firing an unbounded upward walk.
 warn_broken_git_sandbox() {
   command -v git >/dev/null 2>&1 || return 0     # git genuinely absent: not this class
   local rc=0
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || rc=$?
   [ "${rc}" -eq 0 ] && return 0                   # git healthy
+  [ -e ".git" ] || return 0                        # plain non-repo: normal handling, NOT the panic
   echo "" >&2
   echo "[gate] GIT PRESENT BUT FAILING (git rev-parse exited ${rc}): your sandbox/environment is broken, NOT a missing repo." >&2
   [ "${rc}" -ge 100 ] && echo "[gate]   exit >=100 is a tool/sandbox PANIC (e.g. codex >=0.142.4 with a socket in writable_roots). Fix the sandbox; do NOT 'git init'." >&2
   echo "[gate]   The gate cannot trust git-derived paths here; provenance fails closed to a full review and paths may mis-root to \$PWD." >&2
   return 0
 }
+# <<< blue-r18-broken-sandbox <<<
 
 latest_review_context() {
   find ".omx/review-context" -maxdepth 1 -type f -name 'latest-review-context.md' -print 2>/dev/null | head -1

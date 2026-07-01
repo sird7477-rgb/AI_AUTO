@@ -91,6 +91,9 @@ ROOT="$(pwd)"
 IN_AI_LAB=0
 HOME_DIR="${HOME:-}"
 HOME_READY=0
+# Set to 1 iff the existing timeout-bounded git-status probe TIMED OUT (rc=124) -- a slow-FS
+# symptom the slow-FS advisory piggybacks on. Never triggers a NEW/unbounded probe.
+_slowfs_git_slow=0
 
 if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
   HOME_READY=1
@@ -534,6 +537,9 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
       _dirty_out="$(git --attr-source="$_et" status --short 2>/dev/null)" || _dirty_rc=$?
     fi
     if [ "$_dirty_rc" -ne 0 ]; then
+      # rc=124 is a timeout on the EXISTING (already-bounded) git-status probe -> a real slow-FS
+      # symptom. Record it (no NEW probe) so the slow-FS advisory below can piggyback the signal.
+      [ "$_dirty_rc" -eq 124 ] && _slowfs_git_slow=1
       say_warn "unable to determine working tree state, so not reporting clean; the git status probe exited ${_dirty_rc}"
       suggest "inspect with: git status --short   (re-run when load subsides; DOCTOR_SKIP_DIRTY_CHECK=1 to skip)"
     elif [ -n "$_dirty_out" ]; then
@@ -564,17 +570,39 @@ else
   if command -v git >/dev/null 2>&1; then
     _grp_rc=0
     _grp_err="$(git rev-parse --is-inside-work-tree 2>&1 >/dev/null)" || _grp_rc=$?
-    if [ "$_grp_rc" -ge 100 ]; then
-      say_fail "git is PRESENT but FAILING with exit ${_grp_rc} -- a tool/sandbox PANIC, NOT a missing repo: ${_grp_err}"
-      suggest "your sandbox/environment is broken -- fix it (do NOT run 'git init'); e.g. remove a socket like docker.sock from codex writable_roots"
-    elif [ "$_grp_rc" -ne 0 ]; then
-      say_fail "git is PRESENT but FAILING with exit ${_grp_rc} -- an environment error, not a clean missing repo: ${_grp_err}"
-      suggest "fix the environment then re-run; inspect with: git rev-parse --is-inside-work-tree   ('git init' only if there is truly no repo here)"
-    else
+    # Disambiguate a BROKEN sandbox from a legit NON-repo. `git rev-parse` returns 128 for BOTH a
+    # plain non-git directory AND a corrupt/broken repo, so the exit code alone cannot tell them
+    # apart -- the old `-ge 100` branch wrongly fired the "sandbox PANIC / do NOT git init" advice
+    # on a plain non-repo (rc 128 >= 100). Only claim "broken repo" when a repo actually EXISTS:
+    # either a `.git` is present RIGHT HERE, or git itself can still resolve --git-dir. We do NOT
+    # walk ancestors with a bare `[ -e .git ]` -- a stray/invalid `.git` in a parent (e.g. a leftover
+    # /tmp/.git that real git already REJECTS) would be a false positive. A Rust/codex PANIC (exit
+    # 101 and other non-128 crash codes) is a broken sandbox regardless of repo presence; git's own
+    # fatal 128 with NO repo present is simply "not a git repository".
+    _repo_present=0
+    if [ -e "${ROOT}/.git" ] || git rev-parse --git-dir >/dev/null 2>&1; then
+      _repo_present=1
+    fi
+    if [ "$_grp_rc" -eq 0 ]; then
+      # TOCTOU: is-inside-work-tree failed at the outer guard but now succeeds. Treat as no repo.
       say_fail "current directory is not a git repository"
       suggest "git init"
+    elif [ "$_repo_present" -eq 1 ]; then
+      say_fail "git is PRESENT but FAILING with exit ${_grp_rc} in a repo that EXISTS (.git found) -- a broken repo/sandbox, NOT a missing repo: ${_grp_err}"
+      suggest "your sandbox/environment is broken -- fix it (do NOT run 'git init'); e.g. remove a socket like docker.sock from codex writable_roots"
+    elif [ "$_grp_rc" -eq 128 ]; then
+      # git's own fatal AND no repo present -> a clean missing repository, handled normally.
+      say_fail "current directory is not a git repository"
+      suggest "git init"
+    elif [ "$_grp_rc" -ge 100 ]; then
+      # A non-128 crash code (101 panic, 134 abort, 139 segv, ...) with no repo -> broken sandbox.
+      say_fail "git is PRESENT but FAILING with exit ${_grp_rc} -- a tool/sandbox PANIC, NOT a missing repo: ${_grp_err}"
+      suggest "your sandbox/environment is broken -- fix it (do NOT run 'git init'); e.g. remove a socket like docker.sock from codex writable_roots"
+    else
+      say_fail "git is PRESENT but FAILING with exit ${_grp_rc} -- an environment error, not a clean missing repo: ${_grp_err}"
+      suggest "fix the environment then re-run; inspect with: git rev-parse --is-inside-work-tree   ('git init' only if there is truly no repo here)"
     fi
-    unset _grp_rc _grp_err
+    unset _grp_rc _grp_err _repo_present
   else
     say_fail "git is not installed"
     suggest "install git"
@@ -855,11 +883,60 @@ echo "[doctor] checking cross-CLI operational hygiene (advisory; read-only; warn
 # read-only; skip silently when the config is absent. awk captures a single- OR multi-line
 # writable_roots array; each quoted path that EXISTS but is not a directory is flagged.
 check_codex_writable_roots() {
-  local cfg="$1" p
+  local cfg="$1" p prog
+  # `-f` (follows symlinks; true only for REGULAR files) rejects a FIFO/device/symlink-to-device,
+  # so `head` below can never block reading a non-regular path.
   [ -f "$cfg" ] || return 0
-  awk '/writable_roots/{f=1} f{print} f&&/]/{exit}' "$cfg" 2>/dev/null \
-    | grep -oE '"[^"]+"' | tr -d '"' \
-    | while IFS= read -r p; do
+  # DoS bound (the sibling sqlite check already uses `timeout 5`; this parse had NONE): cap the
+  # bytes and lines fed to awk (a symlink-to-huge or a 120 MB config reads at most the cap), cap
+  # the number of elements (awk exits after MAXEL), and wrap the parse in `timeout` so an
+  # unterminated/pathological config cannot hang the doctor. On timeout (rc 124) `|| true`
+  # yields empty output -> no findings, never a hang.
+  local t="${DOCTOR_CODEX_PARSE_TIMEOUT:-5}"
+  local bytes="${DOCTOR_CODEX_PARSE_BYTES:-262144}"
+  local lines="${DOCTOR_CODEX_PARSE_LINES:-4000}"
+  local elems="${DOCTOR_CODEX_PARSE_ELEMS:-256}"
+  # TOML-aware element extraction: anchors on the REAL `writable_roots =` key (a leading `#`
+  # comment line or a suffixed/prefixed name never matches), tracks single AND double quotes,
+  # treats a `#` outside quotes as a comment to end-of-line, and ends the array only on an
+  # UNQUOTED `]` -- so a `]` or `#` INSIDE a quoted value neither truncates the scan nor is
+  # mistaken for a comment. Elements are the quoted strings between the opening/closing brackets.
+  prog='
+    BEGIN { q=""; inarr=0; started=0; depth=0; ntok=0; tok="" }
+    {
+      line = $0
+      if (!started && !inarr) {
+        if (line ~ /^[ \t]*writable_roots[ \t]*=/) {
+          started = 1
+          sub(/^[ \t]*writable_roots[ \t]*=/, "", line)
+        } else {
+          next
+        }
+      }
+      n = length(line); i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        if (q != "") {
+          if (c == q) { if (inarr) { print tok; ntok++; if (ntok >= MAXEL) exit } q = "" }
+          else { tok = tok c }
+          i++; continue
+        }
+        if (c == "#") { break }
+        if (c == "\"" || c == "\047") { q = c; tok = ""; i++; continue }
+        if (c == "[") { depth++; inarr = 1; i++; continue }
+        if (c == "]") { depth--; if (inarr && depth <= 0) exit; i++; continue }
+        i++
+      }
+    }'
+  {
+    if command -v timeout >/dev/null 2>&1; then
+      timeout "$t" awk -v MAXEL="$elems" "$prog" \
+        < <(head -c "$bytes" "$cfg" 2>/dev/null | head -n "$lines") || true
+    else
+      awk -v MAXEL="$elems" "$prog" \
+        < <(head -c "$bytes" "$cfg" 2>/dev/null | head -n "$lines") || true
+    fi
+  } | while IFS= read -r p; do
         [ -n "$p" ] || continue
         if [ -e "$p" ] && [ ! -d "$p" ]; then
           printf 'BADROOT\t%s\n' "$p"
@@ -884,10 +961,13 @@ if [ -n "$HOME_DIR" ] && [ -d "${HOME_DIR}/.codex" ]; then
   # Guarded (needs sqlite3 + the file) and timeout-bounded; VACUUM is the reclaim.
   _codex_db="${HOME_DIR}/.codex/logs_2.sqlite"
   if [ -f "$_codex_db" ] && command -v sqlite3 >/dev/null 2>&1; then
-    _db_sz="$(stat -c%s "$_codex_db" 2>/dev/null || echo 0)"
+    # `stat -L` follows a symlink so a symlinked logs_2.sqlite is sized by its TARGET (not the
+    # ~30-byte link). `sqlite3 -readonly` opens read-only so the doctor never RW-opens (and never
+    # creates a -wal/-shm on) the user's live db.
+    _db_sz="$(stat -L -c%s "$_codex_db" 2>/dev/null || echo 0)"
     if [ "${_db_sz:-0}" -ge "${DOCTOR_CODEX_LOG_BYTES:-52428800}" ]; then
-      _db_free="$(timeout 5 sqlite3 "$_codex_db" 'PRAGMA freelist_count;' 2>/dev/null || echo 0)"
-      _db_total="$(timeout 5 sqlite3 "$_codex_db" 'PRAGMA page_count;' 2>/dev/null || echo 0)"
+      _db_free="$(timeout 5 sqlite3 -readonly "$_codex_db" 'PRAGMA freelist_count;' 2>/dev/null || echo 0)"
+      _db_total="$(timeout 5 sqlite3 -readonly "$_codex_db" 'PRAGMA page_count;' 2>/dev/null || echo 0)"
       case "${_db_free}${_db_total}" in *[!0-9]*|'') _db_free=0; _db_total=0 ;; esac
       if [ "${_db_total:-0}" -gt 0 ]; then
         _db_ratio=$(( _db_free * 100 / _db_total ))
@@ -904,12 +984,30 @@ else
   say_skip "no ~/.codex directory; codex profile/log hygiene checks skipped"
 fi
 
-# (c) slow-FS project location: a repo under a Windows/drvfs mount (/mnt/...) makes every git
-# operation SLOW. Warn and point at a Linux-native path.
+# (c) slow-FS project location: a repo under a Windows/drvfs mount (/mnt/<letter>/...) makes git
+# operations SLOW. The cost is the SERIAL lstat of TRACKED files (preload-index), NOT an untracked
+# scan -- so gitignoring runtime dirs is only a minor, lower-priority note. This environment is
+# PRESERVED UNCONDITIONALLY: never advise relocating the repo. Emit the adversarially-verified
+# levers instead. The classifier is an O(1) path match (no FS I/O); /mnt/wsl is Linux-native tmpfs
+# (fast, NOT drvfs) so it is EXCLUDED -- matching it would be a false positive.
 case "$ROOT" in
+  /mnt/wsl|/mnt/wsl/*|/mnt/wslg|/mnt/wslg/*)
+    : ;;  # Linux-native tmpfs under WSL -- fast; not a Windows/drvfs mount.
   /mnt/*)
-    say_warn "project is on a Windows/drvfs mount (${ROOT}); git operations will be SLOW"
-    suggest "move the repo to a Linux-native path (e.g. under \$HOME); or ensure large runtime dirs are gitignored"
+    _slowfs_msg="project is on a Windows/drvfs mount (${ROOT}); git operations will be SLOW"
+    # Piggyback the EXISTING timeout-bounded git-status probe (rc=124 above) as a confirming
+    # symptom -- no new/unbounded probe is run here.
+    if [ "${_slowfs_git_slow:-0}" -eq 1 ]; then
+      _slowfs_msg="${_slowfs_msg} (the timeout-bounded git-status probe above TIMED OUT, confirming the slow FS)"
+    fi
+    say_warn "$_slowfs_msg"
+    unset _slowfs_msg
+    # Correct, verified levers -- and NOTE: this drive path stays as-is; do NOT change it off the drive.
+    suggest "git config core.untrackedCache true   (caches untracked-dir stat results; minor but real)"
+    suggest "check whether this /mnt drive is a MAPPED / NETWORK (SMB) drive -- that latency is the likely cause; prefer a local (non-network) drive"
+    suggest "add a Windows Defender real-time-scan EXCLUSION for the repo path AND the WSL distro (Settings > Virus & threat protection > Exclusions)"
+    suggest "do NOT rely on fsmonitor here (unsupported on this WSL git build); the drive path is preserved -- keep the repo in place"
+    suggest "(lower priority) ensure large runtime dirs are gitignored so they are not walked"
     ;;
 esac
 
