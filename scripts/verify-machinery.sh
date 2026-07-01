@@ -6546,6 +6546,9 @@ globalize_mk_engine() {  # $1 = engine dir; populates a minimal AI_AUTO engine
   cp "${repo_root}/tools/ai-auto" "${e}/tools/ai-auto"; chmod +x "${e}/tools/ai-auto"
   # F1: the launcher + hooks + baked shim all source the ONE canonical git-exec-env scrub.
   cp "${repo_root}/hooks/git-scrub.sh" "${e}/hooks/git-scrub.sh"
+  # D1: setup's de-pollution diffs/rm route through review_git (scripts/git-harden.sh), which the
+  # launcher now sources — the minimal engine must ship it too or setup dies sourcing a missing file.
+  cp "${repo_root}/scripts/git-harden.sh" "${e}/scripts/git-harden.sh"
   printf '#!/usr/bin/env bash\necho PRE_COMMIT_ENGINE_REACHED\n'  > "${e}/hooks/pre-commit"
   printf '#!/usr/bin/env bash\necho POST_COMMIT_ENGINE_REACHED\n' > "${e}/hooks/post-commit"
   for s in review-gate verify automation-doctor; do
@@ -7330,8 +7333,19 @@ dp = root / "templates" / "domain-packs"
 if dp.is_dir():
     targets += [f for f in dp.rglob("*") if f.is_file()]
 HOOK_NAMES = {"pre-commit", "post-commit", "pre-push", "commit-msg", "post-merge", "prepare-commit-msg"}
+SHEBANG = re.compile(r'^#!.*\b(?:bash|sh|python)')
 def is_text(f):
-    return f.suffix in (".sh", ".py") or f.name in HOOK_NAMES
+    # *.sh/*.py + fixed hook names, PLUS any EXTENSIONLESS launcher whose first line is a
+    # bash/sh/python shebang (D2: the ~28 extensionless tools/ launchers -- incl. tools/ai-auto
+    # -- were NEVER scanned, so their worktree diffs silently escaped rule 3).
+    if f.suffix in (".sh", ".py") or f.name in HOOK_NAMES:
+        return True
+    try:
+        with f.open("r", encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()
+    except OSError:
+        return False
+    return bool(SHEBANG.match(first))
 # A git diff/show/log/blame INVOCATION on ONE physical line: bash `git [opts] diff` (or review_git),
 # or python list `"git", ... "diff"`. Comments are skipped by the caller. `diff` inside `--no-ext-diff`
 # or `diff.external` is NOT matched (the subcommand must be a standalone space/comma-bounded token).
@@ -7348,7 +7362,7 @@ def is_text(f):
 # (`GIT + ["diff",...]`, `["git"]+flags+["diff",...]`) where "git" and "diff" aren't
 # adjacent literals. The git-signal gate (applied below) keeps non-git lists unscanned.
 INVOKE = re.compile(
-    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:then|do|else|elif|eval|xargs)\b[^;#]*?\s)\s*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(diff|show|log|blame)(?![\w.=-]))'
+    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:then|do|else|elif|eval|xargs)\b[^;#]*?\s)\s*(?:(?:sudo|env|command|time|nohup|exec|builtin)\s+)*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(diff|show|log|blame)(?![\w.=-]))'
     r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(diff|show|log|blame)"\s*,?)'
     r'|(?:\[(?:[^\]]*,)?\s*"(diff|show|log|blame)")'
 )
@@ -7493,6 +7507,115 @@ PYEOF
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     || { echo "[verify] R9-DRIFT: control b7-nongit (plain non-git list literal) FALSE-POSITIVED — git-signal gate broken"; exit 1; }
   rm -f "${tmp_dir}/fake/scripts/b7.py"
+  # b8 (D2): an EXTENSIONLESS launcher (bash/python shebang, no .sh/.py suffix, not a hook name)
+  # carrying an un-hardened worktree `git diff` MUST be scanned + flagged. This is the EXACT blind
+  # spot that hid tools/ai-auto's setup clean-filter RCE: pre-D2 is_text() dropped every
+  # extensionless tools/ launcher unread, so the guard scanned 0 of their lines and falsely PASSED.
+  mkdir -p "${tmp_dir}/fake/tools"
+  printf '#!/usr/bin/env bash\ngit -C "$top" diff --quiet -- "$f"\n' > "${tmp_dir}/fake/tools/ai-auto"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b8 (un-hardened extensionless launcher worktree diff) NOT caught — guard blind to shebang scripts (D2 blind-spot regression)"; exit 1; }
+  # b8-hardened: the same launcher routed through review_git MUST pass (no false-positive).
+  printf '#!/usr/bin/env bash\nreview_git -C "$top" diff --quiet -- "$f"\n' > "${tmp_dir}/fake/tools/ai-auto"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b8-hardened (extensionless launcher via review_git) FALSE-POSITIVED"; exit 1; }
+  # b8-nonscript: an extensionless file with NO script shebang carrying the same text MUST stay
+  # UNSCANNED (the shebang gate must not over-match arbitrary extensionless data files).
+  printf 'title only\ngit -C "$top" diff --quiet -- "$f"\n' > "${tmp_dir}/fake/tools/ai-auto"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b8-nonscript (extensionless NON-shebang data file) FALSE-POSITIVED — shebang gate over-matches"; exit 1; }
+  rm -f "${tmp_dir}/fake/tools/ai-auto"
+  # b9 (LOW): a leading command-prefix run (sudo/env/command/time/nohup/exec/builtin) before an
+  # un-hardened worktree `git diff` MUST NOT let it evade rule 3 — the matcher strips the prefix run
+  # and still anchors on git in command position (latent gap: no shipped site uses these, but the
+  # guard's whole job is to fail a FUTURE one).
+  for _b9 in \
+      'time git diff --name-only HEAD' \
+      'env git diff --name-only HEAD' \
+      'command git diff --name-only HEAD' \
+      'nohup git diff --name-only HEAD' \
+      'sudo git diff --name-only HEAD' \
+      'exec git diff --name-only HEAD'; do
+    printf '%s\n' "${_b9}" > "${tmp_dir}/fake/scripts/b9.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b9 (command-prefix evasion) NOT caught — matcher still evadable: ${_b9}"; exit 1; }
+  done
+  # b9-hardened: the same prefixed form, correctly hardened, MUST pass (no false-positive).
+  printf 'env git --attr-source="$ET" diff --name-only HEAD\n' > "${tmp_dir}/fake/scripts/b9.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b9-hardened (env-prefixed via --attr-source) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b9.sh"
+)
+
+echo "[verify] testing R11-SETUP-RCE (D1: 'ai-auto setup' on a HOSTILE project must NOT execute an in-repo .gitattributes-bound filter.<x>.clean driver via its de-pollution WORKTREE 'git diff --quiet' probes; the diffs are review_git-wrapped with central --attr-source=<empty-tree>)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  launcher="${repo_root}/tools/ai-auto"
+  test -s "${launcher}" || { echo "[verify] R11-SETUP-RCE: launcher not found"; exit 1; }
+  mk_hostile() {  # target project: a TRACKED framework file byte-identical to the engine pristine,
+                  # bound to an IN-REPO clean filter, worktree-touched so git re-runs clean on diff.
+                  # The filter driver is configured AFTER committing .gitattributes so the fixture's
+                  # OWN `git add` does NOT pre-fire the marker (setup is the only thing that reads
+                  # the worktree blob under the now-bound filter).
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      cp "${repo_root}/AGENTS.md" AGENTS.md
+      git add AGENTS.md; git commit -qm init
+      printf 'AGENTS.md filter=evil\n' > .gitattributes             # in-repo binding
+      git add .gitattributes; git commit -qm attrs
+      git config filter.evil.clean "touch ${tmp_dir}/PWNED; cat"    # clean filter driver (RCE)
+      touch AGENTS.md )                                             # re-trigger clean on next diff
+  }
+  # HARDENED: the REAL launcher. Its de-pollution `review_git -C "$top" diff --quiet -- AGENTS.md`
+  # (and the atomic `review_git rm`) inject --attr-source=<empty-tree>, so the in-repo clean filter
+  # is NEVER consulted -> NO payload.
+  proj="${tmp_dir}/proj"; mk_hostile "${proj}"
+  rm -f "${tmp_dir}/PWNED"
+  ( cd "${proj}"; bash "${launcher}" setup >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R11-SETUP-RCE: in-repo clean filter EXECUTED during ai-auto setup (RCE)"; exit 1; }
+  # POSITIVE CONTROL: a launcher whose git-harden.sh has --attr-source STRIPPED (review_git -> plain
+  # git). Built in a fake engine home (symlinks to the real engine bits + the neutered wrapper) so
+  # AI_AUTO_HOME still resolves and the pristine cmp still matches. The SAME hostile project MUST
+  # then fire the clean filter, proving the negative is non-vacuous.
+  ctlhome="${tmp_dir}/engine"; mkdir -p "${ctlhome}/tools" "${ctlhome}/scripts" "${ctlhome}/hooks"
+  cp "${launcher}" "${ctlhome}/tools/ai-auto"; chmod +x "${ctlhome}/tools/ai-auto"
+  ln -s "${repo_root}/hooks/git-scrub.sh" "${ctlhome}/hooks/git-scrub.sh"
+  ln -s "${repo_root}/AGENTS.md" "${ctlhome}/AGENTS.md"
+  sed -E 's/--attr-source="\$\{_REVIEW_GIT_ATTR_NONE\}" //' "${repo_root}/scripts/git-harden.sh" > "${ctlhome}/scripts/git-harden.sh"
+  proj2="${tmp_dir}/proj2"; mk_hostile "${proj2}"
+  rm -f "${tmp_dir}/PWNED"
+  ( cd "${proj2}"; bash "${ctlhome}/tools/ai-auto" setup >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R11-SETUP-RCE: control (raw git diff, no --attr-source) inert — fixture would not catch the setup clean-filter RCE"; exit 1; }
+)
+
+echo "[verify] testing R11-1 (retired-framework de-pollution: a tracked docs/PATCH_NOTES.md carrying the '# AI_AUTO Patch Notes' marker but with NO engine pristine is git-rm'd by 'ai-auto setup'; a same-named project-authored file WITHOUT the marker is KEPT)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  launcher="${repo_root}/tools/ai-auto"
+  test ! -e "${repo_root}/docs/PATCH_NOTES.md" \
+    || { echo "[verify] R11-1: engine now SHIPS docs/PATCH_NOTES.md — the retired-marker path must be re-checked"; exit 1; }
+  # (1) marker-bearing retired vendored copy -> STAGED for removal.
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/docs"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '# AI_AUTO Patch Notes\n\nlegacy vendored content\n' > docs/PATCH_NOTES.md
+    git add docs/PATCH_NOTES.md; git commit -qm init )
+  ( cd "${proj}"; bash "${launcher}" setup >/dev/null 2>&1 || true )
+  ( cd "${proj}"; git diff --cached --name-status ) | grep -qE '^D[[:space:]]+docs/PATCH_NOTES.md$' \
+    || { echo "[verify] R11-1: retired marker-bearing docs/PATCH_NOTES.md was NOT staged for removal"; exit 1; }
+  # (2) project-authored same-name file (NO AI_AUTO marker) -> KEPT, untouched.
+  proj2="${tmp_dir}/proj2"; mkdir -p "${proj2}/docs"
+  ( cd "${proj2}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '# My Project Patch Notes\n\nmine\n' > docs/PATCH_NOTES.md
+    git add docs/PATCH_NOTES.md; git commit -qm init )
+  ( cd "${proj2}"; bash "${launcher}" setup >/dev/null 2>&1 || true )
+  ( cd "${proj2}"; git diff --cached --name-status ) | grep -q 'docs/PATCH_NOTES.md' \
+    && { echo "[verify] R11-1: project-authored docs/PATCH_NOTES.md (no AI_AUTO marker) was WRONGLY removed"; exit 1; }
+  ( cd "${proj2}"; git ls-files --error-unmatch docs/PATCH_NOTES.md >/dev/null 2>&1 ) \
+    || { echo "[verify] R11-1: project-authored docs/PATCH_NOTES.md vanished (must be kept)"; exit 1; }
 )
 
 echo "[verify] testing R9b-ENGINE-RCE (in-repo .gitattributes clean filter must NOT execute via the ENGINE collector's WORKTREE diff path: collect-review-context.sh worktree diffs are review_git-wrapped with central --attr-source=<empty-tree>; engine analog of R9-VALIDATOR-RCE)..."

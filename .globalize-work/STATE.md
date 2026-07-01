@@ -67,3 +67,12 @@ redteam-design-v3.md has the exact ref list (test_principal_runtime_contracts:69
 - R8 red: safety HIGH 1 (--no-filters drift @1400); holistic HIGH 1 (R7 diff.external='' REGRESSION breaks plain git diff, victims engine+odoo QC); minimality CLEAN. NOT dry.
 - R8 blue 1ae7dd7: diff.external removed from chokepoint -> call-site --no-ext-diff (incl 2 odoo validators); --no-filters@1400; sourced-chokepoint INTEGRATION fixture (closes the gap that hid H8-1) + structural drift-guard. ( . git-scrub && verify-machinery ) before=1 after=0; 237/1 green.
 - git-defense mechanism corrected + integration-tested + drift-guarded. R9 red dispatched. dry-count=0; need 2 consecutive clean.
+- R9 red: safety 2 HIGH + MED (domain-pack validators/harness git diff unhardened; drift-guard narrow); holistic HIGH (clean-filter on --name-only too); minimality LOW. NOT dry.
+- R9 blue 410117f: --attr-source=<empty-tree> mechanism hardens ALL domain-pack worktree git diffs (7 files) + tree-wide drift-guard (50 sites) + 3-vector positive control.
+- R9b blue 5494d4c: centralized --attr-source in review_git; hardened ENGINE worktree diffs (collect-review-context/review-gate/run-ai-reviews/doc-budget) closing the last disclosed residual; uniform tree-wide drift-guard. both gates green 237/1.
+- CLEANUP: removed fixture-leaked malicious drivers from worktree .git/config (filter.evil*/diff.external) + marker files. config CLEAN.
+- git-exec RCE class CLOSED tree-wide-uniform (review_git --attr-source + fsmonitor chokepoint + drift-guard). R10 red dispatched. dry-count=0; need 2 consecutive clean. NOTE for suite-integrity: verify no fixture pollutes real .git/config or worktree.
+- R10 red: safety MED (drift-guard evadable, LATENT no active vuln); holistic MED (pre-existing config pollution, current fixtures clean); minimality LOW (removable belt). HIGH=0, no active vulnerability -> git-exec class confirmed closed.
+- R10 blue 70fd6e5: drift-guard matcher hardened vs if/for/eval/xargs/python-concat evasion + controls. 50 sites all hardened, both gates green 237/1.
+- CLEANUP: removed [diff.evil2] from shared /root/workspace/ai-lab/.git/config + all markers. all configs CLEAN.
+- R11 red dispatched (final gauntlet). HEAD 70fd6e5. If R11+R12 both clean -> 2 consecutive dry -> DONE.

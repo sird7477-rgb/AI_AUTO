@@ -62,6 +62,20 @@ Commands operate on the project in the current directory ($PWD):
 USAGE
 }
 
+# R11-1: RETIRED framework files have NO engine pristine (so the cmp-based de-pollution loop can
+# never fire for them) yet the OLD copy model vendored them, so they stay committed forever and
+# defeat goal #1 ("zero committed framework files"). Recognize each RETIRED path by an UNAMBIGUOUS
+# AI_AUTO content marker so `ai-auto setup` may safely `git rm` framework cruft while NEVER
+# touching a project-authored file that merely shares the name.
+is_retired_framework_file() {
+  local rel="$1" abs="$2" first=""
+  IFS= read -r first < "$abs" 2>/dev/null || return 1
+  case "$rel" in
+    docs/PATCH_NOTES.md) [ "$first" = "# AI_AUTO Patch Notes" ] ;;
+    *) return 1 ;;
+  esac
+}
+
 # ai-auto setup [project_dir] — content-aware de-vendor + hook shims. Idempotent.
 ai_auto_setup() {
   # F2/R2-3: the git env (GIT_DIR family + the GIT_CONFIG_* injection family) is scrubbed at
@@ -202,7 +216,14 @@ EOF
   # any error, so there is no per-file half-migration (R2-2) and no partial state under a
   # concurrent race (R2-4); a worktree-modified managed file is treated as customized/kept
   # and is never handed to git rm.
-  local removed=() kept=() f pristine
+  # D1: the worktree `git diff --quiet` calls below run the TARGET project's in-repo
+  # `.gitattributes`-bound `filter.<x>.clean` driver (git must filter the worktree blob to decide
+  # changed-ness even for --quiet) — arbitrary code exec on the operator during `setup` of a
+  # hostile project. Route them through review_git (scripts/git-harden.sh), which injects the
+  # central --attr-source=<empty-tree> -c diff.external= … so the in-repo driver cannot bind.
+  # shellcheck source=scripts/git-harden.sh
+  . "$AI_AUTO_HOME/scripts/git-harden.sh"
+  local removed=() kept=() retired=() f pristine
   for f in "${FRAMEWORK_PATHS[@]}"; do
     git -C "$top" ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
     # F6: cmp follows symlinks and ignores file type/mode; a deliberately-symlinked
@@ -212,8 +233,12 @@ EOF
     pristine="$AI_AUTO_HOME/$f"
     # R2-2: `git diff --quiet -- f` fails (non-zero) when the worktree differs from the
     # index/HEAD; such a file would make a no-`--cached` `git rm` error, so KEEP it.
-    if [ -f "$pristine" ] && cmp -s "$top/$f" "$pristine" && git -C "$top" diff --quiet -- "$f"; then
+    if [ -f "$pristine" ] && cmp -s "$top/$f" "$pristine" && review_git -C "$top" diff --quiet -- "$f"; then
       removed+=("$f")
+    elif [ ! -e "$pristine" ] && is_retired_framework_file "$f" "$top/$f" && review_git -C "$top" diff --quiet -- "$f"; then
+      # R11-1: engine ships no pristine for this path (retired), but it carries the AI_AUTO
+      # marker and is worktree-clean -> safe de-pollution of retired framework cruft.
+      retired+=("$f")
     else
       kept+=("$f")
     fi
@@ -225,26 +250,35 @@ EOF
     if [ -L "$top/scripts/verify.sh" ]; then
       kept+=("scripts/verify.sh (symlink — left untouched)")
     elif [ -f "$AI_AUTO_HOME/scripts/verify.sh" ] && cmp -s "$top/scripts/verify.sh" "$AI_AUTO_HOME/scripts/verify.sh" \
-         && git -C "$top" diff --quiet -- scripts/verify.sh; then
+         && review_git -C "$top" diff --quiet -- scripts/verify.sh; then
       removed+=("scripts/verify.sh")
     else
       kept+=("scripts/verify.sh (customized — convert to scripts/verify-project.sh by hand)")
     fi
   fi
-  # Atomic removal of the whole safe set (all-or-nothing; see R2-2/R2-4 above).
-  if ((${#removed[@]})); then
-    git -C "$top" rm --quiet -- "${removed[@]}"
+  # Atomic removal of the whole safe set (all-or-nothing; see R2-2/R2-4 above). R11-1: the
+  # retired-framework set is de-polluted in the SAME atomic `git rm` as the pristine set.
+  local rmset=()
+  ((${#removed[@]})) && rmset+=("${removed[@]}")
+  ((${#retired[@]})) && rmset+=("${retired[@]}")
+  if ((${#rmset[@]})); then
+    # D1: `git rm` ALSO filters each worktree blob (to verify it matches the index before
+    # removing), so a hostile in-repo clean filter would fire here too. Route through review_git
+    # so the central --attr-source=<empty-tree> disarms the driver, exactly as for the diffs.
+    review_git -C "$top" rm --quiet -- "${rmset[@]}"
   fi
 
   # (f) report; do NOT auto-commit. The git rm's are already staged.
   echo
   echo "Removed (pristine vendored copies, STAGED for deletion): ${#removed[@]}"
   ((${#removed[@]})) && printf '  - %s\n' "${removed[@]}"
+  ((${#retired[@]})) && echo "Removed (retired framework files — no longer shipped, STAGED for deletion): ${#retired[@]}"
+  ((${#retired[@]})) && printf '  - %s\n' "${retired[@]}"
   echo "Kept (customized — review): ${#kept[@]}"
   ((${#kept[@]})) && printf '  ~ %s\n' "${kept[@]}"
   echo
   echo "Hook shims (baked engine $baked) in: $hooks_dir"
-  if ((${#removed[@]})); then
+  if ((${#rmset[@]})); then
     echo "Review, then commit the de-pollution:"
     echo "  git -C \"$top\" commit -m 'adopt global AI_AUTO mode: drop vendored framework files'"
   else

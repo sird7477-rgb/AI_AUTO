@@ -152,7 +152,7 @@ def git_log(repo: str, since: str | None) -> list[str]:
 
 
 def commit_message(repo: str, sha: str) -> str:
-    out = subprocess.run(["git", "-C", repo, "show", "-s", "--format=%B", sha],
+    out = subprocess.run(["git", "-C", repo, "show", "-s", "--no-ext-diff", "--no-textconv", "--format=%B", sha],
                          capture_output=True, text=True)
     return out.stdout
 
