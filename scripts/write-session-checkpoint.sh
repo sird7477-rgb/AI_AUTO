@@ -1,10 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Route the worktree `git status` below through the CANONICAL hardened review_git wrapper
+# (scripts/git-harden.sh). An inline `git --attr-source=<empty-tree> status` only neutralizes the
+# IN-TREE `.gitattributes`; it OMITS the fail-closed `$GIT_DIR/info/attributes` guard, the
+# `core.fsmonitor=` pin, and `diff.external=`, so a hostile project repo still runs its
+# `.git/config` clean driver on a stat-dirty tracked blob (RCE — this checkpoint is written by
+# review-gate.sh over the untrusted project repo). review_git carries the full defense. Source
+# the sibling when present+parseable (BLAST-H1 idiom, so `set -e` cannot abort a partial copy).
+_hd="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-harden.sh"
+# shellcheck source=scripts/git-harden.sh
+if [ -f "${_hd}" ] && bash -n "${_hd}" 2>/dev/null; then . "${_hd}"; fi
+
 CHECKPOINT_FILE="${OMX_SESSION_CHECKPOINT_FILE:-.omx/state/session-checkpoint.md}"
 CHECKPOINT_STATUS_LIMIT="${OMX_SESSION_CHECKPOINT_STATUS_LIMIT:-40}"
 CHECKPOINT_FIELD_LIMIT="${OMX_SESSION_CHECKPOINT_FIELD_LIMIT:-300}"
 mkdir -p "$(dirname "$CHECKPOINT_FILE")"
+
+# Symlink-safe: a bare `> "$CHECKPOINT_FILE"` FOLLOWS a pre-existing symlink, so a hostile repo
+# shipping .omx/state/session-checkpoint.md as a symlink to ~/.bashrc gets that target overwritten
+# on the first gate-driven checkpoint. REFUSE when the fixed path is a symlink.
+if [ -L "$CHECKPOINT_FILE" ]; then
+  echo "[checkpoint] REFUSING: ${CHECKPOINT_FILE} is a symlink; an untrusted repo could redirect this write to an arbitrary file. Remove the symlink and re-run." >&2
+  exit 2
+fi
 
 case "$CHECKPOINT_STATUS_LIMIT" in
   ''|*[!0-9]*)
@@ -60,14 +79,12 @@ compact_value() {
 write_git_status() {
   local status_output
   local total_lines
-  local _et
 
-  # --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean-filter driver
-  # that `git status` would otherwise run on a stat-dirty tracked blob (RCE). Precomputed into a
-  # var (not inline `$(...)`) so it is self-contained (no git-harden.sh sibling needed) AND visible
-  # to the R9-DRIFT status guard.
-  _et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  status_output="$(git --attr-source="$_et" status --short)"
+  # review_git (scripts/git-harden.sh, sourced above) disarms an in-repo .gitattributes /
+  # info/attributes + `.git/config` clean-filter driver + core.fsmonitor that `git status` would
+  # otherwise run on a stat-dirty tracked blob (RCE), and fail-closed REFUSES a hostile
+  # info/attributes binding — the residual --attr-source could not cover.
+  status_output="$(review_git status --short)"
   if [ -z "$status_output" ]; then
     echo "  clean"
     return 0
@@ -82,6 +99,12 @@ write_git_status() {
   fi
 }
 
+# Atomic write (mktemp in the same dir + `mv -f`, the review_provenance_record pattern): a
+# concurrent reader never sees a half-written checkpoint, and `mv -f` replaces the name itself
+# (never follows a symlink target). trap-clean the temp on any early exit.
+_ck_dir="$(dirname "$CHECKPOINT_FILE")"
+_ck_tmp="$(mktemp "${_ck_dir}/.session-checkpoint.XXXXXX")"
+trap 'rm -f "${_ck_tmp}"' EXIT
 {
   echo "# Session Checkpoint"
   echo
@@ -138,6 +161,8 @@ write_git_status() {
   echo
   echo "- Treat this checkpoint as resume evidence, not as a replacement for current git status."
   echo "- Re-read the latest user request before continuing."
-} > "$CHECKPOINT_FILE"
+} > "$_ck_tmp"
+mv -f "$_ck_tmp" "$CHECKPOINT_FILE"
+trap - EXIT
 
 echo "[checkpoint] wrote ${CHECKPOINT_FILE}"

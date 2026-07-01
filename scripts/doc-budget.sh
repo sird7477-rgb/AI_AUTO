@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Empty-tree OID (repo hash algo; sha1 constant fallback) for `git --attr-source=<empty-tree>`:
-# the `git diff --numstat <base_ref>` calls below read the WORKTREE side, where an in-repo
-# `.gitattributes` clean/textconv/external driver would otherwise execute. `--attr-source` reads
-# attributes from the empty tree, neutralizing the clean-filter RCE vector uniformly.
-DOC_BUDGET_ATTR_NONE="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+# Route every worktree-reading `git diff` below through the CANONICAL hardened review_git wrapper
+# (scripts/git-harden.sh). An inline `git --attr-source=<empty-tree> diff` only neutralizes the
+# IN-TREE `.gitattributes`; it OMITS the fail-closed `$GIT_DIR/info/attributes` guard, the
+# `core.fsmonitor=` pin, and `diff.external=`, so a hostile project repo still executes its
+# `.git/config` clean/diff driver on a worktree read (RCE — this runs over the untrusted project
+# repo via verify-machinery.sh). review_git carries the full defense on the diffs routed through
+# it. This script ALSO makes BARE worktree-scanning calls (`git ls-files --others`) that are NOT
+# routed through review_git and would still fire a `.git/config core.fsmonitor` hook; the
+# process-wide git-scrub.sh env pin (GIT_CONFIG core.fsmonitor='') closes that for EVERY git call
+# in this process — the same standalone-entrypoint defense automation-doctor.sh/review-gate.sh use.
+# Source both siblings when present+parseable (BLAST-H1 idiom, so `set -e` cannot abort a partial copy).
+_sd="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../hooks/git-scrub.sh
+if [ -f "${_sd}/../hooks/git-scrub.sh" ] && bash -n "${_sd}/../hooks/git-scrub.sh" 2>/dev/null; then . "${_sd}/../hooks/git-scrub.sh"; fi
+# shellcheck source=scripts/git-harden.sh
+if [ -f "${_sd}/git-harden.sh" ] && bash -n "${_sd}/git-harden.sh" 2>/dev/null; then . "${_sd}/git-harden.sh"; fi
 
 STRICT="${DOC_BUDGET_STRICT:-0}"
 TEMPLATE_PATCH_MODE="${DOC_BUDGET_TEMPLATE_PATCH:-0}"
@@ -119,7 +130,12 @@ line_count() {
     printf '0\n'
     return
   fi
-  wc -l < "$path" | tr -d ' '
+  # `grep -c ''` counts EVERY line, including a final line with no trailing newline
+  # (which `wc -l` undercounts by 1 — a 221-line file lacking a final `\n` reported
+  # 220 and slipped under the 220 hard cap). It still prints `0` for an empty file but
+  # EXITS 1 there (no match); `|| true` keeps this always-0-exit (unlike the old `wc -l`)
+  # so a standalone call in the untracked-scan pipeline never trips `set -e`.
+  grep -c '' "$path" || true
 }
 
 # The escape hatch must record a SUBSTANTIVE reason; it is not a silent
@@ -179,7 +195,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     set +f
   fi
 
-  diff_numstat="$(git --attr-source="${DOC_BUDGET_ATTR_NONE}" diff --no-ext-diff --no-textconv --numstat "${base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
+  diff_numstat="$(review_git diff --no-ext-diff --no-textconv --numstat "${base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
   diff_added="$(printf '%s\n' "${diff_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   diff_removed="$(printf '%s\n' "${diff_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   untracked_added="$(
@@ -210,7 +226,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if [ -z "${completion_base_ref}" ]; then
       fail "DOC_BUDGET_COMPLETION_BASE_REF=${COMPLETION_BASE_REF} could not be resolved"
     else
-      completion_numstat="$(git --attr-source="${DOC_BUDGET_ATTR_NONE}" diff --no-ext-diff --no-textconv --numstat "${completion_base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
+      completion_numstat="$(review_git diff --no-ext-diff --no-textconv --numstat "${completion_base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
       completion_added="$(printf '%s\n' "${completion_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
       completion_removed="$(printf '%s\n' "${completion_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
       completion_added=$((completion_added + untracked_added))
@@ -232,7 +248,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   label_pathspecs=(
     ':(glob)**/*.plan.md' ':(glob)**/*.spec.md' ':(glob)*.plan.md' ':(glob)*.spec.md'
   )
-  label_numstat="$(git --attr-source="${DOC_BUDGET_ATTR_NONE}" diff --no-ext-diff --no-textconv --numstat "${base_ref}" -- "${label_pathspecs[@]}" 2>/dev/null || true)"
+  label_numstat="$(review_git diff --no-ext-diff --no-textconv --numstat "${base_ref}" -- "${label_pathspecs[@]}" 2>/dev/null || true)"
   label_added="$(printf '%s\n' "${label_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   label_removed="$(printf '%s\n' "${label_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   label_untracked_added="$(

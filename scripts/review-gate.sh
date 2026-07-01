@@ -75,16 +75,27 @@ REVIEW_PROVENANCE_LOG="${REVIEW_STATE_DIR}/approved-provenance.log"
 # uses `git write-tree`, which would mutate the index.
 review_provenance_hash() {
   {
-    git rev-parse HEAD 2>/dev/null || printf 'NO_HEAD\n'
+    review_git rev-parse HEAD 2>/dev/null || printf 'NO_HEAD\n'
     printf '\037diff\037\n';   review_git diff --no-ext-diff --no-textconv 2>/dev/null
     printf '\037cached\037\n'; review_git diff --cached --no-ext-diff --no-textconv 2>/dev/null
     printf '\037untracked\037\n'
     # Include each untracked file's PATH next to its blob hash so a same-content
-    # rename / path swap changes the hash (content-only would false-match).
-    git ls-files --others --exclude-standard -z 2>/dev/null \
+    # rename / path swap changes the hash (content-only would false-match). A nested
+    # untracked git repo / worktree lists as ONE boundary DIRECTORY (gitlink): hash-object
+    # cannot hash a directory, so its mutating inner content is INVISIBLE and the hash
+    # would false-match a prior clean approval. FAIL CLOSED: any other-entry that is a
+    # directory or that hash-object cannot hash emits a UNIQUE, un-matchable per-call nonce
+    # so a tree carrying such an entry can NEVER carry forward a skip on unreviewed content.
+    review_git ls-files --others --exclude-standard -z 2>/dev/null \
       | while IFS= read -r -d '' provenance_file; do
           printf '%s\t' "${provenance_file}"
-          review_git hash-object --no-filters "${provenance_file}" 2>/dev/null
+          if [ -d "${provenance_file}" ] \
+             || ! provenance_blob="$(review_git hash-object --no-filters "${provenance_file}" 2>/dev/null)" \
+             || [ -z "${provenance_blob}" ]; then
+            printf '\037UNHASHABLE\037%s.%s\n' "${RANDOM}${RANDOM}" "$(date +%s%N 2>/dev/null || printf '%s' "${RANDOM}")"
+          else
+            printf '%s\n' "${provenance_blob}"
+          fi
         done
   } | review_git hash-object --stdin
 }
@@ -120,21 +131,61 @@ review_provenance_disabled_present() {
     | head -1 | grep -q .
 }
 
+# --- Provenance-record AUTHENTICITY (out-of-tree HMAC key) --------------------------------
+# The whole project tree (incl. .omx/reviewer-state) is attacker-controlled under the
+# tarball/copy threat model, so a record's authenticity CANNOT rest on anything stored in it:
+# an attacker precomputes a matching approved_hash and forges every field. Authenticity is
+# bound to an HMAC keyed by a secret held OUTSIDE any project tree. Path precedence:
+# $AI_AUTO_PROVENANCE_KEY_FILE (tests) -> $AI_AUTO_HOME/.provenance-key -> ~/.config/ai-auto/
+# provenance.key. An in-tree path (.omx/.git) is REFUSED, so the secret is never written where
+# the attacker-controlled tree can read it, and an attacker who owns the tree cannot forge it.
+review_provenance_key_file() {
+  if [ -n "${AI_AUTO_PROVENANCE_KEY_FILE:-}" ]; then printf '%s\n' "${AI_AUTO_PROVENANCE_KEY_FILE}"
+  elif [ -n "${AI_AUTO_HOME:-}" ]; then printf '%s/.provenance-key\n' "${AI_AUTO_HOME}"
+  else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
+}
+
+# Generate the key once (0600) if absent. Refuses any in-tree path (.omx/.git).
+review_provenance_ensure_key() {
+  local keyfile dir
+  keyfile="$(review_provenance_key_file)"
+  case "${keyfile}" in *"/.omx/"*|*"/.git/"*) return 1 ;; esac
+  [ -f "${keyfile}" ] && return 0
+  dir="$(dirname "${keyfile}")"
+  ( umask 077; mkdir -p "${dir}" && openssl rand -hex 32 > "${keyfile}" ) 2>/dev/null || return 1
+  chmod 0600 "${keyfile}" 2>/dev/null || true
+}
+
+# HMAC-SHA256 of stdin keyed by the out-of-tree secret (key read from FILE, never argv/env, so
+# it is not exposed on the process table). Empty output when the key/tool is unavailable or the
+# path is in-tree -> the caller fails closed (no valid HMAC => full review), never a silent skip.
+review_provenance_hmac() {
+  local keyfile
+  keyfile="$(review_provenance_key_file)"
+  case "${keyfile}" in *"/.omx/"*|*"/.git/"*) return 0 ;; esac
+  [ -f "${keyfile}" ] || return 0
+  AI_AUTO_PROV_KEYFILE="${keyfile}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_PROV_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
+}
+
 # Record an approved provenance record. Atomic (mktemp+mv) so a concurrent session
 # never reads a half-written env. Caller gates on proceed + normal trust.
 review_provenance_record() {
-  local hash head flags ts tmp
+  local hash head flags ts tmp rec
   hash="$(review_provenance_hash)"
   head="$(review_provenance_head)"
   flags="$(review_provenance_flags)"
   ts="$(date -Iseconds)"
+  review_provenance_ensure_key
   mkdir -p "${REVIEW_STATE_DIR}"
   tmp="$(mktemp "${REVIEW_STATE_DIR}/.approved-provenance.XXXXXX")" || return 0
+  # Canonical record + an HMAC over it keyed by the OUT-OF-TREE secret. The attacker owns the
+  # tree and can forge every field incl. a matching approved_hash, but NOT this HMAC, so a
+  # forged approved-provenance.env cannot pass review_provenance_authentic (=> full review).
+  rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
+    "${hash}" "${head}" "${flags}" "${ts}")"
   {
-    printf 'approved_hash=%s\n' "${hash}"
-    printf 'approved_head=%s\n' "${head}"
-    printf 'approved_flags=%s\n' "${flags}"
-    printf 'approved_at=%s\n' "${ts}"
+    printf '%s\n' "${rec}"
+    printf 'approved_hmac=%s\n' "$(printf '%s' "${rec}" | review_provenance_hmac)"
   } > "${tmp}"
   mv -f "${tmp}" "${REVIEW_PROVENANCE_ENV}"
   printf '%s\t%s\t%s\t%s\n' "${ts}" "${head:-NO_HEAD}" "${hash}" "${flags}" >> "${REVIEW_PROVENANCE_LOG}"
@@ -170,14 +221,38 @@ review_provenance_principal_evidence_ok() {
   case "${explicit}" in ""|codex) return 0 ;; *) return 1 ;; esac
 }
 
+# Verify a record's out-of-tree-keyed HMAC. Returns 0 ONLY when a key exists and the stored
+# approved_hmac equals a fresh HMAC over the record's canonical fields; else 1 (missing key,
+# missing/forged HMAC, tool absent, in-tree key path) -> caller forces a full review. An
+# attacker who owns the tree cannot produce a valid HMAC without the out-of-tree key.
+review_provenance_authentic() {
+  local keyfile stored rec expected
+  keyfile="$(review_provenance_key_file)"
+  case "${keyfile}" in *"/.omx/"*|*"/.git/"*) return 1 ;; esac
+  [ -f "${keyfile}" ] || return 1
+  stored="$(review_provenance_field approved_hmac)"
+  [ -n "${stored}" ] || return 1
+  rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
+    "$(review_provenance_field approved_hash)" \
+    "$(review_provenance_field approved_head)" \
+    "$(review_provenance_field approved_flags)" \
+    "$(review_provenance_field approved_at)")"
+  expected="$(printf '%s' "${rec}" | review_provenance_hmac)"
+  [ -n "${expected}" ] || return 1
+  [ "${expected}" = "${stored}" ]
+}
+
 # Echoes "skip" (exact match, same flags, no disabled reviewer → carry prior verdict)
-# or "full" (no record / changed tree / flag mismatch / disabled present). Delta is
-# deferred until collect-review-context honors a base, so every non-exact case is a
-# full review.
+# or "full" (no record / forged-or-unauthenticated record / changed tree / flag mismatch /
+# disabled present). Delta is deferred until collect-review-context honors a base, so every
+# non-exact case is a full review.
 review_provenance_decision() {
   local approved_hash approved_flags cur_hash cur_flags
   approved_hash="$(review_provenance_field approved_hash)"
   if [ -z "${approved_hash}" ]; then printf 'full\n'; return 0; fi
+  # Authenticity FIRST: a record without a valid out-of-tree-keyed HMAC is forged / legacy —
+  # force a full review (never carry it forward onto an unreviewed, attacker-controlled tree).
+  if ! review_provenance_authentic; then printf 'full\n'; return 0; fi
   cur_hash="$(review_provenance_hash)"
   if [ "${cur_hash}" != "${approved_hash}" ]; then printf 'full\n'; return 0; fi
   approved_flags="$(review_provenance_field approved_flags)"

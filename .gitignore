@@ -24,6 +24,8 @@ instance/
 .omx/review-results/
 
 # Local runtime / session artifacts
+# HMAC provenance secret ($AI_AUTO_HOME/.provenance-key) — must never be committed
+.provenance-key
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 cache/

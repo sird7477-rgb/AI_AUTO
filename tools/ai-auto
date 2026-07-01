@@ -147,11 +147,40 @@ ai_auto_setup() {
     echo "ai-auto setup: WARNING flock unavailable; proceeding WITHOUT the setup lock (concurrent setups not serialized)." >&2
   fi
 
+  # Route git through the hardened wrapper (scripts/git-harden.sh) from here on — the
+  # readability/HEAD probes and the de-pollution diffs all read the UNTRUSTED target repo,
+  # so no bare `git status`/worktree-diff (drift-guard). Sourced ONCE, here.
+  # shellcheck source=scripts/git-harden.sh
+  . "$AI_AUTO_HOME/scripts/git-harden.sh"
+
+  # F7: INDEX/REPO READABILITY PROBE — fail CLOSED on a corrupt/truncated .git/index, BEFORE
+  # the F3 precheck. On a truncated index `git status` is fatal (rc 128) BUT the F3
+  # `git diff --cached` probe below also exits 128 with EMPTY output, so its grep matches
+  # nothing and setup would FALSELY report green success ("nothing to remove … re-asserted",
+  # exit 0) on an unusable repo. Probe readability first and abort with the real cause.
+  if ! review_git -C "$top" status --porcelain >/dev/null 2>&1; then
+    echo "ai-auto setup: ABORT — the git repository index is unreadable/corrupt (the readability probe failed, rc!=0)." >&2
+    echo "ai-auto setup: fix the repository first (e.g. restore .git/index), then re-run. No changes made." >&2
+    return 1
+  fi
+
+  # F8: HEAD RESOLVABILITY — a corrupt/unborn HEAD (ref -> a nonexistent branch) leaves the
+  # index intact but makes the F3 `git diff --cached` compare it against the EMPTY TREE, so
+  # every tracked file reads as a staged ADD and setup aborts blaming "staged changes" — a
+  # correct-to-fail-closed but WRONG diagnosis. Name the real cause (HEAD) first. rev-parse
+  # reads no worktree blob and runs no attr driver (filter-safe; bare git is fine here).
+  if ! git -C "$top" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    echo "ai-auto setup: ABORT — HEAD is unborn or corrupt (does not resolve to a commit)." >&2
+    echo "ai-auto setup: repair HEAD (check .git/HEAD and the branch ref), then re-run. No changes made." >&2
+    return 1
+  fi
+
   # F3: DIRTY-INDEX PRE-CHECK — per-file `git rm` under set -e can half-migrate if a
   # managed file has STAGED index content (git rm refuses an index entry that differs from
   # both HEAD and the worktree). Refuse to mutate, BEFORE touching anything, if the index
   # holds any staged ADD/MODIFY/RENAME. (Staged deletions are setup's own footprint from a
-  # prior run, so an idempotent re-run is still allowed.)
+  # prior run, so an idempotent re-run is still allowed.) Reached only with a readable index
+  # and a resolvable HEAD (F7/F8 above), so this diff-cached is meaningful and non-empty-tree.
   if git -C "$top" diff --cached --name-status 2>/dev/null | grep -qvE '^D'; then
     echo "ai-auto setup: ABORT — the git index has staged changes (non-deletions)." >&2
     echo "ai-auto setup: commit or stash them first, then re-run. No changes made." >&2
@@ -292,8 +321,7 @@ EOF
   # changed-ness even for --quiet) — arbitrary code exec on the operator during `setup` of a
   # hostile project. Route them through review_git (scripts/git-harden.sh), which injects the
   # central --attr-source=<empty-tree> -c diff.external= … so the in-repo driver cannot bind.
-  # shellcheck source=scripts/git-harden.sh
-  . "$AI_AUTO_HOME/scripts/git-harden.sh"
+  # (git-harden.sh is already sourced above, before the F7/F8 readability probes.)
   local removed=() kept=() retired=() f pristine keep_reason
   for f in "${FRAMEWORK_PATHS[@]}"; do
     git -C "$top" ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
