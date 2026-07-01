@@ -499,11 +499,30 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
   _et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
   if [ "$SKIP_DIRTY_CHECK" = "1" ]; then
     say_skip "working tree dirty check skipped (DOCTOR_SKIP_DIRTY_CHECK=1)"
-  elif [ -n "$(git --attr-source="$_et" status --short 2>/dev/null)" ]; then
-    say_warn "working tree has uncommitted changes"
-    suggest "inspect with: git status --short"
   else
-    say_pass "working tree is clean"
+    # Fail-closed: capture git's exit code separately from its output. Under
+    # concurrent multi-session load `git status` can transiently fail; swallowing
+    # its exit code would leave empty output and misreport a dirty/unknown tree
+    # as "clean". On any non-zero exit we WARN (never a false "clean").
+    # `|| _dirty_rc=$?` keeps the failing substitution from tripping `set -e`
+    # before we can inspect it (a bare assignment would abort the script).
+    # --attr-source=<empty-tree> ($_et) disarms an in-repo .gitattributes clean-filter
+    # RCE that `git status` would otherwise run on a stat-dirty tracked blob.
+    _dirty_rc=0
+    _dirty_out="$(git --attr-source="$_et" status --short 2>/dev/null)" || _dirty_rc=$?
+    if [ "$_dirty_rc" -ne 0 ]; then
+      say_warn "unable to determine working tree state, so not reporting clean; the git status probe exited ${_dirty_rc}"
+      suggest "inspect with: git status --short   (re-run when load subsides; DOCTOR_SKIP_DIRTY_CHECK=1 to skip)"
+    elif [ -n "$_dirty_out" ]; then
+      say_warn "working tree has uncommitted changes"
+      # doctor hardens its own check with --attr-source; a plain `git status --short`
+      # may differ if benign clean/EOL filters are configured. Set DOCTOR_SKIP_DIRTY_CHECK=1
+      # to skip benign filter churn.
+      suggest "inspect with: git status --short   (DOCTOR_SKIP_DIRTY_CHECK=1 to skip benign filter churn)"
+    else
+      say_pass "working tree is clean"
+    fi
+    unset _dirty_out _dirty_rc
   fi
 
   if git remote get-url origin >/dev/null 2>&1; then

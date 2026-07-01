@@ -30,11 +30,18 @@ for script in \
   scripts/summarize-ai-reviews.sh \
   scripts/test-review-summary.sh \
   scripts/verify-machinery.sh \
-  scripts/write-session-checkpoint.sh
+  scripts/machinery-memo.sh \
+  scripts/write-session-checkpoint.sh \
+  hooks/pre-commit \
+  hooks/post-commit \
+  hooks/git-scrub.sh
 do
   bash -n "${script}"
 done
 shellcheck -S warning scripts/*.sh
+# BLAST-M1: the hooks/ files are the EXACT surface whose breakage bricks every project's
+# commit, yet the scripts/*.sh glob never reached them. Gate them here too.
+shellcheck -S warning hooks/pre-commit hooks/post-commit hooks/git-scrub.sh
 # Global helper commands in tools/ are extensionless scripts that the
 # scripts/*.sh glob above cannot reach, yet they are the code installed onto
 # other machines. Discover them by shebang so adding, removing, or renaming a
@@ -7471,13 +7478,16 @@ for f in sorted(targets):
             via_review_git = "review_git" in m.group(0)
             if "--attr-source=" not in line and not via_review_git:
                 violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
-        # rule 5 (R13): `git worktree add` checks out a NEW working tree and therefore runs the
-        # in-repo `.gitattributes`+`.git/config` SMUDGE filter on every blob written — a hostile-
-        # repo RCE auto-invoked by the tmux after-new-window hook (tools/ai-worktree). It MUST
-        # carry --attr-source=<empty-tree> or route through review_git. Scoped to the `add` form
-        # ONLY: `git worktree list/remove/prune` touch no blob and run no filter (would false-
-        # positive). `sub == "worktree"` here means the token after git+opts is `worktree`.
-        if sub == "worktree" and re.search(r'\bworktree\s+add\b', line):
+        # rule 5 (R13 + R14-#2): `git worktree add` checks out a NEW working tree and therefore
+        # runs the in-repo `.gitattributes`+`.git/config` SMUDGE filter on every blob written — a
+        # hostile-repo RCE auto-invoked by the tmux after-new-window hook (tools/ai-worktree). It
+        # MUST carry --attr-source=<empty-tree> or route through review_git. Scoped to the `add`
+        # form ONLY: `git worktree list/remove/prune` touch no blob and run no filter (would false-
+        # positive). `sub == "worktree"` here means the token after git+opts is `worktree`. The
+        # `add` proximity check matches BOTH the bash form (`worktree add`, whitespace-separated)
+        # AND the Python-argv form (`["git","worktree","add",...]`, comma/quote-separated) — the
+        # old `\bworktree\s+add\b` was BLIND to the list form (like rule 4's group(2)/(3) path).
+        if sub == "worktree" and re.search(r'\bworktree\b["\x27,\s]+add\b', line):
             via_review_git = "review_git" in m.group(0)
             if "--attr-source=" not in line and not via_review_git:
                 violations.append("%s: `git worktree add` (smudge-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
@@ -7654,6 +7664,18 @@ PYEOF
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     || { echo "[verify] R9-DRIFT: control b12-exempt (worktree list/remove/prune) FALSE-POSITIVED — rule 5 not scoped to `add`"; exit 1; }
   rm -f "${tmp_dir}/fake/tools/ai-worktree"
+  # b12-python (R14-#2): the SAME `git worktree add` expressed as a Python argv LIST
+  # (["git","worktree","add",...] — comma/quote separated, NOT `worktree add` whitespace) is the
+  # form the old `\bworktree\s+add\b` rule 5 was BLIND to (b12 covered bash only). The generalized
+  # proximity check MUST now flag the un-hardened list form.
+  printf '%s\n' 'run(["git", "worktree", "add", target, base])' > "${tmp_dir}/fake/scripts/b12py.py"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b12-python (un-hardened python-argv git worktree add) NOT caught — rule 5 blind to list form (R14-#2 regress)"; exit 1; }
+  # b12-python-hardened: the SAME list form carrying --attr-source MUST pass (no false-positive).
+  printf '%s\n' 'run(["git", "--attr-source=%s" % et, "worktree", "add", target, base])' > "${tmp_dir}/fake/scripts/b12py.py"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b12-python-hardened (python-argv worktree add via --attr-source) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b12py.py"
 )
 
 echo "[verify] testing R13-WORKTREE-RCE (tools/ai-worktree's 'git worktree add' over a HOSTILE repo must NOT execute the in-repo .gitattributes-bound filter.<x>.smudge driver while checking out the new tree; inline --attr-source=<empty-tree> disarms it — this is the tmux-hook auto-invoked RCE)..."
@@ -7967,5 +7989,247 @@ echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed 
     || { echo "[verify] D1: header does not describe the real ai-domain-pack install path"; exit 1; }
 )
 
+echo "[verify] testing R14-#1-FSMONITOR-RCE (standalone tools ai-worktree/ai-tmux-worktree pin core.fsmonitor= so a HOSTILE repo's IN-REPO core.fsmonitor HOOK PROGRAM does NOT execute during their 'git worktree add'/'git status' calls — the CONFIG-level RCE that --attr-source does NOT neutralize, and that these tools previously left open because they inlined ONLY --attr-source; auto-invoked via the tmux after-new-window hook)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  aiwt="${repo_root}/tools/ai-worktree"
+  tmuxwt="${repo_root}/tools/ai-tmux-worktree"
+  test -s "${aiwt}"   || { echo "[verify] R14-#1-FSMONITOR-RCE: ai-worktree not found"; exit 1; }
+  test -s "${tmuxwt}" || { echo "[verify] R14-#1-FSMONITOR-RCE: ai-tmux-worktree not found"; exit 1; }
+  mk_fsmon() {  # hostile repo: an IN-REPO .git/config core.fsmonitor set to a HOOK PROGRAM that git
+                # runs on any index-refreshing call (status, and the checkout inside `worktree add`).
+                # --attr-source does NOT reach it (config, not attribute) — only `-c core.fsmonitor=`
+                # disarms it. Marker written to $2.
+    local p="$1" marker="$2"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      git config core.fsmonitor "touch ${marker}; true" )   # in-repo fsmonitor hook program (RCE)
+  }
+  # (1) ai-worktree `git worktree add` over the hostile repo — the tmux-hook auto-invoked case.
+  # HARDENED (real tool): its `-c core.fsmonitor=` pin means the hook is NEVER run.
+  proj="${tmp_dir}/repo"; mk_fsmon "${proj}" "${tmp_dir}/PWNED_FSMON"
+  rm -f "${tmp_dir}/PWNED_FSMON"
+  ( cd "${proj}"; bash "${aiwt}" wtsafe >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED_FSMON" \
+    || { echo "[verify] R14-#1-FSMONITOR-RCE: in-repo core.fsmonitor EXECUTED during ai-worktree 'git worktree add' (config RCE)"; exit 1; }
+  # POSITIVE CONTROL: a copy of ai-worktree with ONLY the `-c core.fsmonitor=` pin stripped (the
+  # --attr-source stays, so it still runs `worktree add`) MUST then fire the hook — proving the
+  # negative is DUE TO the pin and not a vacuous fixture. NOTE: if this verify run was itself
+  # started with hooks/git-scrub.sh SOURCED, a PROCESS-LEVEL env `core.fsmonitor=` pin
+  # (GIT_CONFIG_*) is inherited and would ALSO shield the control (defense-in-depth) — so the
+  # control subshell first unsets that inherited env pin to isolate the TOOL's inline pin.
+  ctl="${tmp_dir}/ai-worktree-ctl"
+  sed -E 's/-c core\.fsmonitor= //' "${aiwt}" > "${ctl}"; chmod +x "${ctl}"
+  proj2="${tmp_dir}/repo2"; mk_fsmon "${proj2}" "${tmp_dir}/PWNED_FSMON_CTL"
+  rm -f "${tmp_dir}/PWNED_FSMON_CTL"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    cd "${proj2}"; bash "${ctl}" wtctl >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_FSMON_CTL" \
+    || { echo "[verify] R14-#1-FSMONITOR-RCE: control (ai-worktree with core.fsmonitor pin stripped) did NOT fire the hook — fixture is vacuous"; exit 1; }
+  # (2) ai-tmux-worktree removability() `git status` over the hostile repo — the status-path tool.
+  removability_src="$( sed -n '/^removability() {/,/^}/p' "${tmuxwt}" )"
+  [ -n "${removability_src}" ] || { echo "[verify] R14-#1-FSMONITOR-RCE: could not extract removability()"; exit 1; }
+  proj3="${tmp_dir}/repo3"; mk_fsmon "${proj3}" "${tmp_dir}/PWNED_FSMON_STATUS"
+  rm -f "${tmp_dir}/PWNED_FSMON_STATUS"
+  ( eval "${removability_src}"; removability "${proj3}" "" >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED_FSMON_STATUS" \
+    || { echo "[verify] R14-#1-FSMONITOR-RCE: in-repo core.fsmonitor EXECUTED during ai-tmux-worktree removability 'git status' (config RCE)"; exit 1; }
+  # POSITIVE CONTROL: the same extracted function with the fsmonitor pin stripped MUST fire the
+  # hook (unset any inherited git-scrub env pin first, as above, to isolate the inline pin).
+  removability_ctl="$( printf '%s\n' "${removability_src}" | sed -E 's/-c core\.fsmonitor= //' )"
+  proj4="${tmp_dir}/repo4"; mk_fsmon "${proj4}" "${tmp_dir}/PWNED_FSMON_STATUS_CTL"
+  rm -f "${tmp_dir}/PWNED_FSMON_STATUS_CTL"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    eval "${removability_ctl}"; removability "${proj4}" "" >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_FSMON_STATUS_CTL" \
+    || { echo "[verify] R14-#1-FSMONITOR-RCE: control (removability with core.fsmonitor pin stripped) did NOT fire the hook — status-path fixture is vacuous"; exit 1; }
+)
+
 echo "[verify] running ai-lab bootstrap check..."
 ./scripts/bootstrap-ai-lab.sh
+
+echo "[verify] testing BLAST-H1 (broken/missing git-scrub.sh must NOT brick the commit — fail OPEN)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  eng="${tmp_dir}/eng"
+  globalize_mk_engine "${eng}"
+  # use the REAL engine pre-commit (the guarded body under test).
+  cp "${repo_root}/hooks/pre-commit" "${eng}/hooks/pre-commit"; chmod +x "${eng}/hooks/pre-commit"
+  # DERIVED project (AI_AUTO_HOME != repo root) with NO verify-project.sh: the hook warns+ALLOWS,
+  # so any nonzero exit here is attributable to the git-scrub source, not the verify seam.
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > a.txt; git add -A; git commit -qm base )
+  run_hook() { ( cd "${proj}"; AI_AUTO_HOME="${eng}" bash "${eng}/hooks/pre-commit" 2>&1 ); }
+  # (a) git-scrub.sh MISSING -> commit PROCEEDS (exit 0) with a loud warning.
+  rm -f "${eng}/hooks/git-scrub.sh"
+  rc=0; out="$(run_hook)" || rc=$?
+  test "${rc}" -eq 0 \
+    || { echo "[verify] BLAST-H1: missing git-scrub.sh BLOCKED the commit (rc=${rc}) — must fail OPEN"; exit 1; }
+  echo "${out}" | grep -q "git-scrub.sh missing or unparseable" \
+    || { echo "[verify] BLAST-H1: missing git-scrub.sh did not emit the loud WARNING"; exit 1; }
+  # (b) git-scrub.sh present but SYNTAX-BROKEN -> still PROCEEDS (exit 0) with the warning.
+  printf 'if [ ; then\n' > "${eng}/hooks/git-scrub.sh"   # deliberate parse error
+  ! bash -n "${eng}/hooks/git-scrub.sh" 2>/dev/null \
+    || { echo "[verify] BLAST-H1: fixture git-scrub.sh unexpectedly parses (control invalid)"; exit 1; }
+  rc=0; out="$(run_hook)" || rc=$?
+  test "${rc}" -eq 0 \
+    || { echo "[verify] BLAST-H1: syntax-broken git-scrub.sh BLOCKED the commit (rc=${rc}) — must fail OPEN"; exit 1; }
+  echo "${out}" | grep -q "git-scrub.sh missing or unparseable" \
+    || { echo "[verify] BLAST-H1: broken git-scrub.sh did not emit the loud WARNING"; exit 1; }
+  # (c) NON-VACUOUS control: a VALID git-scrub.sh must NOT print the warning (guard is specific).
+  cp "${repo_root}/hooks/git-scrub.sh" "${eng}/hooks/git-scrub.sh"
+  out="$(run_hook)" || true
+  ! echo "${out}" | grep -q "git-scrub.sh missing or unparseable" \
+    || { echo "[verify] BLAST-H1: warning fired even with a VALID git-scrub.sh (vacuous guard)"; exit 1; }
+)
+
+echo "[verify] testing BLAST-H2 (present-but-syntax-broken baked engine hook must NOT brick the commit via the shim)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  eng="${tmp_dir}/eng"
+  globalize_mk_engine "${eng}"
+  # a healthy baked pre-commit hook prints a marker so the positive control can observe the exec.
+  printf '#!/usr/bin/env bash\necho PRE_COMMIT_ENGINE_REACHED\n' > "${eng}/hooks/pre-commit"
+  chmod +x "${eng}/hooks/pre-commit"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > a.txt; git add -A; git commit -qm base )
+  "${eng}/tools/ai-auto" setup "${proj}" >/dev/null
+  shim="${proj}/.git/hooks/pre-commit"
+  test -f "${shim}" || { echo "[verify] BLAST-H2: setup did not install the pre-commit shim"; exit 1; }
+  # (a) POSITIVE control: a healthy baked hook is exec'd by the shim (exit 0, marker printed).
+  rc=0; out="$( cd "${proj}"; bash "${shim}" 2>&1 )" || rc=$?
+  test "${rc}" -eq 0 && echo "${out}" | grep -q "PRE_COMMIT_ENGINE_REACHED" \
+    || { echo "[verify] BLAST-H2: shim did not exec a healthy baked hook (rc=${rc})"; exit 1; }
+  # (b) present + executable but SYNTAX-BROKEN baked hook -> shim's bash -n preflight WARNS+exit 0.
+  printf '#!/usr/bin/env bash\nif [ ; then\n' > "${eng}/hooks/pre-commit"   # deliberate parse error
+  chmod +x "${eng}/hooks/pre-commit"
+  rc=0; out="$( cd "${proj}"; bash "${shim}" 2>&1 )" || rc=$?
+  test "${rc}" -eq 0 \
+    || { echo "[verify] BLAST-H2: syntax-broken baked hook BLOCKED the commit (rc=${rc}) — must fail OPEN"; exit 1; }
+  echo "${out}" | grep -q "does not parse" \
+    || { echo "[verify] BLAST-H2: shim did not emit the 'does not parse' WARNING"; exit 1; }
+  # (c) NON-VACUOUS control: exec'ing the broken hook DIRECTLY (no bash -n preflight) DOES abort,
+  # proving the preflight is what prevents the brick-all.
+  ctl=0; ( cd "${proj}"; exec "${eng}/hooks/pre-commit" ) >/dev/null 2>&1 || ctl=$?
+  test "${ctl}" -ne 0 \
+    || { echo "[verify] BLAST-H2: broken baked hook did not abort when exec'd directly (control invalid)"; exit 1; }
+)
+
+echo "[verify] testing OPCOST-HIGH-1 (machinery self-test memoization: unchanged surface skips, touched surface re-runs)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  repo="${tmp_dir}/repo"
+  mkdir -p "${repo}/scripts" "${repo}/hooks" "${repo}/tools" "${repo}/tests"
+  printf 'echo hi\n' > "${repo}/scripts/x.sh"
+  printf 'echo t\n'  > "${repo}/tests/t.sh"
+  ( cd "${repo}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  (
+    cd "${repo}"
+    # shellcheck source=scripts/machinery-memo.sh
+    . "${repo_root}/scripts/machinery-memo.sh"
+    # 1) no PASS marker yet -> must NOT skip (full run).
+    if machinery_memo_should_skip; then echo "[verify] OPCOST-HIGH-1: skipped with NO marker"; exit 1; fi
+    # 2) record a PASS for the current surface.
+    machinery_memo_record_pass
+    test -f "${MACHINERY_MEMO_MARKER}" \
+      || { echo "[verify] OPCOST-HIGH-1: record_pass wrote no marker"; exit 1; }
+    # 3) SECOND invocation on the UNCHANGED surface -> SKIPPED (the memoization proof).
+    machinery_memo_should_skip \
+      || { echo "[verify] OPCOST-HIGH-1: unchanged surface was NOT skipped on the 2nd run"; exit 1; }
+    machinery_memo_skip_notice | grep -q '\[skip\] machinery unchanged since last PASS' \
+      || { echo "[verify] OPCOST-HIGH-1: skip notice text drifted"; exit 1; }
+    # 4) touch a TESTED file -> surface hash changes -> must NOT skip (full run).
+    printf 'echo changed\n' >> scripts/x.sh
+    if machinery_memo_should_skip; then echo "[verify] OPCOST-HIGH-1: skipped a CHANGED surface (false skip)"; exit 1; fi
+    # 5) a change OUTSIDE the tested surface must NOT invalidate a fresh PASS marker.
+    machinery_memo_record_pass
+    printf 'unrelated\n' > "${repo}/README.md"; git add README.md
+    machinery_memo_should_skip \
+      || { echo "[verify] OPCOST-HIGH-1: a non-surface change wrongly invalidated the marker"; exit 1; }
+  )
+)
+
+# --- blue-C appended fixtures (doctor fail-closed + run-ai-reviews heartbeat) ---
+echo "[verify] testing automation-doctor dirty check fails closed when git status fails..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_doctor_failclosed_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_doctor_failclosed_tmp EXIT
+
+  real_git="$(command -v git)"
+
+  target_dir="${tmp_dir}/target"
+  "${real_git}" -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  mkdir -p scripts
+  cp "${repo_root}/scripts/automation-doctor.sh" scripts/automation-doctor.sh
+  chmod +x scripts/automation-doctor.sh
+
+  # Wrapper git: passthrough for every subcommand EXCEPT `status`, which exits
+  # non-zero to simulate the transient failure seen under concurrent multi-session
+  # load (the exact env this tool targets). doctor hardens its own status call with
+  # a leading --attr-source=<empty-tree>, so `status` is NOT argv[1]; skip leading
+  # global options to find the real subcommand before matching.
+  mkdir -p "${tmp_dir}/bin"
+  cat > "${tmp_dir}/bin/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    -*) continue ;;
+    status)
+      echo "fatal: simulated git status failure under load" >&2
+      exit 128 ;;
+    *) break ;;
+  esac
+done
+exec "${real_git}" "\$@"
+EOF
+  chmod +x "${tmp_dir}/bin/git"
+
+  # Two runs prove the outcome is deterministic (driven by git's exit code, not by
+  # ambiguous empty output): the fail-closed WARN always appears and doctor never
+  # falsely reports "clean".
+  for run in 1 2; do
+    PATH="${tmp_dir}/bin:${PATH}" ./scripts/automation-doctor.sh > "${tmp_dir}/doctor-${run}.out" 2>&1 || true
+    grep -q "unable to determine working tree state" "${tmp_dir}/doctor-${run}.out"
+    ! grep -q "working tree is clean" "${tmp_dir}/doctor-${run}.out"
+  done
+)
+
+echo "[verify] testing run-ai-reviews with_heartbeat emits progress signal..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_heartbeat_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_heartbeat_tmp EXIT
+
+  # Extract the real with_heartbeat helper and exercise it in isolation so the
+  # assertion is deterministic (no reviewer network calls).
+  sed -n '/^with_heartbeat() {$/,/^}$/p' "${repo_root}/scripts/run-ai-reviews.sh" > "${tmp_dir}/hb.sh"
+  grep -q 'with_heartbeat()' "${tmp_dir}/hb.sh"
+  # shellcheck source=/dev/null
+  . "${tmp_dir}/hb.sh"
+
+  # Fast command: start/finish lines always emitted; periodic line suppressed at 0.
+  REVIEW_HEARTBEAT_SECONDS=0 with_heartbeat "unit review" true > "${tmp_dir}/fast.out"
+  grep -q "unit review starting" "${tmp_dir}/fast.out"
+  grep -q "unit review phase finished in" "${tmp_dir}/fast.out"
+  ! grep -q "still running" "${tmp_dir}/fast.out"
+
+  # Slow command at a 1s cadence emits at least one heartbeat line.
+  REVIEW_HEARTBEAT_SECONDS=1 with_heartbeat "unit review" sleep 2 > "${tmp_dir}/slow.out"
+  grep -q "unit review still running" "${tmp_dir}/slow.out"
+
+  # The wrapped command's exit code is preserved through the heartbeat wrapper.
+  set +e
+  REVIEW_HEARTBEAT_SECONDS=0 with_heartbeat "rc check" bash -c 'exit 7' > /dev/null
+  rc=$?
+  set -e
+  [ "${rc}" -eq 7 ]
+)

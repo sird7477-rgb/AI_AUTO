@@ -23,6 +23,27 @@ REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
 REPO_STATUS_BEFORE_CONTEXT="${REPO_STATUS_BEFORE_CONTEXT-$(review_git status --porcelain 2>/dev/null || true)}"
+# OPCOST-MED-3: one gate operates on ONE unchanging tree, yet the changed-file (name-only)
+# set was recomputed via a fresh review_git+git spawn pair at ~5 downstream call sites.
+# Compute each variant ONCE here — through the SAME review_git hardening and identical
+# spawn order, so the bytes/ordering are unchanged — and have every call site reuse it.
+# Overridable (mirrors REPO_STATUS_BEFORE_CONTEXT) so unit tests can inject a set. (The
+# `status --porcelain` recomputes at write_tree_churn_audit and the micro-work audit are
+# DELIBERATELY left: the former compares before-vs-after to detect churn DURING collection,
+# the latter needs core.quotepath=false — both are distinct from this name-only set.)
+CHANGED_FILES_TRACKED_STAGED="${CHANGED_FILES_TRACKED_STAGED-$(
+  {
+    review_git diff --name-only 2>/dev/null || true
+    git diff --cached --name-only 2>/dev/null || true
+  } | sort -u
+)}"
+CHANGED_FILES_WITH_UNTRACKED="${CHANGED_FILES_WITH_UNTRACKED-$(
+  {
+    review_git diff --name-only 2>/dev/null || true
+    git diff --cached --name-only 2>/dev/null || true
+    git ls-files --others --exclude-standard 2>/dev/null || true
+  } | sort -u
+)}"
 OUT_FILE="${OUT_DIR}/latest-review-context.md"
 
 mkdir -p "${OUT_DIR}"
@@ -373,13 +394,7 @@ persona_gate_policy_for_lenses() {
 
 write_diff_scope_summary() {
   local files scopes active_lenses lens_count gate_policy integrator_required
-  files="$(
-    {
-      review_git diff --name-only 2>/dev/null || true
-      git diff --cached --name-only 2>/dev/null || true
-      git ls-files --others --exclude-standard 2>/dev/null || true
-    } | sort -u
-  )"
+  files="${CHANGED_FILES_WITH_UNTRACKED}"  # OPCOST-MED-3: computed once at module load
 
   if [ -z "${files}" ]; then
     echo "No changed files detected."
@@ -455,10 +470,8 @@ write_tree_churn_audit() {
 
 tracked_review_scope_allowlist() {
   local file
-  {
-    review_git diff --name-only 2>/dev/null || true
-    git diff --cached --name-only 2>/dev/null || true
-  } | sort -u | while IFS= read -r file; do
+  # OPCOST-MED-3: reuse the module-load tracked+staged name-only set (identical bytes).
+  printf '%s\n' "${CHANGED_FILES_TRACKED_STAGED}" | while IFS= read -r file; do
     [ -n "${file}" ] || continue
     case "${file}" in
       templates/*)
@@ -644,13 +657,7 @@ write_phase_scope_guard() {
   allowed="$(split_csv_lines "${PHASE_SCOPE_ALLOWED_FILES:-}")"
   deferred="$(split_csv_lines "${PHASE_SCOPE_DEFERRED_FILES:-}")"
   deferred_records="$(split_csv_lines "${PHASE_SCOPE_DEFERRED_RECORDS:-}")"
-  changed="$(
-    {
-      review_git diff --name-only 2>/dev/null || true
-      git diff --cached --name-only 2>/dev/null || true
-      git ls-files --others --exclude-standard 2>/dev/null || true
-    } | sort -u
-  )"
+  changed="${CHANGED_FILES_WITH_UNTRACKED}"  # OPCOST-MED-3: computed once at module load
 
   unresolved=""
   missing_deferral=""
@@ -755,13 +762,7 @@ write_completion_pack_routing_audit() {
     echo "explicit_trigger: none"
   fi
 
-  changed="$(
-    {
-      review_git diff --name-only 2>/dev/null || true
-      git diff --cached --name-only 2>/dev/null || true
-      git ls-files --others --exclude-standard 2>/dev/null || true
-    } | sort -u
-  )"
+  changed="${CHANGED_FILES_WITH_UNTRACKED}"  # OPCOST-MED-3: computed once at module load
 
   inferred=""
   seen=""
@@ -857,13 +858,7 @@ write_visual_artifact_audit() {
   local changed file spec visual_export reviewed_specs status_line any_status
 
   reviewed_specs="$(split_csv_lines "${VISUAL_HUMAN_REVIEWED_SPECS:-}")"
-  changed="$(
-    {
-      review_git diff --name-only 2>/dev/null || true
-      git diff --cached --name-only 2>/dev/null || true
-      git ls-files --others --exclude-standard 2>/dev/null || true
-    } | sort -u
-  )"
+  changed="${CHANGED_FILES_WITH_UNTRACKED}"  # OPCOST-MED-3: computed once at module load
 
   echo "audit_status: report_only"
   echo "runtime_tool_install_required: false"

@@ -62,9 +62,16 @@ unset _gcv 2>/dev/null || true
 # `--attr-source=<empty-tree>` (review_git in scripts/git-harden.sh), never by this env.
 # The env unset above CANNOT reach an in-repo config. But env
 # GIT_CONFIG_* has HIGHER precedence than repo-local `.git/config`, so after the
-# anti-injection unset we re-export a CONTROLLED pair that pins `core.fsmonitor` EMPTY for
-# every git call in this process AND its children. `core.fsmonitor=''` == disabled, so it
-# is functionally inert except to neutralize the hook-program vector.
+# anti-injection unset we re-export a CONTROLLED pair that pins `core.fsmonitor` EMPTY.
+# `core.fsmonitor=''` == disabled, so it is functionally inert except to neutralize the
+# hook-program vector.
+# SCOPE (precise): this env pin covers every git call in the PROCESS THAT SOURCES THIS FILE
+# and its children — i.e. the engine launcher `tools/ai-auto`, both engine hooks, and the baked
+# per-project shim. It does NOT cover the standalone tools (tools/ai-worktree, tools/workspace-
+# scan, tools/ai-tmux-worktree), which are self-contained and do NOT source this file. Those
+# tools close the SAME fsmonitor hook-program vector at their own call site by inlining the
+# canonical review_git pin set (`-c core.fsmonitor=` alongside --attr-source=<empty-tree>; see
+# scripts/git-harden.sh), so the vector is now closed on BOTH the engine and standalone paths.
 #
 # R8-H8-1: `diff.external` is DELIBERATELY NOT pinned here. An empty env value is NOT
 # equivalent to `--no-ext-diff`: git treats `diff.external=''` as "run the empty program"

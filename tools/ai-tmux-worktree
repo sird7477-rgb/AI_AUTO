@@ -66,10 +66,15 @@ removability() {
   local path="$1" base="$2" count
   [ -d "$path" ] || { printf 'gone'; return; }
   [ "${AI_AUTO_TMUX_WORKTREE_KEEP:-0}" = "1" ] && { printf 'keep:keep-mode'; return; }
-  # --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean-filter driver
-  # that `git status` would otherwise run on a stat-dirty tracked blob of the worktree (RCE).
+  # Canonical hardened-git pin set (mirrors review_git in scripts/git-harden.sh; inlined because
+  # removability() is extracted & eval'd standalone by the verify-machinery R13 control, so it
+  # cannot source git-harden.sh). --attr-source=<empty-tree> disarms an in-repo .gitattributes+
+  # `.git/config` CLEAN-filter driver `git status` runs on a stat-dirty tracked blob (RCE), and
+  # -c core.fsmonitor= kills the SEPARATE in-repo `.git/config` fsmonitor HOOK-PROGRAM code-exec
+  # vector (config, not attribute — --attr-source does NOT reach it) that fires as status
+  # refreshes the index of this untrusted worktree.
   local _et; _et="$(git -C "$path" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  [ -z "$(git -C "$path" --attr-source="$_et" status --porcelain 2>/dev/null)" ] || { printf 'keep:uncommitted'; return; }
+  [ -z "$(git -C "$path" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null status --porcelain 2>/dev/null)" ] || { printf 'keep:uncommitted'; return; }
   # "unsafe to drop" = HEAD has commits not on ANY remote-tracking branch. This is true
   # local work; a branch switch (HEAD now on a remote-tracked branch) or a pushed commit
   # both reduce to 0 -> removable. Falls back to base..HEAD only when the repo has no

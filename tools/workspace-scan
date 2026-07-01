@@ -78,10 +78,14 @@ print_repo() {
     branch="detached"
   fi
 
-  # --attr-source=<empty-tree> disarms an in-repo .gitattributes+`.git/config` clean-filter driver
-  # that `git status` would otherwise run on a stat-dirty tracked blob of a scanned repo (RCE).
+  # Canonical hardened-git pin set (mirrors review_git in scripts/git-harden.sh; inlined because
+  # this standalone tool is not sourced through git-harden.sh). --attr-source=<empty-tree> disarms
+  # an in-repo .gitattributes+`.git/config` CLEAN-filter driver `git status` would run on a stat-
+  # dirty tracked blob of a scanned repo, and -c core.fsmonitor= kills the SEPARATE in-repo
+  # `.git/config` fsmonitor HOOK-PROGRAM code-exec vector (config, not attribute — --attr-source
+  # does NOT reach it) that fires while status refreshes the index of an untrusted scanned repo.
   _et="$(git -C "$repo" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  if [ -n "$(git -C "$repo" --attr-source="$_et" status --short 2>/dev/null)" ]; then
+  if [ -n "$(git -C "$repo" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null status --short 2>/dev/null)" ]; then
     status="dirty"
   else
     status="clean"

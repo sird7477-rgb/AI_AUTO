@@ -11,8 +11,14 @@ case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts
 # git-exec-env vars (GIT_EXTERNAL_DIFF/PAGER/EDITOR/SSH/PROXY/ASKPASS, GIT_TRACE*, object-dir
 # overrides) — each is an arbitrary-command-execution / wrong-store vector through every git
 # call here. F1: the canonical denylist is single-sourced in hooks/git-scrub.sh (no drift).
+# BLAST-H1 (fail-OPEN): a missing/moved/unparseable git-scrub.sh (broken engine) must not
+# abort this advisory hook — source only when present AND `bash -n` parses; else warn+continue.
 # shellcheck source=hooks/git-scrub.sh
-. "$AI_AUTO_HOME/hooks/git-scrub.sh"
+if [ -f "$AI_AUTO_HOME/hooks/git-scrub.sh" ] && bash -n "$AI_AUTO_HOME/hooks/git-scrub.sh" 2>/dev/null; then
+  . "$AI_AUTO_HOME/hooks/git-scrub.sh"
+else
+  printf '\033[33m[post-commit] WARNING: AI_AUTO git-scrub.sh missing or unparseable (%s); continuing WITHOUT git-env scrub.\033[0m\n' "$AI_AUTO_HOME/hooks/git-scrub.sh" >&2
+fi
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "${repo_root}" || exit 0

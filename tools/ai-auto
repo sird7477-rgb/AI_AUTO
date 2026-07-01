@@ -145,7 +145,7 @@ ai_auto_setup() {
   # `git rm` de-pollution, so a late failure can never leave staged deletions with no
   # hooks installed.
   # (c) ensure .omx/ is gitignored via the project's exclude file.
-  local exclude_file
+  local exclude_file omx_exclude_status
   exclude_file="$(git -C "$top" rev-parse --git-path info/exclude 2>/dev/null || true)"
   case "$exclude_file" in
     "") exclude_file="$top/.git/info/exclude" ;;
@@ -153,7 +153,15 @@ ai_auto_setup() {
     *)  exclude_file="$top/$exclude_file" ;;
   esac
   mkdir -p "$(dirname "$exclude_file")"
-  grep -Eq '^[.]omx/?$' "$exclude_file" 2>/dev/null || printf '\n.omx/\n' >> "$exclude_file"
+  # D2: record whether we APPENDED (first run) or found it ALREADY PRESENT (idempotent
+  # re-run) so BOTH report branches below can disclose the .git/info/exclude mutation —
+  # previously only the "nothing to remove" branch mentioned .omx at all.
+  if grep -Eq '^[.]omx/?$' "$exclude_file" 2>/dev/null; then
+    omx_exclude_status="already present"
+  else
+    printf '\n.omx/\n' >> "$exclude_file"
+    omx_exclude_status="appended (.omx/)"
+  fi
 
   # (d) install THIN hook shims with the engine path BAKED at setup time (readlink -f).
   # Fail-closed: never clobber a pre-existing NON-shim hook.
@@ -184,7 +192,9 @@ ai_auto_setup() {
 # or any command-exec git var is arbitrary-command execution through a shimmed commit. F1: the
 # list is single-sourced from the baked engine's hooks/git-scrub.sh — NO inline copy here.
 AI_AUTO_HOME="$baked"
-if [ -f "\$AI_AUTO_HOME/hooks/git-scrub.sh" ]; then
+# BLAST-H1 pattern: source the scrub only when present AND parseable; a broken engine file
+# must not abort the commit via the shim's own set-less source.
+if [ -f "\$AI_AUTO_HOME/hooks/git-scrub.sh" ] && bash -n "\$AI_AUTO_HOME/hooks/git-scrub.sh" 2>/dev/null; then
   . "\$AI_AUTO_HOME/hooks/git-scrub.sh"
 fi
 # F1/R2-1: if the baked engine hook was moved/renamed/reinstalled elsewhere — or the path
@@ -193,6 +203,14 @@ fi
 # executable FILE; otherwise warn loudly + exit 0.
 if ! [ -f "\$AI_AUTO_HOME/hooks/$hook" ] || ! [ -x "\$AI_AUTO_HOME/hooks/$hook" ]; then
   printf '[$hook] WARNING: AI_AUTO engine hook missing or not a runnable file (%s); re-run '\''ai-auto setup'\''. NOT blocking commit.\n' "\$AI_AUTO_HOME/hooks/$hook" >&2
+  exit 0
+fi
+# BLAST-H2 (fail-OPEN): a PRESENT + executable but SYNTAX-BROKEN engine hook body (an
+# interrupted pull / bad merge in the baked engine) passes -f/-x, then aborts under the
+# hook's own set -e and BRICKS every project's commit. Pre-flight parse it; if it does not
+# parse, WARN loudly + exit 0 — never block the user's commit on an engine defect.
+if ! bash -n "\$AI_AUTO_HOME/hooks/$hook" 2>/dev/null; then
+  printf '[$hook] WARNING: AI_AUTO engine hook does not parse (%s); re-run '\''ai-auto setup'\'' or repair the engine. NOT blocking commit.\n' "\$AI_AUTO_HOME/hooks/$hook" >&2
   exit 0
 fi
 PATH="\$AI_AUTO_HOME/scripts:\$AI_AUTO_HOME/tools:\$PATH"
@@ -232,7 +250,7 @@ EOF
   # central --attr-source=<empty-tree> -c diff.external= … so the in-repo driver cannot bind.
   # shellcheck source=scripts/git-harden.sh
   . "$AI_AUTO_HOME/scripts/git-harden.sh"
-  local removed=() kept=() retired=() f pristine
+  local removed=() kept=() retired=() f pristine keep_reason
   for f in "${FRAMEWORK_PATHS[@]}"; do
     git -C "$top" ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
     # F6: cmp follows symlinks and ignores file type/mode; a deliberately-symlinked
@@ -249,7 +267,17 @@ EOF
       # marker and is worktree-clean -> safe de-pollution of retired framework cruft.
       retired+=("$f")
     else
-      kept+=("$f")
+      # D3: disambiguate the THREE collapsed keep reasons so an operator can spot a
+      # hardening-induced FALSE keep (a --attr-source benign-filter false-dirty shows up as
+      # "worktree-modified" on a truly-clean tree) vs a genuine customization vs a no-pristine.
+      if [ ! -e "$pristine" ]; then
+        keep_reason="no engine pristine — not a currently-shipped framework file"
+      elif ! cmp -s "$top/$f" "$pristine"; then
+        keep_reason="customized — content differs from engine pristine"
+      else
+        keep_reason="worktree-modified — matches pristine but has uncommitted local edits (or a benign in-repo filter reads as dirty)"
+      fi
+      kept+=("$f ($keep_reason)")
     fi
   done
   # scripts/verify.sh is special: identical to engine default -> safe pristine, remove;
@@ -286,6 +314,9 @@ EOF
   echo "Kept (customized — review): ${#kept[@]}"
   ((${#kept[@]})) && printf '  ~ %s\n' "${kept[@]}"
   echo
+  # D2: disclose the .git/info/exclude mutation on EVERY run (first-run/removal too), not
+  # only the idempotent "nothing to remove" branch.
+  echo ".omx/ gitignore in $exclude_file: ${omx_exclude_status}"
   echo "Hook shims (baked engine $baked) in: $hooks_dir"
   if ((${#rmset[@]})); then
     echo "Review, then commit the de-pollution:"

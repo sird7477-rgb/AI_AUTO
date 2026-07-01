@@ -252,7 +252,7 @@ Generated at: $(date -Iseconds)
 - reason: verify_failed (ai-auto verify exit ${verify_status})
 - coverage: none
 - trust: blocked_or_needs_attention
-- active_principal: ${ACTIVE_PRINCIPAL:-unknown}
+- active_principal: $(review_provenance_principal)
 - missing_or_unusable_reviewers: not_evaluated
 - verify_override: none
 - authority: blocked is not commit approval. Fix the failing ai-auto verify, or re-run with both AI_AUTO_VERIFY_OVERRIDE_REASON and AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY to proceed degraded.
@@ -518,25 +518,43 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
   if { review_git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
        | grep -Eq '^(scripts/|hooks/)'; then
     echo "[gate] automation scripts changed; running machinery-scope verify..."
-    set +e
-    # Run the harness as a clean standalone: scrub the gate-context REVIEW_* vars
-    # (the REVIEW_DECISION_GATE block exports REVIEW_TARGETED_RECHECK=0 etc.) so they
-    # do NOT leak into verify-machinery's own env-sensitive review-gate sub-tests and
-    # flip their expected behavior. (verify-in-gate-flakes-under-leaked-env.)
-    env \
-      -u REVIEW_DECISION_GATE \
-      -u REVIEW_CONTEXT_DETAIL \
-      -u REVIEW_PROVENANCE_SKIP \
-      -u REVIEW_INTEGRATION_ONLY \
-      -u REVIEW_TARGETED_RECHECK \
-      -u REVIEW_INCLUDE_UNTRACKED_CONTENT \
-      -u REVIEW_UNTRACKED_ALLOWLIST \
-      -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
-      -u RUN_CLAUDE_REVIEW \
-      -u AI_AUTO_IN_REVIEW_GATE \
-      "$AH/verify-machinery.sh" 2>&1 | tee -a "$VERIFY_OUTPUT_FILE"
-    machinery_status="${PIPESTATUS[0]}"
-    set -e
+    # OPCOST-HIGH-1: this ~6min self-test also runs in the VERY NEXT commit's pre-commit
+    # hook over an IDENTICAL surface, so it ran TWICE per change->commit cycle. Memoize:
+    # skip the re-run when a PASS marker for the exact tested-surface hash already exists
+    # (scripts/machinery-memo.sh). Any change to the surface misses the marker -> full run.
+    # BLAST-H1 pattern: source the (engine-internal) helper only if present AND parseable.
+    if [ -f "$AH/machinery-memo.sh" ] && bash -n "$AH/machinery-memo.sh" 2>/dev/null; then
+      # shellcheck source=scripts/machinery-memo.sh
+      . "$AH/machinery-memo.sh"
+    fi
+    if command -v machinery_memo_should_skip >/dev/null 2>&1 && machinery_memo_should_skip; then
+      machinery_memo_skip_notice | tee -a "$VERIFY_OUTPUT_FILE"
+      machinery_status=0
+    else
+      set +e
+      # Run the harness as a clean standalone: scrub the gate-context REVIEW_* vars
+      # (the REVIEW_DECISION_GATE block exports REVIEW_TARGETED_RECHECK=0 etc.) so they
+      # do NOT leak into verify-machinery's own env-sensitive review-gate sub-tests and
+      # flip their expected behavior. (verify-in-gate-flakes-under-leaked-env.)
+      env \
+        -u REVIEW_DECISION_GATE \
+        -u REVIEW_CONTEXT_DETAIL \
+        -u REVIEW_PROVENANCE_SKIP \
+        -u REVIEW_INTEGRATION_ONLY \
+        -u REVIEW_TARGETED_RECHECK \
+        -u REVIEW_INCLUDE_UNTRACKED_CONTENT \
+        -u REVIEW_UNTRACKED_ALLOWLIST \
+        -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
+        -u RUN_CLAUDE_REVIEW \
+        -u AI_AUTO_IN_REVIEW_GATE \
+        "$AH/verify-machinery.sh" 2>&1 | tee -a "$VERIFY_OUTPUT_FILE"
+      machinery_status="${PIPESTATUS[0]}"
+      set -e
+      # Record the PASS so the imminent pre-commit machinery-fold can skip the twin run.
+      if [ "${machinery_status}" -eq 0 ] && command -v machinery_memo_record_pass >/dev/null 2>&1; then
+        machinery_memo_record_pass
+      fi
+    fi
     if [ "${machinery_status}" -ne 0 ]; then
       echo "[gate] machinery-scope verify FAILED (exit ${machinery_status})." >&2
       verify_status="${machinery_status}"

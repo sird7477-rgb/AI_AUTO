@@ -32,6 +32,9 @@ REVIEW_RETRY_LIMIT="${REVIEW_RETRY_LIMIT:-3}"
 # instead of staying disabled until a manual RESET_DISABLED_AI_REVIEWERS (which
 # left Codex self-substitution as the de-facto reviewer). 0 disables auto-recovery.
 REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS="${REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS:-1800}"
+# Heartbeat cadence for the multi-minute reviewer phase so the gate does not
+# "look hung" (ST-P1-63). 0 disables the periodic heartbeat.
+REVIEW_HEARTBEAT_SECONDS="${REVIEW_HEARTBEAT_SECONDS:-30}"
 
 reviewer_disabled_file() {
   echo "${REVIEW_STATE_DIR}/$1.disabled"
@@ -2230,10 +2233,53 @@ run_codex_fallback_reviews() {
   fi
 }
 
+# with_heartbeat <label> <command...>
+# Runs <command> in THIS shell (return code, globals, and file writes preserved)
+# while a backgrounded printer emits a periodic
+# "[review] <label> still running… (elapsed Ns)" line, so an operator can tell the
+# multi-minute reviewer phase is alive rather than hung. Only the printer is
+# backgrounded — no daemon. Set REVIEW_HEARTBEAT_SECONDS=0 to silence the periodic
+# line (start/finish lines are always emitted).
+with_heartbeat() {
+  local label="$1"
+  shift
+  local interval="${REVIEW_HEARTBEAT_SECONDS:-30}"
+  local start_ts hb_pid="" rc
+  start_ts="$(date +%s 2>/dev/null || echo 0)"
+  echo "[review] ${label} starting…"
+
+  if [ "${interval}" -gt 0 ] 2>/dev/null; then
+    (
+      while true; do
+        sleep "${interval}"
+        hb_now="$(date +%s 2>/dev/null || echo 0)"
+        echo "[review] ${label} still running… (elapsed $(( hb_now - start_ts ))s)"
+      done
+    ) &
+    hb_pid=$!
+  fi
+
+  if "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [ -n "${hb_pid}" ]; then
+    kill "${hb_pid}" 2>/dev/null || true
+    wait "${hb_pid}" 2>/dev/null || true
+  fi
+
+  local end_ts
+  end_ts="$(date +%s 2>/dev/null || echo 0)"
+  echo "[review] ${label} phase finished in $(( end_ts - start_ts ))s"
+  return "${rc}"
+}
+
 load_model_routing
-run_claude
-run_gemini
-run_codex_fallback_reviews
+with_heartbeat "Claude review" run_claude
+with_heartbeat "Gemini review" run_gemini
+with_heartbeat "Codex fallback reviews" run_codex_fallback_reviews
 generate_codex_fallback_summary
 
 cat > "${SUMMARY_OUT}" <<SUMMARY
