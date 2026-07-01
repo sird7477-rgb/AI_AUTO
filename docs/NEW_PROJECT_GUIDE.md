@@ -295,5 +295,22 @@ Recommended adoption flow:
 - Project-specific agent instructions belong in the optional `AGENTS.md` overlay.
 - Project-specific checks belong in `scripts/verify-project.sh`.
 - Commit only after reviewing the staged changes and verification results.
+
+## Security note: benign git filters may show as "uncommitted"
+
+AI_AUTO hardens its git worktree reads against a hostile-repo filter RCE by
+ignoring the in-repo `.gitattributes` (`git --attr-source=<empty-tree>`). This is
+what blocks a malicious `filter.<x>.clean`/`.smudge` driver from executing when
+tooling inspects your tree. Because git cannot tell a malicious filter from a
+benign one, this also disables **benign** filters (EOL normalization, `git-lfs`,
+a legitimate clean filter). Consequence: a project that uses such a filter may be
+reported as **"uncommitted changes" / kept** in advisory tooling — `ai-auto
+doctor` shows a working-tree WARN, and `ai-tmux-worktree` keeps the worktree
+(`keep:uncommitted`) instead of GC'ing it. `git-lfs` is the canonical case: every
+LFS-managed blob shows as ` M`. This is a deliberate, unavoidable safe-side
+trade-off: it **never affects a gate verdict and never loses or mutates work** —
+it only errs toward "dirty/keep". Use `DOCTOR_SKIP_DIRTY_CHECK=1 ai-auto doctor`
+to skip the advisory dirty check when you know your tree is clean under a benign
+filter.
 </content>
 </invoke>

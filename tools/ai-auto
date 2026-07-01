@@ -77,7 +77,10 @@ is_retired_framework_file() {
     # AI_AUTO_TEMPLATE_VERSION: the old copy model vendored a bare version string (e.g.
     # 2026.06.30.6) as its first/only line. The filename is unambiguous (no project authors a
     # file so named); the version-string first-line guard keeps a same-named non-framework file safe.
-    AI_AUTO_TEMPLATE_VERSION) [[ "$first" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2} ]] ;;
+    # Full-line bare version only (optional .N patch, trailing whitespace) — the retired file
+    # was a lone version string. Anchored end ($) so a project file whose first line merely
+    # STARTS with a date (e.g. `2026.06.30 meeting notes`) is NOT matched and is KEPT.
+    AI_AUTO_TEMPLATE_VERSION) [[ "$first" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?[[:space:]]*$ ]] ;;
     *) return 1 ;;
   esac
 }

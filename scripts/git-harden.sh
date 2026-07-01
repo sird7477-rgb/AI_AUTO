@@ -24,6 +24,17 @@
 # Single-sourced so review-gate.sh, summarize-ai-reviews.sh, and collect-review-context.sh
 # share ONE implementation and a newly added patch-producing call cannot drift un-hardened.
 #
+# SECURITY TRADE-OFF (benign-filter false-dirty — UNAVOIDABLE, SAFE-SIDE): `--attr-source=<empty
+# -tree>` ignores the IN-REPO `.gitattributes`, which is what closes the hostile-repo clean/
+# smudge-filter RCE. But git cannot tell a MALICIOUS filter from a BENIGN one (EOL normalization,
+# git-lfs, a legit clean filter), so it disables ALL of them. Consequence: over a NORMAL project
+# that legitimately uses such a filter, a worktree-read status/diff routed through review_git may
+# report a genuinely-clean tree as MODIFIED (git-lfs is the canonical victim — every lfs blob
+# shows ` M`). This NEVER flips a gate verdict and NEVER loses/mutates work: it errs strictly
+# toward "dirty/keep" in advisory tooling (automation-doctor WARN, ai-tmux-worktree keep:
+# uncommitted, checkpoint churn). A filter-aware fallback is impossible (indistinguishable) and
+# is intentionally NOT attempted; the safe over-report is accepted. See docs/NEW_PROJECT_GUIDE.md.
+#
 # Empty-tree OID in the repo's hash algo (sha1 constant 4b825dc6… as fallback), computed once at
 # source time in the project repo's CWD — mirrors how the domain-pack validators derive it.
 _REVIEW_GIT_ATTR_NONE="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"

@@ -7368,11 +7368,32 @@ def is_text(f):
 # stash/apply/archive/cat-file (rule 4) ALSO run the in-repo `.gitattributes`+`.git/config`
 # filter driver on worktree blobs — `git status` runs `filter.<x>.clean` on a stat-dirty
 # tracked file (R12 RCE), the write-side (checkout/restore/reset --hard/stash/apply) runs
-# smudge, archive runs export filters, cat-file --filters runs clean. So EACH is scanned and
-# (rule 4) required to carry --attr-source or review_git. `add`/`ls-files` are DELIBERATELY
-# excluded: no shipped `git add` invocation exists (it appears only as suggestion TEXT, which
-# would false-positive), and `git ls-files --others` lists untracked NAMES and runs no filter.
-SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file'
+# smudge, archive runs export filters, cat-file --filters runs clean. `worktree` (rule 5, R13)
+# runs SMUDGE while `git worktree add` checks out the new tree (tools/ai-worktree, auto-invoked
+# by the tmux hook) — so `worktree add` MUST carry --attr-source/review_git, while the pure-
+# metadata forms (worktree list/remove/prune) run no filter and are exempt. So EACH filter-
+# touching sub is scanned and required to be hardened. `add`/`ls-files` are DELIBERATELY
+# excluded: no shipped `git add` STAGING invocation exists (`git worktree add` is a distinct
+# sub handled by rule 5; bare `git add` appears only as suggestion TEXT, which would false-
+# positive), and `git ls-files --others` lists untracked NAMES and runs no filter.
+#
+# END-THE-REGRESS classification (R13) — the COMPLETE distinct git-subcommand set actually
+# invoked in the shipped trust-path tree (scripts/ hooks/ tools/ templates/domain-packs/**;
+# verify-machinery.sh test fixtures are SELF-excluded). Each is classified so a maintainer
+# sees why it is or is not in SUBS. GUARDED = must carry --attr-source/review_git:
+#   (a) clean-filter over worktree blobs .... status, diff .................. GUARDED (in SUBS)
+#   (b) smudge-filter writes worktree blobs . worktree(add) ................. GUARDED (rule 5)
+#        checkout/restore/reset/stash/apply/archive/cat-file: NO shipped site — pre-emptive in SUBS
+#        rebase (safe-push.sh): smudge driver must live in YOUR local .git/config, not
+#          attacker CONTENT -> not a hostile-repo RCE -> intentionally NOT guarded
+#   (c) textconv/external-diff readers ...... show (collect-review-context, review_git-hardened),
+#        log (workspace-scan `log -1 --format`, no -p -> no diff -> no textconv/filter) . in SUBS
+#        blame: NO shipped site — pre-emptive in SUBS
+#   (d) FILTER-SAFE, intentionally NOT guarded (read no worktree blob / run no attr driver):
+#        rev-parse, config/`-c`, init, hash-object(--no-filters), ls-files, merge-base,
+#        merge-file, rev-list, remote, push, fetch, branch, commit, diff-tree, show-ref,
+#        show-toplevel/show-current(options), worktree list/remove/prune.
+SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file|worktree'
 INVOKE = re.compile(
     r'(?:(?:^|[;&|(){}`"\x27]|\b(?:then|do|else|elif|eval|xargs)\b[^;#]*?\s)\s*(?:(?:sudo|env|command|time|nohup|exec|builtin)\s+)*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
     r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(' + SUBS + r')"\s*,?)'
@@ -7450,12 +7471,22 @@ for f in sorted(targets):
             via_review_git = "review_git" in m.group(0)
             if "--attr-source=" not in line and not via_review_git:
                 violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
+        # rule 5 (R13): `git worktree add` checks out a NEW working tree and therefore runs the
+        # in-repo `.gitattributes`+`.git/config` SMUDGE filter on every blob written — a hostile-
+        # repo RCE auto-invoked by the tmux after-new-window hook (tools/ai-worktree). It MUST
+        # carry --attr-source=<empty-tree> or route through review_git. Scoped to the `add` form
+        # ONLY: `git worktree list/remove/prune` touch no blob and run no filter (would false-
+        # positive). `sub == "worktree"` here means the token after git+opts is `worktree`.
+        if sub == "worktree" and re.search(r'\bworktree\s+add\b', line):
+            via_review_git = "review_git" in m.group(0)
+            if "--attr-source=" not in line and not via_review_git:
+                violations.append("%s: `git worktree add` (smudge-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
 if violations:
     sys.stderr.write("R9-DRIFT VIOLATIONS:\n")
     for v in violations:
         sys.stderr.write("  " + v + "\n")
     sys.exit(1)
-print("R9-DRIFT OK: %d git diff/show/log/blame/status(+checkout/restore/reset/stash/apply/archive/cat-file) site(s) scanned, all hardened" % scanned)
+print("R9-DRIFT OK: %d git diff/show/log/blame/status(+checkout/restore/reset/stash/apply/archive/cat-file/worktree-add) site(s) scanned, all hardened" % scanned)
 PYEOF
   # (a) the real shipped tree MUST pass.
   out="$( python3 "${guard}" "${repo_root}" 2>&1 )" \
@@ -7600,6 +7631,105 @@ PYEOF
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     || { echo "[verify] R9-DRIFT: control b11-hardened (worktree-filter subcommand via review_git) FALSE-POSITIVED"; exit 1; }
   rm -f "${tmp_dir}/fake/scripts/b11.sh"
+  # b12 (R13): `git worktree add` is a SMUDGE runner (checks out the new tree) — an un-hardened
+  # one is the ai-worktree hostile-repo RCE (tmux-hook auto-invoked). rule 5 MUST fire.
+  for _b12 in \
+      'git worktree add "$target" "$wt_branch"' \
+      'git worktree add -b "$b" "$target" HEAD' \
+      'git -C "$p" worktree add ../wt HEAD'; do
+    printf '#!/usr/bin/env bash\n%s\n' "${_b12}" > "${tmp_dir}/fake/tools/ai-worktree"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b12 (un-hardened git worktree add smudge RCE) NOT caught — guard blind to worktree add (R13 regress): ${_b12}"; exit 1; }
+  done
+  # b12-hardened: `worktree add` carrying --attr-source, and via review_git, MUST pass.
+  printf '#!/usr/bin/env bash\ngit --attr-source="$_et" worktree add "$target" "$wt_branch"\n' > "${tmp_dir}/fake/tools/ai-worktree"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b12-hardened (worktree add via inline --attr-source) FALSE-POSITIVED"; exit 1; }
+  printf '#!/usr/bin/env bash\nreview_git worktree add "$target" HEAD\n' > "${tmp_dir}/fake/tools/ai-worktree"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b12-hardened (worktree add via review_git) FALSE-POSITIVED"; exit 1; }
+  # b12-exempt: pure-metadata worktree forms (list/remove/prune) run NO filter — MUST NOT fire
+  # (else every ai-worktree/ai-tmux-worktree management call false-positives).
+  printf '#!/usr/bin/env bash\ngit worktree list --porcelain\ngit -C "$p" worktree remove "$path"\ngit worktree prune\n' > "${tmp_dir}/fake/tools/ai-worktree"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b12-exempt (worktree list/remove/prune) FALSE-POSITIVED — rule 5 not scoped to `add`"; exit 1; }
+  rm -f "${tmp_dir}/fake/tools/ai-worktree"
+)
+
+echo "[verify] testing R13-WORKTREE-RCE (tools/ai-worktree's 'git worktree add' over a HOSTILE repo must NOT execute the in-repo .gitattributes-bound filter.<x>.smudge driver while checking out the new tree; inline --attr-source=<empty-tree> disarms it — this is the tmux-hook auto-invoked RCE)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  aiwt="${repo_root}/tools/ai-worktree"
+  test -s "${aiwt}" || { echo "[verify] R13-WORKTREE-RCE: ai-worktree not found"; exit 1; }
+  mk_smudge() {  # hostile repo: a tracked file bound (in-repo) to a SMUDGE filter that fires on
+                 # checkout. The driver is set in the IN-REPO .git/config (threat model: repo
+                 # delivered as a full .git dir, not via clone). Marker written to $1.
+    local p="$1" marker="$2"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      printf 'a.txt filter=evil\n' > .gitattributes; git add .gitattributes; git commit -qm attr
+      git config filter.evil.smudge "touch ${marker}; cat" )   # in-repo smudge driver (RCE)
+  }
+  # HARDENED: the REAL ai-worktree. Its `git --attr-source="$_et" worktree add` reads attributes
+  # from the empty tree -> the in-repo smudge binding is never consulted -> NO payload.
+  proj="${tmp_dir}/repo"; mk_smudge "${proj}" "${tmp_dir}/PWNED_SMUDGE"
+  rm -f "${tmp_dir}/PWNED_SMUDGE"
+  ( cd "${proj}"; bash "${aiwt}" wtsafe >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED_SMUDGE" \
+    || { echo "[verify] R13-WORKTREE-RCE: in-repo smudge filter EXECUTED during ai-worktree 'git worktree add' (RCE)"; exit 1; }
+  # POSITIVE CONTROL: a copy of ai-worktree with --attr-source STRIPPED (git --attr-source=... ->
+  # plain git). The SAME hostile repo MUST then fire the smudge on checkout, proving the negative
+  # is non-vacuous.
+  ctl="${tmp_dir}/ai-worktree-ctl"
+  sed -E 's/--attr-source="\$_et" //' "${aiwt}" > "${ctl}"; chmod +x "${ctl}"
+  proj2="${tmp_dir}/repo2"; mk_smudge "${proj2}" "${tmp_dir}/PWNED_SMUDGE_CTL"
+  rm -f "${tmp_dir}/PWNED_SMUDGE_CTL"
+  ( cd "${proj2}"; bash "${ctl}" wtctl >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_SMUDGE_CTL" \
+    || { echo "[verify] R13-WORKTREE-RCE: control (ai-worktree with --attr-source stripped) did NOT fire smudge — fixture is vacuous"; exit 1; }
+)
+
+echo "[verify] testing R13-BENIGN-FILTER (safe-side trade-off: a NORMAL repo using a BENIGN clean/EOL filter shows FALSE-DIRTY under the empty-tree attr-source hardening — advisory tooling degrades to warn/keep, NEVER crashes, loses work, or flips a gate verdict)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  doctor="${repo_root}/scripts/automation-doctor.sh"
+  tmuxwt="${repo_root}/tools/ai-tmux-worktree"
+  test -s "${doctor}" || { echo "[verify] R13-BENIGN-FILTER: automation-doctor not found"; exit 1; }
+  # A pristine repo with a BENIGN clean filter (CRLF->LF normalization) — the canonical
+  # git-lfs/EOL case. True state = CLEAN (plain `git status` is empty), but the empty-tree
+  # attr-source disables the benign clean filter too, so the hardened status over-reports ' M'.
+  proj="${tmp_dir}/repo"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '*.txt filter=norm\n' > .gitattributes
+    git config filter.norm.clean 'tr -d "\r"'; git config filter.norm.smudge cat
+    printf 'a\r\nb\r\n' > data.txt; git add .gitattributes data.txt; git commit -qm init )
+  # sanity: the tree is TRULY clean (filter-aware status is empty).
+  [ -z "$( cd "${proj}"; git status --short 2>/dev/null )" ] \
+    || { echo "[verify] R13-BENIGN-FILTER: fixture repo not actually clean under filter-aware status"; exit 1; }
+  # (1) automation-doctor DEGRADES to a WARN (not a crash, not a hard fail) — exit stays 0-class
+  # for the advisory dirty check and the wording is the documented over-report.
+  out="$( cd "${proj}"; DOCTOR_SKIP_DIRTY_CHECK=0 bash "${doctor}" 2>&1 || true )"
+  printf '%s\n' "${out}" | grep -q 'working tree has uncommitted changes' \
+    || { echo "[verify] R13-BENIGN-FILTER: doctor did not degrade to the documented uncommitted WARN over a benign-filter repo"; exit 1; }
+  # and the DOCTOR_SKIP_DIRTY_CHECK escape hatch still yields a clean skip (no data loss / no crash).
+  out2="$( cd "${proj}"; DOCTOR_SKIP_DIRTY_CHECK=1 bash "${doctor}" 2>&1 || true )"
+  printf '%s\n' "${out2}" | grep -q 'working tree dirty check skipped' \
+    || { echo "[verify] R13-BENIGN-FILTER: DOCTOR_SKIP_DIRTY_CHECK escape hatch broken"; exit 1; }
+  # (2) ai-tmux-worktree removability() degrades to keep:uncommitted (conservative KEEP — errs
+  # toward preserving work, never data loss). Extract & source the function over the benign repo.
+  removability_src="$( sed -n '/^removability() {/,/^}/p' "${tmuxwt}" )"
+  [ -n "${removability_src}" ] || { echo "[verify] R13-BENIGN-FILTER: could not extract removability()"; exit 1; }
+  verdict="$( eval "${removability_src}"; removability "${proj}" "" )"
+  case "${verdict}" in
+    keep:uncommitted) : ;;
+    *) echo "[verify] R13-BENIGN-FILTER: removability over benign-filter repo = '${verdict}', expected safe-side keep:uncommitted"; exit 1 ;;
+  esac
+  # (3) SAFE-SIDE proof: the repo is not corrupted and no work is lost — the tracked blob is
+  # intact and re-checkout is a no-op (the over-report is purely advisory, never a mutation).
+  ( cd "${proj}"; git cat-file -e HEAD:data.txt ) \
+    || { echo "[verify] R13-BENIGN-FILTER: tracked content lost — hardening must never mutate/lose work"; exit 1; }
 )
 
 echo "[verify] testing R11-SETUP-RCE (D1: 'ai-auto setup' on a HOSTILE project must NOT execute an in-repo .gitattributes-bound filter.<x>.clean driver via its de-pollution WORKTREE 'git diff --quiet' probes; the diffs are review_git-wrapped with central --attr-source=<empty-tree>)..."
@@ -7683,6 +7813,18 @@ echo "[verify] testing R11-1/R12-min (retired-framework de-pollution: BOTH retir
     || { echo "[verify] R11-1: project-authored docs/PATCH_NOTES.md vanished (must be kept)"; exit 1; }
   ( cd "${proj2}"; git ls-files --error-unmatch AI_AUTO_TEMPLATE_VERSION >/dev/null 2>&1 ) \
     || { echo "[verify] R12-min: project-authored AI_AUTO_TEMPLATE_VERSION vanished (must be kept)"; exit 1; }
+  # (3, R13-LOW) anchor regression: a project file whose FIRST LINE merely STARTS with a date
+  # (e.g. `2026.06.30 meeting notes`) is NOT a bare version string -> MUST be KEPT. Pre-anchor
+  # the unanchored `^[0-9]{4}\.[0-9]{2}\.[0-9]{2}` matched it and wrongly staged `git rm`.
+  proj3="${tmp_dir}/proj3"; mkdir -p "${proj3}"
+  ( cd "${proj3}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '2026.06.30 meeting notes\n\n- discuss release\n' > AI_AUTO_TEMPLATE_VERSION
+    git add AI_AUTO_TEMPLATE_VERSION; git commit -qm init )
+  ( cd "${proj3}"; bash "${launcher}" setup >/dev/null 2>&1 || true )
+  ( cd "${proj3}"; git diff --cached --name-status ) | grep -q 'AI_AUTO_TEMPLATE_VERSION' \
+    && { echo "[verify] R13-LOW: date-prefixed (non-bare-version) AI_AUTO_TEMPLATE_VERSION WRONGLY staged for removal — retire regex still unanchored"; exit 1; }
+  ( cd "${proj3}"; git ls-files --error-unmatch AI_AUTO_TEMPLATE_VERSION >/dev/null 2>&1 ) \
+    || { echo "[verify] R13-LOW: date-prefixed AI_AUTO_TEMPLATE_VERSION vanished (must be kept)"; exit 1; }
 )
 
 echo "[verify] testing R9b-ENGINE-RCE (in-repo .gitattributes clean filter must NOT execute via the ENGINE collector's WORKTREE diff path: collect-review-context.sh worktree diffs are review_git-wrapped with central --attr-source=<empty-tree>; engine analog of R9-VALIDATOR-RCE)..."

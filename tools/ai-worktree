@@ -88,13 +88,20 @@ fi
 
 [ ! -e "$target" ] || die "path already exists but is not a registered worktree: ${target}"
 
+# `git worktree add` checks out the new worktree, running the in-repo `.gitattributes`+
+# `.git/config` SMUDGE filter on every blob it writes -> hostile-repo RCE, auto-invoked via
+# the tmux after-new-window hook (a new window inside a hostile repo runs its filter). We are
+# NOT sourced through git-scrub/git-harden, so pin attributes to the EMPTY TREE at the call
+# site (mirrors the `git status` empty-tree pin in ai-tmux-worktree/ai-home): git then reads
+# attributes from the empty tree and the in-repo binding cannot bind a clean/smudge driver.
+_et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
 if git show-ref --verify --quiet "refs/heads/${wt_branch}"; then
   # Reuse an existing wt/<name> branch (not checked out elsewhere -> attach).
-  git worktree add "$target" "$wt_branch" >&2
+  git --attr-source="$_et" worktree add "$target" "$wt_branch" >&2
 else
   # New branch wt/<name> off the chosen base (default: current HEAD). Using a NEW branch
   # avoids the multi-terminal footgun of checking out a branch already live elsewhere.
-  git worktree add -b "$wt_branch" "$target" "${BRANCH_BASE:-HEAD}" >&2
+  git --attr-source="$_et" worktree add -b "$wt_branch" "$target" "${BRANCH_BASE:-HEAD}" >&2
 fi
 log "[worktree] created ${target} on branch ${wt_branch}"
 printf '%s\n' "$target"

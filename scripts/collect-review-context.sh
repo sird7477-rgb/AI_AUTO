@@ -147,7 +147,7 @@ write_diff_stat() {
     echo "No working tree diff detected; showing latest commit diff for post-commit review context."
     echo
     echo '```text'
-    git show --stat --oneline --decorate --find-renames HEAD
+    review_git show --stat --oneline --decorate --find-renames HEAD
     echo '```'
     echo
     return 0

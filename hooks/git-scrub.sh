@@ -13,6 +13,15 @@
 #   - object-dir overrides       : read/write the wrong object store
 #   - GIT_TRACE* (R5-2)          : append/clobber an attacker-chosen absolute path on every git op
 #   - GIT_TEMPLATE_DIR + attr/ceiling (R5-3): inject hooks into `git init` fixtures -> RCE
+# SECURITY TRADE-OFF (benign-filter false-dirty — UNAVOIDABLE, SAFE-SIDE): the companion call-
+# site `--attr-source=<empty-tree>` hardening (scripts/git-harden.sh) that closes the in-repo
+# clean/smudge-filter RCE also disables BENIGN in-repo filters (EOL normalization, git-lfs, a
+# legit clean filter) — git cannot distinguish malicious from benign. So a NORMAL project using
+# such a filter may show a truly-clean tree as "uncommitted/keep" in advisory tooling (doctor
+# WARN, ai-tmux-worktree keep). This NEVER affects a gate verdict and NEVER loses/mutates work
+# (errs toward dirty/keep). A filter-aware fallback is impossible and is not attempted. See
+# docs/NEW_PROJECT_GUIDE.md.
+#
 # NOTE: the unset above closes the ENV surface only. The project-local `.git/config`
 # `core.fsmonitor` exec vector is then closed for EVERY git call by the defensive
 # GIT_CONFIG_* re-export below (env-config overrides repo-local config). The repo-local
