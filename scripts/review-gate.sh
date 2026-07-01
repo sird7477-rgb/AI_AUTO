@@ -5,6 +5,23 @@ set -euo pipefail
 # symlinks) so siblings are reachable from ANY cwd / PATH / temp-sandbox fixture.
 AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
+# R7-F1 STANDALONE hardening: the gate is a documented standalone entrypoint. Under `ai-auto`
+# the launcher sources git-scrub.sh, so the child run-ai-reviews.sh inherits the GIT_CONFIG_*
+# `core.fsmonitor=` env pin; run STANDALONE there was NO pin, and run-ai-reviews.sh's
+# worktree-scanning git calls (`git diff --name-only`, `git ls-files --others`) would EXECUTE
+# an untrusted project's in-repo `core.fsmonitor` hook (RCE). Source the canonical scrub at
+# startup — as tools/ai-auto does — so the pin (and hostile-GIT_* unset) covers this process AND
+# every child it spawns (run-ai-reviews.sh, collect-review-context.sh, verify). git-harden.sh
+# (review_git) is sourced below for the --attr-source call-site defense; this closes the
+# fsmonitor CONFIG vector --attr-source cannot reach. hooks/ is a sibling of scripts/ and always
+# present in the engine repo; source only when present AND parseable (ai-auto BLAST-H1 idiom) so
+# `set -e` cannot abort the gate on a partial scripts/-only copy (a test harness copies scripts/
+# without hooks/).
+# shellcheck source=../hooks/git-scrub.sh
+if [ -f "$AH/../hooks/git-scrub.sh" ] && bash -n "$AH/../hooks/git-scrub.sh" 2>/dev/null; then
+  . "$AH/../hooks/git-scrub.sh"
+fi
+
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
 # Clear any stale verify-failure override marker at gate start so an override can

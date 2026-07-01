@@ -117,7 +117,12 @@ ai_auto_setup() {
   # R3-5: lock on the COMMON git dir (not the per-worktree --git-path) so two `ai-auto setup`
   # runs on DIFFERENT worktrees of one repo serialize against the SHARED info/exclude + hooks
   # they both write. (--git-path ai-auto-setup.lock resolves per-worktree -> no mutual excl.)
-  local _lockfile _lockfd _lockcommon
+  local _lockfile _lockfd _lockcommon _locktimeout
+  # R15-1: BOUND the wait. A bare `flock "$_lockfd"` (no -w) blocks FOREVER on a live-hung
+  # holder or a leaked non-CLOEXEC lock fd inherited by a surviving child (see R5-4 below) —
+  # wedging every later `ai-auto setup` (exit 124). Match resolve-feedback.sh's bounded
+  # `flock -w <timeout>`; on timeout, WARN (R15-2) and degrade rather than hang silently.
+  _locktimeout="${AI_AUTO_SETUP_LOCK_TIMEOUT_SECONDS:-10}"
   _lockcommon="$(git -C "$top" rev-parse --git-common-dir 2>/dev/null || true)"
   case "$_lockcommon" in "") _lockcommon="$top/.git" ;; /*) : ;; *) _lockcommon="$top/$_lockcommon" ;; esac
   _lockfile="$_lockcommon/ai-auto-setup.lock"
@@ -125,8 +130,17 @@ ai_auto_setup() {
     # NOTE: the 2>/dev/null is SCOPED to the group; a bare `exec ... 2>/dev/null` would
     # redirect the whole shell's stderr permanently and swallow every later message.
     if { exec {_lockfd}>"$_lockfile"; } 2>/dev/null; then
-      flock "$_lockfd" 2>/dev/null || true
+      # R15-2: a lost/timed-out lock is NOT silent — setup still mutates (info/exclude +
+      # hooks), so a concurrent racer must be disclosed. The `git rm` below is atomic
+      # all-or-nothing (R2-2), so degrading is safe; it must not be quiet.
+      if ! flock -w "$_locktimeout" "$_lockfd" 2>/dev/null; then
+        echo "ai-auto setup: WARNING could not acquire the setup lock within ${_locktimeout}s ($_lockfile); proceeding WITHOUT the setup lock — a concurrent 'ai-auto setup' on this repo may race." >&2
+      fi
+    else
+      echo "ai-auto setup: WARNING could not open the setup lock file ($_lockfile); proceeding WITHOUT the setup lock." >&2
     fi
+  else
+    echo "ai-auto setup: WARNING flock unavailable; proceeding WITHOUT the setup lock (concurrent setups not serialized)." >&2
   fi
 
   # F3: DIRTY-INDEX PRE-CHECK — per-file `git rm` under set -e can half-migrate if a
@@ -165,9 +179,14 @@ ai_auto_setup() {
 
   # (d) install THIN hook shims with the engine path BAKED at setup time (readlink -f).
   # Fail-closed: never clobber a pre-existing NON-shim hook.
-  local hooks_dir baked hook dst
-  hooks_dir="$(git -C "$top" rev-parse --git-path hooks 2>/dev/null || true)"
-  case "$hooks_dir" in /*) : ;; *) hooks_dir="$top/$hooks_dir" ;; esac
+  local hooks_dir baked hook dst tmp
+  # R15-3: `git rev-parse --git-path hooks` HONORS a repo-local `core.hooksPath` in the
+  # UNTRUSTED target's .git/config — a hostile value redirects these mode-755 shim writes to
+  # an ATTACKER path (arbitrary-location executable write / victim-hook clobber) AND leaves
+  # the real repo un-hardened while setup reports success. Derive the hooks dir from the
+  # already-resolved COMMON git dir instead (hooks are shared across worktrees), so a
+  # repo-local core.hooksPath override cannot redirect where the shims land.
+  hooks_dir="$_lockcommon/hooks"
   baked="$(readlink -f "$AI_AUTO_HOME")"
   if [ -n "$hooks_dir" ]; then
     mkdir -p "$hooks_dir"
@@ -184,7 +203,12 @@ ai_auto_setup() {
         echo "ai-auto setup: WARNING existing custom $hook left untouched: $dst (merge manually)" >&2
         continue
       fi
-      cat > "$dst" <<EOF
+      # R15-4: write to a same-dir temp then atomic `mv` into place. A SIGKILL mid-`cat`
+      # DIRECTLY over an already-executable $dst would leave a TRUNCATED executable hook that
+      # breaks every commit until re-run; the temp+rename makes the installed hook
+      # complete-or-absent (the old $dst survives intact until the rename swaps it).
+      tmp="$(mktemp "$hooks_dir/.$hook.XXXXXX")"
+      cat > "$tmp" <<EOF
 #!/usr/bin/env bash
 # AI_AUTO shim — baked engine path (do not edit; re-run 'ai-auto setup' to refresh).
 # R4-1/R3-3: scrub the CANONICAL git-exec-env denylist before running the engine hook — an
@@ -216,7 +240,8 @@ fi
 PATH="\$AI_AUTO_HOME/scripts:\$AI_AUTO_HOME/tools:\$PATH"
 exec "\$AI_AUTO_HOME/hooks/$hook" "\$@"
 EOF
-      chmod +x "$dst"
+      chmod +x "$tmp"
+      mv -f "$tmp" "$dst"
     done
   fi
 

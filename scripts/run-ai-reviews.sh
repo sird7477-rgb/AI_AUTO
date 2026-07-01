@@ -5,6 +5,10 @@ set -euo pipefail
 # the worktree `git diff --name-only` listings embedded in the reviewer prompts below run against
 # the (untrusted) project worktree, where an in-repo `.gitattributes` clean filter would otherwise
 # execute. `--attr-source` reads attributes from the empty tree, disarming that driver.
+# R7-F1: under the review-gate / ai-auto entrypoints the process already carries the git-scrub.sh
+# `core.fsmonitor=` env pin, so these worktree scans cannot run an in-repo `core.fsmonitor` hook.
+# The inline `-c core.fsmonitor=` below is DEFENSE-IN-DEPTH so the same scans stay RCE-safe even if
+# run-ai-reviews.sh is ever invoked directly (outside the gate) with an un-scrubbed env.
 REVIEW_ATTR_NONE="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
 
 OUT_DIR="${OUT_DIR:-.omx/review-results}"
@@ -1814,9 +1818,9 @@ Before issuing a verdict, read the referenced files directly from the workspace 
 Changed files visible to git:
 
 \`\`\`text
-$(git --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
-$(git diff --cached --name-only 2>/dev/null || true)
-$(git ls-files --others --exclude-standard 2>/dev/null || true)
+$(git -c core.fsmonitor= --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
+$(git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true)
+$(git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true)
 \`\`\`
 
 You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.
@@ -1884,9 +1888,9 @@ Before issuing a verdict, read the referenced files directly from the workspace 
 Changed files visible to git:
 
 \`\`\`text
-$(git --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
-$(git diff --cached --name-only 2>/dev/null || true)
-$(git ls-files --others --exclude-standard 2>/dev/null || true)
+$(git -c core.fsmonitor= --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
+$(git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true)
+$(git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true)
 \`\`\`
 
 You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.
@@ -1955,9 +1959,9 @@ Before issuing a verdict, read the referenced files directly from the workspace 
 Changed files visible to git:
 
 \`\`\`text
-$(git --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
-$(git diff --cached --name-only 2>/dev/null || true)
-$(git ls-files --others --exclude-standard 2>/dev/null || true)
+$(git -c core.fsmonitor= --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
+$(git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true)
+$(git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true)
 \`\`\`
 
 You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.

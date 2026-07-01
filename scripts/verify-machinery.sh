@@ -6950,6 +6950,67 @@ echo "[verify] testing ai-auto setup R3-5 (lock on the COMMON git dir, shared ac
     || { echo "[verify] R3-5: lock landed in a per-worktree dir (no cross-worktree mutual excl.)"; exit 1; }
 )
 
+echo "[verify] testing ai-auto setup R15-1 (repo-local core.hooksPath in .git/config cannot redirect shim writes to an attacker path)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  # UNTRUSTED repo pins a hostile core.hooksPath in ITS OWN .git/config (NOT the GIT_CONFIG_*
+  # env family that R2-3 covers — this is the on-disk config path git-scrub does not scrub).
+  # Without the R15-1 fix `git rev-parse --git-path hooks` honors it and drops the mode-755
+  # shims into the attacker dir (arbitrary-location executable write) while the REAL .git/hooks
+  # stays empty. The fix derives the hooks dir from the COMMON git dir instead.
+  attacker="${tmp_dir}/attacker"; mkdir -p "${attacker}"
+  ( cd "${proj}"; git config core.hooksPath "${attacker}" )
+  "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null 2>&1 || true
+  test ! -e "${attacker}/pre-commit" \
+    || { echo "[verify] R15-1: shim landed in the hostile core.hooksPath (arbitrary-write)"; exit 1; }
+  test ! -e "${attacker}/post-commit" \
+    || { echo "[verify] R15-1: post-commit shim landed in the hostile core.hooksPath"; exit 1; }
+  grep -q "AI_AUTO shim" "${proj}/.git/hooks/pre-commit" \
+    || { echo "[verify] R15-1: shim NOT installed in the REAL .git/hooks"; exit 1; }
+  grep -q "AI_AUTO shim" "${proj}/.git/hooks/post-commit" \
+    || { echo "[verify] R15-1: post-commit shim NOT installed in the REAL .git/hooks"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup R15-2/R15-3 (bounded flock -w: a live lock holder yields a WARNED bounded return, never an infinite hang)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    git add -A; git commit -qm base )
+  lock="${proj}/.git/ai-auto-setup.lock"
+  # A LIVE holder grabs the advisory lock on the common-git-dir lockfile and sleeps, modeling
+  # a hung/leaked-fd holder. A bare `flock` (no -w) would block the next setup FOREVER; the
+  # bounded `flock -w` must give up after the timeout, WARN, and still complete.
+  # Deterministic handshake: the holder signals AFTER it actually owns the flock, so a slow/
+  # loaded scheduler can never let setup grab an un-held lock (which would falsely show NO
+  # contention -> no warning -> a flaky R15-3). Wait for the ready marker before contending.
+  ( exec 9>"${lock}"; flock 9; : > "${tmp_dir}/holder-ready"; sleep 30 ) &
+  holder=$!
+  for _ in $(seq 1 200); do [ -e "${tmp_dir}/holder-ready" ] && break; sleep 0.1; done
+  test -e "${tmp_dir}/holder-ready" \
+    || { echo "[verify] R15-2: lock holder never acquired — fixture setup failed"; kill "${holder}" 2>/dev/null || true; exit 1; }
+  start=$(date +%s)
+  rc=0
+  out="$(AI_AUTO_SETUP_LOCK_TIMEOUT_SECONDS=2 timeout 25 "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" 2>&1)" || rc=$?
+  end=$(date +%s)
+  kill "${holder}" 2>/dev/null || true; wait "${holder}" 2>/dev/null || true
+  test "${rc}" -ne 124 \
+    || { echo "[verify] R15-2: setup HUNG on a live lock holder (timeout-killed, exit 124)"; exit 1; }
+  test "$(( end - start ))" -lt 20 \
+    || { echo "[verify] R15-2: setup did not return promptly under a live lock holder"; exit 1; }
+  echo "${out}" | grep -q "WITHOUT the setup lock" \
+    || { echo "[verify] R15-3: setup lost the lock SILENTLY (no serialization-lost warning)"; exit 1; }
+)
+
 echo "[verify] testing ai-auto R4-1 (GIT_EXTERNAL_DIFF scrubbed -> no RCE via gate diff + shimmed commit)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -7099,6 +7160,87 @@ echo "[verify] testing review-gate R5-1 (provenance git calls INERT to project-l
     || { echo "[verify] R5-1: control vectors inert — fixture would not catch a regression"; exit 1; }
 )
 
+echo "[verify] testing R16-INFO-ATTRIBUTES-RCE (review_git REFUSES a hostile \$GIT_DIR/info/attributes filter driver — the CRITICAL clean-filter RCE that BYPASSES --attr-source; in-tree .gitattributes + legit tracked-.gitattributes filters stay unaffected)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # \$GIT_DIR/info/attributes is git's HIGHEST-precedence attributes file. --attr-source (the
+  # central review_git neutralizer) only relocates the IN-TREE .gitattributes source; empirically
+  # (git 2.43) NO per-invocation switch (--attr-source/GIT_ATTR_SOURCE/core.attributesFile/
+  # GIT_ATTR_NOSYSTEM) covers info/attributes, so a clean filter bound there still execs its
+  # .git/config command through a hardened worktree read (e.g. `review_git diff --quiet` runs the
+  # clean filter to detect a change). Under the untrusted-repo-directory threat model (a copy
+  # carries .git/info/attributes + .git/config; same model the core.fsmonitor env-pin defends),
+  # this is a CRITICAL RCE. review_git's fail-closed guard REFUSES such a repo before any op.
+  harden="${repo_root}/scripts/git-harden.sh"
+  test -s "${harden}" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: git-harden.sh not found"; exit 1; }
+  mk_hostile() {  # $1 dest: repo whose .git/info/attributes binds a clean filter -> config exec
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      printf '* filter=evil\n' > .git/info/attributes
+      git config filter.evil.clean "touch ${tmp_dir}/INFOATTR; cat"
+      printf 'changed\n' >> a.txt )                                # worktree edit -> --quiet diff runs clean
+  }
+  # (1) HARDENED: the SAME reachable ops (ai-auto setup's `review_git ... diff --quiet` / `rm`,
+  # review-gate provenance's `review_git diff [--cached]`) through the shipped review_git must NOT
+  # run the info/attributes filter.
+  proj="${tmp_dir}/proj"; mk_hostile "${proj}"
+  # shellcheck source=/dev/null
+  ( cd "${proj}"; . "${harden}"
+    review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || true
+    review_git diff --cached --no-ext-diff --no-textconv >/dev/null 2>&1 || true
+    review_git rm --cached a.txt >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/INFOATTR" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: \$GIT_DIR/info/attributes clean filter EXECUTED through review_git (RCE bypassing --attr-source)"; exit 1; }
+  # (2) Positive control: the SAME wrapper with ONLY the fail-closed guard call stripped (the
+  # pre-fix review_git) MUST fire the canary on the SAME repo — proving the guard is load-bearing
+  # AND that --attr-source/-c/core.attributesFile do NOT, by themselves, cover info/attributes.
+  ctl="${tmp_dir}/harden-noguard.sh"
+  grep -v '_review_git_attr_guard || return' "${harden}" > "${ctl}"
+  proj2="${tmp_dir}/proj2"; mk_hostile "${proj2}"
+  # shellcheck source=/dev/null
+  ( cd "${proj2}"; . "${ctl}"
+    review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/INFOATTR" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: control (guard stripped) inert — fixture vacuous / --attr-source wrongly assumed to cover info/attributes"; exit 1; }
+  # (3) IN-TREE .gitattributes clean filter: --attr-source already neutralizes this; review_git
+  # must NOT refuse (no info/attributes) and must NOT run the filter — behavior preserved. NB:
+  # commit the .gitattributes binding + a.txt BEFORE defining filter.evil.clean, else the setup
+  # `git add` itself would run the clean filter (false marker unrelated to review_git).
+  proj3="${tmp_dir}/proj3"; mkdir -p "${proj3}"
+  ( cd "${proj3}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '* filter=evil\n' > .gitattributes
+    printf 'hello\n' > a.txt; git add .gitattributes a.txt; git commit -qm init
+    git config filter.evil.clean "touch ${tmp_dir}/INTREE; cat"
+    printf 'changed\n' >> a.txt )
+  # shellcheck source=/dev/null
+  ( cd "${proj3}"; . "${harden}"
+    rc=0; review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || rc=$?
+    test "${rc}" -ne 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: review_git wrongly REFUSED an in-tree .gitattributes (no info/attributes)"; exit 1; }
+    review_git status --porcelain >/dev/null 2>&1 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: review_git status failed on in-tree .gitattributes repo"; exit 1; } )
+  test ! -e "${tmp_dir}/INTREE" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: in-tree .gitattributes clean filter EXECUTED through review_git (--attr-source regression)"; exit 1; }
+  # non-vacuous: a BARE worktree `git diff --quiet` on the SAME repo DOES run the in-tree filter,
+  # proving --attr-source (not the setup) is what keeps the hardened negative above green.
+  ( cd "${proj3}"; git diff --quiet >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/INTREE" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: in-tree control inert — case (3) would not catch an --attr-source regression"; exit 1; }
+  # (4) LEGIT tracked .gitattributes filter (the git-lfs pattern): bound via the TRACKED file,
+  # NEVER info/attributes -> review_git must NOT refuse (exit != 3) and status/diff must work.
+  proj4="${tmp_dir}/proj4"; mkdir -p "${proj4}"
+  ( cd "${proj4}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '*.dat filter=lfsish\n' > .gitattributes
+    git config filter.lfsish.clean cat; git config filter.lfsish.smudge cat
+    printf 'blob\n' > f.dat; git add .gitattributes f.dat; git commit -qm init
+    printf 'more\n' >> f.dat )
+  # shellcheck source=/dev/null
+  ( cd "${proj4}"; . "${harden}"
+    rc=0; review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || rc=$?
+    test "${rc}" -ne 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: FALSE REFUSAL — repo whose LEGIT filter binds via tracked .gitattributes was refused"; exit 1; }
+    review_git status --porcelain | grep -q 'f.dat' || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: review_git status wrong on legit-filter repo"; exit 1; } )
+)
+
 echo "[verify] testing R6-1 (collect-review-context.sh patch calls INERT to project-local .gitattributes diff/textconv RCE — the gate's FIRST git work, run before any skip)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -7168,6 +7310,18 @@ echo "[verify] testing git-exec-env scrub SINGLE-SOURCE (F1: one list, no four-c
     grep -q 'hooks/git-scrub.sh"' "${repo_root}/${src}" \
       || { echo "[verify] F1: ${src} does not source hooks/git-scrub.sh"; exit 1; }
   done
+  # (a2) R7-F1 STANDALONE ENTRYPOINTS: the DOCUMENTED standalone tools automation-doctor.sh and
+  # review-gate.sh have worktree-scanning git calls (or spawn children that do) that are NOT all
+  # inline-pinned, so a standalone run (no ai-auto launcher) depends on THESE scripts sourcing
+  # git-scrub.sh for the process-wide core.fsmonitor= pin. A future edit dropping the source would
+  # silently reopen the standalone-doctor / standalone-gate fsmonitor RCE while the R9-DRIFT guard
+  # (which only checks --attr-source, NOT the fsmonitor pin) still passed. Narrow presence check —
+  # NOT a tree-wide rule change — so that regression fails the suite. See the R7-F1-STANDALONE
+  # regression fixture below for the behavioral proof.
+  for src in scripts/automation-doctor.sh scripts/review-gate.sh; do
+    grep -q 'hooks/git-scrub.sh"' "${repo_root}/${src}" \
+      || { echo "[verify] F1: standalone entrypoint ${src} does not source hooks/git-scrub.sh (fsmonitor RCE reopened)"; exit 1; }
+  done
   # (b) a freshly-generated shim must source git-scrub.sh too (no inline copy baked).
   proj="${tmp_dir}/proj"; mkdir -p "${proj}"
   cp "${tmp_dir}/eng/AGENTS.md" "${proj}/AGENTS.md"
@@ -7235,6 +7389,92 @@ echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/c
   ( cd "${proj2}"; . "${ctl_scrub}"; OUT_DIR="${tmp_dir}/rcctl" bash "${collector}" >/dev/null 2>&1 || true )
   test -e "${tmp_dir}/FSM" \
     || { echo "[verify] R7-F1: control (override stripped) inert — fixture would not catch a regression"; exit 1; }
+)
+
+echo "[verify] testing R7-F1-STANDALONE (the DOCUMENTED standalone entrypoints — './scripts/automation-doctor.sh --project' and the review-gate->run-ai-reviews worktree scans — must NOT exec an untrusted project's in-repo core.fsmonitor hook when run WITHOUT the ai-auto launcher; they now source git-scrub.sh themselves)..."
+(
+  tmp_dir="$(mktemp -d)"
+  fake_home="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}" "${fake_home}"' EXIT
+  # Hostile project: its IN-REPO .git/config core.fsmonitor is an arbitrary program that fires on
+  # EVERY worktree-scanning git call (status / ls-files / check-ignore-triggered scans). Isolated
+  # HOME + GIT_CONFIG_NOSYSTEM so we NEVER read/write the real user's git config or siblings.
+  mk_fsmon_hostile() {
+    local p="$1"; mkdir -p "${p}/.omx"
+    ( cd "${p}"; HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 git init -q
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 git config user.email t@e.x
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 git config user.name T
+      printf 'hello\n' > a.txt
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 git add a.txt
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 git commit -qm init
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 git config core.fsmonitor "touch ${tmp_dir}/PWNED; true"
+      printf 'changed\n' >> a.txt            # unstaged edit -> `git status --short` worktree scan
+      printf 'untracked\n' > u.txt )         # -> `git ls-files --others` worktree scan
+  }
+
+  # --- F1: the REAL standalone doctor entrypoint ---------------------------------------------
+  doc_proj="${tmp_dir}/docproj"; mk_fsmon_hostile "${doc_proj}"
+  # NON-VACUOUS positive control: the SAME hostile repo, one of the doctor's own worktree-scan
+  # calls (`git status --short`) run UNPINNED (ambient git-scrub pin explicitly removed) MUST fire —
+  # proves the fixture repo is genuinely armed and these are the live vectors.
+  rm -f "${tmp_dir}/PWNED"
+  ( cd "${doc_proj}"; env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 git status --short >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R7-F1-STANDALONE: control (unpinned doctor-vector git status) inert — fixture repo not armed (vacuous)"; exit 1; }
+  # THE FIX: the real standalone doctor sources git-scrub.sh itself, so its process carries the
+  # core.fsmonitor= pin and NONE of its scans exec the hook. (Revert the source in the doctor and
+  # this assertion fails — non-vacuous.)
+  rm -f "${tmp_dir}/PWNED"
+  ( cd "${doc_proj}"; HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 \
+      "${repo_root}/scripts/automation-doctor.sh" --project >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R7-F1-STANDALONE: standalone automation-doctor.sh EXECUTED in-repo core.fsmonitor (RCE reopened — is it still sourcing hooks/git-scrub.sh?)"; exit 1; }
+
+  # --- F2: the review-gate -> run-ai-reviews worktree scans -----------------------------------
+  # review-gate.sh sources git-scrub.sh at startup and spawns run-ai-reviews.sh as a CHILD, which
+  # therefore inherits the core.fsmonitor= env pin covering ITS worktree scans (and its own child
+  # collect-review-context.sh). Emulate that gate process boundary: a parent that sourced git-scrub
+  # runs run-ai-reviews.sh's real F2 scan calls -> inert; control (no source) -> fires.
+  rar_proj="${tmp_dir}/rarproj"; mk_fsmon_hostile "${rar_proj}"
+  # Extract the three real worktree-scan call lines verbatim from run-ai-reviews.sh (strip the
+  # `$( ... || true)` command-substitution wrapper) so the fixture exercises the SHIPPED text.
+  rar_lines="$(grep -E 'diff --name-only 2>/dev/null|diff --cached --name-only 2>/dev/null|ls-files --others --exclude-standard 2>/dev/null' \
+    "${repo_root}/scripts/run-ai-reviews.sh" | head -n 3 | sed 's/^[[:space:]]*\$(//; s/ || true)[[:space:]]*$//')"
+  test -n "${rar_lines}" \
+    || { echo "[verify] R7-F1-STANDALONE: could not extract run-ai-reviews F2 scan lines (script drift?)"; exit 1; }
+  # The PRE-FIX form of the same three lines: the inline `-c core.fsmonitor=` defense stripped out
+  # (== the shipped text at 219bbd2). Used as the non-vacuous CONTROL so we prove the repo/vector
+  # is genuinely armed even though the SHIPPED lines are now hardened inline.
+  rar_prefix="$(printf '%s\n' "${rar_lines}" | sed 's/ -c core\.fsmonitor=//')"
+  run_rar_scans() {  # $1 = the 3 scan lines to eval, in $PWD
+    bash -c '
+      REVIEW_ATTR_NONE="$(git hash-object -t tree /dev/null 2>/dev/null)"
+      while IFS= read -r _l; do eval "$_l" >/dev/null 2>&1 || true; done <<< "$1"' _ "$1"
+  }
+  # Control (NON-VACUOUS): pre-fix lines in an UNPINNED process (ambient pin removed) MUST fire.
+  rm -f "${tmp_dir}/PWNED"
+  ( cd "${rar_proj}"; env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 bash -c "$(declare -f run_rar_scans); run_rar_scans \"\$1\"" _ "${rar_prefix}" || true )
+  test -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R7-F1-STANDALONE: control (unpinned PRE-FIX run-ai-reviews scans) inert — fixture would not catch a regression (vacuous)"; exit 1; }
+  # FIX A (inline defense-in-depth): the SHIPPED lines carry `-c core.fsmonitor=`, so even UNPINNED
+  # the three F2 sites are inert. (Revert the inline in run-ai-reviews.sh -> this fails.)
+  rm -f "${tmp_dir}/PWNED"
+  ( cd "${rar_proj}"; env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+      HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 bash -c "$(declare -f run_rar_scans); run_rar_scans \"\$1\"" _ "${rar_lines}" || true )
+  test ! -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R7-F1-STANDALONE: shipped run-ai-reviews F2 scans EXECUTED in-repo core.fsmonitor unpinned (inline -c core.fsmonitor= defense missing)"; exit 1; }
+  # FIX B (gate env-pin path — the REAL protection for run-ai-reviews AND its child collect-review-
+  # context.sh, which is out of run-ai-reviews' own text): review-gate.sh sources git-scrub, so the
+  # spawned child inherits the pin. Emulate with the PRE-FIX lines under a git-scrub-sourced parent
+  # -> inert. (Revert the source in review-gate.sh -> the gate no longer pins -> this path reopens.)
+  rm -f "${tmp_dir}/PWNED"
+  # shellcheck disable=SC1090  # dynamic source of the engine git-scrub.sh (the gate's own source)
+  ( cd "${rar_proj}"; . "${repo_root}/hooks/git-scrub.sh"; HOME="${fake_home}" GIT_CONFIG_NOSYSTEM=1 \
+      bash -c "$(declare -f run_rar_scans); run_rar_scans \"\$1\"" _ "${rar_prefix}" || true )
+  test ! -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R7-F1-STANDALONE: review-gate env-pin path did NOT neutralize run-ai-reviews in-repo core.fsmonitor (RCE)"; exit 1; }
 )
 
 echo "[verify] testing R8-H8-1 (SOURCED-chokepoint integration: a plain patch-producing 'git diff' through a shell that sourced git-scrub.sh SUCCEEDS with real output — diff.external='' must NOT be exported)..."
@@ -8120,7 +8360,7 @@ echo "[verify] testing BLAST-H2 (present-but-syntax-broken baked engine hook mus
     || { echo "[verify] BLAST-H2: broken baked hook did not abort when exec'd directly (control invalid)"; exit 1; }
 )
 
-echo "[verify] testing OPCOST-HIGH-1 (machinery self-test memoization: unchanged surface skips, touched surface re-runs)..."
+echo "[verify] testing OPCOST-HIGH-1 (machinery self-test memoization: whole-worktree surface — unchanged skips, ANY tested-tree change (incl. ROOT product code pytest imports) re-runs)..."
 (
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
@@ -8128,7 +8368,13 @@ echo "[verify] testing OPCOST-HIGH-1 (machinery self-test memoization: unchanged
   mkdir -p "${repo}/scripts" "${repo}/hooks" "${repo}/tools" "${repo}/tests"
   printf 'echo hi\n' > "${repo}/scripts/x.sh"
   printf 'echo t\n'  > "${repo}/tests/t.sh"
+  # A ROOT-LEVEL product file the suite imports (pythonpath=.): it is INSIDE the tested surface
+  # (whole worktree) but was OUTSIDE the retired path-allowlist. Breaking it is the exact
+  # red-team false-skip repro; the memo MUST now re-run when it changes.
+  printf 'VALUE = 1\n' > "${repo}/app.py"
   ( cd "${repo}"; git init -q; git config user.email t@e.x; git config user.name T
+    # The .omx/ marker must stay ignored so writing it does not perturb the worktree hash.
+    printf '.omx/\n' >> .git/info/exclude
     git add -A; git commit -qm base )
   (
     cd "${repo}"
@@ -8140,19 +8386,29 @@ echo "[verify] testing OPCOST-HIGH-1 (machinery self-test memoization: unchanged
     machinery_memo_record_pass
     test -f "${MACHINERY_MEMO_MARKER}" \
       || { echo "[verify] OPCOST-HIGH-1: record_pass wrote no marker"; exit 1; }
-    # 3) SECOND invocation on the UNCHANGED surface -> SKIPPED (the memoization proof).
+    # 3) SECOND invocation on the UNCHANGED surface -> SKIPPED (the memoization proof; writing
+    #    the ignored marker did NOT change the hash).
     machinery_memo_should_skip \
       || { echo "[verify] OPCOST-HIGH-1: unchanged surface was NOT skipped on the 2nd run"; exit 1; }
     machinery_memo_skip_notice | grep -q '\[skip\] machinery unchanged since last PASS' \
       || { echo "[verify] OPCOST-HIGH-1: skip notice text drifted"; exit 1; }
-    # 4) touch a TESTED file -> surface hash changes -> must NOT skip (full run).
-    printf 'echo changed\n' >> scripts/x.sh
-    if machinery_memo_should_skip; then echo "[verify] OPCOST-HIGH-1: skipped a CHANGED surface (false skip)"; exit 1; fi
-    # 5) a change OUTSIDE the tested surface must NOT invalidate a fresh PASS marker.
+    # 4) SAFETY DIRECTION (the regression this fixture exists for). Record a PASS on the good
+    #    tree, then break a ROOT product file (app.py) and stage it — the red-team repro. The
+    #    memo MUST now RE-RUN (NOT skip). Under the retired path-allowlist this file was not
+    #    hashed, so should_skip returned true -> FALSE GREEN. Reverting the machinery-memo fix
+    #    makes THIS assertion fail (non-vacuous).
     machinery_memo_record_pass
-    printf 'unrelated\n' > "${repo}/README.md"; git add README.md
+    printf 'raise RuntimeError("broken")\n' >> app.py; git add app.py
+    if machinery_memo_should_skip; then
+      echo "[verify] OPCOST-HIGH-1: FALSE SKIP — broke ROOT product file app.py but memo said skip"; exit 1
+    fi
+    # 5) GENUINE POSITIVE (optimization preserved). Restore the tree to the recorded state and
+    #    re-record; a change to a truly IGNORED file must NOT invalidate the marker -> STILL skip.
+    git checkout -q -- app.py; git reset -q -- app.py
+    machinery_memo_record_pass
+    mkdir -p .omx; printf 'ignored churn\n' > .omx/junk
     machinery_memo_should_skip \
-      || { echo "[verify] OPCOST-HIGH-1: a non-surface change wrongly invalidated the marker"; exit 1; }
+      || { echo "[verify] OPCOST-HIGH-1: an IGNORED-file change wrongly invalidated the marker (optimization broken)"; exit 1; }
   )
 )
 

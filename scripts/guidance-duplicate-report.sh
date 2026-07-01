@@ -80,12 +80,13 @@ run_jscpd() {
 }
 
 run_fallback_report() {
-  local file_list
-  local repeated_lines
-  local repeated_headings
+  # Script-scoped (not `local`) so the EXIT trap can still see them if `set -e` aborts
+  # mid-function; a pipeline failure must not LEAK these three mktemp files. The trailing
+  # `rm -f` remains for the normal path; the trap guards against unset under `set -u`.
   file_list="$(mktemp)"
   repeated_lines="$(mktemp)"
   repeated_headings="$(mktemp)"
+  trap 'rm -f "${file_list:-}" "${repeated_lines:-}" "${repeated_headings:-}"' EXIT
 
   for path in "${SCOPE[@]}"; do
     if [ -f "${path}" ]; then

@@ -5,6 +5,22 @@ set -euo pipefail
 # cwd; project artifacts/.omx stay relative to $(pwd).
 AH="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
+# R7-F1 STANDALONE hardening: this doctor is a DOCUMENTED standalone entrypoint
+# (`./scripts/automation-doctor.sh --project`; install-ubuntu-prereqs.sh, bootstrap-ai-lab.sh).
+# Unlike `ai-auto doctor` (whose launcher sources git-scrub.sh), a standalone run had NO
+# process-env pin, so its worktree-scanning git calls (`git ls-files --error-unmatch`,
+# `git check-ignore`, `git status`) would EXECUTE an untrusted project's in-repo
+# `.git/config core.fsmonitor` hook program (RCE). Source the canonical scrub at startup —
+# exactly as tools/ai-auto does — so the GIT_CONFIG_* `core.fsmonitor=` env pin (and the
+# hostile-GIT_* unset) covers EVERY git call in this process at once. hooks/ is a sibling of
+# scripts/ and always present in the engine repo (where this documented entrypoint runs); source
+# only when present AND parseable (ai-auto BLAST-H1 idiom) so `set -e` cannot abort the doctor on a
+# partial scripts/-only copy (e.g. a test harness that copies scripts/ without hooks/).
+# shellcheck source=../hooks/git-scrub.sh
+if [ -f "$AH/../hooks/git-scrub.sh" ] && bash -n "$AH/../hooks/git-scrub.sh" 2>/dev/null; then
+  . "$AH/../hooks/git-scrub.sh"
+fi
+
 FIX=0
 SKIP_DIRTY_CHECK="${DOCTOR_SKIP_DIRTY_CHECK:-0}"
 OMX_ARTIFACT_WARN_COUNT="${OMX_ARTIFACT_WARN_COUNT:-120}"

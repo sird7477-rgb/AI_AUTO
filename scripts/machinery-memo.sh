@@ -9,37 +9,49 @@
 # re-run. SAFE-SIDE: skip ONLY on an EXACT surface-hash match; ANY change to the tested
 # surface changes the hash -> marker miss -> full run. Any hashing hiccup -> no skip.
 #
+# CRITICAL (blue-memo): the tested surface is the WHOLE WORKING TREE, not a path-allowlist.
+# verify-machinery.sh's FIRST step is `pytest -q`, and pytest.ini sets `pythonpath = .`, so
+# the suite imports this repo's PRODUCT code from the ROOT (app.py, incident_ops.py,
+# repository.py, config/, ...) — files OUTSIDE any hand-picked path list. A previous version
+# hashed only `scripts hooks tools templates/domain-packs tests`; breaking a root product
+# file left that hash byte-identical -> FALSE SKIP -> a broken tree committed green. The fix:
+# hash the exact content the suite can see — every tracked + untracked-non-ignored file as it
+# exists on disk — by writing a throwaway-index tree of the worktree (`git add -A` +
+# `write-tree`, honoring .gitignore/exclude so the .omx/ marker itself is not hashed). This
+# makes the hashed surface EQUAL the tested surface, so false-skip is structurally impossible,
+# and it deletes the drift-prone allowlist. The marker key also folds in the worktree identity
+# (--show-toplevel) so a PASS in worktree A can never satisfy a skip in worktree B.
+#
 # The marker lives under .omx/ (gitignored, project-local); it is content-addressed, so a
-# stale marker for a different surface simply never matches. Plain `git` is used (not the
-# review_git hardening wrapper): this path only ever runs in the TRUSTED engine self-host
-# repo (both call sites gate on AI_AUTO_HOME -ef repo-root), and the pre-commit context
-# does not source git-harden.sh.
+# stale marker for a different surface simply never matches. All git access goes through the
+# hardened review_git wrapper (scripts/git-harden.sh) — never a bare `git` — so the
+# clean/textconv/external-diff/fsmonitor code-exec surface stays closed even here.
 
 : "${MACHINERY_MEMO_MARKER:=.omx/state/machinery-last-pass.sha}"
 
-# Tested surface = the exact paths whose breakage the machinery harness gates. A content
-# hash of HEAD + the worktree-vs-HEAD diff of these paths captures the tracked+staged
-# state: any staged or unstaged content change to a surface file changes the diff, hence
-# the hash. (An unstaged edit reverted before commit also re-matches — correct: identical
-# surface, identical result.)
-machinery_memo_surface_paths() {
-  printf '%s\n' scripts hooks tools templates/domain-packs tests
-}
+# review_git (scripts/git-harden.sh) is the ONLY git entry point used below. The gate already
+# sources it; the pre-commit context does not — so pull it in if absent (from this file's dir).
+if ! command -v review_git >/dev/null 2>&1; then
+  # shellcheck source=scripts/git-harden.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-harden.sh"
+fi
 
+# Tested surface = the ENTIRE worktree content the suite can see. Compute a tree OID of the
+# current worktree (tracked + untracked-non-ignored, exact on-disk bytes) via a THROWAWAY
+# index so the real index is untouched; `git add -A` respects .gitignore/.git-info-exclude, so
+# the .omx/ marker is not part of the tree. Fold the worktree toplevel path into the final hash
+# (Finding-3: cross-worktree marker bleed) so an identical tree in a DIFFERENT worktree hashes
+# differently. Any failure -> empty hash -> fail-closed to "do not skip".
 machinery_memo_surface_hash() {
-  # R9-DRIFT: this worktree-vs-HEAD `git diff` reads worktree blobs, so it must be inert to an
-  # in-repo `.gitattributes`+`.git/config` clean/textconv/external-diff driver. Even though this
-  # path only ever runs in the TRUSTED engine self-host, carry the same defense every shipped
-  # worktree diff carries: `--attr-source=<empty-tree>` (ignores in-repo .gitattributes so no
-  # attribute driver binds) + `--no-ext-diff`/`--no-textconv` (close the config-level drivers).
-  local et
-  et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  {
-    git rev-parse HEAD 2>/dev/null || printf 'NO_HEAD\n'
-    printf '\037machinery-surface\037\n'
-    # shellcheck disable=SC2046  # word-splitting the path list is intended
-    git --attr-source="${et}" diff HEAD --no-ext-diff --no-textconv -- $(machinery_memo_surface_paths) 2>/dev/null || true
-  } | git hash-object --stdin 2>/dev/null || true
+  local idx tree top
+  idx="$(mktemp 2>/dev/null)" || return 0
+  rm -f "${idx}"   # git rejects a 0-byte index; remove so it writes a fresh one at this path
+  GIT_INDEX_FILE="${idx}" review_git add -A >/dev/null 2>&1
+  tree="$(GIT_INDEX_FILE="${idx}" review_git write-tree 2>/dev/null || true)"
+  rm -f "${idx}"
+  [ -n "${tree}" ] || return 0
+  top="$(review_git rev-parse --show-toplevel 2>/dev/null || printf 'NO_TOP')"
+  printf '%s\037%s\n' "${top}" "${tree}" | review_git hash-object --stdin 2>/dev/null || true
 }
 
 # True (exit 0) when a PASS marker exists whose recorded hash EXACTLY equals the current
