@@ -854,6 +854,31 @@ echo "[verify] testing safe-push race auto-rebase-retry + non-race stop (ST-P1-7
   [ "$(git rev-parse HEAD)" = "${head_before}" ] || { echo "[verify] safe-push: rewrote local history on a non-race"; exit 1; }
 )
 
+echo "[verify] testing odoo pack ships a runtime-DATA .gitignore scaffold (blue-r17-odoo)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_dataignore_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_dataignore_tmp EXIT
+  sample="${repo_root}/templates/domain-packs/odoo/git-tier/.gitignore.sample"
+  # The pack MUST ship the sample (slow git-status root cause: the multi-GB `00. DATA/`
+  # runtime dir enumerated on every untracked scan when it sits inside the working tree).
+  [ -f "${sample}" ] || { echo "[verify] odoo-dataignore: git-tier/.gitignore.sample missing"; exit 1; }
+  grep -q '00. DATA/' "${sample}" || { echo "[verify] odoo-dataignore: sample does not cover '00. DATA/'"; exit 1; }
+  # Non-vacuous: apply the sample in a scratch repo and prove `check-ignore` semantics —
+  # the runtime DATA dir (at any depth) IS ignored; a normal addon dir is NOT.
+  cd "${tmp_dir}"
+  git -c init.defaultBranch=main init -q
+  cp "${sample}" .gitignore
+  mkdir -p "00. DATA/01. Odoo.19" "99. odoo/00. DATA" "custom-addons/jw_sale"
+  git check-ignore -q "00. DATA/01. Odoo.19" \
+    || { echo "[verify] odoo-dataignore: runtime '00. DATA/' NOT ignored (slow git-status not fixed)"; exit 1; }
+  git check-ignore -q "99. odoo/00. DATA" \
+    || { echo "[verify] odoo-dataignore: nested '00. DATA/' (jw_dev layout) NOT ignored"; exit 1; }
+  if git check-ignore -q "custom-addons/jw_sale"; then
+    echo "[verify] odoo-dataignore: OVER-BROAD — a normal addon dir was ignored"; exit 1
+  fi
+)
+
 echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -919,6 +944,55 @@ echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
   done
   [ "${m1_double}" -eq 0 ] \
     || { echo "[verify] session-lock/M1: ${m1_double}/25 concurrent trials did NOT have exactly one acquirer (non-atomic acquire)"; exit 1; }
+
+  # TTL (PID-reuse / forged-live-PID wedge): a lock whose holder_pid is LIVE but whose
+  # acquired_at is older than AI_AUTO_SESSION_LOCK_TTL_SECONDS is STALE and must be RECLAIMED
+  # (acquire -> 0), not wedged at 75 forever. `held_pid` is our live sleep; a 10h-old acquired_at
+  # with TTL=1 forces expiry. Pre-fix (no TTL) a live foreign pid always returned 75 -> revert fails.
+  printf 'holder_pid=%s\nholder_session=other@host\nholder_op=x\nacquired_at=%s\n' \
+    "${held_pid}" "$(date -Iseconds -d '10 hours ago')" > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_SESSION_LOCK_TTL_SECONDS=1 AI_AUTO_SESSION_ID="self@host" \
+    session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock/TTL: live-but-expired lock not reclaimed, wedged at ${_rc}"; exit 1; }
+  # ... but a live foreign holder still WITHIN its TTL must still defer (75): TTL must not steal fresh locks.
+  printf 'holder_pid=%s\nholder_session=other@host\nholder_op=x\nacquired_at=%s\n' \
+    "${held_pid}" "$(date -Iseconds)" > "${SESSION_LOCK_FILE}"
+  _rc=0; AI_AUTO_SESSION_LOCK_TTL_SECONDS=3600 AI_AUTO_SESSION_ID="self@host" \
+    session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 75 ] || { echo "[verify] session-lock/TTL: live foreign within TTL not deferred (got ${_rc})"; exit 1; }
+
+  # Reclaim race (CRITICAL): N>=8 DISTINCT sessions all reclaiming ONE pre-planted STALE (dead-pid)
+  # lock must yield EXACTLY ONE holder. The old blind rm+ln reclaim let 2-7 racers `ln` into each
+  # other's gap and all win (~100/250). Barrier -> simultaneity; the winner sleeps briefly so its
+  # live pid keeps the losers on the live-foreign->75 path (isolating the SIMULTANEOUS-holder
+  # invariant from benign sequential handoff). Reverting to blind rm+ln makes some trial report >1.
+  reclaim_bad=0
+  for _trial in $(seq 1 15); do
+    _d="${tmp_dir}/rc-${_trial}"; mkdir -p "${_d}/.omx/state"; rm -f "${_d}/go" "${_d}/winners"
+    printf 'holder_pid=999999\nholder_session=ghost@host\nholder_op=x\nacquired_at=%s\n' \
+      "$(date -Iseconds)" > "${_d}/.omx/state/session.lock"
+    _pids=""
+    for _i in $(seq 1 8); do
+      (
+        cd "${_d}"
+        export SESSION_LOCK_FILE=".omx/state/session.lock"
+        unset AI_AUTO_SESSION_ID
+        export AI_AUTO_SESSION_ID="rc-racer-${_i}-$$@host"
+        while [ ! -f go ]; do :; done          # barrier -> tight simultaneity
+        SESSION_LOCK_HELD=0
+        session_lock_acquire validate >/dev/null 2>&1
+        if [ "${SESSION_LOCK_HELD}" = "1" ]; then echo x >> winners; sleep 0.3; fi
+      ) & _pids="${_pids} $!"
+    done
+    sleep 0.02
+    : > "${_d}/go"                             # release all racers together
+    # shellcheck disable=SC2086
+    wait ${_pids} 2>/dev/null || true
+    _w="$(wc -l < "${_d}/winners" 2>/dev/null | tr -d ' ')"; _w="${_w:-0}"
+    [ "${_w}" -ne 1 ] && reclaim_bad=$((reclaim_bad + 1))
+  done
+  [ "${reclaim_bad}" -eq 0 ] \
+    || { echo "[verify] session-lock/reclaim-race: ${reclaim_bad}/15 trials did NOT have exactly one reclaimer (double-acquire on stale reclaim)"; exit 1; }
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."
@@ -7269,6 +7343,121 @@ echo "[verify] testing review-gate R5-1 (provenance git calls INERT to project-l
     || { echo "[verify] R5-1: control vectors inert — fixture would not catch a regression"; exit 1; }
 )
 
+echo "[verify] testing BLUE-R17-PROVENANCE-FAILCLOSED (a corrupt/truncated .git/index must NOT collapse the provenance hash to a clean-tree constant and false-skip the AI panel on a DIRTY tree)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # The shared review_provenance_hash reads the working tree through the REAL .git/index and
+  # swallows git errors (2>/dev/null). A truncated index (empirically: `git diff`/`ls-files` exit
+  # 128) empties every diff section, collapsing the hash to the constant a clean checkout hashes
+  # to — so a DIRTY tree hashes identical to a prior CLEAN approval and review_provenance_decision
+  # returns `skip` (carried-forward proceed on a tree the panel never saw). review-gate.sh overrides
+  # the hash OUTSIDE the shared block (kept byte-identical with summarize-ai-reviews.sh) with a
+  # fail-closed index-health gate. Assert: after a clean approval, a dirty tree + corrupt index
+  # decides `full` (re-review), NOT `skip`.
+  blk="${tmp_dir}/blk.sh"; ovr="${tmp_dir}/ovr.sh"
+  sed -n '/# >>> review-provenance-shared/,/# <<< review-provenance-shared/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${blk}"
+  sed -n '/# >>> blue-r17-provenance-failclosed/,/# <<< blue-r17-provenance-failclosed/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${ovr}"
+  test -s "${blk}" && test -s "${ovr}" \
+    || { echo "[verify] BLUE-R17-PROVENANCE: could not extract shared block + fail-closed override"; exit 1; }
+  mk_repo() {  # $1 dest: a committed repo with .omx gitignored (mirrors the real reviewer-state dir)
+    local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf '.omx/\n' > .gitignore; git add .gitignore
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init )
+  }
+  # (1) FIXED path: block + fail-closed override.
+  proj="${tmp_dir}/proj"; mk_repo "${proj}"
+  decide_fixed() {
+    ( cd "${proj}"
+      export REVIEW_STATE_DIR="${proj}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      # shellcheck source=/dev/null
+      . "${blk}"
+      # shellcheck source=/dev/null
+      . "${ovr}"
+      "$@" )
+  }
+  decide_fixed review_provenance_record
+  # sanity: healthy exact-match still skips (the R2 optimization is preserved by the override)
+  test "$(decide_fixed review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R17-PROVENANCE: fixed override broke the healthy exact-match skip (optimization regressed)"; exit 1; }
+  ( cd "${proj}"; printf 'evil-payload\n' >> a.txt; printf 'DIRC\000\000\000\002\000' > .git/index )
+  test "$(decide_fixed review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R17-PROVENANCE: dirty tree + corrupt index did NOT force a full re-review (still false-skips)"; exit 1; }
+  # (2) CONTROL: block ONLY (no override) = the pre-fix behavior. The SAME dirty+corrupt tree MUST
+  # wrongly decide `skip`, proving the assertion above is not vacuously green.
+  proj2="${tmp_dir}/proj2"; mk_repo "${proj2}"
+  decide_ctl() {
+    ( cd "${proj2}"
+      export REVIEW_STATE_DIR="${proj2}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      # shellcheck source=/dev/null
+      . "${blk}"
+      "$@" )
+  }
+  decide_ctl review_provenance_record
+  ( cd "${proj2}"; printf 'evil-payload\n' >> a.txt; printf 'DIRC\000\000\000\002\000' > .git/index )
+  test "$(decide_ctl review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R17-PROVENANCE: control (pre-fix block) did NOT false-skip — fixture is vacuous"; exit 1; }
+)
+
+echo "[verify] testing BLUE-R17-BROKEN-SANDBOX (automation-doctor distinguishes git PRESENT-but-FAILING from a missing repo: a git that panics exit 101 must yield a 'sandbox broken' diagnostic, NOT 'not a git repository / git init')..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # Fake `git` that PANICS (exit 101) like codex >=0.142.4 with a socket in writable_roots — git
+  # PRESENT but every call failing. The old doctor swallowed the panic (2>/dev/null) and told the
+  # operator to `git init` an already-fine repo (the incident class where a broken sandbox looked
+  # like the agent ignoring guidelines).
+  mkdir -p "${tmp_dir}/bin"
+  printf '#!/usr/bin/env bash\necho "panic: writable_roots contains a socket" >&2\nexit 101\n' > "${tmp_dir}/bin/git"
+  chmod +x "${tmp_dir}/bin/git"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  out="${tmp_dir}/doctor.out"
+  ( cd "${proj}"; PATH="${tmp_dir}/bin:${PATH}" HOME="${tmp_dir}/home" \
+      bash "${repo_root}/scripts/automation-doctor.sh" --project > "${out}" 2>&1 || true )
+  grep -Eiq 'PRESENT but FAILING with exit 101|sandbox/environment is broken' "${out}" \
+    || { echo "[verify] BLUE-R17-BROKEN-SANDBOX: doctor did NOT emit the git-failing/sandbox-broken diagnostic"; cat "${out}"; exit 1; }
+  grep -Eq '^\[fail\] current directory is not a git repository$' "${out}" \
+    && { echo "[verify] BLUE-R17-BROKEN-SANDBOX: doctor still misreports a broken sandbox as a missing repo"; exit 1; }
+  grep -Eq '^  git init$' "${out}" \
+    && { echo "[verify] BLUE-R17-BROKEN-SANDBOX: doctor still suggests the destructive 'git init' on a broken sandbox"; exit 1; }
+  # Control (non-vacuous): a HEALTHY git (real one) must NOT emit the broken-sandbox diagnostic.
+  ( cd "${proj}"; git init -q )
+  ok="${tmp_dir}/doctor-ok.out"
+  ( cd "${proj}"; HOME="${tmp_dir}/home" bash "${repo_root}/scripts/automation-doctor.sh" --project > "${ok}" 2>&1 || true )
+  grep -Eiq 'PRESENT but FAILING|sandbox/environment is broken' "${ok}" \
+    && { echo "[verify] BLUE-R17-BROKEN-SANDBOX: healthy git wrongly flagged as a broken sandbox — diagnostic is unconditional"; exit 1; }
+  true
+)
+
+echo "[verify] testing BLUE-R17-DOCTOR-HYGIENE (a fake codex profile with a NON-directory writable_root — a socket — makes the doctor WARN 'will PANIC codex'; a directory writable_root does not)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  home="${tmp_dir}/home"; mkdir -p "${home}/.codex"
+  sock="${home}/.codex/docker.sock"
+  python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "${sock}" 2>/dev/null || true
+  test -S "${sock}" || { echo "[verify] BLUE-R17-DOCTOR-HYGIENE: could not create a unix socket fixture"; exit 1; }
+  # multi-line writable_roots array with BOTH a valid dir (/run) and the socket.
+  { printf '[sandbox_workspace_write]\n'
+    printf 'writable_roots = [\n  "/run",\n  "%s",\n]\n' "${sock}"; } > "${home}/.codex/odoo.config.toml"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"; ( cd "${proj}"; git init -q )
+  out="${tmp_dir}/doctor.out"
+  ( cd "${proj}"; HOME="${home}" bash "${repo_root}/scripts/automation-doctor.sh" --project > "${out}" 2>&1 || true )
+  grep -Eiq "writable_root '${sock}' is not a directory" "${out}" \
+    || { echo "[verify] BLUE-R17-DOCTOR-HYGIENE: doctor did NOT warn on the socket writable_root"; cat "${out}"; exit 1; }
+  grep -Eiq "will PANIC codex" "${out}" \
+    || { echo "[verify] BLUE-R17-DOCTOR-HYGIENE: doctor warning missing the codex-panic advisory"; exit 1; }
+  # Control (non-vacuous): the DIRECTORY writable_root (/run) must NOT be flagged.
+  grep -Eiq "writable_root '/run' is not a directory" "${out}" \
+    && { echo "[verify] BLUE-R17-DOCTOR-HYGIENE: a directory writable_root was wrongly flagged — check over-warns"; exit 1; }
+  true
+)
+
 echo "[verify] testing R16-INFO-ATTRIBUTES-RCE (review_git REFUSES a hostile \$GIT_DIR/info/attributes filter driver — the CRITICAL clean-filter RCE that BYPASSES --attr-source; in-tree .gitattributes + legit tracked-.gitattributes filters stay unaffected)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -7384,6 +7573,80 @@ echo "[verify] testing R16-INFO-ATTRIBUTES-RCE (review_git REFUSES a hostile \$G
   ev_ops "${tmp_dir}/e_q";  test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: quoted-value filter driver EXECUTED / not refused"; exit 1; }
   mk_evade "${tmp_dir}/e_m"  '[attr]m filter=-x\n* m\n' 'git config filter.-x.clean "touch '"${tmp_dir}"'/PWNED; cat"'
   ev_ops "${tmp_dir}/e_m";  test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: macro-attribute (dash) filter driver EXECUTED / not refused"; exit 1; }
+
+  # (5b) UNICODE-WHITESPACE DRIVER-NAME evasion (R17 — the 3rd bypass of THIS guard, after env
+  # GIT_CONFIG and leading-dash `-x`). git splits info/attributes lines on ASCII whitespace ONLY,
+  # so a driver NAMED with a leading Unicode-space codepoint (NBSP U+00A0 / U+2000 / U+202F /
+  # U+3000 / …) keeps those non-ASCII bytes AS the driver name and git EXECUTES the .git/config
+  # clean/diff driver. But GNU grep's `[[:space:]]` under a MULTIBYTE locale (LC_ALL=*.UTF-8)
+  # classifies those codepoints as space (WHICH ones depends on the libc ctype table), so the
+  # pre-R17 `=[^[:space:]]` did NOT match a Unicode-space-led name → the guard ALLOWED → canary
+  # fired (proven: `filter=<NBSP>x`, `diff=<NBSP>y`, U+2000, U+3000). The R17 guard runs its grep
+  # under LC_ALL=C (ASCII byte semantics = git's split set), so ANY name git accepts is a name the
+  # guard rejects, independent of ambient locale. Each unicode/tab variant here must fire NO canary
+  # AND refuse (rc 3). Real codepoint bytes via $'…' land in BOTH info/attributes and the config
+  # key; run under a UTF-8 locale so the pre-fix classification would (mis)apply — the guard's
+  # internal LC_ALL=C must win over this ambient locale.
+  mk_uni() {  # $1 dest  $2 leading-bytes(real)  $3 attr(filter|diff)  $4 driver subkey(clean|command)
+    local p="$1" lead="$2" attr="$3" sub="$4"; rm -rf "${p}"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      printf 'a.txt %s=%sx\n' "${attr}" "${lead}" > .git/info/attributes   # NAME led by the codepoint
+      git config "${attr}.${lead}x.${sub}" "touch ${tmp_dir}/PWNED; cat"     # binds only if git keeps the bytes
+      printf 'changed\n' >> a.txt )                                          # worktree edit -> reads run driver
+  }
+  uni_refuse() {  # $1 dest  $2 label : the SHIPPED guard must fire NO canary AND refuse (rc 3)
+    rm -f "${tmp_dir}/PWNED"; ev_ops "$1"
+    test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: unicode/tab driver-name ($2) EXECUTED through review_git (guard bypass)"; exit 1; }
+    # shellcheck source=/dev/null
+    ( cd "$1"; . "${harden}"; rc=0; review_git diff --quiet >/dev/null 2>&1 || rc=$?
+      test "${rc}" -eq 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: guard did NOT refuse unicode/tab driver-name ($2) (rc=${rc})"; exit 1; } )
+  }
+  # Pick an installed UTF-8 locale (prefer C./en_US) to reproduce the reporter's multibyte condition.
+  uni_locale="$( { locale -a 2>/dev/null | grep -iE 'utf-?8' | grep -iE '^(C|en_US)\.' ; locale -a 2>/dev/null | grep -iE 'utf-?8' ; } 2>/dev/null | head -1 || true)"
+  : "${uni_locale:=C.UTF-8}"
+  ( export LC_ALL="${uni_locale}" LANG="${uni_locale}"
+    mk_uni "${tmp_dir}/u_nb"  $'\xc2\xa0'     filter clean;   uni_refuse "${tmp_dir}/u_nb"  "NBSP filter"
+    mk_uni "${tmp_dir}/u_dnb" $'\xc2\xa0'     diff   command; uni_refuse "${tmp_dir}/u_dnb" "NBSP diff"
+    mk_uni "${tmp_dir}/u_20"  $'\xe2\x80\x80' filter clean;   uni_refuse "${tmp_dir}/u_20"  "U+2000 filter"
+    mk_uni "${tmp_dir}/u_2f"  $'\xe2\x80\xaf' filter clean;   uni_refuse "${tmp_dir}/u_2f"  "U+202F filter"
+    mk_uni "${tmp_dir}/u_30"  $'\xe3\x80\x80' diff   command; uni_refuse "${tmp_dir}/u_30"  "U+3000 diff"
+    mk_uni "${tmp_dir}/u_09"  $'\xe2\x80\x89' filter clean;   uni_refuse "${tmp_dir}/u_09"  "U+2009 filter" )
+  # a TAB-SEPARATED filter attr (`a.txt<TAB>filter=tv`): git splits on the tab -> binds `tv` and
+  # would EXEC; under LC_ALL=C the `(^|[[:space:]])` anchor still matches the ASCII tab -> REFUSE.
+  mk_evade "${tmp_dir}/e_tab" 'a.txt\tfilter=tv\n' 'git config filter.tv.clean "touch '"${tmp_dir}"'/PWNED; cat"'
+  uni_refuse "${tmp_dir}/e_tab" "tab-separated filter"
+
+  # (5c) NON-VACUOUS (LC_ALL=C is load-bearing): rebuild the guard with ONLY the `LC_ALL=C `
+  # grep prefixes stripped (the pre-R17 locale-sensitive guard). Under a UTF-8 locale that
+  # classifies some test codepoint as space, that stripped guard MUST slip (rc != 3) and EXEC —
+  # so reverting the LC_ALL=C fix FAILS the unicode-space case here. Probe an (installed UTF-8
+  # locale, codepoint) pair where GNU grep treats the codepoint as `[[:space:]]`; if none exists
+  # on this libc, the load-bearing demonstration is skipped (the shipped-guard refusals above
+  # still stand), but the fix's byte-matching still closes every codepoint regardless.
+  nolcguard="${tmp_dir}/harden-nolcall.sh"
+  sed 's/LC_ALL=C grep/grep/g' "${harden}" > "${nolcguard}"
+  ! grep -Fq 'LC_ALL=C grep' "${nolcguard}" && grep -Fq -- '-Eiq' "${nolcguard}" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: LC_ALL=C-strip control build failed (sed did not strip the prefix)"; exit 1; }
+  nv_loc=""; nv_cp=""
+  for _loc in $( { { locale -a 2>/dev/null | grep -iE 'utf-?8' | grep -iE '^(C|en_US)\.' ; locale -a 2>/dev/null | grep -iE 'utf-?8' ; } 2>/dev/null | head -4 || true; } ); do
+    for _cp in $'\xc2\xa0' $'\xe2\x80\x80' $'\xe3\x80\x80' $'\xe2\x80\xaf' $'\xe2\x80\x89'; do
+      if printf '%s\n' "${_cp}" | LC_ALL="${_loc}" grep -Eq '[[:space:]]' 2>/dev/null; then nv_loc="${_loc}"; nv_cp="${_cp}"; break 2; fi
+    done
+  done
+  if [ -n "${nv_loc}" ]; then
+    mk_uni "${tmp_dir}/u_nv" "${nv_cp}" filter clean   # dest built with real bytes; NAME led by nv_cp
+    rm -f "${tmp_dir}/PWNED"
+    # shellcheck source=/dev/null
+    ( cd "${tmp_dir}/u_nv"; export LC_ALL="${nv_loc}" LANG="${nv_loc}"; . "${nolcguard}"
+      rc=0; review_git diff --quiet >/dev/null 2>&1 || rc=$?
+      test "${rc}" -ne 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: LC_ALL=C-strip control unexpectedly refused unicode-space name — non-vacuity broken"; exit 1; }
+      review_git add -A >/dev/null 2>&1 || true )
+    test -e "${tmp_dir}/PWNED" \
+      || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: non-vacuous control inert — pre-R17 (locale-sensitive) guard should EXEC a unicode-space-led driver name; reverting LC_ALL=C would not be caught"; exit 1; }
+  else
+    echo "[verify] R16-INFO-ATTRIBUTES-RCE: note — no installed UTF-8 locale classifies a test codepoint as space; LC_ALL=C load-bearing sub-control skipped (shipped-guard unicode refusals still enforced)"
+  fi
 
   # (6) NON-VACUOUS: rebuild the guard with ONLY the positive name-token regex reverted to the
   # pre-fix negated class that exempted `-` (`=[^[:space:]-]`, no `-i`). The SAME filter=-x/diff=-y
@@ -8820,4 +9083,51 @@ echo "[verify] testing M3 (verify.sh product scope: a 0-byte verify-project.sh F
   rc=0; run_p || rc=$?
   test "${rc}" -ne 0 \
     || { echo "[verify] M3: a FAILING verify-project.sh did not propagate as blocked (rc=0)"; exit 1; }
+)
+
+echo "[verify] testing R17 (verify.sh product scope: a NO-EXECUTABLE-CONTENT verify-project.sh FAILS CLOSED, same as absent)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  vsh="${repo_root}/scripts/verify.sh"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts"
+  git -c init.defaultBranch=main init -q "${proj}"
+
+  run_p() { ( cd "${proj}"; AI_AUTO_VERIFY_SCOPE=product bash "${vsh}" ) >"${tmp_dir}/o" 2>&1; }
+
+  # M3 gated on 0-byte / parse-fail. R17: a file that is `-s`>0 AND `bash -n`-clean can STILL
+  # verify nothing — a truncation leaving only a shebang/comment/whitespace. Each such no-op
+  # verifier must BLOCK (nonzero) exactly like absent, and disclose the fail-closed reason.
+
+  # (a) shebang-only -> BLOCK.
+  printf '#!/usr/bin/env bash\n' > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] R17: shebang-only verify-project.sh read as GREEN (rc=0) — false-green"; exit 1; }
+  grep -q 'no executable content' "${tmp_dir}/o" \
+    || { echo "[verify] R17: shebang-only case did not disclose the no-executable-content reason"; exit 1; }
+
+  # (b) whitespace-only (spaces + tab, no shebang) -> BLOCK.
+  printf '   \n\t\n' > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] R17: whitespace-only verify-project.sh read as GREEN (rc=0) — false-green"; exit 1; }
+
+  # (c) comment-only (shebang + comment lines, incl. indented) -> BLOCK.
+  printf '#!/usr/bin/env bash\n# nothing here\n   # indented comment\n' > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] R17: comment-only verify-project.sh read as GREEN (rc=0) — false-green"; exit 1; }
+
+  # NON-VACUOUS control: a verifier with an ACTUAL command (a real `test`/`grep`) must still
+  # RUN — passing on exit 0 and blocking on nonzero — proving the guard closes ONLY the
+  # content-free class, not real verifiers (and not defeated by an inline trailing comment).
+  printf '#!/usr/bin/env bash\ntest 1 = 1  # real check\nexit 0\n' > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -eq 0 \
+    || { echo "[verify] R17: a real (has-statement) passing verify-project.sh was wrongly blocked (rc=${rc}) — over-broad"; exit 1; }
+  printf '#!/usr/bin/env bash\ngrep -q NOPE /dev/null\n' > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] R17: a real FAILING verify-project.sh did not propagate as blocked (rc=0)"; exit 1; }
 )

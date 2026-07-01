@@ -68,6 +68,9 @@ When the user asks to preview the project in a browser — trigger phrases
 - Stop it by killing the background run (the user can also Ctrl-C their own foreground run).
 - The harness lives outside the repo (`ODOO_HARNESS_DIR` / the project's `00. DATA/harness`);
   if it is not configured, say so rather than guessing a path.
+- If the runtime `00. DATA/` sits INSIDE the working tree (the real jw_dev layout), ignore it
+  so `git status` stays fast — copy `git-tier/.gitignore.sample` into the project `.gitignore`
+  (its multi-GB contents are runtime material, not a commit target).
 
 ## Project-Specific Rules
 

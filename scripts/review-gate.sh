@@ -189,6 +189,50 @@ review_provenance_decision() {
 }
 # <<< review-provenance-shared <<<
 
+# >>> blue-r17-provenance-failclosed >>>
+# HIGH fail-closed override of the shared review_provenance_hash. The shared implementation
+# reads the working tree through the REAL .git/index and SWALLOWS git errors (2>/dev/null). A
+# truncated/corrupt index -- the R13 exit-128 condition, realistic under WSL2/9p multi-session
+# load -- makes its `git diff` / `git ls-files` calls go FATAL (empirically exit 128), the diff
+# sections empty, and the hash COLLAPSES to the constant a clean checkout hashes to. A dirty
+# (malicious) tree then hashes identical to a prior clean approval => review_provenance_decision
+# returns `skip` => the gate emits proceed / carried_forward on a tree the AI panel NEVER saw.
+# This lives OUTSIDE the shared block so the block stays byte-identical with summarize-ai-reviews.sh
+# (the provenance_block_identical invariant) and the recorded-vs-decided hash stay value-identical
+# on a HEALTHY tree (the skip optimization is preserved): the override probes the exact index reads
+# the shared hash depends on and, only when they all succeed, delegates to the UNCHANGED shared
+# algorithm. On ANY nonzero git rc (index corruption OR a sandbox where every git call panics
+# >=100) it emits NOTHING, so the decision cannot match a prior approval and forces a full
+# re-review -- never a carried-forward skip on an unverified tree.
+eval "$(declare -f review_provenance_hash | sed '1s/^review_provenance_hash /_review_provenance_hash_shared /')"
+review_provenance_hash() {
+  local rc
+  review_git diff --cached --quiet --no-ext-diff --no-textconv >/dev/null 2>&1; rc=$?
+  case "${rc}" in 0|1) ;; *) return 1 ;; esac   # 0=no staged, 1=staged; anything else = git fatal
+  review_git diff --quiet --no-ext-diff --no-textconv >/dev/null 2>&1; rc=$?
+  case "${rc}" in 0|1) ;; *) return 1 ;; esac   # 0=no unstaged, 1=unstaged; else = fatal
+  review_git ls-files --others --exclude-standard >/dev/null 2>&1 || return 1
+  _review_provenance_hash_shared
+}
+# <<< blue-r17-provenance-failclosed <<<
+
+# Broken-sandbox vs missing-repo diagnostic (HIGH). Distinguish "git ABSENT" from "git PRESENT
+# but every call FATAL" (the codex >=0.142.4 panic exits 101; a corrupt env exits >=128). The
+# provenance/root probes swallow git stderr (2>/dev/null) and silently mis-root to $PWD, so a
+# broken sandbox looks like the agent ignoring guidelines. Surface it LOUDLY at gate start; never
+# blocks (fail-closed provenance + verify already handle the coverage).
+warn_broken_git_sandbox() {
+  command -v git >/dev/null 2>&1 || return 0     # git genuinely absent: not this class
+  local rc=0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || rc=$?
+  [ "${rc}" -eq 0 ] && return 0                   # git healthy
+  echo "" >&2
+  echo "[gate] GIT PRESENT BUT FAILING (git rev-parse exited ${rc}): your sandbox/environment is broken, NOT a missing repo." >&2
+  [ "${rc}" -ge 100 ] && echo "[gate]   exit >=100 is a tool/sandbox PANIC (e.g. codex >=0.142.4 with a socket in writable_roots). Fix the sandbox; do NOT 'git init'." >&2
+  echo "[gate]   The gate cannot trust git-derived paths here; provenance fails closed to a full review and paths may mis-root to \$PWD." >&2
+  return 0
+}
+
 latest_review_context() {
   find ".omx/review-context" -maxdepth 1 -type f -name 'latest-review-context.md' -print 2>/dev/null | head -1
 }
@@ -323,6 +367,16 @@ warn_stale_disabled_reviewers() {
     [ -n "${when}" ] || continue
     when_s="$(date -d "${when}" +%s 2>/dev/null || echo 0)"
     [ "${when_s}" -gt 0 ] || continue
+    # Clock-skew guard: a FUTURE disabled_at makes age_days negative, which is < stale_days and
+    # would silently SUPPRESS this persistent-degraded warning. A future marker is itself
+    # suspicious (skew / tampering) and still means a non-transient disabled reviewer, so surface
+    # it instead of hiding it.
+    if [ "${when_s}" -gt "${now_s}" ]; then
+      reviewer="$(basename "${marker}" .disabled)"
+      echo ""
+      echo "[gate] EXTERNAL REVIEW PERSISTENTLY DEGRADED: reviewer '${reviewer}' has a FUTURE disabled_at (${when}) -- clock skew or tampering; not auto-recovering. Investigate and re-enable."
+      continue
+    fi
     age_days=$(( (now_s - when_s) / 86400 ))
     [ "${age_days}" -lt "${stale_days}" ] && continue
     reviewer="$(basename "${marker}" .disabled)"
@@ -519,6 +573,7 @@ if [ "${REVIEW_DECISION_GATE:-0}" = "1" ]; then
   echo "[gate] decision gate: full unanimous panel (provenance skip / targeted recheck / integration-only OFF, context=full)"
 fi
 
+warn_broken_git_sandbox
 warn_stale_disabled_reviewers
 
 echo "[gate] running verification..."

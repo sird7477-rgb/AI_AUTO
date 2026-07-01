@@ -1,0 +1,18 @@
+# Sample .gitignore for an Odoo project whose local runtime/validation harness lives
+# INSIDE the working tree (the real jw_dev layout: `.../99. odoo/00. DATA/`).
+# Copy these lines into the project's own .gitignore (per-clone, like git-tier/.gitattributes.sample).
+#
+# WHY: `00. DATA/` holds the multi-GB Odoo community/enterprise sources, the harness, the
+# regenerable warm base, and warm-pass caches (see validation-harness/README.md,
+# WORKFLOW.md). It is runtime material, NOT a commit target. Left un-ignored, git has to
+# enumerate those GBs on every `git status` / untracked scan, a confirmed root cause of
+# slow load-time on `/mnt/z`. Ignoring it keeps `git status` fast.
+#
+# The trailing-slash, unanchored patterns match the runtime dir at ANY depth, so this works
+# whether the git root is at `99. odoo/` or a parent.
+
+# Odoo local runtime/source + harness (community/enterprise sources, harness, warm base)
+00. DATA/
+
+# Warm-PASS validation caches, wherever the harness writes them
+.warm-pass-cache.*/

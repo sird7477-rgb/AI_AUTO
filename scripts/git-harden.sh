@@ -77,8 +77,25 @@ _review_git_attr_guard() {
     # `merge=` is NOT matched: empirically no merge driver execs on any op review_git reaches
     # (add/diff/status/rm/show/hash-object/rev-parse; merge drivers run only on `git merge`/
     # `checkout -m`, which the review path never invokes), so binding it here is inert.
-    if grep -Ev '^[[:space:]]*(#|$)' "${_ia}" 2>/dev/null \
-         | grep -Eiq '(^|[[:space:]])(filter|diff)=[^[:space:]]'; then
+    #
+    # CRITICAL — LC_ALL=C (byte semantics): git's attribute parser splits `info/attributes` lines
+    # on ASCII whitespace ONLY (space, tab, newline, CR, VT, FF — see git's `attr.c` isspace/strtok
+    # over the raw bytes). But GNU grep's `[[:space:]]`/`[^[:space:]]` follow the LOCALE ctype table
+    # under a MULTIBYTE locale (LC_ALL=*.UTF-8): it classifies Unicode whitespace codepoints — U+00A0
+    # NBSP, U+2000, U+202F, U+3000, … (which of them depends on the libc's ctype table) — as space.
+    # So a driver NAMED with a leading Unicode-space codepoint (`filter=<U+2000>x`, `[filter "<U+2000>x"]`
+    # in .git/config) made `=[^[:space:]]` NOT match under a UTF-8 locale → the guard ALLOWED, yet git
+    # kept those non-ASCII bytes AS the driver name and EXECUTED the clean/diff driver (canary-proven
+    # RCE — the 3rd bypass of this guard after env-GIT_CONFIG and leading-dash `-x`). Forcing LC_ALL=C
+    # makes `[[:space:]]` = ASCII whitespace ONLY — EXACTLY git's split set — so a name led by ANY
+    # non-ASCII-space byte (0xC2/0xE2/0xE3/… of NBSP/U+2000/U+3000/U+202F/every other codepoint) is
+    # correctly a non-space driver-name char → `=[^[:space:]]` MATCHES → REFUSE. Byte matching closes
+    # the WHOLE class, not one codepoint: any name that git accepts is now a name the guard rejects,
+    # independent of the ambient locale's Unicode ctype table. BOTH greps run under LC_ALL=C so the
+    # comment/blank strip (`^[[:space:]]*(#|$)`) also uses ASCII-only leading-whitespace, mirroring
+    # git (a line led by a Unicode-space byte is NOT a comment/blank to git, and must not be dropped).
+    if LC_ALL=C grep -Ev '^[[:space:]]*(#|$)' "${_ia}" 2>/dev/null \
+         | LC_ALL=C grep -Eiq '(^|[[:space:]])(filter|diff)=[^[:space:]]'; then
       printf 'review_git: REFUSING — %s binds a filter/diff driver. That is git'"'"'s highest-precedence attributes file, which NO per-invocation switch (--attr-source/GIT_ATTR_SOURCE/core.attributesFile/GIT_ATTR_NOSYSTEM) can neutralize, so an untrusted repo can execute arbitrary clean/smudge/diff .git/config commands through this hardened read. Legit filters bind via the tracked .gitattributes; the review path needs raw content. Refusing.\n' "${_ia}" >&2
       return 3
     fi

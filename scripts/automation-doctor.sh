@@ -524,8 +524,15 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
     # before we can inspect it (a bare assignment would abort the script).
     # --attr-source=<empty-tree> ($_et) disarms an in-repo .gitattributes clean-filter
     # RCE that `git status` would otherwise run on a stat-dirty tracked blob.
+    # timeout so the probe cannot HANG on the very slow FS it is meant to diagnose (a /mnt
+    # drvfs mount under load). A timeout returns 124 -> handled by the nonzero branch below
+    # (warn, never a false "clean"). `command -v timeout` guard keeps it portable.
     _dirty_rc=0
-    _dirty_out="$(git --attr-source="$_et" status --short 2>/dev/null)" || _dirty_rc=$?
+    if command -v timeout >/dev/null 2>&1; then
+      _dirty_out="$(timeout "${DOCTOR_GIT_STATUS_TIMEOUT:-30}" git --attr-source="$_et" status --short 2>/dev/null)" || _dirty_rc=$?
+    else
+      _dirty_out="$(git --attr-source="$_et" status --short 2>/dev/null)" || _dirty_rc=$?
+    fi
     if [ "$_dirty_rc" -ne 0 ]; then
       say_warn "unable to determine working tree state, so not reporting clean; the git status probe exited ${_dirty_rc}"
       suggest "inspect with: git status --short   (re-run when load subsides; DOCTOR_SKIP_DIRTY_CHECK=1 to skip)"
@@ -548,8 +555,30 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
     suggest "git remote add origin <repo-url>"
   fi
 else
-  say_fail "current directory is not a git repository"
-  suggest "git init"
+  # Distinguish "git ABSENT" from "git PRESENT but every call FAILING". The old code always
+  # said "not a git repository -> git init"; under a broken sandbox (codex >=0.142.4 panics
+  # exit 101; a corrupt env exits >=128) every `git rev-parse` fails, the panic is discarded by
+  # 2>/dev/null, and the operator is told to `git init` an already-fine repo -- the exact class
+  # that made a broken-sandbox incident look like the agent ignoring guidelines. Capture the rc
+  # and stderr and say so LOUDLY instead.
+  if command -v git >/dev/null 2>&1; then
+    _grp_rc=0
+    _grp_err="$(git rev-parse --is-inside-work-tree 2>&1 >/dev/null)" || _grp_rc=$?
+    if [ "$_grp_rc" -ge 100 ]; then
+      say_fail "git is PRESENT but FAILING with exit ${_grp_rc} -- a tool/sandbox PANIC, NOT a missing repo: ${_grp_err}"
+      suggest "your sandbox/environment is broken -- fix it (do NOT run 'git init'); e.g. remove a socket like docker.sock from codex writable_roots"
+    elif [ "$_grp_rc" -ne 0 ]; then
+      say_fail "git is PRESENT but FAILING with exit ${_grp_rc} -- an environment error, not a clean missing repo: ${_grp_err}"
+      suggest "fix the environment then re-run; inspect with: git rev-parse --is-inside-work-tree   ('git init' only if there is truly no repo here)"
+    else
+      say_fail "current directory is not a git repository"
+      suggest "git init"
+    fi
+    unset _grp_rc _grp_err
+  else
+    say_fail "git is not installed"
+    suggest "install git"
+  fi
 fi
 
 echo
@@ -817,6 +846,72 @@ elif [ "${IN_AI_LAB:-0}" -eq 1 ]; then
 else
   say_pass "not running inside ai-lab source checkout; helper link checks skipped"
 fi
+
+echo
+echo "[doctor] checking cross-CLI operational hygiene (advisory; read-only; warn-only)"
+
+# (a) codex profile sanity: a NON-directory (e.g. a docker.sock socket) listed as a
+# sandbox_workspace_write writable_root PANICS codex >=0.142.4 (the exact incident class). Purely
+# read-only; skip silently when the config is absent. awk captures a single- OR multi-line
+# writable_roots array; each quoted path that EXISTS but is not a directory is flagged.
+check_codex_writable_roots() {
+  local cfg="$1" p
+  [ -f "$cfg" ] || return 0
+  awk '/writable_roots/{f=1} f{print} f&&/]/{exit}' "$cfg" 2>/dev/null \
+    | grep -oE '"[^"]+"' | tr -d '"' \
+    | while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if [ -e "$p" ] && [ ! -d "$p" ]; then
+          printf 'BADROOT\t%s\n' "$p"
+        fi
+      done
+}
+if [ -n "$HOME_DIR" ] && [ -d "${HOME_DIR}/.codex" ]; then
+  _codex_cfgs=()
+  [ -f "${HOME_DIR}/.codex/config.toml" ] && _codex_cfgs+=("${HOME_DIR}/.codex/config.toml")
+  while IFS= read -r _cfg; do [ -n "$_cfg" ] && _codex_cfgs+=("$_cfg"); done \
+    < <(find "${HOME_DIR}/.codex" -maxdepth 1 -type f -name '*.config.toml' 2>/dev/null)
+  for _cfg in "${_codex_cfgs[@]}"; do
+    while IFS=$'\t' read -r _tag _bad; do
+      [ "$_tag" = "BADROOT" ] || continue
+      say_warn "codex profile ${_cfg}: writable_root '${_bad}' is not a directory (e.g. a socket) -- will PANIC codex >=0.142.4"
+      suggest "in ${_cfg}, use the parent DIRECTORY (e.g. /run) as the writable_root instead of ${_bad}"
+    done < <(check_codex_writable_roots "$_cfg")
+  done
+  unset _codex_cfgs _cfg _tag _bad
+
+  # (b) codex log-store bloat: a large logs_2.sqlite with a high free-page ratio wastes space.
+  # Guarded (needs sqlite3 + the file) and timeout-bounded; VACUUM is the reclaim.
+  _codex_db="${HOME_DIR}/.codex/logs_2.sqlite"
+  if [ -f "$_codex_db" ] && command -v sqlite3 >/dev/null 2>&1; then
+    _db_sz="$(stat -c%s "$_codex_db" 2>/dev/null || echo 0)"
+    if [ "${_db_sz:-0}" -ge "${DOCTOR_CODEX_LOG_BYTES:-52428800}" ]; then
+      _db_free="$(timeout 5 sqlite3 "$_codex_db" 'PRAGMA freelist_count;' 2>/dev/null || echo 0)"
+      _db_total="$(timeout 5 sqlite3 "$_codex_db" 'PRAGMA page_count;' 2>/dev/null || echo 0)"
+      case "${_db_free}${_db_total}" in *[!0-9]*|'') _db_free=0; _db_total=0 ;; esac
+      if [ "${_db_total:-0}" -gt 0 ]; then
+        _db_ratio=$(( _db_free * 100 / _db_total ))
+        if [ "$_db_ratio" -ge "${DOCTOR_CODEX_LOG_FREE_PCT:-25}" ]; then
+          say_warn "codex log store ${_codex_db} is $((_db_sz / 1048576))MB with ${_db_ratio}% free pages; run VACUUM to reclaim space"
+          suggest "sqlite3 ${_codex_db} 'VACUUM;'"
+        fi
+      fi
+    fi
+    unset _db_sz _db_free _db_total _db_ratio
+  fi
+  unset _codex_db
+else
+  say_skip "no ~/.codex directory; codex profile/log hygiene checks skipped"
+fi
+
+# (c) slow-FS project location: a repo under a Windows/drvfs mount (/mnt/...) makes every git
+# operation SLOW. Warn and point at a Linux-native path.
+case "$ROOT" in
+  /mnt/*)
+    say_warn "project is on a Windows/drvfs mount (${ROOT}); git operations will be SLOW"
+    suggest "move the repo to a Linux-native path (e.g. under \$HOME); or ensure large runtime dirs are gitignored"
+    ;;
+esac
 
 echo
 printf 'Summary: %s passed, %s warnings, %s failed' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT"

@@ -67,8 +67,15 @@ run_product() {
   # M3: an EMPTY (0-byte) or syntactically-BROKEN verify-project.sh (truncated / botched
   # merge) is NOT a passing verification — fail CLOSED exactly like absent so it can never
   # read as a silent green no-op. An empty file passes `bash -n`, so gate on -s too.
-  if [ -e "${vp}" ] && { [ ! -s "${vp}" ] || ! bash -n "${vp}" 2>/dev/null; }; then
-    echo "[verify] scripts/verify-project.sh is empty or does not parse — FAIL-CLOSED (NOTHING was verified)" >&2
+  # R17: also fail CLOSED on NO-EXECUTABLE-CONTENT — a shebang-only, comment-only, or
+  # whitespace-only truncation is `-s`>0 AND `bash -n`-clean yet verifies NOTHING (false-green).
+  # Strip shebang/comment lines (`^[[:space:]]*#`) and blank/whitespace-only lines; if the
+  # `grep -qv` finds NO remaining line, there is no statement to run -> BLOCK. (Out of scope:
+  # a project deliberately opting into a trivial `exit 0`/`:` verifier — that leaves an
+  # executable statement, so it runs and its exit propagates; only content-free files block.)
+  if [ -e "${vp}" ] && { [ ! -s "${vp}" ] || ! bash -n "${vp}" 2>/dev/null \
+      || ! grep -qvE '^[[:space:]]*(#|$)' "${vp}"; }; then
+    echo "[verify] scripts/verify-project.sh is empty or does not parse or has no executable content — FAIL-CLOSED (NOTHING was verified)" >&2
     exit 1
   fi
   if [ -x "${vp}" ]; then

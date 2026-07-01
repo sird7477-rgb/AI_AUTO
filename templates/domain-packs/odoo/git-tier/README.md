@@ -32,6 +32,19 @@ A merge driver is configured per-clone (git never reads a driver command from a 
 file, for safety), so each environment runs the `git config` once; the `.gitattributes`
 mapping can be committed and shared.
 
+## 1b. `.gitignore.sample` — ignore the runtime DATA dir so `git status` stays fast
+
+When the local runtime/harness lives INSIDE the working tree (the real jw_dev layout,
+`.../99. odoo/00. DATA/`), the multi-GB `00. DATA/` (Odoo sources + harness + warm base +
+warm-pass caches) is runtime material, not a commit target. Un-ignored, git enumerates
+those GBs on every `git status` / untracked scan — a confirmed root cause of slow load-time
+on `/mnt/z`. Copy the lines from `.gitignore.sample` into the project's own `.gitignore`
+(per-clone, same convention as `.gitattributes.sample`):
+
+```sh
+cat "$H/.gitignore.sample" >> .gitignore   # then commit .gitignore
+```
+
 ## 2. `safe-push.sh` — bounded fetch+rebase retry on a lost race (ST-P1-73(B))
 
 ```sh

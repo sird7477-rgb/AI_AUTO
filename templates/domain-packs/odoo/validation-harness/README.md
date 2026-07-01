@@ -11,6 +11,11 @@ copies it, points it at its parity-pinned Odoo source, and wires the pre-push ga
 
 ## Prerequisites
 - Docker + Docker Compose.
+  - Run this docker-based harness as a host/executor step OUTSIDE the codex sandbox: AI_AUTO
+    runs codex with a **read-only** sandbox, where the docker socket is not reachable (it is
+    reachable under `sandbox_mode=workspace-write`, so socket access is MODE-dependent, not
+    unconditional). Do NOT add `/var/run/docker.sock` to codex `writable_roots` (it panics codex
+    ≥0.142.4 — use the parent dir `/run` if a writable entry is ever needed).
 - The project's Odoo **community + enterprise source**, fetched from an odoo.sh
   build for module-set + point-release **parity** (enterprise is **mounted,
   never baked** into an image — license/leak). Store outside the repo.
