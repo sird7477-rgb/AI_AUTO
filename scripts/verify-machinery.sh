@@ -888,6 +888,37 @@ echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
   printf 'holder_pid=%s\nholder_session=other-session@host\nholder_op=x\n' "${held_pid}" > "${SESSION_LOCK_FILE}"
   _rc=0; AI_AUTO_ALLOW_SHARED_TREE=1 AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
   [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: shared-tree override did not return 0 (got ${_rc})"; exit 1; }
+
+  # M1 (non-atomic acquire): two DISTINCT sessions racing for the SAME fresh lock must yield
+  # EXACTLY ONE holder (SESSION_LOCK_HELD=1). The old `[ -f ] test` then `mv -f` let both win
+  # (60/60). Real concurrency: two racers spin on a barrier file then acquire simultaneously;
+  # assert exactly one winner across many trials so a non-atomic acquire (which double-wins often)
+  # reliably fails here. Reverting the atomic-`ln` acquire makes some trial report 2 winners.
+  m1_double=0
+  for _trial in $(seq 1 25); do
+    _d="${tmp_dir}/m1-${_trial}"; mkdir -p "${_d}/.omx/state"; rm -f "${_d}/go" "${_d}/winners"
+    _pids=""
+    for _i in 1 2; do
+      (
+        cd "${_d}"
+        export SESSION_LOCK_FILE=".omx/state/session.lock"
+        unset AI_AUTO_SESSION_ID
+        export AI_AUTO_SESSION_ID="m1-racer-${_i}-$$@host"
+        while [ ! -f go ]; do :; done          # barrier -> tight simultaneity
+        SESSION_LOCK_HELD=0
+        session_lock_acquire validate >/dev/null 2>&1
+        [ "${SESSION_LOCK_HELD}" = "1" ] && echo x >> winners
+      ) & _pids="${_pids} $!"
+    done
+    sleep 0.02
+    : > "${_d}/go"                             # release both racers together
+    # shellcheck disable=SC2086
+    wait ${_pids} 2>/dev/null || true
+    _w="$(wc -l < "${_d}/winners" 2>/dev/null | tr -d ' ')"; _w="${_w:-0}"
+    [ "${_w}" -ne 1 ] && m1_double=$((m1_double + 1))
+  done
+  [ "${m1_double}" -eq 0 ] \
+    || { echo "[verify] session-lock/M1: ${m1_double}/25 concurrent trials did NOT have exactly one acquirer (non-atomic acquire)"; exit 1; }
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."
@@ -5840,6 +5871,32 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
   fi
 )
 
+echo "[verify] testing profile export is injection-safe for a hostile checkout path..."
+(
+  inj_tmp="$(mktemp -d)"
+  cleanup_inj_tmp() { rm -rf "${inj_tmp}"; }
+  trap cleanup_inj_tmp EXIT
+
+  # Check out the engine into a path carrying a live command substitution. The backslash
+  # keeps the current shell from expanding it; the literal token becomes the dir name.
+  hostile="${inj_tmp}/x\$(touch ${inj_tmp}/INJECTED)y"
+  mkdir -p "${hostile}" "${inj_tmp}/home/bin"
+  cp -a "${repo_root}/scripts" "${repo_root}/tools" "${hostile}/"
+
+  HOME="${inj_tmp}/home" PATH="${inj_tmp}/home/bin:${PATH}" \
+    bash "${hostile}/scripts/install-global-files.sh" >/dev/null 2>&1 || true
+
+  # Sourcing the written profile must NOT run the substitution, and AI_AUTO_HOME must be the
+  # literal checkout path. Reverting the printf '%q' escaping regresses both assertions.
+  rm -f "${inj_tmp}/INJECTED"
+  resolved="$(HOME="${inj_tmp}/home" bash -c 'source "$HOME/.bashrc" >/dev/null 2>&1; printf "%s" "$AI_AUTO_HOME"')"
+  if [ -e "${inj_tmp}/INJECTED" ]; then
+    echo "[verify] profile export fired a command substitution from a hostile checkout path"
+    exit 1
+  fi
+  test "${resolved}" = "${hostile}"
+)
+
 echo "[verify] testing global helper link repair..."
 (
   tmp_home="$(mktemp -d)"
@@ -6505,16 +6562,18 @@ echo "[verify] testing verify.sh R4-2 engine-SUBDIR default scope (still folds m
 (
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' EXIT
-  mkdir -p "${tmp_dir}/scripts" "${tmp_dir}/sub/scripts"
+  mkdir -p "${tmp_dir}/scripts" "${tmp_dir}/sub"
   cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"; chmod +x "${tmp_dir}/scripts/verify.sh"
   printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
     > "${tmp_dir}/scripts/session-lock.sh"
   printf '#!/usr/bin/env bash\necho MACHINERY_RAN\n'      > "${tmp_dir}/scripts/verify-machinery.sh"
   chmod +x "${tmp_dir}/scripts/verify-machinery.sh"
-  # product hook reachable from the SUBDIR cwd (verify.sh runs ./scripts/verify-project.sh
-  # relative to pwd), so full scope = machinery + product both pass.
-  printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\n' > "${tmp_dir}/sub/scripts/verify-project.sh"
-  chmod +x "${tmp_dir}/sub/scripts/verify-project.sh"
+  # L5: the product hook lives ONLY at the git TOPLEVEL (engine root) scripts dir — NOT in the
+  # subdir cwd. run_product is now toplevel-anchored, so running from the SUBDIR must still
+  # resolve the SAME root-owned verify-project.sh (proving the anchor; the old pwd-relative
+  # logic would have looked in ./sub/scripts and false-failed as absent).
+  printf '#!/usr/bin/env bash\necho PROJECT_VERIFY_RAN\n' > "${tmp_dir}/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/scripts/verify-project.sh"
   ( cd "${tmp_dir}" && git init -q )
   # Run from an engine SUBDIR (cwd != engine root, but toplevel == engine root). The OLD
   # `dirname($AH) -ef pwd` guard resolved product here (machinery silently skipped); the R4-2
@@ -6740,6 +6799,56 @@ echo "[verify] testing ai-auto BAKED-PATH hook shim (reaches global engine hook)
   out="$(cd "${proj}" && env -u AI_AUTO_HOME PATH=/usr/bin:/bin .git/hooks/pre-commit 2>&1)"
   echo "${out}" | grep -q "PRE_COMMIT_ENGINE_REACHED" \
     || { echo "[verify] hook shim: pre-commit did not reach the engine hook"; exit 1; }
+)
+
+echo "[verify] testing ai-auto setup M2 (installed hook shims are mode 0755 regardless of umask)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # R15-4 writes the shim to a mktemp temp (created 0600) then `mv -f` (mode-preserving). A
+  # bare `chmod +x` only ADDS the exec bit -> 711 under umask 022 / 700 under umask 077,
+  # stripping the group/other READ bit bash needs to read a shebang script -> commits break
+  # for non-owner users in a shared repo. The installed shim must be EXACTLY 0755 under ANY
+  # umask (revert `chmod 0755` -> `chmod +x` and this fails 711/700).
+  for u in 022 077; do
+    proj="${tmp_dir}/proj-${u}"; mkdir -p "${proj}"
+    ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'x\n' > f; git add -A; git commit -qm base )
+    ( umask "${u}"; "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null )
+    for hook in pre-commit post-commit; do
+      mode="$(stat -c '%a' "${proj}/.git/hooks/${hook}")"
+      test "${mode}" = "755" \
+        || { echo "[verify] M2: ${hook} installed mode is ${mode}, expected 755 (umask ${u})"; exit 1; }
+    done
+  done
+)
+
+echo "[verify] testing ai-auto setup L2 (concurrent unlocked-path .omx exclude append -> exactly one line)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  globalize_mk_engine "${tmp_dir}/eng"
+  # Hold the common-git-dir setup lock EXTERNALLY so every concurrent `ai-auto setup` times
+  # out (tiny AI_AUTO_SETUP_LOCK_TIMEOUT_SECONDS) and takes the PROCEED-UNLOCKED path (R15-2).
+  # A naked grep-then-`>>` there lets racers both see `.omx/` absent and both append it ->
+  # duplicate exclude lines. The L2 flock-serialized/idempotent append must leave the `.omx/`
+  # line EXACTLY once across bursts (revert -> a burst yields >=2 and this fails).
+  for burst in 1 2 3; do
+    proj="${tmp_dir}/proj-${burst}"; mkdir -p "${proj}"
+    ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'x\n' > f; git add -A; git commit -qm base )
+    exec 8>"${proj}/.git/ai-auto-setup.lock"; flock 8   # hold the setup lock so racers degrade
+    for _ in $(seq 1 12); do
+      AI_AUTO_SETUP_LOCK_TIMEOUT_SECONDS=1 \
+        "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null 2>&1 8>&- &
+    done
+    wait
+    exec 8>&-
+    cnt="$(grep -Ec '^[.]omx/?$' "${proj}/.git/info/exclude" 2>/dev/null || true)"
+    test "${cnt}" = "1" \
+      || { echo "[verify] L2: .omx/ exclude line appears ${cnt}x (burst ${burst}), expected exactly 1"; exit 1; }
+  done
 )
 
 echo "[verify] testing ai-auto setup IDEMPOTENCY (second run mutates nothing)..."
@@ -7239,6 +7348,77 @@ echo "[verify] testing R16-INFO-ATTRIBUTES-RCE (review_git REFUSES a hostile \$G
     rc=0; review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || rc=$?
     test "${rc}" -ne 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: FALSE REFUSAL — repo whose LEGIT filter binds via tracked .gitattributes was refused"; exit 1; }
     review_git status --porcelain | grep -q 'f.dat' || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: review_git status wrong on legit-filter repo"; exit 1; } )
+
+  # (5) EVASION VARIANTS — a driver NAMED with a leading `-` (`filter=-x` binds `[filter "-x"]` and
+  # git EXECUTES its clean driver; `diff=-y` external-diff/textconv evades identically) that the
+  # prior negated class exempting `-` let SLIP. Plus uppercase/whitespace `FILTER=`, a quoted value,
+  # and a macro-attribute (`[attr]m filter=-x` + `* m`). The SHIPPED review_git must REFUSE each and
+  # fire NO canary. mk_evade builds a repo whose info/attributes binds the given driver.
+  mk_evade() {  # $1 dest  $2 info/attributes body(%b)  $3 driver-config cmd
+    local p="$1"; rm -rf "${p}"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      printf '%b' "$2" > .git/info/attributes
+      eval "$3"
+      printf 'changed\n' >> a.txt )                                # worktree edit -> reads run driver
+  }
+  # reachable review ops: a clean filter fires on `diff --quiet`/`add`; a diff driver fires on a
+  # patch-producing `diff`. All must early-return via the guard (no op reaches worktree content).
+  # shellcheck source=/dev/null
+  ev_ops() { ( cd "$1"; . "${harden}"
+      review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || true
+      review_git diff >/dev/null 2>&1 || true
+      review_git add -A >/dev/null 2>&1 || true ); }
+  rm -f "${tmp_dir}/PWNED"
+  mk_evade "${tmp_dir}/e_fx" 'a.txt filter=-x\n'      'git config filter.-x.clean "touch '"${tmp_dir}"'/PWNED; cat"'
+  ev_ops "${tmp_dir}/e_fx"; test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: leading-dash filter=-x EXECUTED through review_git (guard bypass)"; exit 1; }
+  # the guard must specifically REFUSE (rc 3), not merely no-op:
+  # shellcheck source=/dev/null
+  ( cd "${tmp_dir}/e_fx"; . "${harden}"; rc=0; review_git diff --quiet >/dev/null 2>&1 || rc=$?
+    test "${rc}" -eq 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: guard did NOT refuse filter=-x (rc=${rc})"; exit 1; } )
+  mk_evade "${tmp_dir}/e_dy" 'a.txt diff=-y\n'        'git config diff.-y.command "touch '"${tmp_dir}"'/PWNED; true"'
+  ev_ops "${tmp_dir}/e_dy"; test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: leading-dash diff=-y EXECUTED through review_git (guard bypass)"; exit 1; }
+  mk_evade "${tmp_dir}/e_up" '\t  FILTER=evil  \n'    'git config filter.evil.clean "touch '"${tmp_dir}"'/PWNED; cat"'
+  ev_ops "${tmp_dir}/e_up"; test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: uppercase/whitespace FILTER= EXECUTED / not refused"; exit 1; }
+  mk_evade "${tmp_dir}/e_q"  'a.txt filter="ev"\n'    'git config filter.\"ev\".clean "touch '"${tmp_dir}"'/PWNED; cat"'
+  ev_ops "${tmp_dir}/e_q";  test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: quoted-value filter driver EXECUTED / not refused"; exit 1; }
+  mk_evade "${tmp_dir}/e_m"  '[attr]m filter=-x\n* m\n' 'git config filter.-x.clean "touch '"${tmp_dir}"'/PWNED; cat"'
+  ev_ops "${tmp_dir}/e_m";  test ! -e "${tmp_dir}/PWNED" || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: macro-attribute (dash) filter driver EXECUTED / not refused"; exit 1; }
+
+  # (6) NON-VACUOUS: rebuild the guard with ONLY the positive name-token regex reverted to the
+  # pre-fix negated class that exempted `-` (`=[^[:space:]-]`, no `-i`). The SAME filter=-x/diff=-y
+  # repos MUST then slip the guard (rc != 3) and EXECUTE — so reverting the regex fix fails here.
+  oldguard="${tmp_dir}/harden-oldregex.sh"
+  sed -e 's/\[\^\[:space:\]\]'\''/[^[:space:]-]'\''/' -e 's/-Eiq /-Eq /' "${harden}" > "${oldguard}"
+  grep -Fq '=[^[:space:]-]' "${oldguard}" && ! grep -Fq -- '-Eiq' "${oldguard}" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: old-regex control build failed (sed did not revert the regex)"; exit 1; }
+  rm -f "${tmp_dir}/PWNED"
+  # shellcheck source=/dev/null
+  ( cd "${tmp_dir}/e_fx"; . "${oldguard}"
+    rc=0; review_git diff --quiet >/dev/null 2>&1 || rc=$?
+    test "${rc}" -ne 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: old-regex control unexpectedly refused filter=-x"; exit 1; }
+    review_git add -A >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: non-vacuous control inert — old regex should EXEC filter=-x (fixture would not catch a regex revert)"; exit 1; }
+  rm -f "${tmp_dir}/PWNED"
+  # shellcheck source=/dev/null
+  ( cd "${tmp_dir}/e_dy"; . "${oldguard}"; review_git diff >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED" \
+    || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: non-vacuous control inert — old regex should EXEC diff=-y"; exit 1; }
+
+  # (7) LEGIT false-refusal control: info/attributes with ONLY benign non-exec attrs (a comment,
+  # a boolean/unset `-text`, `eol=lf`, an attribute-unset `-filter` with NO `=value`, and an empty
+  # `filter=` with NO driver name) must NOT be refused (rc != 3) and status/diff must still work.
+  benign="${tmp_dir}/benign"; mkdir -p "${benign}"
+  ( cd "${benign}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+    printf '# a comment\n* -text\n*.txt eol=lf\na.txt -filter\nx.txt filter=\n' > .git/info/attributes
+    printf 'changed\n' >> a.txt )
+  # shellcheck source=/dev/null
+  ( cd "${benign}"; . "${harden}"
+    rc=0; review_git diff --no-ext-diff --no-textconv --quiet >/dev/null 2>&1 || rc=$?
+    test "${rc}" -ne 3 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: FALSE REFUSAL — benign info/attributes (comment/-text/eol=lf/-filter/empty filter=) refused"; exit 1; }
+    review_git status --porcelain >/dev/null 2>&1 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: review_git status failed on benign info/attributes"; exit 1; } )
 )
 
 echo "[verify] testing R6-1 (collect-review-context.sh patch calls INERT to project-local .gitattributes diff/textconv RCE — the gate's FIRST git work, run before any skip)..."
@@ -7972,9 +8152,15 @@ echo "[verify] testing R13-BENIGN-FILTER (safe-side trade-off: a NORMAL repo usi
     || { echo "[verify] R13-BENIGN-FILTER: fixture repo not actually clean under filter-aware status"; exit 1; }
   # (1) automation-doctor DEGRADES to a WARN (not a crash, not a hard fail) — exit stays 0-class
   # for the advisory dirty check and the wording is the documented over-report.
+  # SAFE-SIDE: accept EITHER the benign-filter over-report ('working tree has uncommitted changes')
+  # OR the hardened fail-closed verdict ('unable to determine working tree state', emitted when the
+  # `git status` probe itself exits non-zero under transient multi-session/9p index corruption).
+  # BOTH are documented non-clean, non-crash degradations — asserting ONLY the first turns a
+  # correct fail-closed into a self-test FAIL by timing luck, flipping the real gate. A WRONG
+  # 'working tree is clean' verdict matches NEITHER alternative and still FAILS this fixture.
   out="$( cd "${proj}"; DOCTOR_SKIP_DIRTY_CHECK=0 bash "${doctor}" 2>&1 || true )"
-  printf '%s\n' "${out}" | grep -q 'working tree has uncommitted changes' \
-    || { echo "[verify] R13-BENIGN-FILTER: doctor did not degrade to the documented uncommitted WARN over a benign-filter repo"; exit 1; }
+  printf '%s\n' "${out}" | grep -qE 'working tree has uncommitted changes|unable to determine working tree state' \
+    || { echo "[verify] R13-BENIGN-FILTER: doctor did not degrade to the documented uncommitted WARN nor the hardened fail-closed 'unable to determine working tree state' over a benign-filter repo"; exit 1; }
   # and the DOCTOR_SKIP_DIRTY_CHECK escape hatch still yields a clean skip (no data loss / no crash).
   out2="$( cd "${proj}"; DOCTOR_SKIP_DIRTY_CHECK=1 bash "${doctor}" 2>&1 || true )"
   printf '%s\n' "${out2}" | grep -q 'working tree dirty check skipped' \
@@ -8372,9 +8558,16 @@ echo "[verify] testing OPCOST-HIGH-1 (machinery self-test memoization: whole-wor
   # (whole worktree) but was OUTSIDE the retired path-allowlist. Breaking it is the exact
   # red-team false-skip repro; the memo MUST now re-run when it changes.
   printf 'VALUE = 1\n' > "${repo}/app.py"
+  # A gitignored venv so its identity is OUTSIDE the tree hash (proves the H2 interp-hash path,
+  # not the tree path): change pyvenv.cfg/dist-info and the tree OID is unchanged, yet the memo key
+  # must still shift. A stub `python` that just prints a version is enough for `--version`.
+  mkdir -p "${repo}/.venv/bin" "${repo}/.venv/lib/python3.12/site-packages/pytest-8.0.0.dist-info"
+  printf 'home = /usr/bin\nversion = 3.12.3\n' > "${repo}/.venv/pyvenv.cfg"
+  printf '#!/usr/bin/env bash\necho "Python 3.12.3"\n' > "${repo}/.venv/bin/python"
+  chmod +x "${repo}/.venv/bin/python"
   ( cd "${repo}"; git init -q; git config user.email t@e.x; git config user.name T
-    # The .omx/ marker must stay ignored so writing it does not perturb the worktree hash.
-    printf '.omx/\n' >> .git/info/exclude
+    # The .omx/ marker and .venv/ must stay ignored so writing them does not perturb the tree hash.
+    printf '.omx/\n.venv/\n' >> .git/info/exclude
     git add -A; git commit -qm base )
   (
     cd "${repo}"
@@ -8409,6 +8602,42 @@ echo "[verify] testing OPCOST-HIGH-1 (machinery self-test memoization: whole-wor
     mkdir -p .omx; printf 'ignored churn\n' > .omx/junk
     machinery_memo_should_skip \
       || { echo "[verify] OPCOST-HIGH-1: an IGNORED-file change wrongly invalidated the marker (optimization broken)"; exit 1; }
+
+    # 6) H1 (time-of-record false-skip). record_pass must record the surface that was ACTUALLY
+    #    TESTED (captured before verify), NOT a fresh re-hash of a tree a concurrent session mutated
+    #    during the verify window. Simulate the mid-window edit by ordering: capture the GOOD tested
+    #    hash, THEN break the tree, THEN call record_pass with the tested hash. It must DECLINE (live
+    #    != tested) so the BROKEN live tree is NOT skipped -> RE-RUN. Reverting the H1 fix (record the
+    #    fresh live hash) makes record match the broken tree -> should_skip true -> THIS fails.
+    git checkout -q -- app.py 2>/dev/null || true; git reset -q -- app.py 2>/dev/null || true
+    rm -f "${MACHINERY_MEMO_MARKER}"
+    h1_tested="$(machinery_memo_surface_hash)"
+    printf 'raise RuntimeError("mid-window concurrent edit")\n' >> app.py; git add app.py
+    machinery_memo_record_pass "${h1_tested}"
+    if machinery_memo_should_skip; then
+      echo "[verify] OPCOST-HIGH-1/H1: FALSE SKIP — recorded a PASS that skips a mid-window-mutated (BROKEN) tree"; exit 1
+    fi
+
+    # 7) H2 (out-of-tree / interpreter identity). The venv is gitignored, so the tree OID is
+    #    unchanged when it moves; the memo key must still fold interpreter identity so a venv change
+    #    invalidates the skip. Restore a clean tree, record, confirm SKIP, then bump pyvenv.cfg (and
+    #    separately the installed-package dist-info) and assert RE-RUN each time. Reverting the H2
+    #    fix (drop interp hash) leaves the key tree-only -> should_skip stays true -> THIS fails.
+    git checkout -q -- app.py 2>/dev/null || true; git reset -q -- app.py 2>/dev/null || true
+    machinery_memo_record_pass "$(machinery_memo_surface_hash)"
+    machinery_memo_should_skip \
+      || { echo "[verify] OPCOST-HIGH-1/H2: clean tree+venv did not skip (setup broken)"; exit 1; }
+    printf 'home = /usr/bin\nversion = 3.13.0\n' > .venv/pyvenv.cfg   # interpreter identity changed
+    if machinery_memo_should_skip; then
+      echo "[verify] OPCOST-HIGH-1/H2: FALSE SKIP — pyvenv.cfg (interpreter) changed but memo skipped"; exit 1
+    fi
+    printf 'home = /usr/bin\nversion = 3.12.3\n' > .venv/pyvenv.cfg   # restore + re-record
+    machinery_memo_record_pass "$(machinery_memo_surface_hash)"
+    machinery_memo_should_skip || { echo "[verify] OPCOST-HIGH-1/H2: restore did not re-skip"; exit 1; }
+    mkdir -p .venv/lib/python3.12/site-packages/requests-2.31.0.dist-info   # installed-package set changed
+    if machinery_memo_should_skip; then
+      echo "[verify] OPCOST-HIGH-1/H2: FALSE SKIP — installed-package manifest changed but memo skipped"; exit 1
+    fi
   )
 )
 
@@ -8488,4 +8717,107 @@ echo "[verify] testing run-ai-reviews with_heartbeat emits progress signal..."
   rc=$?
   set -e
   [ "${rc}" -eq 7 ]
+)
+
+# --- blue-seam appended fixtures (H5 symlink arbitrary-overwrite + M3 empty verify-project.sh) ---
+echo "[verify] testing H5 (ai-project-profile write REFUSES a hostile symlinked .omx/*.tmp instead of clobbering the victim)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  app="${repo_root}/tools/ai-project-profile"
+  test -s "${app}" || { echo "[verify] H5: ai-project-profile not found"; exit 1; }
+
+  # victim lives INSIDE the sandbox — the symlink target NEVER points at a real file.
+  victim="${tmp_dir}/victim.txt"
+  printf 'SECRET-VICTIM-CONTENT\n' > "${victim}"
+
+  # hostile "cloned" repo: a detectable odoo project whose .omx/project-profile.json.tmp is a
+  # symlink escaping the repo to the victim (git stores the target verbatim; this reproduces it).
+  hostile="${tmp_dir}/hostile"
+  mkdir -p "${hostile}/custom-addons/mod" "${hostile}/.omx"
+  printf "'version': '19.0'\n" > "${hostile}/custom-addons/mod/__manifest__.py"
+  ln -s "${victim}" "${hostile}/.omx/project-profile.json.tmp"
+
+  # run the REAL write path (the exact call `ai-auto setup` makes).
+  rc=0; out="$( python3 "${app}" write "${hostile}" 2>&1 )" || rc=$?
+
+  # (1) the victim MUST be untouched.
+  grep -q 'SECRET-VICTIM-CONTENT' "${victim}" \
+    || { echo "[verify] H5: victim was CLOBBERED through the symlinked .omx/*.tmp"; exit 1; }
+  # (2) the write MUST be refused (nonzero) and disclosed — never silently masked.
+  test "${rc}" -ne 0 \
+    || { echo "[verify] H5: write returned 0 through a symlinked temp (should refuse)"; exit 1; }
+  echo "${out}" | grep -qi 'REFUSING' \
+    || { echo "[verify] H5: refusal was not disclosed on stderr"; exit 1; }
+  # (3) the real profile must NOT have been created via the followed link.
+  test ! -e "${hostile}/.omx/project-profile.json" -o -L "${hostile}/.omx/project-profile.json.tmp" \
+    || true
+
+  # NON-VACUOUS control: an HONEST repo (no symlink) MUST still write successfully (exit 0),
+  # proving the refusal is specific to the symlink attack and not a blanket break.
+  honest="${tmp_dir}/honest"
+  mkdir -p "${honest}/custom-addons/mod"
+  printf "'version': '19.0'\n" > "${honest}/custom-addons/mod/__manifest__.py"
+  hrc=0; python3 "${app}" write "${honest}" >/dev/null 2>&1 || hrc=$?
+  test "${hrc}" -eq 0 \
+    || { echo "[verify] H5: honest (non-symlink) repo write was wrongly refused (rc=${hrc}) — vacuous/over-broad"; exit 1; }
+  test -f "${honest}/.omx/project-profile.json" \
+    || { echo "[verify] H5: honest repo profile was not written"; exit 1; }
+)
+
+echo "[verify] testing H5b (ai-project-profile write REFUSES a hostile symlinked .omx DIRECTORY, not just the .tmp)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  app="${repo_root}/tools/ai-project-profile"
+  victimdir="${tmp_dir}/victimdir"; mkdir -p "${victimdir}"
+  printf 'PRECIOUS\n' > "${victimdir}/keep.txt"
+  hostile="${tmp_dir}/hostile"
+  mkdir -p "${hostile}/custom-addons/mod"
+  printf "'version': '19.0'\n" > "${hostile}/custom-addons/mod/__manifest__.py"
+  ln -s "${victimdir}" "${hostile}/.omx"          # .omx itself is a symlink to a victim dir
+  rc=0; out="$( python3 "${app}" write "${hostile}" 2>&1 )" || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] H5b: write returned 0 through a symlinked .omx dir (should refuse)"; exit 1; }
+  echo "${out}" | grep -qi 'REFUSING' \
+    || { echo "[verify] H5b: symlinked .omx refusal not disclosed"; exit 1; }
+  test ! -e "${victimdir}/project-profile.json" \
+    || { echo "[verify] H5b: profile was written INTO the victim dir via the .omx symlink"; exit 1; }
+)
+
+echo "[verify] testing M3 (verify.sh product scope: a 0-byte verify-project.sh FAILS CLOSED, same as absent)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  vsh="${repo_root}/scripts/verify.sh"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}/scripts"
+  git -c init.defaultBranch=main init -q "${proj}"
+
+  run_p() { ( cd "${proj}"; AI_AUTO_VERIFY_SCOPE=product bash "${vsh}" ) >"${tmp_dir}/o" 2>&1; }
+
+  # (a) 0-byte executable verify-project.sh -> BLOCK (nonzero), NOT green.
+  : > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] M3: 0-byte verify-project.sh read as GREEN (rc=0) — false-green"; exit 1; }
+  grep -q 'empty or does not parse' "${tmp_dir}/o" \
+    || { echo "[verify] M3: 0-byte case did not disclose the fail-closed reason"; exit 1; }
+
+  # (b) syntactically-BROKEN (truncated/botched-merge) verify-project.sh -> BLOCK too.
+  printf '#!/usr/bin/env bash\nif [ ; then\n' > "${proj}/scripts/verify-project.sh"
+  chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] M3: syntax-broken verify-project.sh read as GREEN (rc=0)"; exit 1; }
+
+  # (c) NON-VACUOUS controls: a real PASSING verifier must still pass (0), and a real FAILING
+  # verifier must still block (nonzero) — proving the guard blocks ONLY empty/broken, not valid ones.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -eq 0 \
+    || { echo "[verify] M3: a VALID passing verify-project.sh was wrongly blocked (rc=${rc}) — over-broad"; exit 1; }
+  printf '#!/usr/bin/env bash\nexit 1\n' > "${proj}/scripts/verify-project.sh"; chmod +x "${proj}/scripts/verify-project.sh"
+  rc=0; run_p || rc=$?
+  test "${rc}" -ne 0 \
+    || { echo "[verify] M3: a FAILING verify-project.sh did not propagate as blocked (rc=0)"; exit 1; }
 )

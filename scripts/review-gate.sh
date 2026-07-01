@@ -24,10 +24,23 @@ fi
 
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
-# Clear any stale verify-failure override marker at gate start so an override can
-# only ever apply to the run that explicitly sets it (written later, only on an
-# approved verify failure). Prevents a prior run's override leaking forward.
-rm -f .omx/state/verify-override.env
+# Clear a STALE verify-failure override marker at gate start so an override can only ever apply
+# to the run that explicitly sets it (written later, only on an approved verify failure) — but
+# L1: do NOT clobber a CONCURRENT live session's approved override (summarize-ai-reviews.sh reads
+# it as source of truth). Ownership = the writer pid recorded in the file; if that pid is a
+# DIFFERENT live process, another gate owns it -> leave it. Otherwise (our own prior run's pid,
+# a dead pid, or no pid field) it is stale -> remove. Single-session flow is unchanged: a prior
+# run's pid is dead, so the override is always cleared.
+VERIFY_OVERRIDE_ENV="${VERIFY_OVERRIDE_ENV:-.omx/state/verify-override.env}"
+if [ -f "$VERIFY_OVERRIDE_ENV" ]; then
+  _ovr_pid="$(sed -n 's/^holder_pid=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
+  if [ -n "$_ovr_pid" ] && [ "$_ovr_pid" != "$$" ] && kill -0 "$_ovr_pid" 2>/dev/null; then
+    : # a concurrent live session owns this override -> preserve it
+  else
+    rm -f "$VERIFY_OVERRIDE_ENV"
+  fi
+  unset _ovr_pid
+fi
 
 # Concurrency guard: warn / soft-block when another live session shares this working tree
 # (prefer one git worktree per terminal — aiwt <name>). Released on every exit path.
@@ -548,6 +561,13 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
       machinery_memo_skip_notice | tee -a "$VERIFY_OUTPUT_FILE"
       machinery_status=0
     else
+      # H1 (time-of-record false-skip): capture the surface hash that is about to be TESTED,
+      # BEFORE verify runs, and record THAT exact hash on PASS — never a fresh re-hash of the live
+      # tree ~6min later (a concurrent session could have mutated it during the verify window).
+      machinery_tested_hash=""
+      if command -v machinery_memo_surface_hash >/dev/null 2>&1; then
+        machinery_tested_hash="$(machinery_memo_surface_hash)"
+      fi
       set +e
       # Run the harness as a clean standalone: scrub the gate-context REVIEW_* vars
       # (the REVIEW_DECISION_GATE block exports REVIEW_TARGETED_RECHECK=0 etc.) so they
@@ -567,9 +587,11 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
         "$AH/verify-machinery.sh" 2>&1 | tee -a "$VERIFY_OUTPUT_FILE"
       machinery_status="${PIPESTATUS[0]}"
       set -e
-      # Record the PASS so the imminent pre-commit machinery-fold can skip the twin run.
+      # Record the PASS so the imminent pre-commit machinery-fold can skip the twin run —
+      # keyed to the TESTED surface (H1), not a fresh re-hash (record_pass declines if the live
+      # tree drifted during verify).
       if [ "${machinery_status}" -eq 0 ] && command -v machinery_memo_record_pass >/dev/null 2>&1; then
-        machinery_memo_record_pass
+        machinery_memo_record_pass "${machinery_tested_hash}"
       fi
     fi
     if [ "${machinery_status}" -ne 0 ]; then
@@ -636,7 +658,8 @@ if [ "${verify_status}" -ne 0 ]; then
   {
     printf 'reason=%s\n' "${verify_override_reason}"
     printf 'approved_by=%s\n' "${verify_override_by}"
-  } > .omx/state/verify-override.env
+    printf 'holder_pid=%s\n' "$$"   # L1: ownership tag so a concurrent gate won't clobber this
+  } > "${VERIFY_OVERRIDE_ENV:-.omx/state/verify-override.env}"
 fi
 
 echo "[gate] collecting review context for diff-scope policy..."

@@ -57,12 +57,26 @@ fi
 # NOT a framework sibling). Present + executable -> run it. ABSENT -> FAIL-CLOSED so a
 # derived project's verify is never a silent green no-op.
 run_product() {
-  if [ -x ./scripts/verify-project.sh ]; then
-    echo "[verify] delegating to project verification: ./scripts/verify-project.sh"
-    ./scripts/verify-project.sh
-  elif [ -e ./scripts/verify-project.sh ]; then
-    echo "[verify] scripts/verify-project.sh present but NOT executable — running via bash (lost exec bit)" >&2
-    bash ./scripts/verify-project.sh
+  # L5: anchor the project verifier at the git TOPLEVEL (consistent with the gate's
+  # toplevel-anchored logic), NOT pwd — so running from a subdir resolves the SAME
+  # project-owned seam instead of a subdir's file or a false "absent".
+  local top vp
+  top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "${top}" ] || top="$(pwd)"
+  vp="${top}/scripts/verify-project.sh"
+  # M3: an EMPTY (0-byte) or syntactically-BROKEN verify-project.sh (truncated / botched
+  # merge) is NOT a passing verification — fail CLOSED exactly like absent so it can never
+  # read as a silent green no-op. An empty file passes `bash -n`, so gate on -s too.
+  if [ -e "${vp}" ] && { [ ! -s "${vp}" ] || ! bash -n "${vp}" 2>/dev/null; }; then
+    echo "[verify] scripts/verify-project.sh is empty or does not parse — FAIL-CLOSED (NOTHING was verified)" >&2
+    exit 1
+  fi
+  if [ -x "${vp}" ]; then
+    echo "[verify] delegating to project verification: ${vp}"
+    "${vp}"
+  elif [ -e "${vp}" ]; then
+    echo "[verify] ${vp} present but NOT executable — running via bash (lost exec bit)" >&2
+    bash "${vp}"
   else
     echo "[verify] no project verification: scripts/verify-project.sh is absent — NOTHING was verified" >&2
     exit 1

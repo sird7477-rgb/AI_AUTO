@@ -32,44 +32,81 @@ _session_lock_field() { sed -n "s/^$1=//p" "$SESSION_LOCK_FILE" 2>/dev/null | he
 _session_lock_pid_alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
 
 session_lock_acquire() {
-  local op="${1:-session}" self tmp held_pid held_sess held_op
+  local op="${1:-session}" self tmp held_pid held_sess held_op tries=0
   : "${AI_AUTO_SESSION_ID:=$(_session_lock_compute_id)}"
   export AI_AUTO_SESSION_ID
   self="$AI_AUTO_SESSION_ID"
   mkdir -p "$(dirname "$SESSION_LOCK_FILE")"
 
-  if [ -f "$SESSION_LOCK_FILE" ]; then
-    held_sess="$(_session_lock_field holder_session)"
-    held_pid="$(_session_lock_field holder_pid)"
-    held_op="$(_session_lock_field holder_op)"
-    if [ "$held_sess" = "$self" ]; then
-      SESSION_LOCK_HELD=0          # our own session (e.g. review-gate -> nested verify.sh)
-      return 0
-    fi
-    if _session_lock_pid_alive "$held_pid"; then
-      printf '%s\n' "[lock] WARNING: this working tree is already in use by a live session (pid=${held_pid} op=${held_op})." >&2
-      printf '%s\n' "[lock]   Prefer a separate worktree per terminal:  aiwt <name>" >&2
-      if [ "${AI_AUTO_ALLOW_SHARED_TREE:-0}" != "1" ]; then
-        printf '%s\n' "[lock]   Deferred (retryable): re-run after that session finishes, or use a separate worktree (aiwt). Set AI_AUTO_ALLOW_SHARED_TREE=1 to share anyway (state races possible)." >&2
-        return 75   # EX_TEMPFAIL: live-foreign-holder contention, NOT a failure
+  # M1 (non-atomic acquire): the old `[ -f ] test` then `mktemp; mv -f` let TWO simultaneous racers
+  # BOTH win (each saw no file, each clobbered the other with `mv -f`). Acquire is now atomic: we
+  # publish a FULLY-FORMED temp file into place with `ln` (hardlink create-or-fail — O_EXCL
+  # semantics, and the lock is complete at the instant it appears, so no reader ever sees a
+  # half-written lock). Exactly one simultaneous racer's `ln` succeeds; the loser's fails EEXIST,
+  # loops, and inspects the now-present lock (own / live-foreign->75 / stale). Only the true creator
+  # sets SESSION_LOCK_HELD=1, so release removes only its OWN lock. Bounded loop: each iteration
+  # either returns, or resolves to a live holder; the counter is a deadlock backstop (degrades to a
+  # non-atomic `mv` only if `ln` is unsupported, never spinning forever).
+  while : ; do
+    tries=$((tries + 1))
+    if [ -f "$SESSION_LOCK_FILE" ]; then
+      held_sess="$(_session_lock_field holder_session)"
+      held_pid="$(_session_lock_field holder_pid)"
+      held_op="$(_session_lock_field holder_op)"
+      if [ "$held_sess" = "$self" ]; then
+        SESSION_LOCK_HELD=0          # our own session (e.g. review-gate -> nested verify.sh)
+        return 0
       fi
-      printf '%s\n' "[lock]   AI_AUTO_ALLOW_SHARED_TREE=1: proceeding on a SHARED tree." >&2
-      SESSION_LOCK_HELD=0          # do not disturb the live holder's lock
+      if [ -z "$held_pid" ] && [ "$tries" -lt 50 ]; then
+        continue                     # lock present but holder_pid unreadable: retry, do not steal
+      fi
+      if _session_lock_pid_alive "$held_pid"; then
+        printf '%s\n' "[lock] WARNING: this working tree is already in use by a live session (pid=${held_pid} op=${held_op})." >&2
+        printf '%s\n' "[lock]   Prefer a separate worktree per terminal:  aiwt <name>" >&2
+        if [ "${AI_AUTO_ALLOW_SHARED_TREE:-0}" != "1" ]; then
+          printf '%s\n' "[lock]   Deferred (retryable): re-run after that session finishes, or use a separate worktree (aiwt). Set AI_AUTO_ALLOW_SHARED_TREE=1 to share anyway (state races possible)." >&2
+          return 75   # EX_TEMPFAIL: live-foreign-holder contention, NOT a failure
+        fi
+        printf '%s\n' "[lock]   AI_AUTO_ALLOW_SHARED_TREE=1: proceeding on a SHARED tree." >&2
+        SESSION_LOCK_HELD=0          # do not disturb the live holder's lock
+        return 0
+      fi
+      # Stale holder (dead pid): drop it, then contend for the atomic publish below. The rm+ln is
+      # itself racy across sessions, but the loser's `ln` fails -> loops -> inspects the winner.
+      printf '%s\n' "[lock] reclaiming stale lock (holder pid=${held_pid} no longer alive)" >&2
+      rm -f "$SESSION_LOCK_FILE"
+    fi
+
+    tmp="$(mktemp "$(dirname "$SESSION_LOCK_FILE")/.session.lock.XXXXXX")" || return 0
+    {
+      printf 'holder_pid=%s\n' "$$"
+      printf 'holder_session=%s\n' "$self"
+      printf 'holder_op=%s\n' "$op"
+      printf 'acquired_at=%s\n' "$(date -Iseconds)"
+    } > "$tmp"
+    if ln "$tmp" "$SESSION_LOCK_FILE" 2>/dev/null; then
+      rm -f "$tmp"
+      SESSION_LOCK_HELD=1
       return 0
     fi
-    printf '%s\n' "[lock] reclaiming stale lock (holder pid=${held_pid} no longer alive)" >&2
-  fi
-
-  tmp="$(mktemp "$(dirname "$SESSION_LOCK_FILE")/.session.lock.XXXXXX")" || return 0
-  {
-    printf 'holder_pid=%s\n' "$$"
-    printf 'holder_session=%s\n' "$self"
-    printf 'holder_op=%s\n' "$op"
-    printf 'acquired_at=%s\n' "$(date -Iseconds)"
-  } > "$tmp"
-  mv -f "$tmp" "$SESSION_LOCK_FILE"
-  SESSION_LOCK_HELD=1
-  return 0
+    rm -f "$tmp"
+    # `ln` failed. If the lock now exists a racer beat us -> loop and inspect. If it still does NOT
+    # exist, hardlinks are unsupported here: fall back to the legacy (non-atomic) mv publish rather
+    # than spin forever. This backstop only trips on exotic filesystems, never in the race case.
+    if [ ! -e "$SESSION_LOCK_FILE" ] || [ "$tries" -ge 50 ]; then
+      tmp="$(mktemp "$(dirname "$SESSION_LOCK_FILE")/.session.lock.XXXXXX")" || return 0
+      {
+        printf 'holder_pid=%s\n' "$$"
+        printf 'holder_session=%s\n' "$self"
+        printf 'holder_op=%s\n' "$op"
+        printf 'acquired_at=%s\n' "$(date -Iseconds)"
+      } > "$tmp"
+      mv -f "$tmp" "$SESSION_LOCK_FILE"
+      SESSION_LOCK_HELD=1
+      return 0
+    fi
+    # Lost the create race: a concurrent racer created the lock a moment ago. Loop to inspect it.
+  done
 }
 
 # Release only a lock WE created and still hold (never delete a live holder's lock).

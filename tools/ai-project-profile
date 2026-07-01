@@ -124,13 +124,50 @@ def cmd_write(repo: str) -> int:
         "updated_at": now_iso(),
     }
     omx = os.path.join(repo, ".omx")
-    os.makedirs(omx, exist_ok=True)
     path = os.path.join(repo, PROFILE_REL)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(profile, fh, ensure_ascii=False, indent=2, sort_keys=True)
-        fh.write("\n")
-    os.replace(tmp, path)
+    # H5: a hostile cloned repo can pre-plant `.omx`, the target, or the `.tmp` path as a
+    # symlink escaping the repo (git stores the target verbatim). A naive `open(tmp,"w")`
+    # FOLLOWS it and truncates+overwrites an arbitrary victim. Refuse every symlinked seam
+    # and open the temp with O_NOFOLLOW|O_EXCL so a link planted after the check (TOCTOU) is
+    # rejected (ELOOP/EEXIST) rather than followed. Surface the refusal — never mask it.
+    if os.path.islink(omx):
+        sys.stderr.write(f"[project-profile] REFUSING: {omx} is a symlink (won't write through it)\n")
+        return 1
+    try:
+        os.makedirs(omx, exist_ok=True)
+    except OSError as exc:
+        sys.stderr.write(f"[project-profile] REFUSING: cannot create {omx}: {exc}\n")
+        return 1
+    if os.path.islink(omx) or not os.path.isdir(omx):
+        sys.stderr.write(f"[project-profile] REFUSING: {omx} is not a real directory\n")
+        return 1
+    if os.path.islink(path) or os.path.islink(tmp):
+        sys.stderr.write(f"[project-profile] REFUSING: {path} or {tmp} is a symlink\n")
+        return 1
+    # Clear only a stale NON-symlink temp; a planted symlink is refused above, never removed.
+    if os.path.lexists(tmp) and not os.path.islink(tmp):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    data = json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        sys.stderr.write(f"[project-profile] REFUSING to write temp {tmp}: {exc}\n")
+        return 1
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except OSError as exc:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        sys.stderr.write(f"[project-profile] write failed for {path}: {exc}\n")
+        return 1
     print(path)
     return 0
 

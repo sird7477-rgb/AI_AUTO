@@ -9,6 +9,9 @@ SUMMARY_SCRIPT="${REPO_ROOT}/scripts/summarize-ai-reviews.sh"
 # so point the wrapper at the real helper. Inherited by every subshell that sources the block.
 export AI_AUTO_GIT_HARDEN_SH="${REPO_ROOT}/scripts/git-harden.sh"
 TMP_ROOT="$(mktemp -d)"
+# L2: per-run unique capture path (under the mktemp'd TMP_ROOT, auto-cleaned by the trap)
+# so two concurrent gate-folded runs never race on a shared fixed /tmp file.
+SUMMARY_OUT="${TMP_ROOT}/review-summary-test-output.txt"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
@@ -229,7 +232,7 @@ assert_summary() {
   set +e
   REVIEW_UNTRACKED_MANUAL_REVIEWED="${REVIEW_UNTRACKED_MANUAL_REVIEWED_FOR_TEST:-0}" \
     PHASE_SCOPE_MANUAL_REVIEWED="${PHASE_SCOPE_MANUAL_REVIEWED_FOR_TEST:-0}" \
-    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >"${SUMMARY_OUT}" 2>&1
   status=$?
   set -e
 
@@ -238,7 +241,7 @@ assert_summary() {
 
   if [ -z "${summary_file}" ]; then
     echo "[summary-test] ${name}: summary file was not created"
-    cat /tmp/review-summary-test-output.txt
+    cat "${SUMMARY_OUT}"
     exit 1
   fi
 
@@ -1185,13 +1188,13 @@ case_review_revision_task_created_from_accepted_finding() {
   set +e
   REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
     REVIEW_REVISION_CYCLE_COUNT=2 \
-    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >"${SUMMARY_OUT}" 2>&1
   status=$?
   set -e
 
   if [ "${status}" -ne 1 ]; then
     echo "[summary-test] review_revision_task_created_from_accepted_finding: expected exit 1, got ${status}"
-    cat /tmp/review-summary-test-output.txt
+    cat "${SUMMARY_OUT}"
     exit 1
   fi
 
@@ -1199,7 +1202,7 @@ case_review_revision_task_created_from_accepted_finding() {
   task_file="$(find "${out_dir}" -maxdepth 1 -type f -name 'review-revision-task-*.md' -print | head -1)"
   if [ -z "${task_file}" ]; then
     echo "[summary-test] review_revision_task_created_from_accepted_finding: missing task file"
-    cat /tmp/review-summary-test-output.txt
+    cat "${SUMMARY_OUT}"
     exit 1
   fi
 
@@ -1234,13 +1237,13 @@ case_targeted_review_recheck_rejects_expanded_scope() {
   REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
     REVIEW_TARGETED_RECHECK=1 \
     REVIEW_TARGETED_RECHECK_SCOPE_OK=0 \
-    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >"${SUMMARY_OUT}" 2>&1
   status=$?
   set -e
 
   if [ "${status}" -ne 1 ]; then
     echo "[summary-test] targeted_review_recheck_rejects_expanded_scope: expected exit 1, got ${status}"
-    cat /tmp/review-summary-test-output.txt
+    cat "${SUMMARY_OUT}"
     exit 1
   fi
 
@@ -1274,14 +1277,14 @@ case_targeted_recheck_defaults_on() {
   set +e
   REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
     REVIEW_REVISION_CYCLE_COUNT=2 \
-    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >"${SUMMARY_OUT}" 2>&1
   set -e
 
   local task_file
   task_file="$(find "${out_dir}" -maxdepth 1 -type f -name 'review-revision-task-*.md' -print | head -1)"
   if [ -z "${task_file}" ]; then
     echo "[summary-test] targeted_recheck_defaults_on: missing task file"
-    cat /tmp/review-summary-test-output.txt
+    cat "${SUMMARY_OUT}"
     exit 1
   fi
 
@@ -1469,13 +1472,13 @@ case_review_revision_task_stops_at_cycle_limit() {
   set +e
   REVIEW_ACCEPTED_FINDINGS_FILE="${dir}/accepted-findings.psv" \
     REVIEW_REVISION_CYCLE_COUNT=3 \
-    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >/tmp/review-summary-test-output.txt 2>&1
+    RESULT_DIR="${dir}" OUT_DIR="${out_dir}" "${SUMMARY_SCRIPT}" >"${SUMMARY_OUT}" 2>&1
   status=$?
   set -e
 
   if [ "${status}" -ne 1 ]; then
     echo "[summary-test] review_revision_task_stops_at_cycle_limit: expected exit 1, got ${status}"
-    cat /tmp/review-summary-test-output.txt
+    cat "${SUMMARY_OUT}"
     exit 1
   fi
 
@@ -1483,7 +1486,7 @@ case_review_revision_task_stops_at_cycle_limit() {
   task_file="$(find "${out_dir}" -maxdepth 1 -type f -name 'review-revision-task-*.md' -print | head -1)"
   if [ -z "${task_file}" ]; then
     echo "[summary-test] review_revision_task_stops_at_cycle_limit: missing task file"
-    cat /tmp/review-summary-test-output.txt
+    cat "${SUMMARY_OUT}"
     exit 1
   fi
 

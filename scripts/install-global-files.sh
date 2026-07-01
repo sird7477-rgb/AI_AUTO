@@ -205,6 +205,7 @@ install_shell_function() {
   local end_marker="# <<< AI_AUTO shell integration <<<"
   local tmp_path
   local begin_count end_count
+  local root_quoted
 
   if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
     say_fail "HOME is not ready; cannot install AI_AUTO shell function"
@@ -384,14 +385,21 @@ EOF
   fi
 
   # Bake the resolved engine root so the `ai-auto` launcher + framework tools are on
-  # PATH in interactive shells. $ROOT is expanded at install time; $AI_AUTO_HOME/$PATH/$HOME
-  # stay runtime-literal. The PATH prepend is guarded so re-sourcing never duplicates entries.
+  # PATH in interactive shells. $ROOT is run through printf '%q' so a checkout path with
+  # shell metacharacters ($(...), backticks, quotes) cannot become a live command
+  # substitution in the profile — see the codex wrapper for the same escaping. The value is
+  # emitted UNQUOTED because %q already yields a single safe shell word.
+  # $AI_AUTO_HOME/$PATH/$HOME stay runtime-literal. The engine dirs are APPENDED to PATH so a
+  # system binary always wins over a same-named file dropped into an untrusted checkout; the
+  # engine launchers (ai-auto, ai-*, *.sh) are uniquely named and still resolve. The append
+  # is guarded so re-sourcing never duplicates entries.
+  root_quoted="$(printf '%q' "$ROOT")"
   cat >> "$tmp_path" <<EOF
 # >>> AI_AUTO shell integration >>>
-export AI_AUTO_HOME="${ROOT}"
+export AI_AUTO_HOME=${root_quoted}
 case ":\$PATH:" in
   *":\$AI_AUTO_HOME/scripts:"*) ;;
-  *) PATH="\$AI_AUTO_HOME/scripts:\$AI_AUTO_HOME/tools:\$PATH" ;;
+  *) PATH="\$PATH:\$AI_AUTO_HOME/scripts:\$AI_AUTO_HOME/tools" ;;
 esac
 export PATH
 [ -f "\$HOME/.config/ai-lab/AI_AUTO.sh" ] && . "\$HOME/.config/ai-lab/AI_AUTO.sh"

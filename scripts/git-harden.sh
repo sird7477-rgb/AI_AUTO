@@ -61,10 +61,24 @@ _review_git_attr_guard() {
   # check both. Either resolution failing (e.g. a `--no-index` compare outside any repo) is fine.
   for _gd in "$(git rev-parse --git-dir 2>/dev/null)" "$(git rev-parse --git-common-dir 2>/dev/null)"; do
     [ -n "${_gd}" ] && _ia="${_gd}/info/attributes" && [ -f "${_ia}" ] || continue
-    # A non-comment line binding a `filter=`/`diff=` DRIVER (a name after `=`, so `-filter` unset
-    # and empty `filter=` are exempt). git-lfs/EOL never appear here; a driver here is the RCE.
+    # A non-comment line binding a `filter=`/`diff=` DRIVER to ANY non-empty driver NAME is the RCE.
+    # Match a POSITIVE name token `=[^[:space:]]` (`=` + ANY non-space, INCLUDING a leading `-`).
+    # A negated class that also excluded `-` (`=[^[:space:]-]`) let a driver NAMED with a leading
+    # dash slip through: `filter=-x` binds `[filter "-x"]` and git EXECUTES its .git/config clean
+    # driver (canary-proven RCE); `diff=-y` external-diff/textconv evades identically on a patch-
+    # producing read. `-i` also refuses uppercase `FILTER=`/`DIFF=` (git attr names are case-
+    # sensitive so these do NOT bind — refusing is safe-side, no legit line uses them) and the
+    # match spans every evasion shape: leading/trailing whitespace or tabs (`[[:space:]]` anchor),
+    # the attr as a 2nd+ token, a quoted value (`=` + `"`), and a macro definition
+    # (`[attr]m filter=evil` — the driver name appears on the macro line and is caught there).
+    # EXEMPT (no exec driver, no refusal): comments (`#`), unset/boolean attrs (`-text`, `text`,
+    # `eol=lf`), an attribute-unset `-filter` (no `=value`), an empty `filter=` (no name token),
+    # and a git-lfs/EOL filter — which bind via the TRACKED `.gitattributes`, NEVER info/attributes.
+    # `merge=` is NOT matched: empirically no merge driver execs on any op review_git reaches
+    # (add/diff/status/rm/show/hash-object/rev-parse; merge drivers run only on `git merge`/
+    # `checkout -m`, which the review path never invokes), so binding it here is inert.
     if grep -Ev '^[[:space:]]*(#|$)' "${_ia}" 2>/dev/null \
-         | grep -Eq '(^|[[:space:]])(filter|diff)=[^[:space:]-]'; then
+         | grep -Eiq '(^|[[:space:]])(filter|diff)=[^[:space:]]'; then
       printf 'review_git: REFUSING — %s binds a filter/diff driver. That is git'"'"'s highest-precedence attributes file, which NO per-invocation switch (--attr-source/GIT_ATTR_SOURCE/core.attributesFile/GIT_ATTR_NOSYSTEM) can neutralize, so an untrusted repo can execute arbitrary clean/smudge/diff .git/config commands through this hardened read. Legit filters bind via the tracked .gitattributes; the review path needs raw content. Refusing.\n' "${_ia}" >&2
       return 3
     fi

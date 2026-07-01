@@ -131,8 +131,12 @@ ai_auto_setup() {
     # redirect the whole shell's stderr permanently and swallow every later message.
     if { exec {_lockfd}>"$_lockfile"; } 2>/dev/null; then
       # R15-2: a lost/timed-out lock is NOT silent — setup still mutates (info/exclude +
-      # hooks), so a concurrent racer must be disclosed. The `git rm` below is atomic
-      # all-or-nothing (R2-2), so degrading is safe; it must not be quiet.
+      # hooks), so a concurrent racer must be disclosed. Degrading is safe only because EACH
+      # unlocked-path mutation is INDEPENDENTLY race-safe: the `git rm` is atomic all-or-
+      # nothing (R2-2), the hook shims land via same-dir temp+atomic-rename (R15-4), and the
+      # `.omx/` exclude append is serialized under its own flock + idempotent-guarded (L2
+      # below) — the append itself is NOT atomic, so without that guard two unlocked racers
+      # would double-write the line. It must not be quiet, but it does not corrupt state.
       if ! flock -w "$_locktimeout" "$_lockfd" 2>/dev/null; then
         echo "ai-auto setup: WARNING could not acquire the setup lock within ${_locktimeout}s ($_lockfile); proceeding WITHOUT the setup lock — a concurrent 'ai-auto setup' on this repo may race." >&2
       fi
@@ -170,12 +174,21 @@ ai_auto_setup() {
   # D2: record whether we APPENDED (first run) or found it ALREADY PRESENT (idempotent
   # re-run) so BOTH report branches below can disclose the .git/info/exclude mutation —
   # previously only the "nothing to remove" branch mentioned .omx at all.
-  if grep -Eq '^[.]omx/?$' "$exclude_file" 2>/dev/null; then
-    omx_exclude_status="already present"
-  else
-    printf '\n.omx/\n' >> "$exclude_file"
-    omx_exclude_status="appended (.omx/)"
-  fi
+  # L2: on the proceed-unlocked path (setup lock lost/timed out, R15-2) two concurrent
+  # setups can BOTH see `.omx/` absent and BOTH `>>`-append it — the append is NOT atomic,
+  # so the naked grep-then-append double-writes the line. Serialize the WHOLE grep+append as
+  # one critical section under a short flock on the exclude file itself (its own fd 9), so
+  # the check and the write cannot interleave across racers and the line is added exactly
+  # once. flock missing -> setup already WARNED that concurrent setups are unserialized.
+  {
+    command -v flock >/dev/null 2>&1 && flock 9 2>/dev/null || true
+    if grep -Eq '^[.]omx/?$' "$exclude_file" 2>/dev/null; then
+      omx_exclude_status="already present"
+    else
+      printf '\n.omx/\n' >&9
+      omx_exclude_status="appended (.omx/)"
+    fi
+  } 9>>"$exclude_file"
 
   # (d) install THIN hook shims with the engine path BAKED at setup time (readlink -f).
   # Fail-closed: never clobber a pre-existing NON-shim hook.
@@ -240,7 +253,13 @@ fi
 PATH="\$AI_AUTO_HOME/scripts:\$AI_AUTO_HOME/tools:\$PATH"
 exec "\$AI_AUTO_HOME/hooks/$hook" "\$@"
 EOF
-      chmod +x "$tmp"
+      # M2: `mktemp` creates the temp 0600 and `mv -f` PRESERVES that mode, so a bare
+      # `chmod +x` only ADDS the execute bit — yielding 711 under umask 022 (or 700 under
+      # 077), stripping the group/other READ bit bash needs to read a shebang script and
+      # breaking commits for non-owner users in a shared repo. Set the mode EXPLICITLY to
+      # 0755 (not `+x`) so the installed shim is world-readable+executable regardless of
+      # umask, matching the pre-atomic `cat >dst; chmod +x` behavior.
+      chmod 0755 "$tmp"
       mv -f "$tmp" "$dst"
     done
   fi

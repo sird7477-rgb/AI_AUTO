@@ -79,9 +79,15 @@ if [ "$AI_AUTO_HOME" -ef "$repo_root" ]; then
     if command -v machinery_memo_should_skip >/dev/null 2>&1 && machinery_memo_should_skip; then
       machinery_memo_skip_notice
     else
+      # H1: capture the surface hash TESTED before verify runs, and record THAT on PASS (never a
+      # fresh re-hash after the run, which could pick up a concurrent session's mid-window edit).
+      machinery_tested_hash=""
+      if command -v machinery_memo_surface_hash >/dev/null 2>&1; then
+        machinery_tested_hash="$(machinery_memo_surface_hash)"
+      fi
       verify-machinery.sh
       if command -v machinery_memo_record_pass >/dev/null 2>&1; then
-        machinery_memo_record_pass
+        machinery_memo_record_pass "${machinery_tested_hash}"
       fi
     fi
   else
