@@ -7335,14 +7335,22 @@ def is_text(f):
 # A git diff/show/log/blame INVOCATION on ONE physical line: bash `git [opts] diff` (or review_git),
 # or python list `"git", ... "diff"`. Comments are skipped by the caller. `diff` inside `--no-ext-diff`
 # or `diff.external` is NOT matched (the subcommand must be a standalone space/comma-bounded token).
-# bash: a COMMAND-POSITION `git`/`review_git` (after start, `;`, `|`, `&`, `(`, `{`, or backtick)
-# followed by opts then a STANDALONE `diff|show|log|blame` subcommand. The trailing `(?![\w.=-])`
-# rejects `diff.external` (config key), `diff-tree`/`diff-index` (tree-only subcommands), and
+# bash: a COMMAND-POSITION `git`/`review_git` followed by opts then a STANDALONE
+# `diff|show|log|blame` subcommand. Command position = after start-of-line, one of
+# `;&|(){}` `` ` `` `"` `'`, OR a shell keyword/operator that introduces a command
+# (`then`/`do`/`else`/`elif`/`eval`/`xargs ...`) -- so a worktree `git diff` inside an
+# `if/for/while/eval/xargs` line is caught (defense-in-depth: idiomatic forms must not
+# evade the --attr-source/flag requirement). The trailing `(?![\w.=-])` rejects
+# `diff.external` (config key), `diff-tree`/`diff-index` (tree-only subcommands), and
 # `--no-ext-diff`; the command-position prefix rejects prose mentions like "such as git diff".
-# python: a `"git", ... "diff"` argv list.
+# python: a `"git", ... "diff"` adjacent argv list, OR (over-approx) ANY `[ ... "diff" ]`
+# list-literal token on a git-signal line -- catches argv built by `+`-concatenation
+# (`GIT + ["diff",...]`, `["git"]+flags+["diff",...]`) where "git" and "diff" aren't
+# adjacent literals. The git-signal gate (applied below) keeps non-git lists unscanned.
 INVOKE = re.compile(
-    r'(?:(?:^|[;&|(){`])\s*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(diff|show|log|blame)(?![\w.=-]))'
+    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:then|do|else|elif|eval|xargs)\b[^;#]*?\s)\s*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(diff|show|log|blame)(?![\w.=-]))'
     r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(diff|show|log|blame)"\s*,?)'
+    r'|(?:\[(?:[^\]]*,)?\s*"(diff|show|log|blame)")'
 )
 NONPATCH = ("--name-only", "--name-status", "--stat", "--shortstat", "--numstat", "--quiet", "--no-patch", "--check")
 violations = []
@@ -7362,7 +7370,15 @@ for f in sorted(targets):
         m = INVOKE.search(line)
         if not m:
             continue
-        sub = m.group(1) or m.group(2)
+        sub = m.group(1) or m.group(2) or m.group(3)
+        # group(3): a python list-literal diff token reached via concat/splitting (over-approx).
+        # Only treat as a git invocation when the line carries a git signal -- this keeps plain
+        # non-git list literals (e.g. modes=["diff","merge"]) UNSCANNED while still flagging
+        # `GIT + ["diff",...]` / `["git"]+x+["diff",...]`. (Errs toward FLAGGING: a guard false-
+        # positive is a loud test failure a dev fixes, far safer than a missed clean-filter RCE.)
+        if m.group(3) and not m.group(1) and not m.group(2):
+            if not (re.search(r'(?i)\bgit', line) or "GIT" in line):
+                continue
         scanned += 1
         loc = "%s:%d" % (rel, i)
         s = line.strip()
@@ -7437,6 +7453,46 @@ PYEOF
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     || { echo "[verify] R9-DRIFT: control b5 (engine worktree diff via review_git) FALSE-POSITIVED — wrapper exemption broken"; exit 1; }
   rm -f "${tmp_dir}/fake/scripts/engine-bad.sh"
+  # b6: idiomatic SHELL evasion forms (command position after a keyword/operator, not punctuation)
+  # — each an UN-hardened worktree diff that PRE-strengthening scanned to ZERO sites and passed
+  # clean. The broadened command-position matcher must now CATCH every one (defense-in-depth: no
+  # if/for/while/eval/xargs `git diff` may slip past the --attr-source/review_git requirement).
+  for _b6 in \
+      'if true; then git diff --name-only HEAD; fi' \
+      'for x in a; do git diff --name-only HEAD; done' \
+      'while read l; do git diff --name-only HEAD; done' \
+      'eval "git diff --name-only HEAD"' \
+      'xargs -I{} git diff --name-only {}' \
+      'xargs git diff --name-only HEAD'; do
+    printf '%s\n' "${_b6}" > "${tmp_dir}/fake/scripts/b6.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b6 (keyword-prefixed evasion) NOT caught — matcher still evadable: ${_b6}"; exit 1; }
+  done
+  # b6-hardened: the same keyword-prefixed forms, correctly hardened, MUST pass (no false-positive).
+  printf 'if true; then git --attr-source="$ET" diff --name-only HEAD; fi\n' > "${tmp_dir}/fake/scripts/b6.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b6-hardened (if/then via --attr-source) FALSE-POSITIVED"; exit 1; }
+  printf 'for x in a; do review_git diff --name-only HEAD; done\n' > "${tmp_dir}/fake/scripts/b6.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b6-hardened (for/do via review_git) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b6.sh"
+  # b7: PYTHON argv-concat evasion — git-ness comes from a `+`-joined `["git"]`/GIT var, so "git"
+  # and "diff" are NOT adjacent literals (pre-strengthening: 0 sites). The broadened python matcher
+  # must CATCH it; and a plain non-git list literal must stay UNSCANNED (git-signal gate).
+  printf 'import subprocess\nGIT = ["git"]\nsubprocess.run(GIT + ["diff", "--name-only", base])\n' > "${tmp_dir}/fake/scripts/b7.py"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b7 (python GIT + [\"diff\"] concat) NOT caught — concat evasion reopened"; exit 1; }
+  printf 'import subprocess\nsubprocess.run(["git"] + flags + ["diff", base])\n' > "${tmp_dir}/fake/scripts/b7.py"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b7 (python [\"git\"]+flags+[\"diff\"] concat) NOT caught — concat evasion reopened"; exit 1; }
+  # b7-hardened: concat form carrying --attr-source MUST pass; plain non-git list MUST NOT be scanned.
+  printf 'import subprocess\nsubprocess.run(GIT + ["diff", "--attr-source=" + ET, "--name-only", base])\n' > "${tmp_dir}/fake/scripts/b7.py"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b7-hardened (python concat with --attr-source) FALSE-POSITIVED"; exit 1; }
+  printf 'modes = ["diff", "merge", "stat"]\n' > "${tmp_dir}/fake/scripts/b7.py"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b7-nongit (plain non-git list literal) FALSE-POSITIVED — git-signal gate broken"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b7.py"
 )
 
 echo "[verify] testing R9b-ENGINE-RCE (in-repo .gitattributes clean filter must NOT execute via the ENGINE collector's WORKTREE diff path: collect-review-context.sh worktree diffs are review_git-wrapped with central --attr-source=<empty-tree>; engine analog of R9-VALIDATOR-RCE)..."
