@@ -84,8 +84,13 @@ print_repo() {
   # dirty tracked blob of a scanned repo, and -c core.fsmonitor= kills the SEPARATE in-repo
   # `.git/config` fsmonitor HOOK-PROGRAM code-exec vector (config, not attribute — --attr-source
   # does NOT reach it) that fires while status refreshes the index of an untrusted scanned repo.
+  # R22: -c core.hooksPath=/dev/null kills the THIRD vector — `git status`'s index refresh REWRITES
+  # the stale on-disk index of a scanned directory-copy and FIRES the repo's `post-index-change`
+  # HOOK (default `.git/hooks/*`, or a hostile repo-local core.hooksPath), an auto-invoked RCE as
+  # workspace-scan walks EVERY .git under $WORKSPACE. Neither --attr-source nor core.fsmonitor= stops
+  # it (it is the hook path, not an attribute/config-program). Canary-proven.
   _et="$(git -C "$repo" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  if [ -n "$(git -C "$repo" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null status --short 2>/dev/null)" ]; then
+  if [ -n "$(git -C "$repo" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null -c core.hooksPath=/dev/null status --short 2>/dev/null)" ]; then
     status="dirty"
   else
     status="clean"

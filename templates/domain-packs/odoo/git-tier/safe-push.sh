@@ -23,11 +23,23 @@ BACKOFF="${SAFE_PUSH_BACKOFF:-2}"
 
 [ "$BRANCH" = "HEAD" ] && { echo "[safe-push] detached HEAD — refusing to guess a target branch." >&2; exit 2; }
 
+# R22 (hook RCE): git subcommands here fire repo hooks and HONOR a repo-local `core.hooksPath`.
+#   - `rebase`/`fetch` do NOT need any project hook for safe-push, so they are pinned to
+#     `core.hooksPath=/dev/null` (a hostile core.hooksPath / tracked `.git/hooks/*` in a copied
+#     repo would otherwise run 6 rebase hooks + fetch hooks as the operator — RCE).
+#   - `push` MUST still run the INTENDED pre-push validation (never bypassed — the whole point of
+#     safe-push), so it is pinned to the repo's REAL hooks dir. That defeats a hostile core.hooksPath
+#     that would REDIRECT (hijack) or point away from (bypass) the validation, while preserving it.
+#     The real dir is derived from `--git-common-dir` (which core.hooksPath cannot influence), so the
+#     resolution itself is not hijackable; falls back to `.git/hooks` if resolution fails.
+_gcd="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+REAL_HOOKS="${_gcd:-.git}/hooks"
+
 i=0
 while : ; do
   i=$((i + 1))
   echo "[safe-push] attempt ${i}/${MAX}: git push ${REMOTE} HEAD:${BRANCH}"
-  out="$(git push "${REMOTE}" "HEAD:${BRANCH}" 2>&1)"; rc=$?
+  out="$(git -c core.hooksPath="${REAL_HOOKS}" push "${REMOTE}" "HEAD:${BRANCH}" 2>&1)"; rc=$?
   printf '%s\n' "${out}"
   if [ "${rc}" -eq 0 ]; then
     echo "[safe-push] pushed to ${REMOTE}/${BRANCH} on attempt ${i}."
@@ -48,7 +60,7 @@ while : ; do
   fi
   echo "[safe-push] non-fast-forward — fetching ${REMOTE}/${BRANCH} ..."
   before="$(git rev-parse "${REMOTE}/${BRANCH}" 2>/dev/null || echo none)"
-  if ! git fetch "${REMOTE}" "${BRANCH}"; then
+  if ! git -c core.hooksPath=/dev/null fetch "${REMOTE}" "${BRANCH}"; then
     echo "[safe-push] fetch failed — aborting." >&2
     exit 1
   fi
@@ -61,8 +73,8 @@ while : ; do
     exit 1
   fi
   echo "[safe-push] rebasing onto ${REMOTE}/${BRANCH} (${before:0:7}..${after:0:7}) ..."
-  if ! git rebase "${REMOTE}/${BRANCH}"; then
-    git rebase --abort 2>/dev/null || true
+  if ! git -c core.hooksPath=/dev/null rebase "${REMOTE}/${BRANCH}"; then
+    git -c core.hooksPath=/dev/null rebase --abort 2>/dev/null || true
     echo "[safe-push] rebase hit a conflict the version merge driver could not auto-resolve." >&2
     echo "[safe-push] resolve it manually:  git rebase ${REMOTE}/${BRANCH}   then re-run safe-push." >&2
     exit 1

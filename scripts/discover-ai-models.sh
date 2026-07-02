@@ -94,6 +94,16 @@ EOF
   fi
 }
 
+env_body_is_literal() {
+  # The cache-hit branch preserves the existing file body byte-for-byte, so it
+  # must first be confirmed as pure data: every non-blank/comment line a literal
+  # single-quoted KEY='value' assignment. A tampered/hostile body (e.g. an
+  # injected `X=$(cmd)` line) fails this and forces full regeneration below
+  # (`: > ENV_OUT` + shell_quote), so a poisoned env is never reused/trusted.
+  ! grep -vE "^[[:space:]]*(#.*)?\$" "$1" \
+    | grep -qvE "^[A-Za-z_][A-Za-z0-9_]*='[^']*'\$"
+}
+
 update_cached_report_status() {
   local cache_age="$1"
   local observation_status="${2:-not_updated_cache_reused}"
@@ -133,7 +143,7 @@ if [ "${AI_MODEL_DISCOVERY_REFRESH}" != "1" ] && [ -f "${ENV_OUT}" ] && [ -f "${
   esac
 
   cache_age=$((now_epoch - cached_epoch))
-  if [ "${cached_override_fingerprint}" = "${current_override_fingerprint}" ] && [ "${cache_age}" -ge 0 ] && [ "${cache_age}" -le "${AI_MODEL_ROUTING_TTL_SECONDS}" ]; then
+  if [ "${cached_override_fingerprint}" = "${current_override_fingerprint}" ] && [ "${cache_age}" -ge 0 ] && [ "${cache_age}" -le "${AI_MODEL_ROUTING_TTL_SECONDS}" ] && env_body_is_literal "${ENV_OUT}"; then
     tmp_env="${ENV_OUT}.tmp.$$"
     grep -v -E "^(AI_MODEL_ROUTING_CACHE_STATUS|AI_MODEL_ROUTING_CACHE_AGE_SECONDS|AI_MODEL_ROUTING_CACHE_TTL_SECONDS|AI_MODEL_ROUTING_OBSERVATIONS|AI_MODEL_ROUTING_OBSERVATIONS_STATUS)=" "${ENV_OUT}" > "${tmp_env}" || true
     mv "${tmp_env}" "${ENV_OUT}"

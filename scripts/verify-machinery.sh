@@ -2507,6 +2507,73 @@ STUB
   grep -q "^CODEX_ARCHITECT_REVIEW_MODEL_SOURCE='unsupported'$" "${missing_dir}/latest.env"
 )
 
+echo "[verify] testing BLUE-R22-SOURCED-ENV (the in-tree, attacker-controllable model-routing env is read as DATA, never sourced: a hostile latest.env carrying INJECTED=\$(touch CANARY) does NOT execute on the load-model-routing path, a poisoned cache-hit body is regenerated not trusted, and a legitimate cache still routes)..."
+(
+  review_script="$(pwd)/scripts/run-ai-reviews.sh"
+  discover_script="$(pwd)/scripts/discover-ai-models.sh"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  unset AI_MODEL_DISCOVERY_REFRESH AI_MODEL_ROUTING_TTL_SECONDS \
+    CLAUDE_REVIEW_ROLE CLAUDE_REVIEW_MODEL GEMINI_REVIEW_MODEL 2>/dev/null || true
+  cd "${tmp_dir}"
+  canary="${tmp_dir}/canary"
+
+  # --- The parser is the RCE boundary. First prove the hostile body genuinely
+  #     executes when sourced (so the assertions below are non-vacuous), then
+  #     prove run-ai-reviews.sh reads it as data and refuses it (fail closed). ---
+  cat > hostile.env <<EOF
+AI_MODEL_ROUTING_DISCOVERED_EPOCH='$(date +%s)'
+CLAUDE_REVIEW_MODEL='opus'
+INJECTED=\$(touch ${canary})
+EOF
+  ( . ./hostile.env ) >/dev/null 2>&1 || true
+  test -e "${canary}" || { echo "[verify] R22 fixture broken: hostile env is not code-if-sourced" >&2; exit 1; }
+  rm -f "${canary}"
+
+  if bash "${review_script}" --parse-model-routing-env "${tmp_dir}/hostile.env" >parse.out 2>/dev/null; then
+    echo "[verify] R22: hostile routing env was accepted (expected fail-closed rejection)" >&2
+    exit 1
+  fi
+  if [ -e "${canary}" ]; then
+    echo "[verify] R22 RCE: parsing the hostile routing env executed its payload" >&2
+    exit 1
+  fi
+
+  # A legitimate literal env still parses and routes; non-whitelisted keys and
+  # single-quoted metacharacter values are ignored, never executed.
+  cat > legit.env <<'EOF'
+CLAUDE_REVIEW_ROLE='architect_review'
+CLAUDE_REVIEW_MODEL='opus'
+CLAUDE_REVIEW_MODEL_SOURCE='auto:claude-cli-alias:opus;role:architect_review'
+GEMINI_REVIEW_MODEL='gemini-fixture'
+QUOTED_VALUE='$(touch should-not-run)'
+EOF
+  bash "${review_script}" --parse-model-routing-env "${tmp_dir}/legit.env" >parse.out 2>/dev/null
+  grep -q "^CLAUDE_REVIEW_MODEL=opus$" parse.out
+  grep -q "^CLAUDE_REVIEW_ROLE=architect_review$" parse.out
+  grep -q "^GEMINI_REVIEW_MODEL=gemini-fixture$" parse.out
+  test ! -e "${tmp_dir}/should-not-run"
+
+  # --- The cache-hit path must not TRUST a tampered body. Generate a valid
+  #     cache, poison it with an injection line (keeping the valid
+  #     fingerprint/epoch so it would otherwise cache-hit), then confirm the
+  #     next discovery regenerates a clean body instead of preserving it. ---
+  AI_MODEL_DISCOVERY_DIR="${tmp_dir}/routing" "${discover_script}" >/dev/null
+  grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='refreshed'$" "${tmp_dir}/routing/latest.env"
+  printf 'INJECTED=$(touch %s)\n' "${canary}" >> "${tmp_dir}/routing/latest.env"
+  AI_MODEL_DISCOVERY_DIR="${tmp_dir}/routing" "${discover_script}" >/dev/null
+  grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='refreshed'$" "${tmp_dir}/routing/latest.env"
+  if grep -q "INJECTED" "${tmp_dir}/routing/latest.env"; then
+    echo "[verify] R22: poisoned routing cache body was preserved on cache-hit" >&2
+    exit 1
+  fi
+
+  # A legitimate (untampered) cache still reuses -> the caching feature works.
+  AI_MODEL_DISCOVERY_DIR="${tmp_dir}/legit-routing" "${discover_script}" >/dev/null
+  AI_MODEL_DISCOVERY_DIR="${tmp_dir}/legit-routing" "${discover_script}" >/dev/null
+  grep -q "^AI_MODEL_ROUTING_CACHE_STATUS='reused'$" "${tmp_dir}/legit-routing/latest.env"
+)
+
 echo "[verify] testing review context edge cases..."
 (
   context_script="$(pwd)/scripts/collect-review-context.sh"
@@ -7471,6 +7538,39 @@ echo "[verify] testing ai-auto R3-3 (GIT_CONFIG_* config-injection scrubbed in s
     || { echo "[verify] R3-3: control vector inert — test would not catch a regression"; exit 1; }
 )
 
+echo "[verify] testing BLUE-R22-SCRUB (GIT_CONFIG_PARAMETERS — git's \`-c\` serialization env, honored on EVERY git command, additive to + HIGHER precedence than the KEY/VALUE channel — is unset by hooks/git-scrub.sh, so a poisoned-parent-env core.fsmonitor/core.hooksPath injected through GCP does NOT execute on a bare \`git status\`/commit after sourcing the scrub, and does NOT defeat the scrub's own core.fsmonitor='' re-pin)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"; export GIT_CONFIG_NOSYSTEM=1
+  repo="${tmp_dir}/repo"; mkdir -p "${repo}"
+  ( cd "${repo}"; git init -q; git config user.email t@e.x; git config user.name T
+    echo x > f; git add -A; git commit -qm base )
+  # (a) fsmonitor via GCP: bare `git status` after sourcing the scrub must NOT fire the canary.
+  ( cd "${repo}"
+    GIT_CONFIG_PARAMETERS="'core.fsmonitor=touch ${tmp_dir}/GCP_FSM'" \
+      bash -c '. '"${repo_root}"'/hooks/git-scrub.sh; git status >/dev/null 2>&1' )
+  test ! -e "${tmp_dir}/GCP_FSM" \
+    || { echo "[verify] BLUE-R22-SCRUB: GIT_CONFIG_PARAMETERS core.fsmonitor EXECUTED through the scrub"; exit 1; }
+  # (b) hooksPath via GCP: a commit after sourcing the scrub must NOT run the redirected hook.
+  hd="${tmp_dir}/gcphooks"; mkdir -p "${hd}"
+  printf '#!/usr/bin/env bash\ntouch %s\n' "${tmp_dir}/GCP_HP" > "${hd}/pre-commit"; chmod +x "${hd}/pre-commit"
+  ( cd "${repo}"
+    GIT_CONFIG_PARAMETERS="'core.hooksPath=${hd}'" \
+      bash -c '. '"${repo_root}"'/hooks/git-scrub.sh; echo y>>f; git add -A; git commit -qm x2 >/dev/null 2>&1' )
+  test ! -e "${tmp_dir}/GCP_HP" \
+    || { echo "[verify] BLUE-R22-SCRUB: GIT_CONFIG_PARAMETERS core.hooksPath hook EXECUTED through the scrub"; exit 1; }
+  # Control (NON-VACUOUS): the SAME GCP injection with the GIT_CONFIG_PARAMETERS unset REMOVED from
+  # the scrub DOES fire — proving both assertions above catch a revert, not vacuously green.
+  ctl_scrub="${tmp_dir}/git-scrub-novacuous.sh"
+  sed 's/ GIT_CONFIG_PARAMETERS GIT_CONFIG / /' "${repo_root}/hooks/git-scrub.sh" > "${ctl_scrub}"
+  ( cd "${repo}"
+    GIT_CONFIG_PARAMETERS="'core.fsmonitor=touch ${tmp_dir}/GCP_CTRL'" \
+      bash -c '. '"${ctl_scrub}"'; git status >/dev/null 2>&1' )
+  test -e "${tmp_dir}/GCP_CTRL" \
+    || { echo "[verify] BLUE-R22-SCRUB: control (scrub w/o GCP unset) inert — fixture would not catch a regression"; exit 1; }
+)
+
 echo "[verify] testing ai-auto setup R3-5 (lock on the COMMON git dir, shared across worktrees)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -9007,10 +9107,13 @@ echo "[verify] testing R9-DRIFT (COMPREHENSIVE: EVERY patch/content-producing gi
   cat > "${guard}" <<'PYEOF'
 import os, re, sys, pathlib
 root = pathlib.Path(sys.argv[1])
-# EXCLUDE the test harness verify-machinery.sh: it is not shipped engine/validator logic and
-# deliberately contains adversarial BARE `git diff` negative-control fixtures; scanning it would
-# flag those intentional controls.
-SELF = (root / "scripts" / "verify-machinery.sh").resolve()
+# EXCLUDE test HARNESSES (not shipped engine/validator logic): verify-machinery.sh (deliberately
+# contains adversarial BARE `git diff`/`git status`/`git commit` negative-control fixtures) AND
+# scripts/test-*.sh (e.g. test-review-summary.sh, which builds EPHEMERAL mktemp `git init` repos
+# and `git commit`s trusted fixtures INTO them — a controlled, non-hostile-repo op, not a
+# trust-path invocation). Scanning either would flag those intentional/ephemeral fixtures. The
+# match is by resolved path (verify-machinery.sh) OR the `scripts/test-*.sh` name pattern.
+TEST_HARNESS = {(root / "scripts" / "verify-machinery.sh").resolve()}
 targets = []
 for d in ("scripts", "hooks", "tools"):
     p = root / d
@@ -9083,13 +9186,45 @@ def is_text(f):
 #        rev-parse, config/`-c`, init, hash-object(--no-filters), merge-base,
 #        merge-file, rev-list, remote, push, fetch, branch, commit, diff-tree, show-ref,
 #        show-toplevel/show-current(options), worktree list.
-SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file|worktree|ls-files'
+# R22 (post-index-change HOOK class): the hook-RCE surface is BIGGER than R21 modeled. `git status`
+# — and reset/restore/stash/apply — FIRE the repo's `post-index-change` HOOK when the index refresh
+# rewrites the on-disk index (canary-proven: a stale-index directory-copy's first `git status`
+# executes `.git/hooks/post-index-change`, and a hostile repo-local `core.hooksPath` redirects it).
+# So EVERY such call over an untrusted repo lacking `-c core.hooksPath=/dev/null` (and not via
+# review_git, which now carries it) is a hook RCE — NOT just checkout/worktree-add (R21). rebase/
+# commit/merge/am/cherry-pick/revert/push/fetch/pull/clone are ADDED to SUBS with the hooksPath
+# requirement so a NEW such site cannot land with zero hardening (pre-R22 they were not in SUBS at
+# all -> passed unguarded). rm/mv are ADDED for the fsmonitor requirement (they rewrite the index ->
+# query core.fsmonitor). diff / ls-files / diff --cached / show / rev-parse / log / cat-file are kept
+# AS-IS for hooks (they do NOT write the index / fire post-index-change) — they still carry their
+# existing attr-source + fsmonitor pins.
+SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file|worktree|ls-files|rebase|cherry-pick|revert|commit|merge|am|push|fetch|pull|clone|rm|mv'
+# INVOKE (R22 command-position hardening): a command-position `git`/`review_git` followed by opts then
+# a STANDALONE subcommand. Command position = start-of-line, one of `;&|(){}` `` ` `` `"` `'`, OR a
+# shell keyword that introduces a command (if/then/do/else/elif/while/until/eval/xargs). PLUS, before
+# git: (a) leading ENV-ASSIGNMENTS (`GIT_OPTIONAL_LOCKS=0 git …`, `FOO=bar git …`), and (b) wrapper
+# commands WITH THEIR OWN ARGS (`env FOO=bar git …`, `sudo -n git …`, `nice -n 10 git …`,
+# `ionice/stdbuf/timeout … git …`). A backslash LINE-CONTINUATION between `git` and its subcommand is
+# handled by the logical-line join in the caller (physical lines are joined before matching).
 INVOKE = re.compile(
-    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:if|then|do|else|elif|while|until|eval|xargs)\b[^;#]*?\s)\s*(?:(?:sudo|env|command|time|nohup|exec|builtin)\s+)*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
+    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:if|then|do|else|elif|while|until|eval|xargs)\b[^;#]*?\s)'
+    r'\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*'
+    r'(?:(?:sudo|env|command|time|nohup|exec|builtin|nice|ionice|stdbuf|timeout)(?:\s+-\S+|\s+[A-Za-z_][A-Za-z0-9_]*=\S*|\s+\d+)*\s+)*'
+    r'(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
     r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(' + SUBS + r')"\s*,?)'
     r'|(?:\[(?:[^\]]*,)?\s*"(' + SUBS + r')")'
 )
 NONPATCH = ("--name-only", "--name-status", "--stat", "--shortstat", "--numstat", "--quiet", "--no-patch", "--check")
+# R22 hooksPath term: subcommands that FIRE A GIT HOOK / WRITE THE INDEX and so must carry
+# `-c core.hooksPath=/dev/null` (or route through review_git, or live in a file sourcing
+# hooks/git-scrub.sh whose process-wide GIT_CONFIG core.hooksPath pin — env config overrides the
+# repo-local `core.hooksPath` AND the default `.git/hooks` path — neutralizes the hook). `checkout`
+# and `worktree add|remove|prune` keep their STRICTER R21 hooksPath handling (inline / review_git
+# ONLY — no sources_scrub relaxation) in rules 4/5 below, since they actively check out an attacker
+# tree; they are therefore NOT listed here.
+HOOK_SUBS = ("status", "reset", "restore", "stash", "apply",
+             "rebase", "commit", "merge", "am", "cherry-pick", "revert",
+             "push", "fetch", "pull", "clone")
 # FSMONITOR (R20 + R21): the WORKTREE/INDEX-scanning subcommands (diff worktree AND --cached / status /
 # checkout / restore / reset / stash / apply / archive / cat-file / worktree add|remove / ls-files —
 # rules 3/4/5/6) query core.fsmonitor while
@@ -9106,9 +9241,12 @@ SCRUB_SOURCE = re.compile(r'(?:^|[;&|]|&&|\|\||\bthen\b|\bdo\b|\belse\b)\s*(?:\.
 violations = []
 scanned = 0
 for f in sorted(targets):
-    if not is_text(f) or f.resolve() == SELF:
+    if not is_text(f):
         continue
     rel = f.relative_to(root).as_posix()
+    # test HARNESSES excluded (see TEST_HARNESS note): verify-machinery.sh + scripts/test-*.sh.
+    if f.resolve() in TEST_HARNESS or (rel.startswith("scripts/") and f.name.startswith("test-") and f.suffix == ".sh"):
+        continue
     is_dp = rel.startswith("templates/domain-packs/")
     try:
         text = f.read_text(encoding="utf-8", errors="replace")
@@ -9117,11 +9255,34 @@ for f in sorted(targets):
     # File-level fsmonitor defense (b): this file sources hooks/git-scrub.sh, so EVERY git call in
     # its process inherits the core.fsmonitor='' env pin (rules 3/4/5 fsmonitor requirement met).
     sources_scrub = bool(SCRUB_SOURCE.search(text))
-    for i, line in enumerate(text.splitlines(), 1):
+    # LOGICAL LINES (R22): join backslash line-continuations so a `git \<newline>  status` invocation
+    # is matched (physical-line scanning missed it — a git-and-subcommand split across lines slipped
+    # every rule). Each logical line keeps the PHYSICAL line number where it STARTS (where `git`
+    # appears), so violation locations stay accurate.
+    raw = text.splitlines()
+    logical = []
+    _j = 0
+    while _j < len(raw):
+        start_no = _j + 1
+        buf = raw[_j]
+        while buf.rstrip().endswith("\\") and _j + 1 < len(raw):
+            buf = buf.rstrip()[:-1] + " " + raw[_j + 1]
+            _j += 1
+        logical.append((start_no, buf))
+        _j += 1
+    for i, line in enumerate([t for _, t in logical]):
+        i = logical[i][0]
         if line.lstrip().startswith("#"):
             continue
         m = INVOKE.search(line)
         if not m:
+            continue
+        # Suggestion/diagnostic TEXT skip (R22): a line whose command is `echo`/`printf` PRINTS a git
+        # command as text, it does not execute it (e.g. tools/ai-auto's "Review, then commit:\n
+        # git -C ... commit ..." hint). Skip ONLY when the match is anchored on a quote (git sits at
+        # the start of the echoed string) — a real trailing `; git ...`/`&& git ...` anchors on the
+        # separator, not a quote, so it is NOT skipped.
+        if m.group(1) and re.match(r'\s*(?:echo|printf)\b', line) and m.start() < len(line) and line[m.start()] in ('"', "\x27"):
             continue
         sub = m.group(1) or m.group(2) or m.group(3)
         # group(3): a python list-literal diff token reached via concat/splitting (over-approx).
@@ -9252,12 +9413,36 @@ for f in sorted(targets):
             is_py_dp = is_dp and rel.endswith(".py")
             if not via_review_git and not sources_scrub and not is_py_dp and "core.fsmonitor=" not in line:
                 violations.append("%s: `git ls-files` (fsmonitor HOOK-PROGRAM RCE vector; index refresh) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, s))
+        # rule 7 (R22 — post-index-change HOOK class): status/reset/restore/stash/apply FIRE the repo's
+        # `post-index-change` hook when the index refresh rewrites the on-disk index (canary-proven RCE
+        # over a stale-index directory-copy); rebase/commit/merge/am/cherry-pick/revert/push/fetch/pull/
+        # clone fire their own hooks (pre-commit/post-merge/pre-push/…). A hostile repo-local
+        # `core.hooksPath` (or the DEFAULT `.git/hooks/*` of a directory-copied untrusted repo) runs the
+        # hook as the OPERATOR. So each of these MUST carry `-c core.hooksPath=/dev/null` (empirically
+        # blocks the fire), OR route through review_git (git-harden.sh carries it), OR live in a file
+        # SOURCING hooks/git-scrub.sh (its process-wide GIT_CONFIG core.hooksPath pin — env config
+        # overrides both the repo-local key AND the default `.git/hooks` path — neutralizes the hook for
+        # every git call in the process; the 3 scrub-sourcing status sites ai-rebuild-plan/automation-
+        # doctor/ai-home depend on this chokepoint, exactly as they already do for fsmonitor). checkout
+        # and worktree add|remove|prune are handled STRICTER (inline/review_git only) in rules 4/5.
+        if sub in HOOK_SUBS:
+            via_review_git = "review_git" in m.group(0)
+            if not via_review_git and not sources_scrub and "core.hooksPath=" not in line:
+                violations.append("%s: `git %s` (post-index-change / hook RCE vector; hostile core.hooksPath or default .git/hooks) MISSING `-c core.hooksPath=/dev/null` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
+        # rule 8 (R22): `git rm`/`git mv` REWRITE the index -> the refresh QUERIES core.fsmonitor, so a
+        # hostile in-repo `.git/config core.fsmonitor` EXECUTES. They stage NAMES (no clean/smudge on a
+        # removal/rename) -> need ONLY the fsmonitor defense. (The one shipped site, tools/ai-auto's
+        # `review_git rm`, is covered by the wrapper's `-c core.fsmonitor=`.)
+        if sub in ("rm", "mv"):
+            via_review_git = "review_git" in m.group(0)
+            if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
+                violations.append("%s: `git %s` (fsmonitor HOOK-PROGRAM RCE vector; index rewrite) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
 if violations:
     sys.stderr.write("R9-DRIFT VIOLATIONS:\n")
     for v in violations:
         sys.stderr.write("  " + v + "\n")
     sys.exit(1)
-print("R9-DRIFT OK: %d git diff/show/log/blame/status/ls-files(+checkout/restore/reset/stash/apply/archive/cat-file/worktree add|remove|prune) site(s) scanned, all hardened (clean-filter + fsmonitor + post-checkout/hooksPath)" % scanned)
+print("R9-DRIFT OK: %d git diff/show/log/blame/status/ls-files/rm/mv(+checkout/restore/reset/stash/apply/archive/cat-file/worktree add|remove|prune + rebase/commit/merge/am/cherry-pick/revert/push/fetch/pull/clone) site(s) scanned, all hardened (clean-filter + fsmonitor + post-index-change/post-checkout/hooksPath)" % scanned)
 PYEOF
   # (a) the real shipped tree MUST pass.
   out="$( python3 "${guard}" "${repo_root}" 2>&1 )" \
@@ -9389,12 +9574,21 @@ PYEOF
   printf 'git --attr-source="$ET" status --short\n' > "${tmp_dir}/fake/scripts/b10.sh"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     && { echo "[verify] R9-DRIFT: control b10-fsmon (--attr-source status with NO -c core.fsmonitor= pin) NOT caught — guard still certifies the fsmonitor RCE form (root-cause regression)"; exit 1; }
-  # b10-hardened-B: --attr-source PLUS an inline `-c core.fsmonitor=` pin (BOTH the clean-filter AND
-  # fsmonitor defenses) MUST pass. This is the corrected control: --attr-source ALONE no longer
-  # certifies a worktree-scanning `git status`.
-  printf 'git --attr-source="$ET" -c core.fsmonitor= status --short\n' > "${tmp_dir}/fake/scripts/b10.sh"
+  # b10-hardened-B: --attr-source PLUS `-c core.fsmonitor=` PLUS `-c core.hooksPath=/dev/null` (ALL
+  # THREE defenses: clean-filter + fsmonitor + R22 post-index-change hook) MUST pass. R22: a bare
+  # `git --attr-source -c core.fsmonitor= status` (NO hooksPath) is STILL the post-index-change hook
+  # RCE — see b10-r22-hooks below — so the fsmonitor pin ALONE no longer certifies a status.
+  printf 'git --attr-source="$ET" -c core.fsmonitor= -c core.hooksPath=/dev/null status --short\n' > "${tmp_dir}/fake/scripts/b10.sh"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
-    || { echo "[verify] R9-DRIFT: control b10-hardened-B (git status via inline --attr-source + -c core.fsmonitor=) FALSE-POSITIVED"; exit 1; }
+    || { echo "[verify] R9-DRIFT: control b10-hardened-B (git status via inline --attr-source + -c core.fsmonitor= + -c core.hooksPath=) FALSE-POSITIVED"; exit 1; }
+  # b10-r22-hooks (R22 root-cause fixture): a `git --attr-source -c core.fsmonitor= status` WITHOUT
+  # `-c core.hooksPath=`, NOT via review_git, in a file that does NOT source git-scrub.sh is STILL the
+  # post-index-change HOOK RCE (canary-proven: a stale-index directory-copy's status fires
+  # `.git/hooks/post-index-change`). The strengthened rule 7 MUST FLAG it (for the hooksPath term).
+  # Revert the rule 7 hooksPath term -> this stops firing.
+  printf 'git --attr-source="$ET" -c core.fsmonitor= status --short\n' > "${tmp_dir}/fake/scripts/b10.sh"
+  out10h="$( python3 "${guard}" "${tmp_dir}/fake" 2>&1 )" && { echo "[verify] R9-DRIFT: control b10-r22-hooks (status w/o -c core.hooksPath=) NOT caught — guard still certifies the post-index-change hook RCE (R22 root-cause regression)"; exit 1; }
+  printf '%s' "${out10h}" | grep -q 'hook RCE' || { echo "[verify] R9-DRIFT: control b10-r22-hooks did not flag the HOOK term: ${out10h}"; exit 1; }
   # b10-hardened-C: the SAME bare `git --attr-source status` in a file that SOURCES hooks/git-scrub.sh
   # (process-wide env pin) MUST pass — the fsmonitor defense (b) is file-level, not per-line.
   printf 'if [ -f ../hooks/git-scrub.sh ] && bash -n ../hooks/git-scrub.sh 2>/dev/null; then . ../hooks/git-scrub.sh; fi\ngit --attr-source="$ET" status --short\n' > "${tmp_dir}/fake/scripts/b10.sh"
@@ -9533,6 +9727,104 @@ PYEOF
       && { echo "[verify] R9-DRIFT: control b16-while-until (keyword-prefixed evasion) NOT caught: ${_b16}"; exit 1; }
   done
   rm -f "${tmp_dir}/fake/scripts/b16.sh"
+  # b17 (R22): status/reset/restore/stash/apply + rebase/commit/merge/am/cherry-pick/revert/push/
+  # fetch/pull/clone are hook-firing/index-writing -> rule 7 REQUIRES `-c core.hooksPath=/dev/null`
+  # (or review_git, or a git-scrub-sourcing file). An UN-hardened one MUST fire the hook term.
+  for _b17 in \
+      'git status --short' \
+      'git reset --hard HEAD' \
+      'git stash push' \
+      'git restore some/file' \
+      'git rebase origin/main' \
+      'git commit -m x' \
+      'git merge origin/main' \
+      'git am < patch' \
+      'git cherry-pick abc' \
+      'git revert abc' \
+      'git push origin HEAD' \
+      'git fetch origin main' \
+      'git pull origin main' \
+      'git clone https://x/y z'; do
+    printf '%s\n' "${_b17}" > "${tmp_dir}/fake/scripts/b17.sh"
+    out17="$( python3 "${guard}" "${tmp_dir}/fake" 2>&1 )" && { echo "[verify] R9-DRIFT: control b17 (un-hardened hook-firing subcommand) NOT caught — rule 7 blind (R22 regress): ${_b17}"; exit 1; }
+    printf '%s' "${out17}" | grep -q 'hook RCE' || { echo "[verify] R9-DRIFT: control b17 did not flag the HOOK term: ${_b17} :: ${out17}"; exit 1; }
+  done
+  # b17-hardened: each of the three defenses satisfies the hooksPath term. Uses `commit`/`push` —
+  # subcommands ONLY in the rule-7 hook set (NOT rule 4), so the hooksPath defense ALONE certifies
+  # them (status/reset/stash ALSO carry the rule-4 attr-source+fsmonitor requirement, so they are
+  # NOT suitable for isolating the hooksPath term; review_git — which carries all three — still
+  # certifies reset below).
+  printf 'git -c core.hooksPath=/dev/null commit -m x\n' > "${tmp_dir}/fake/scripts/b17.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b17-hardened-inline (commit via -c core.hooksPath=/dev/null) FALSE-POSITIVED"; exit 1; }
+  printf 'review_git reset --hard HEAD\n' > "${tmp_dir}/fake/scripts/b17.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b17-hardened-reviewgit (reset via review_git — all three defenses) FALSE-POSITIVED"; exit 1; }
+  printf '. ../hooks/git-scrub.sh\ngit push origin HEAD\n' > "${tmp_dir}/fake/scripts/b17.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b17-hardened-scrub (push in a file sourcing git-scrub.sh) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b17.sh"
+  # b18 (R22): `git rm`/`git mv` rewrite the index -> rule 8 REQUIRES the fsmonitor pin (no hooksPath,
+  # no attr-source — they stage names). An un-hardened one fires; inline/review_git/scrub pass.
+  for _b18 in 'git rm --cached f' 'git mv a b'; do
+    printf '%s\n' "${_b18}" > "${tmp_dir}/fake/scripts/b18.sh"
+    out18="$( python3 "${guard}" "${tmp_dir}/fake" 2>&1 )" && { echo "[verify] R9-DRIFT: control b18 (un-hardened git rm/mv) NOT caught: ${_b18}"; exit 1; }
+    printf '%s' "${out18}" | grep -q 'fsmonitor' || { echo "[verify] R9-DRIFT: control b18 did not flag fsmonitor: ${_b18} :: ${out18}"; exit 1; }
+  done
+  printf 'review_git -C "$t" rm --quiet -- f\n' > "${tmp_dir}/fake/scripts/b18.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b18-hardened (git rm via review_git) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b18.sh"
+  # b19 (R22 command-position): a leading ENV-ASSIGNMENT (`FOO=bar git …`, `GIT_OPTIONAL_LOCKS=0
+  # git …`) and a WRAPPER WITH ITS OWN ARGS (`env FOO=bar git …`, `nice -n 10 git …`, `timeout 30
+  # git …`) MUST NOT let an un-hardened worktree op evade the scan. Each MUST be caught.
+  for _b19 in \
+      'GIT_OPTIONAL_LOCKS=0 git status --short' \
+      'FOO=bar git status --short' \
+      'env FOO=bar git status --porcelain' \
+      'nice -n 10 git status --short' \
+      'ionice -c3 git status --short' \
+      'timeout 30 git status --short' \
+      'stdbuf -oL git status --short'; do
+    printf '%s\n' "${_b19}" > "${tmp_dir}/fake/scripts/b19b.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b19 (env-assignment / wrapper-with-args command-position) NOT caught — matcher still evadable: ${_b19}"; exit 1; }
+  done
+  # b19-hardened: the same env/wrapper forms, correctly hardened, MUST pass (no false-positive).
+  printf 'env FOO=bar git -c core.hooksPath=/dev/null --attr-source="$ET" -c core.fsmonitor= status --short\n' > "${tmp_dir}/fake/scripts/b19b.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b19-hardened (env-wrapper status fully pinned) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b19b.sh"
+  # b20 (R22 line-continuation): a `git \<newline> status` split across physical lines by a backslash
+  # continuation MUST be joined and caught (pre-R22 physical-line scanning missed it entirely).
+  printf 'git \\\n  status --short\n' > "${tmp_dir}/fake/scripts/b20.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b20 (backslash line-continuation git/subcommand) NOT caught — logical-line join missing"; exit 1; }
+  printf 'git -c core.hooksPath=/dev/null \\\n  --attr-source="$ET" -c core.fsmonitor= status --short\n' > "${tmp_dir}/fake/scripts/b20.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b20-hardened (continued+pinned status) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b20.sh"
+  # b21 (R22 suggestion-TEXT exemption): an `echo`/`printf` line that PRINTS a git command as text
+  # (git anchored right after the opening quote, e.g. ai-auto's "commit the de-pollution" hint) MUST
+  # NOT be flagged — it is not an invocation. But a REAL trailing `; git commit` (anchored on the
+  # separator, not a quote) on an echo line MUST still be caught.
+  printf 'echo "  git -C \\"$top\\" commit -m x"\n' > "${tmp_dir}/fake/scripts/b21.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b21 (echo suggestion-text git commit) FALSE-POSITIVED — text treated as invocation"; exit 1; }
+  printf 'echo done; git commit -m x\n' > "${tmp_dir}/fake/scripts/b21.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b21-real (echo done; git commit — real trailing invocation) NOT caught — echo skip over-broad"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b21.sh"
+  # b22 (R22 test-harness exemption): scripts/test-*.sh is a test HARNESS (ephemeral mktemp `git
+  # init` fixtures) -> excluded from the scan, so its `git commit` fixture does NOT flag. A NON-test
+  # scripts/ file with the same un-hardened `git commit` IS flagged (proves the exemption is scoped).
+  printf 'git commit -q --allow-empty -m init\n' > "${tmp_dir}/fake/scripts/test-fixture.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b22 (scripts/test-*.sh harness) FALSE-POSITIVED — test-harness exemption broken"; exit 1; }
+  mv "${tmp_dir}/fake/scripts/test-fixture.sh" "${tmp_dir}/fake/scripts/real-fixture.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b22-real (non-test scripts/ git commit) NOT caught — test-harness exemption over-broad"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/real-fixture.sh"
 )
 
 echo "[verify] testing R13-WORKTREE-RCE (tools/ai-worktree's 'git worktree add' over a HOSTILE repo must NOT execute the in-repo .gitattributes-bound filter.<x>.smudge driver while checking out the new tree; inline --attr-source=<empty-tree> disarms it — this is the tmux-hook auto-invoked RCE)..."
@@ -9952,6 +10244,113 @@ echo "[verify] testing R21-HOOK-RCE / b13 hostile-hook (tools/ai-worktree's 'git
     test -e "${tmp_dir}/PWNED_HOOK_CTL_${_variant}" \
       || { echo "[verify] R21-HOOK-RCE: control (ai-worktree with core.hooksPath pin stripped, ${_variant}) did NOT fire the post-checkout hook — fixture is vacuous"; exit 1; }
   done
+)
+
+echo "[verify] testing R22-PIC-HOOK-RCE (the post-index-change HOOK class R21 missed: tools/workspace-scan + ai-tmux-worktree run 'git status' over an UNTRUSTED repo; the index refresh REWRITES a stale on-disk index and FIRES the repo's post-index-change HOOK — via the default .git/hooks OR a hostile repo-local core.hooksPath. The R22 '-c core.hooksPath=/dev/null' pin disarms BOTH; auto-invoked as workspace-scan walks every .git under \$WORKSPACE and the tmux keep/remove lifecycle inspects worktrees)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  ws="${repo_root}/tools/workspace-scan"
+  tmuxwt="${repo_root}/tools/ai-tmux-worktree"
+  test -s "${ws}"     || { echo "[verify] R22-PIC-HOOK-RCE: workspace-scan not found"; exit 1; }
+  test -s "${tmuxwt}" || { echo "[verify] R22-PIC-HOOK-RCE: ai-tmux-worktree not found"; exit 1; }
+  mk_pic() {  # hostile repo: a post-index-change hook (variant A=.git/hooks, B=core.hooksPath) that
+              # fires when a `git status` index refresh REWRITES the STALE on-disk index. Committed
+              # with `-c core.hooksPath=` so setup itself never trips it; the tracked file is then
+              # given an OLD mtime so the FIRST status refresh is guaranteed to rewrite the index.
+              # Marker -> $2.
+    local p="$1" marker="$2" variant="$3"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git -c core.hooksPath= commit -qm init
+      if [ "${variant}" = "hookspath" ]; then
+        mkdir -p .evilhooks
+        printf '#!/bin/sh\ntouch %s\n' "${marker}" > .evilhooks/post-index-change; chmod +x .evilhooks/post-index-change
+        git config core.hooksPath "${p}/.evilhooks"      # in-repo core.hooksPath -> RCE
+      else
+        printf '#!/bin/sh\ntouch %s\n' "${marker}" > .git/hooks/post-index-change; chmod +x .git/hooks/post-index-change
+      fi
+      touch -t 200001010000 a.txt )                      # stale index -> refresh rewrites it -> hook fires
+  }
+  # (1) workspace-scan `git status` (print_repo, line ~88) over the hostile repo — the auto-invoked
+  # walk-every-.git case. HARDENED (real tool): `-c core.hooksPath=/dev/null` -> hook NEVER runs.
+  for _v in dirhook hookspath; do
+    wsdir="${tmp_dir}/ws_${_v}"; mkdir -p "${wsdir}"
+    mk_pic "${wsdir}/repo" "${tmp_dir}/PWNED_WS_${_v}" "${_v}"
+    rm -f "${tmp_dir}/PWNED_WS_${_v}"
+    ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+      bash "${ws}" "${wsdir}" >/dev/null 2>&1 || true )
+    test ! -e "${tmp_dir}/PWNED_WS_${_v}" \
+      || { echo "[verify] R22-PIC-HOOK-RCE: post-index-change HOOK (${_v}) EXECUTED during workspace-scan 'git status' (RCE)"; exit 1; }
+  done
+  # POSITIVE CONTROL: a copy of workspace-scan with ONLY the `-c core.hooksPath=/dev/null` pin
+  # stripped (attr-source + fsmonitor remain, so status still runs) MUST fire the hook — proving the
+  # negative is DUE TO the pin, not vacuous. Unset any inherited git-scrub env pin to isolate it.
+  wsctl="${tmp_dir}/ws-ctl"; sed -E 's/ -c core\.hooksPath=\/dev\/null//' "${ws}" > "${wsctl}"; chmod +x "${wsctl}"
+  wsdir="${tmp_dir}/ws_ctl"; mkdir -p "${wsdir}"; mk_pic "${wsdir}/repo" "${tmp_dir}/PWNED_WS_CTL" dirhook
+  rm -f "${tmp_dir}/PWNED_WS_CTL"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    bash "${wsctl}" "${wsdir}" >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_WS_CTL" \
+    || { echo "[verify] R22-PIC-HOOK-RCE: control (workspace-scan with core.hooksPath pin stripped) did NOT fire post-index-change — fixture is vacuous"; exit 1; }
+  # (2) ai-tmux-worktree removability() `git status` over the hostile repo — the tmux-lifecycle case.
+  removability_src="$( sed -n '/^removability() {/,/^}/p' "${tmuxwt}" )"
+  [ -n "${removability_src}" ] || { echo "[verify] R22-PIC-HOOK-RCE: could not extract removability()"; exit 1; }
+  for _v in dirhook hookspath; do
+    mk_pic "${tmp_dir}/tm_${_v}" "${tmp_dir}/PWNED_TM_${_v}" "${_v}"
+    rm -f "${tmp_dir}/PWNED_TM_${_v}"
+    ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+      eval "${removability_src}"; removability "${tmp_dir}/tm_${_v}" "" >/dev/null 2>&1 || true )
+    test ! -e "${tmp_dir}/PWNED_TM_${_v}" \
+      || { echo "[verify] R22-PIC-HOOK-RCE: post-index-change HOOK (${_v}) EXECUTED during ai-tmux-worktree removability 'git status' (RCE)"; exit 1; }
+  done
+  # POSITIVE CONTROL: the same extracted function with the hooksPath pin stripped MUST fire the hook.
+  removability_ctl="$( printf '%s\n' "${removability_src}" | sed -E 's/ -c core\.hooksPath=\/dev\/null//' )"
+  mk_pic "${tmp_dir}/tm_ctl" "${tmp_dir}/PWNED_TM_CTL" dirhook
+  rm -f "${tmp_dir}/PWNED_TM_CTL"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    eval "${removability_ctl}"; removability "${tmp_dir}/tm_ctl" "" >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_TM_CTL" \
+    || { echo "[verify] R22-PIC-HOOK-RCE: control (removability with core.hooksPath pin stripped) did NOT fire post-index-change — fixture is vacuous"; exit 1; }
+)
+
+echo "[verify] testing R22-SAFEPUSH-REBASE-HOOK (safe-push.sh's auto-rebase runs the repo's hooks — a hostile post-checkout in .git/hooks fires as the rebase checks out onto the upstream. rebase hooks are NOT needed for safe-push, so the '-c core.hooksPath=/dev/null' pin disarms them; the intended pre-push validation on the push is preserved separately by pinning push to the REAL hooks dir)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  sp="${repo_root}/templates/domain-packs/odoo/git-tier/safe-push.sh"
+  drv="${repo_root}/templates/domain-packs/odoo/git-tier/odoo-manifest-version-merge.sh"
+  test -s "${sp}" || { echo "[verify] R22-SAFEPUSH-REBASE-HOOK: safe-push.sh not found"; exit 1; }
+  cd "${tmp_dir}"
+  git -c init.defaultBranch=main init -q --bare origin.git
+  spsetup() { git config user.email v@e.i; git config user.name V;
+    git config merge.odoo-manifest-version.driver "${drv} %O %A %B"; git config merge.odoo-manifest-version.name vmax;
+    echo '**/__manifest__.py merge=odoo-manifest-version' > .gitattributes; }
+  mkman() { mkdir -p m; printf "{\n 'name':'A',\n 'version':'%s',\n}\n" "$1" > m/__manifest__.py; }
+  # A diverged from origin (origin advanced via B) -> safe-push's first push is non-FF -> it fetches
+  # + rebases A's commit onto origin/main, checking out the upstream tree (fires post-checkout).
+  plant_hooks() { mkdir -p "$1/.git/hooks"; printf '#!/bin/sh\ntouch %s\nexit 0\n' "$2" > "$1/.git/hooks/post-checkout"; chmod +x "$1/.git/hooks/post-checkout"; }
+  # HARDENED (real safe-push): rebase pinned to core.hooksPath=/dev/null -> post-checkout NEVER runs.
+  git clone -q origin.git A 2>/dev/null; ( cd A; spsetup; mkman 1.0.205; git add -A; git commit -q -m base; git push -q -u origin main )
+  git clone -q origin.git B 2>/dev/null; ( cd B; spsetup; mkman 1.0.206; git commit -q -am "B .206"; git push -q origin main )
+  ( cd A; mkman 1.0.207; git commit -q -am "A .207" )
+  plant_hooks "${tmp_dir}/A" "${tmp_dir}/PWNED_SP"
+  rm -f "${tmp_dir}/PWNED_SP"
+  ( cd A; SAFE_PUSH_BACKOFF=0 bash "${sp}" origin main >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED_SP" \
+    || { echo "[verify] R22-SAFEPUSH-REBASE-HOOK: post-checkout HOOK EXECUTED during safe-push rebase (RCE)"; exit 1; }
+  # POSITIVE CONTROL: a copy of safe-push with ONLY the rebase hooksPath pin stripped MUST fire the
+  # hook on the same rebase — proving the negative is due to the pin. ORDER MATTERS: A2 must clone +
+  # commit off the CURRENT origin FIRST, THEN C advances origin, so A2's push is non-FF and safe-push
+  # rebases (if C advanced origin BEFORE A2 cloned, A2 would be up-to-date -> fast-forward -> NO
+  # rebase -> vacuous control).
+  spctl="${tmp_dir}/sp-ctl.sh"; sed -E 's/-c core\.hooksPath=\/dev\/null rebase/rebase/g' "${sp}" > "${spctl}"
+  git clone -q origin.git A2 2>/dev/null; ( cd A2; spsetup; git fetch -q origin; git reset -q --hard origin/main; mkman 1.0.209; git commit -q -am "A2 .209" )
+  git clone -q origin.git C 2>/dev/null; ( cd C; spsetup; git fetch -q origin; git reset -q --hard origin/main; mkman 1.0.208; git commit -q -am "C .208"; git push -q origin main )
+  plant_hooks "${tmp_dir}/A2" "${tmp_dir}/PWNED_SP_CTL"
+  rm -f "${tmp_dir}/PWNED_SP_CTL"
+  ( cd A2; SAFE_PUSH_BACKOFF=0 bash "${spctl}" origin main >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_SP_CTL" \
+    || { echo "[verify] R22-SAFEPUSH-REBASE-HOOK: control (safe-push with rebase hooksPath pin stripped) did NOT fire post-checkout — fixture is vacuous"; exit 1; }
 )
 
 echo "[verify] testing R21-COLLECT-FSMONITOR (scripts/collect-review-context.sh run STANDALONE — no ai-auto launcher, so no INHERITED core.fsmonitor= env pin — must NOT execute a hostile project's in-repo core.fsmonitor hook on its BARE 'git diff --cached'/'git ls-files --others' index-refresh calls; it now SOURCES hooks/git-scrub.sh itself. With git-scrub absent/unsourced the SAME bare calls fire the hook)..."

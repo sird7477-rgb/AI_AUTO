@@ -77,7 +77,9 @@ def manifest_refs(manifest_path):
 
 def changed_modules(base, root):
     files = run(["git", "--attr-source=" + _EMPTY_TREE, "-c", "core.fsmonitor=", "diff", "--name-only", base, "--"]).splitlines()
-    files += run(["git", "ls-files", "--others", "--exclude-standard", "--"]).splitlines()
+    # R22: inline `-c core.fsmonitor= -c core.hooksPath=/dev/null` closes the ls-files index-refresh
+    # fsmonitor/post-index-change hook RCE on the STANDALONE path (no git-scrub env pin inherited).
+    files += run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "ls-files", "--others", "--exclude-standard", "--"]).splitlines()
     prefix = root.rstrip("/") + "/"
     mods = set()
     for line in files:

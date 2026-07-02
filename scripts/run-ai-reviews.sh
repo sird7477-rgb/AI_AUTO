@@ -82,6 +82,57 @@ AI_MODEL_DISCOVERY="${AI_MODEL_DISCOVERY:-1}"
 AI_MODEL_DISCOVERY_DIR="${AI_MODEL_DISCOVERY_DIR:-.omx/model-routing}"
 AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV:-${AI_MODEL_DISCOVERY_DIR}/latest.env}"
 AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT:-${AI_MODEL_DISCOVERY_DIR}/latest.md}"
+
+# The model-routing env (${AI_MODEL_ROUTING_ENV}) lives IN-TREE and is therefore
+# attacker-controllable. It is DATA, never code: we MUST NOT `source` it (that was
+# an RCE — an injected `X=$(payload)` line executed on the default local review
+# path, before any reviewer ran). parse_model_routing_env reads ONLY the
+# whitelisted routing keys below, as literal single-quoted values; it never
+# evaluates the file. If ANY non-blank/comment line is not a plain KEY='value'
+# assignment the whole file is rejected (fail closed -> provider defaults), so a
+# hostile/malformed env can neither inject shell nor silently force a wrong model.
+AI_MODEL_ROUTING_ALLOWED_KEYS="AI_MODEL_ROUTING_DISCOVERED_AT AI_MODEL_ROUTING_DISCOVERED_EPOCH AI_MODEL_ROUTING_REPORT AI_MODEL_ROUTING_OBSERVATIONS AI_MODEL_ROUTING_CACHE_STATUS AI_MODEL_ROUTING_CACHE_AGE_SECONDS AI_MODEL_ROUTING_CACHE_TTL_SECONDS CLAUDE_REVIEW_ROLE CLAUDE_REVIEW_MODEL GEMINI_REVIEW_ROLE GEMINI_REVIEW_MODEL GEMINI_REVIEW_COMMAND CODEX_ARCHITECT_REVIEW_ROLE CODEX_ARCHITECT_REVIEW_MODEL CODEX_TEST_REVIEW_ROLE CODEX_TEST_REVIEW_MODEL"
+
+parse_model_routing_env() {
+  local file="$1" line key value
+  [ -f "${file}" ] || return 1
+
+  # Fail closed: reject the whole file if any non-blank/comment line is not a
+  # literal, single-quoted KEY='value' assignment. `INJECTED=$(cmd)` is not
+  # single-quoted, so a poisoned cache-hit body is refused instead of trusted.
+  if grep -vE "^[[:space:]]*(#.*)?$" "${file}" \
+     | grep -qvE "^[A-Za-z_][A-Za-z0-9_]*='[^']*'\$"; then
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    case "${line}" in
+      [A-Za-z_]*=\'*\') ;;
+      *) continue ;;
+    esac
+    key="${line%%=*}"
+    value="${line#*=\'}"
+    value="${value%\'}"
+    case " ${AI_MODEL_ROUTING_ALLOWED_KEYS} " in
+      *" ${key} "*)
+        # Assign the literal string; no command substitution / eval ever runs.
+        printf -v "${key}" '%s' "${value}"
+        export "${key?}"
+        ;;
+    esac
+  done < "${file}"
+}
+
+# Data-only reader exposed as a subcommand so the security boundary above is
+# testable in isolation (verify-machinery) without driving a full review run.
+if [ "${1:-}" = "--parse-model-routing-env" ]; then
+  parse_model_routing_env "${2:-${AI_MODEL_ROUTING_ENV}}" || exit 1
+  for _routing_key in ${AI_MODEL_ROUTING_ALLOWED_KEYS}; do
+    printf '%s=%s\n' "${_routing_key}" "${!_routing_key-}"
+  done
+  exit 0
+fi
+
 RUN_AI_REVIEWS_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_ADAPTER_SCRIPT="${RUNTIME_ADAPTER_SCRIPT:-${RUN_AI_REVIEWS_SCRIPT_DIR}/ai-runtime-adapter.sh}"
 PRINCIPAL_RUNTIME_SCRIPT="${PRINCIPAL_RUNTIME_SCRIPT:-${RUN_AI_REVIEWS_SCRIPT_DIR}/ai-principal-runtime.sh}"
@@ -527,16 +578,19 @@ load_model_routing() {
     AI_MODEL_ROUTING_ENV="${AI_MODEL_ROUTING_ENV}" \
     AI_MODEL_ROUTING_REPORT="${AI_MODEL_ROUTING_REPORT}" \
     "${RUN_AI_REVIEWS_SCRIPT_DIR}/discover-ai-models.sh" >/dev/null; then
-    # shellcheck disable=SC1090
-    . "${AI_MODEL_ROUTING_ENV}"
-    echo "[review] model routing report: ${AI_MODEL_ROUTING_REPORT}"
-    if [ -n "${AI_MODEL_ROUTING_DISCOVERED_EPOCH:-}" ] && printf '%s\n' "${AI_MODEL_ROUTING_DISCOVERED_EPOCH}" | grep -Eq '^[0-9]+$'; then
-      routing_age=$(( $(date +%s) - AI_MODEL_ROUTING_DISCOVERED_EPOCH ))
-      if [ "${routing_age}" -ge 0 ]; then
-        echo "[review] model routing cache: ${AI_MODEL_ROUTING_CACHE_STATUS:-unknown}, age=${routing_age}s, ttl=${AI_MODEL_ROUTING_CACHE_TTL_SECONDS:-unknown}s"
+    # Strict-parse the in-tree routing env as DATA (never source it).
+    if parse_model_routing_env "${AI_MODEL_ROUTING_ENV}"; then
+      echo "[review] model routing report: ${AI_MODEL_ROUTING_REPORT}"
+      if [ -n "${AI_MODEL_ROUTING_DISCOVERED_EPOCH:-}" ] && printf '%s\n' "${AI_MODEL_ROUTING_DISCOVERED_EPOCH}" | grep -Eq '^[0-9]+$'; then
+        routing_age=$(( $(date +%s) - AI_MODEL_ROUTING_DISCOVERED_EPOCH ))
+        if [ "${routing_age}" -ge 0 ]; then
+          echo "[review] model routing cache: ${AI_MODEL_ROUTING_CACHE_STATUS:-unknown}, age=${routing_age}s, ttl=${AI_MODEL_ROUTING_CACHE_TTL_SECONDS:-unknown}s"
+        fi
       fi
+      echo "[review] selected models: claude(${CLAUDE_REVIEW_ROLE:-review})=${CLAUDE_REVIEW_MODEL:-provider-default} gemini(${GEMINI_REVIEW_ROLE:-review})=${GEMINI_REVIEW_MODEL:-provider-default} codex_architect(${CODEX_ARCHITECT_REVIEW_ROLE:-fallback})=${CODEX_ARCHITECT_REVIEW_MODEL:-provider-default} codex_test(${CODEX_TEST_REVIEW_ROLE:-fallback})=${CODEX_TEST_REVIEW_MODEL:-provider-default}"
+    else
+      echo "[review] model routing env rejected (not a literal KEY='value' data file); using provider defaults" >&2
     fi
-    echo "[review] selected models: claude(${CLAUDE_REVIEW_ROLE:-review})=${CLAUDE_REVIEW_MODEL:-provider-default} gemini(${GEMINI_REVIEW_ROLE:-review})=${GEMINI_REVIEW_MODEL:-provider-default} codex_architect(${CODEX_ARCHITECT_REVIEW_ROLE:-fallback})=${CODEX_ARCHITECT_REVIEW_MODEL:-provider-default} codex_test(${CODEX_TEST_REVIEW_ROLE:-fallback})=${CODEX_TEST_REVIEW_MODEL:-provider-default}"
   else
     echo "[review] AI model discovery failed; using provider defaults"
   fi

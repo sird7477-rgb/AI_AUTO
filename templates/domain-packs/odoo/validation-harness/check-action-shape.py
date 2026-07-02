@@ -82,7 +82,11 @@ def changed_files(base, root):
     # file changed, so a `--name-only` worktree diff is ALSO a clean-filter RCE vector.
     out = run(["git", "--attr-source=" + _EMPTY_TREE, "-c", "core.fsmonitor=", "diff", "--name-only", base, "--", "*.py"])
     files.update(line for line in out.splitlines() if line.endswith(".py"))
-    out = run(["git", "ls-files", "--others", "--exclude-standard", "--", "*.py"])
+    # R22: `git ls-files` refreshes/rewrites the index -> queries core.fsmonitor AND can fire
+    # post-index-change. On the STANDALONE run path (validator invoked directly, NOT as a child of
+    # the ai-auto launcher that sources git-scrub.sh) there is no process-wide env pin, so inline
+    # `-c core.fsmonitor= -c core.hooksPath=/dev/null` closes the hostile-repo fsmonitor/hook RCE.
+    out = run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "ls-files", "--others", "--exclude-standard", "--", "*.py"])
     files.update(line for line in out.splitlines() if line.endswith(".py"))
     root = root.rstrip("/") + "/"
     return sorted(f for f in files if f.startswith(root) and Path(f).is_file())
@@ -137,7 +141,7 @@ def main():
         base = run(["git", "merge-base", args.base, "HEAD"]).strip() or run(
             ["git", "rev-parse", "HEAD"]
         ).strip()
-        tracked = set(run(["git", "ls-files", "--", "*.py"]).splitlines())
+        tracked = set(run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "ls-files", "--", "*.py"]).splitlines())
         for path in changed_files(base, args.root):
             added = added_lines(base, path, untracked=path not in tracked)
             for lineno, end, model in act_window_dicts(path):

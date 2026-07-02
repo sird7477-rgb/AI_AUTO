@@ -73,8 +73,13 @@ removability() {
   # -c core.fsmonitor= kills the SEPARATE in-repo `.git/config` fsmonitor HOOK-PROGRAM code-exec
   # vector (config, not attribute — --attr-source does NOT reach it) that fires as status
   # refreshes the index of this untrusted worktree.
+  # R22: -c core.hooksPath=/dev/null kills the THIRD vector — this `git status`'s index refresh
+  # REWRITES the stale on-disk index and FIRES the worktree's `post-index-change` HOOK (default
+  # `.git/hooks/*`, or a hostile repo-local core.hooksPath), an RCE auto-invoked by the tmux
+  # keep/remove lifecycle over an untrusted worktree. Neither --attr-source nor core.fsmonitor=
+  # reaches the hook path. Canary-proven.
   local _et; _et="$(git -C "$path" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  [ -z "$(git -C "$path" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null status --porcelain 2>/dev/null)" ] || { printf 'keep:uncommitted'; return; }
+  [ -z "$(git -C "$path" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null -c core.hooksPath=/dev/null status --porcelain 2>/dev/null)" ] || { printf 'keep:uncommitted'; return; }
   # "unsafe to drop" = HEAD has commits not on ANY remote-tracking branch. This is true
   # local work; a branch switch (HEAD now on a remote-tracked branch) or a pushed commit
   # both reduce to 0 -> removable. Falls back to base..HEAD only when the repo has no
