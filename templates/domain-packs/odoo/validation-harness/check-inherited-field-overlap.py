@@ -78,7 +78,13 @@ def _inherit_targets(class_node):
 
 
 def _field_assignments(class_node):
-    """Yield (field_name, lineno) for `name = fields.X(...)` in a class body."""
+    """Yield (field_name, lineno) for `name = fields.X(...)` in a class body.
+
+    LITERAL-ONLY: matches the literal `name = fields.X(...)` shape with a `fields`
+    attribute call. A field added by other means (setattr, a metaclass/mixin, a
+    subscript/`_add_field`, an aliased `from odoo import fields as f`) is NOT seen —
+    this advisory screen UNDER-approximates; a clean run is not proof of no overlap.
+    """
     for stmt in class_node.body:
         if not isinstance(stmt, ast.Assign) or not isinstance(stmt.value, ast.Call):
             continue
@@ -97,7 +103,12 @@ def inherited_fields(path):
     inherited model in this file."""
     try:
         tree = ast.parse(Path(path).read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
+    except SyntaxError:
+        # Unparseable file: the literal scan cannot cover it. Note it (still advisory,
+        # exit 0) instead of skipping silently so a caller does not read "OK" as "scanned".
+        print(f"[inherit-overlap] note: skipped unparseable {path} (not scanned)")
+        return
+    except OSError:
         return
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):

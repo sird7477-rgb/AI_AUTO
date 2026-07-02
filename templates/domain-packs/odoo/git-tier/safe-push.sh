@@ -23,6 +23,15 @@ BACKOFF="${SAFE_PUSH_BACKOFF:-2}"
 
 [ "$BRANCH" = "HEAD" ] && { echo "[safe-push] detached HEAD — refusing to guess a target branch." >&2; exit 2; }
 
+# Option-injection guard: BRANCH reaches `git fetch` (and `git push` refspec) below. A hostile
+# `.git/HEAD` symref (e.g. `--upload-pack=<cmd>`) or a `-`-leading name would be parsed by git as
+# an OPTION (local-transport RCE), not a ref. Refuse anything that is not a plain ref-name shape.
+case "$BRANCH" in
+  -*) echo "[safe-push] refusing branch name starting with '-' ('${BRANCH}') — option-injection guard." >&2; exit 2 ;;
+esac
+printf '%s' "$BRANCH" | grep -qE '^[A-Za-z0-9._/-]+$' \
+  || { echo "[safe-push] refusing branch name with illegal characters ('${BRANCH}')." >&2; exit 2; }
+
 # R22 (hook RCE): git subcommands here fire repo hooks and HONOR a repo-local `core.hooksPath`.
 #   - `rebase`/`fetch` do NOT need any project hook for safe-push, so they are pinned to
 #     `core.hooksPath=/dev/null` (a hostile core.hooksPath / tracked `.git/hooks/*` in a copied
@@ -60,7 +69,7 @@ while : ; do
   fi
   echo "[safe-push] non-fast-forward — fetching ${REMOTE}/${BRANCH} ..."
   before="$(git rev-parse "${REMOTE}/${BRANCH}" 2>/dev/null || echo none)"
-  if ! git -c core.hooksPath=/dev/null fetch "${REMOTE}" "${BRANCH}"; then
+  if ! git -c core.hooksPath=/dev/null fetch "${REMOTE}" -- "${BRANCH}"; then
     echo "[safe-push] fetch failed — aborting." >&2
     exit 1
   fi

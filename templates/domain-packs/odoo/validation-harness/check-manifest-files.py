@@ -54,10 +54,15 @@ _EMPTY_TREE = run(["git", "hash-object", "-t", "tree", os.devnull]).strip() \
 
 def manifest_refs(manifest_path):
     """Return [(key, relpath)] for data/demo string entries in a manifest dict."""
+    # A manifest that will not parse/read is itself the module-load failure this gate
+    # exists to catch (odoo -u / odoo.sh die importing it). Returning [] here would GREEN
+    # the gate's OWN target class (crash-as-pass), so surface a sentinel failing ref.
     try:
         tree = ast.parse(Path(manifest_path).read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
-        return []
+    except SyntaxError:
+        return [("__manifest__.py", "<unparseable manifest>")]
+    except OSError:
+        return [("__manifest__.py", "<unreadable manifest>")]
     refs = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Dict):
@@ -92,11 +97,20 @@ def changed_modules(base, root):
 
 def module_problems(root, mod):
     moddir = Path(root) / mod
-    return [
-        (key, rel)
-        for key, rel in manifest_refs(moddir / "__manifest__.py")
-        if not (moddir / rel).is_file()
-    ]
+    # A bare `.is_file()` follows symlinks and accepts absolute / `..` paths that Odoo
+    # `file_open`/`file_path` REJECT: the referenced file must resolve INSIDE the module
+    # dir with no abs path, no `..` escape and no symlink. Mirror that so an escape path
+    # (which loads fine locally but is refused at odoo.sh build) is flagged, not passed.
+    problems = []
+    for key, rel in manifest_refs(moddir / "__manifest__.py"):
+        p = moddir / rel
+        ok = (not os.path.isabs(rel)
+              and p.resolve().is_relative_to(moddir.resolve())
+              and p.is_file()
+              and not p.is_symlink())
+        if not ok:
+            problems.append((key, rel))
+    return problems
 
 
 def resolve_modules(args):

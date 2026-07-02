@@ -44,6 +44,94 @@ reviewer_disabled_file() {
   echo "${REVIEW_STATE_DIR}/$1.disabled"
 }
 
+# >>> principal-evidence-auth: out-of-tree HMAC key (keep identical in ai-principal-runtime.sh + run-ai-reviews.sh) >>>
+# The principal-runtime evidence file is gitignored and therefore PLANTABLE by an untrusted
+# project. Presence + literal-line greps alone let a plant forge the active principal (dropping a
+# required reviewer / laundering proceed_degraded->proceed). We bind the evidence to an HMAC keyed
+# by a secret held OUTSIDE any project tree, mirroring the review-gate provenance key discipline
+# (same key precedence + [-s]/[-O]/mode + in-tree refusal). The launcher writes the HMAC because it
+# holds the key; a project plant cannot. Readers recompute the HMAC over the canonical trust fields
+# and REJECT any mismatch, failing closed to the codex default -- exactly as an ABSENT file behaves.
+principal_evidence_key_file() {
+  if [ -n "${AI_AUTO_PROVENANCE_KEY_FILE:-}" ]; then printf '%s\n' "${AI_AUTO_PROVENANCE_KEY_FILE}"
+  elif [ -n "${AI_AUTO_HOME:-}" ]; then printf '%s/.provenance-key\n' "${AI_AUTO_HOME}"
+  else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
+}
+# Refuse an in-tree key path (attacker-readable) via realpath+toplevel; return 0 == in-tree == REFUSE.
+principal_evidence_key_in_tree() {
+  local kf top rp
+  kf="$(principal_evidence_key_file)"
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "${top}" ] || return 1
+  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
+  rp="$(realpath -m -- "${kf}" 2>/dev/null)" || return 1
+  case "${rp}/" in "${top}/"*) return 0 ;; esac
+  return 1
+}
+# HMAC-SHA256 of stdin keyed by the out-of-tree secret; empty output when the key is
+# absent/empty/not-owned/group-or-other-accessible/in-tree/tool-missing -> caller fails closed.
+principal_evidence_hmac() {
+  local kf mode
+  kf="$(principal_evidence_key_file)"
+  principal_evidence_key_in_tree && return 0
+  [ -s "${kf}" ] || return 0
+  [ -O "${kf}" ] || return 0
+  mode="$(stat -c '%a' "${kf}" 2>/dev/null || echo 777)"
+  [ $(( 0${mode} & 077 )) -eq 0 ] || return 0
+  AI_AUTO_PEV_KEYFILE="${kf}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_PEV_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
+}
+# Canonical trust record the evidence_hmac covers (args: principal workspace). Always PIPED
+# directly into the hmac (never via $()) so writer and readers hash byte-identical input.
+principal_evidence_canonical() {
+  printf 'principal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "$1" "$2"
+}
+# 0 iff <file> carries a framework-written evidence_hmac matching canonical(<principal>,<workspace>).
+principal_evidence_hmac_ok() {
+  local stored expected
+  stored="$(sed -n 's/^evidence_hmac=//p' "$1" | head -n 1)"
+  [ -n "${stored}" ] || return 1
+  expected="$(principal_evidence_canonical "$2" "$3" | principal_evidence_hmac)"
+  [ -n "${expected}" ] || return 1
+  [ "${expected}" = "${stored}" ]
+}
+# Ensure a non-empty out-of-tree key exists (writers only). Refuses in-tree paths; publishes the
+# secret only after confirming it is non-empty (same-dir mktemp+mv) so a 0-byte key is never left.
+principal_evidence_ensure_key() {
+  local kf dir tmp
+  kf="$(principal_evidence_key_file)"
+  principal_evidence_key_in_tree && return 1
+  [ -s "${kf}" ] && return 0
+  dir="$(dirname "${kf}")"
+  mkdir -p "${dir}" 2>/dev/null || return 1
+  tmp="$(mktemp "${dir}/.pevkey.XXXXXX" 2>/dev/null)" || return 1
+  if ( umask 077; openssl rand -hex 32 > "${tmp}" ) 2>/dev/null && [ -s "${tmp}" ]; then
+    chmod 0600 "${tmp}" 2>/dev/null || true
+    mv -f "${tmp}" "${kf}" 2>/dev/null && return 0
+  fi
+  rm -f "${tmp}" 2>/dev/null
+  return 1
+}
+# <<< principal-evidence-auth <<<
+
+# A reviewer .disabled marker (REVIEW_STATE_DIR/*.disabled) is ALSO gitignored/plantable: a project
+# shipping claude.disabled+gemini.disabled degrades the panel to codex-only. It is authoritative
+# ONLY if it carries a framework-written marker_hmac over its canonical fields keyed by the same
+# out-of-tree secret. A planted/unauthenticated marker is IGNORED (the reviewer runs); disable_reviewer
+# writes the HMAC so genuine runtime disables still work.
+reviewer_marker_canonical() {
+  grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id)=' "$1" 2>/dev/null
+}
+reviewer_disabled_authentic() {
+  local f stored expected
+  f="$(reviewer_disabled_file "$1")"
+  [ -f "${f}" ] || return 1
+  stored="$(sed -n 's/^marker_hmac=//p' "${f}" | head -n 1)"
+  [ -n "${stored}" ] || return 1
+  expected="$(reviewer_marker_canonical "${f}" | principal_evidence_hmac)"
+  [ -n "${expected}" ] || return 1
+  [ "${expected}" = "${stored}" ]
+}
+
 # Auto-recover transient reviewer disables once their cooldown has elapsed, so a
 # usage-limit / network blip does not keep an external reviewer (Claude/Gemini)
 # disabled until a manual reset. Persistent or unclassified disables are left for
@@ -178,10 +266,12 @@ read_valid_launcher_principal() {
   grep -Fqx "source=ai-auto-principal-launcher" "${evidence_file}" || return 0
   grep -Fqx "workspace=${workspace}" "${evidence_file}" || return 0
   declared="$(sed -n 's/^principal_runtime=//p' "${evidence_file}" | head -n 1)"
-  case "${declared}" in
-    codex|claude|gemini) printf '%s\n' "${declared}" ;;
-    *) return 0 ;;
-  esac
+  case "${declared}" in codex|claude|gemini) ;; *) return 0 ;; esac
+  # Authenticate with the out-of-tree HMAC key: a planted evidence lacking a framework-written
+  # evidence_hmac is untrusted -> echo nothing, so a plant cannot drive selection to a forged
+  # principal (fail closed to the codex default, exactly as an absent file).
+  principal_evidence_hmac_ok "${evidence_file}" "${declared}" "${workspace}" || return 0
+  printf '%s\n' "${declared}"
 }
 
 EXPLICIT_PRINCIPAL="${AI_AUTO_PRINCIPAL:-}"
@@ -268,6 +358,13 @@ principal_evidence_valid() {
     echo "[review] principal_unavailable: evidence file does not match workspace ${workspace}: ${evidence_file}" >&2
     return 1
   fi
+
+  # Out-of-tree-keyed HMAC: a planted evidence lacking a framework-written evidence_hmac is a
+  # forgery -> fail closed (a non-codex principal cannot ride an unauthenticated evidence file).
+  if ! principal_evidence_hmac_ok "${evidence_file}" "${ACTIVE_PRINCIPAL}" "${workspace}"; then
+    echo "[review] principal_unavailable: ${ACTIVE_PRINCIPAL} principal evidence HMAC does not verify (planted/unauthenticated): ${evidence_file}" >&2
+    return 1
+  fi
 }
 
 PRINCIPAL_REVIEWERS="$(principal_reviewers | paste -sd, -)"
@@ -349,7 +446,10 @@ disabled_reason() {
   local disabled_file
   disabled_file="$(reviewer_disabled_file "${reviewer}")"
 
-  if [ ! -f "${disabled_file}" ]; then
+  # A marker is authoritative only if it carries a valid out-of-tree-keyed HMAC. A planted /
+  # unauthenticated marker is treated as ABSENT (no reason) so the reviewer runs instead of the
+  # panel silently degrading to codex-only.
+  if ! reviewer_disabled_authentic "${reviewer}"; then
     return 1
   fi
 
@@ -651,7 +751,7 @@ disable_reviewer() {
   local reviewer="$1"
   local reason="$2"
   local details="$3"
-  local disabled_file disable_class next_action
+  local disabled_file disable_class next_action _mk_hmac
   disabled_file="$(reviewer_disabled_file "${reviewer}")"
 
   # Classify: usage-limit / network-sandbox / connection-style failures are
@@ -683,6 +783,14 @@ disable_reviewer() {
     echo "next_action=${next_action}"
     echo "reset_hint=RESET_DISABLED_AI_REVIEWERS=${reviewer} ./scripts/review-gate.sh"
   } > "${disabled_file}"
+
+  # HMAC-authenticate the marker with the out-of-tree key so a planted .disabled (gitignored,
+  # project-controlled) cannot force a codex-only panel; only the framework, holding the key,
+  # writes an authoritative marker. A genuine runtime disable ensures the key so it stays honored.
+  if principal_evidence_ensure_key; then
+    _mk_hmac="$(reviewer_marker_canonical "${disabled_file}" | principal_evidence_hmac)"
+    if [ -n "${_mk_hmac}" ]; then printf 'marker_hmac=%s\n' "${_mk_hmac}" >> "${disabled_file}"; fi
+  fi
 
   echo "[review] ${reviewer} review disabled (${disable_class}): ${reason} (${details})"
 }
@@ -1641,10 +1749,10 @@ reviewer_fallback_needed() {
 
   case "${reviewer}" in
     claude)
-      [ "${RUN_CLAUDE_REVIEW:-1}" = "0" ] || [ -f "$(reviewer_disabled_file claude)" ]
+      [ "${RUN_CLAUDE_REVIEW:-1}" = "0" ] || reviewer_disabled_authentic claude
       ;;
     gemini)
-      [ "${RUN_GEMINI_REVIEW:-1}" = "0" ] || [ -f "$(reviewer_disabled_file gemini)" ]
+      [ "${RUN_GEMINI_REVIEW:-1}" = "0" ] || reviewer_disabled_authentic gemini
       ;;
     *)
       return 1

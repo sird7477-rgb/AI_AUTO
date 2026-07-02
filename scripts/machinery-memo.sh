@@ -86,15 +86,67 @@ machinery_memo_surface_hash() {
   printf '%s\037%s\037%s\n' "${top}" "${tree}" "${interp}" | review_git hash-object --stdin 2>/dev/null || true
 }
 
-# True (exit 0) when a PASS marker exists whose recorded hash EXACTLY equals the current
-# surface hash. Fail-closed to "do not skip" on any missing/mismatched/unreadable state.
+# --- Marker AUTHENTICITY (out-of-tree HMAC key) -------------------------------------------------
+# F1 fix: the skip marker used to store ONLY the surface hash, which a tree-controlling attacker
+# can recompute -> a forged marker skipped the ~11k-line self-test on UNREVIEWED code. Bind the
+# marker to an HMAC keyed by the SAME out-of-tree secret the review-provenance system uses (path
+# precedence $AI_AUTO_PROVENANCE_KEY_FILE -> $AI_AUTO_HOME/.provenance-key -> ~/.config/ai-auto/
+# provenance.key), with the SAME [-s]/owner/mode discipline as scripts/review-gate.sh. No key (or
+# empty/untrusted) -> no valid HMAC -> a marker cannot satisfy a skip => the suite RUNS (fail-closed).
+# Reuse the provenance helpers when the shared block is already sourced (the gate); resolve
+# standalone otherwise (the engine pre-commit hook, which does not source that block).
+machinery_memo_key_file() {
+  if command -v review_provenance_key_file >/dev/null 2>&1; then review_provenance_key_file; return; fi
+  if [ -n "${AI_AUTO_PROVENANCE_KEY_FILE:-}" ]; then printf '%s\n' "${AI_AUTO_PROVENANCE_KEY_FILE}"
+  elif [ -n "${AI_AUTO_HOME:-}" ]; then printf '%s/.provenance-key\n' "${AI_AUTO_HOME}"
+  else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
+}
+
+# Create the key once (0600) if absent-OR-EMPTY, via a same-dir mktemp + mv (never publish a
+# 0-byte key). Delegates to the provenance ensure when that block is sourced (in-tree-path refusal).
+machinery_memo_ensure_key() {
+  local keyfile dir tmp
+  if command -v review_provenance_ensure_key >/dev/null 2>&1; then review_provenance_ensure_key; return; fi
+  keyfile="$(machinery_memo_key_file)"
+  [ -s "${keyfile}" ] && return 0
+  dir="$(dirname "${keyfile}")"
+  mkdir -p "${dir}" 2>/dev/null || return 1
+  tmp="$(mktemp "${dir}/.provkey.XXXXXX" 2>/dev/null)" || return 1
+  if ( umask 077; openssl rand -hex 32 > "${tmp}" ) 2>/dev/null && [ -s "${tmp}" ]; then
+    chmod 0600 "${tmp}" 2>/dev/null || true
+    mv -f "${tmp}" "${keyfile}" 2>/dev/null && return 0
+  fi
+  rm -f "${tmp}" 2>/dev/null
+  return 1
+}
+
+# HMAC-SHA256(stdin) keyed by the out-of-tree secret (read from FILE, never argv/env). Empty output
+# when the key is absent/empty/untrusted -> caller fails closed (no valid HMAC => run the suite).
+machinery_memo_hmac() {
+  local keyfile mode
+  keyfile="$(machinery_memo_key_file)"
+  [ -s "${keyfile}" ] || return 0
+  [ -O "${keyfile}" ] || return 0
+  mode="$(stat -c '%a' "${keyfile}" 2>/dev/null || echo 777)"
+  [ $(( 0${mode} & 077 )) -eq 0 ] || return 0
+  AI_AUTO_MEMO_KEYFILE="${keyfile}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_MEMO_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
+}
+
+# True (exit 0) when a PASS marker exists whose recorded hash EXACTLY equals the current surface
+# hash AND carries a valid out-of-tree-keyed HMAC over that hash. Fail-closed to "do not skip" on
+# any missing/mismatched/unreadable state OR a missing/forged/legacy (hash-only) HMAC.
 machinery_memo_should_skip() {
-  local hash recorded
+  local hash recorded stored expected
   hash="$(machinery_memo_surface_hash)"
   [ -n "${hash}" ] || return 1
   [ -f "${MACHINERY_MEMO_MARKER}" ] || return 1
-  recorded="$(cat "${MACHINERY_MEMO_MARKER}" 2>/dev/null || true)"
-  [ -n "${recorded}" ] && [ "${recorded}" = "${hash}" ]
+  recorded="$(sed -n '1p' "${MACHINERY_MEMO_MARKER}" 2>/dev/null || true)"
+  [ -n "${recorded}" ] && [ "${recorded}" = "${hash}" ] || return 1
+  stored="$(sed -n 's/^hmac=//p' "${MACHINERY_MEMO_MARKER}" 2>/dev/null | head -1)"
+  [ -n "${stored}" ] || return 1
+  expected="$(printf '%s' "${recorded}" | machinery_memo_hmac)"
+  [ -n "${expected}" ] || return 1
+  [ "${expected}" = "${stored}" ]
 }
 
 # Record a PASS for the surface that was ACTUALLY TESTED. Call ONLY after verify-machinery.sh
@@ -110,8 +162,16 @@ machinery_memo_record_pass() {
   if [ -n "${tested}" ] && [ "${tested}" != "${live}" ]; then
     return 0   # worktree changed during verify -> do NOT record an untested surface
   fi
+  local rec mac
+  rec="${tested:-${live}}"
+  # F1: bind the marker with an out-of-tree-keyed HMAC over the recorded surface hash. Ensure the
+  # key exists first; if it cannot be created (no openssl / no writable key dir) the HMAC is empty
+  # and the marker will NOT satisfy a future skip (fail-closed -> the suite re-runs), so a forger
+  # can never ride it.
+  machinery_memo_ensure_key >/dev/null 2>&1 || true
+  mac="$(printf '%s' "${rec}" | machinery_memo_hmac)"
   mkdir -p "$(dirname "${MACHINERY_MEMO_MARKER}")" 2>/dev/null || return 0
-  printf '%s\n' "${tested:-${live}}" > "${MACHINERY_MEMO_MARKER}" 2>/dev/null || true
+  printf '%s\nhmac=%s\n' "${rec}" "${mac}" > "${MACHINERY_MEMO_MARKER}" 2>/dev/null || true
 }
 
 # The loud one-liner the fold prints when it skips (kept identical at both call sites).

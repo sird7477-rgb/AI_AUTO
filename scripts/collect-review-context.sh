@@ -1371,7 +1371,11 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
   echo "## Untracked Files"
   echo
   echo '```text'
-  git ls-files --others --exclude-standard
+  # R24 (HIGH) belt: git leaves a printable-ASCII backtick-leading filename
+  # unquoted, so an untracked file named ```zzz would emit a fence-opening line
+  # inside this listing and desync the guard parsers. Indent every listing line so
+  # no line can open/close a code fence (^``` no longer matches).
+  git ls-files --others --exclude-standard | sed 's/^/    /'
   echo '```'
   echo
   echo "Untracked text file content is omitted by default. Set INCLUDE_UNTRACKED_CONTENT=1 to include text files up to ${MAX_UNTRACKED_BYTES} bytes after confirming .gitignore excludes secrets."

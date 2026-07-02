@@ -78,13 +78,14 @@ run_product() {
   # bash-parse would WRONGLY reject a perfectly valid verifier. Apply `bash -n` only when the
   # shebang is absent or names a shell; the empty (-s) and no-executable-content gates still apply
   # to every verifier, so the fail-closed behavior for empty/no-op/broken bash verifiers is intact.
-  local apply_bashn=1 shebang base
+  local apply_bashn=1 shebang base interp=""
   if [ -e "${vp}" ]; then
     IFS= read -r shebang < "${vp}" || true
     case "${shebang}" in
       '#!'*)
+        interp="${shebang#\#!}"
         # shellcheck disable=SC2086  # deliberate word-split of the shebang's interpreter args
-        set -- ${shebang#\#!}
+        set -- ${interp}
         base="${1##*/}"
         [ "${base}" = env ] && { base="${2:-}"; base="${base##*/}"; }
         case "${base}" in
@@ -104,8 +105,18 @@ run_product() {
     echo "[verify] delegating to project verification: ${vp}"
     "${vp}"
   elif [ -e "${vp}" ]; then
-    echo "[verify] ${vp} present but NOT executable — running via bash (lost exec bit)" >&2
-    bash "${vp}"
+    # R24: the exec bit was lost. Dispatch by shebang so a NON-shell verifier
+    # (#!/usr/bin/env python3, node, ruby…) is run by its DECLARED interpreter, not bash —
+    # bash would mis-parse a valid python/node verifier and wrongly BLOCK it (fail-closed
+    # robustness regression). Fall back to bash only for a shell / no-shebang script.
+    if [ "${apply_bashn}" = 0 ] && [ -n "${interp}" ]; then
+      echo "[verify] ${vp} present but NOT executable — dispatching via its shebang interpreter (lost exec bit)" >&2
+      # shellcheck disable=SC2086  # deliberate word-split of the shebang's interpreter args
+      ${interp} "${vp}"
+    else
+      echo "[verify] ${vp} present but NOT executable — running via bash (lost exec bit)" >&2
+      bash "${vp}"
+    fi
   else
     echo "[verify] no project verification: scripts/verify-project.sh is absent — NOTHING was verified" >&2
     exit 1

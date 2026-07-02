@@ -21,6 +21,21 @@ def _run(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.Co
     )
 
 
+def _record_launcher_evidence(evidence_file: Path, principal: str) -> None:
+    # The principal-runtime evidence is now HMAC-authenticated with an out-of-tree key, so
+    # a valid record can only be produced by the launcher writer (which holds the key). Tests
+    # set up trusted evidence via record-launch instead of hand-writing the file; a hand-written
+    # (unauthenticated) file is now correctly rejected as a plant.
+    result = _run(
+        ["./scripts/ai-principal-runtime.sh", "record-launch", principal],
+        env={
+            "AI_AUTO_PRINCIPAL_EVIDENCE": str(evidence_file),
+            "AI_AUTO_PRINCIPAL_LAUNCHER": "1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def _write_review(path: Path, verdict: str, extra: str = "") -> None:
     path.write_text(
         f"""# Review
@@ -501,10 +516,7 @@ REVIEW
 
     out_dir = tmp_path / "review-results"
     evidence_file = tmp_path / "principal.env"
-    evidence_file.write_text(
-        f"principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace={ROOT}\n",
-        encoding="utf-8",
-    )
+    _record_launcher_evidence(evidence_file, "claude")
     result = _run(
         ["./scripts/run-ai-reviews.sh"],
         env={
@@ -580,10 +592,7 @@ def _principal_run_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
 
 def test_valid_launcher_evidence_selects_principal_when_env_unset(tmp_path: Path) -> None:
     evidence_file = tmp_path / "principal.env"
-    evidence_file.write_text(
-        f"principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace={ROOT}\n",
-        encoding="utf-8",
-    )
+    _record_launcher_evidence(evidence_file, "claude")
     result = _run(
         ["./scripts/run-ai-reviews.sh"],
         env=_principal_run_env(
@@ -600,10 +609,7 @@ def test_valid_launcher_evidence_selects_principal_when_env_unset(tmp_path: Path
 
 def test_explicit_principal_contradicting_evidence_fails_closed(tmp_path: Path) -> None:
     evidence_file = tmp_path / "principal.env"
-    evidence_file.write_text(
-        f"principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace={ROOT}\n",
-        encoding="utf-8",
-    )
+    _record_launcher_evidence(evidence_file, "claude")
     result = _run(
         ["./scripts/run-ai-reviews.sh"],
         env=_principal_run_env(

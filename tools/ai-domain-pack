@@ -76,6 +76,8 @@ def sha256_file(path: Path) -> str:
 
 def file_map(root: Path) -> dict[str, str]:
     files: dict[str, str] = {}
+    if root.is_symlink():
+        raise RuntimeError(f"refusing symlinked domain pack root: {root}")
     if not root.exists():
         return files
     for path in sorted(root.rglob("*")):
@@ -147,11 +149,15 @@ def list_source_packs(source_root: Path) -> list[str]:
 
 
 def copy_source_to_target(source_dir: Path, target_dir: Path, source_files: dict[str, str]) -> None:
+    if target_dir.is_symlink():
+        raise RuntimeError(f"refusing to write through symlinked pack target: {target_dir}")
     target_dir.mkdir(parents=True, exist_ok=True)
     for rel in source_files:
         source_path = source_dir / rel
         target_path = target_dir / rel
         target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.is_symlink() or target_path.parent.is_symlink():
+            raise RuntimeError(f"refusing to write through symlink: {target_path}")
         tmp_fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", dir=str(target_path.parent))
         try:
             with os.fdopen(tmp_fd, "wb") as handle:
@@ -163,9 +169,13 @@ def copy_source_to_target(source_dir: Path, target_dir: Path, source_files: dict
 
 
 def remove_clean_old_files(target_dir: Path, old_files: dict[str, str], new_files: dict[str, str]) -> None:
+    if target_dir.is_symlink():
+        raise RuntimeError(f"refusing to unlink through symlinked pack target: {target_dir}")
     for rel in sorted(set(old_files) - set(new_files), reverse=True):
         path = target_dir / rel
-        if path.exists() and path.is_file():
+        if path.parent.is_symlink():
+            raise RuntimeError(f"refusing to unlink through symlink: {path}")
+        if path.is_symlink() or (path.exists() and path.is_file()):
             path.unlink()
     for dirpath, dirnames, filenames in os.walk(target_dir, topdown=False):
         if filenames or dirnames:
@@ -188,6 +198,21 @@ def local_extra_files(target_dir: Path, baseline_files: dict[str, str]) -> list[
     return extras
 
 
+def target_dir_escapes(target: Path, target_dir: Path) -> bool:
+    """True if the pack dir or its `.omx/domain-packs` base is a symlink / escapes the project."""
+    base = target / ".omx/domain-packs"
+    if base.is_symlink() or target_dir.is_symlink():
+        return True
+    troot = target.resolve()
+    try:
+        base.resolve().relative_to(troot)
+        if target_dir.exists():
+            target_dir.resolve().relative_to(base.resolve())
+    except ValueError:
+        return True
+    return False
+
+
 def classify_pack(target: Path, source_root: Path, pack: str) -> dict:
     source_dir = source_root / pack
     target_dir = target / ".omx/domain-packs" / pack
@@ -196,6 +221,20 @@ def classify_pack(target: Path, source_root: Path, pack: str) -> dict:
             "pack": pack,
             "state": "invalid_pack_name",
             "details": ["pack_name_must_not_contain_path_separators"],
+            "source_hash": "",
+            "target_hash": "",
+            "manifest_hash": "",
+            "source_files": {},
+            "current_files": {},
+            "manifest_files": {},
+            "target_dir": target_dir,
+            "source_dir": source_dir,
+        }
+    if target_dir_escapes(target, target_dir):
+        return {
+            "pack": pack,
+            "state": "conflict",
+            "details": ["target_symlink_or_escape"],
             "source_hash": "",
             "target_hash": "",
             "manifest_hash": "",

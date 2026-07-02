@@ -38,7 +38,16 @@ trusted_launcher_principal() {
   grep -Fqx "source=ai-auto-principal-launcher" "${ev}" || return 0
   grep -Fqx "workspace=${workspace}" "${ev}" || return 0
   declared="$(sed -n 's/^principal_runtime=//p' "${ev}" | head -1)"
-  case "${declared}" in codex|claude|gemini) printf '%s\n' "${declared}" ;; *) return 0 ;; esac
+  case "${declared}" in codex|claude|gemini) ;; *) return 0 ;; esac
+  # Authenticate with the out-of-tree HMAC key (reuse the sourced provenance helper): a planted
+  # evidence lacking a framework-written evidence_hmac is untrusted -> echo nothing, so it cannot
+  # relabel degraded coverage (proceed_degraded/single_external_plus_codex_fallback) into a
+  # normal-trust proceed/principal_rotation. ACTIVE_PRINCIPAL then stays at the full-panel default.
+  local stored expected
+  stored="$(sed -n 's/^evidence_hmac=//p' "${ev}" | head -1)"
+  expected="$(printf 'principal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${declared}" "${workspace}" | review_provenance_hmac)"
+  [ -n "${stored}" ] && [ -n "${expected}" ] && [ "${stored}" = "${expected}" ] || return 0
+  printf '%s\n' "${declared}"
 }
 
 latest_file() {
@@ -458,12 +467,19 @@ untracked_guard_block_reason() {
   local guard_text
 
   [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
-  guard_text="$(awk '
+  guard_text="$(LC_ALL=C awk '
     # R20 (MED): skip fenced code blocks (mirrors extract_verdict) so a forged
     # "## Untracked Review Guard" section injected inside raw untracked-file bodies
     # (embedded in ```markdown fences by collect-review-context.sh) cannot suppress
     # a real material-untracked block.
-    /^```/ { in_code = !in_code; next }
+    # R24 (HIGH): a fence CLOSES only on a BARE ``` line; a ```<info> line while
+    # in-fence is content, not a toggle. Git leaves a printable-ASCII backtick-
+    # leading untracked filename (e.g. ```zzz) unquoted inside the ```text listing;
+    # under a naive !in_code toggle it desynced in_code and skipped this real (later)
+    # heading -> empty guard_text -> bypass. Bare-only close keeps the listing (and
+    # any balanced ```markdown forgery) correctly delimited so this heading is read.
+    in_code && /^```[[:space:]]*$/ { in_code = 0; next }
+    /^```/ { in_code = 1; next }
     in_code { next }
     /^## Untracked Review Guard$/ { in_guard=1; next }
     /^## / && in_guard { exit }
@@ -485,10 +501,13 @@ phase_scope_guard_block_reason() {
   local guard_text
 
   [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
-  guard_text="$(awk '
+  guard_text="$(LC_ALL=C awk '
     # R20 (MED): skip fenced code blocks so a forged "## Phase Scope Guard" section
     # inside raw untracked-file bodies cannot suppress a real out-of-phase block.
-    /^```/ { in_code = !in_code; next }
+    # R24 (HIGH): close a fence only on a BARE ``` line so a backtick-leading
+    # untracked filename (```zzz) cannot desync in_code and skip this heading.
+    in_code && /^```[[:space:]]*$/ { in_code = 0; next }
+    /^```/ { in_code = 1; next }
     in_code { next }
     /^## Phase Scope Guard$/ { in_guard=1; next }
     /^## / && in_guard { exit }
@@ -509,10 +528,13 @@ persona_gate_guard_block_reason() {
   local summary_text policy active_lenses integrator_required reasons
 
   [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
-  summary_text="$(awk '
+  summary_text="$(LC_ALL=C awk '
     # R20 (MED): skip fenced code blocks so a forged "## Diff Scope Summary" section
     # inside raw untracked-file bodies cannot flip the persona-gate classifier.
-    /^```/ { in_code = !in_code; next }
+    # R24 (HIGH): close a fence only on a BARE ``` line so a backtick-leading
+    # untracked filename (```zzz) cannot desync in_code across sections.
+    in_code && /^```[[:space:]]*$/ { in_code = 0; next }
+    /^```/ { in_code = 1; next }
     in_code { next }
     /^## Diff Scope Summary$/ { in_summary=1; next }
     /^## / && in_summary { exit }
@@ -565,6 +587,23 @@ persona_gate_guard_block_reason() {
   fi
 
   return 1
+}
+
+# F2 fail-open fix: the three block-guards above each `return 1` (no block) when the context file
+# is empty/missing, so a context-collection infra failure silently disabled EVERY policy guard and
+# let a change that should block `proceed`. Fire ONLY when a REAL review run summary declared a
+# `- Context:` line (run-ai-reviews.sh always emits one) whose VALUE is EMPTY/blank -- i.e.
+# collect-review-context.sh produced NO file at all (CONTEXT_FILE=""). That is the true infra-
+# failure signal, and it is distinct from a run that names its context (present OR a since-removed
+# path, which the individual guards handle) so a legitimate run is never over-blocked. Emitting a
+# block here routes the verdict to review_manually instead of a silent context-blind proceed.
+policy_guard_context_missing_block_reason() {
+  local context_file="$1"
+  [ -n "${REVIEW_RUN_SUMMARY_FILE:-}" ] && [ -f "${REVIEW_RUN_SUMMARY_FILE}" ] || return 1
+  grep -q '^- Context:' "${REVIEW_RUN_SUMMARY_FILE}" || return 1
+  [ -z "${context_file}" ] || return 1
+  echo "policy_guard_context_missing"
+  return 0
 }
 
 review_covers_split_context() {
@@ -945,25 +984,42 @@ review_provenance_key_in_tree() {
   return 1
 }
 
-# Generate the key once (0600) if absent. Refuses any in-tree path (realpath inside toplevel).
+# Generate the key once (0600) if absent-OR-EMPTY. Refuses any in-tree path (realpath inside
+# toplevel). CRITICAL fail-open fix: `> "${keyfile}"` truncates the target to 0 bytes BEFORE
+# openssl execs, so a missing/failing openssl (minimal container, PATH gap, transient) left a
+# persistent 0-byte key that later `[ -f ]` checks accepted as valid => HMAC keyed by NO secret
+# => an attacker who owns the tree could forge a valid approved_hmac. Fix: presence test is now
+# `[ -s ]` (empty key == absent), and the secret is written to a SAME-DIR mktemp and mv'd into
+# place ONLY after confirming it is non-empty, so a 0-byte key is never published at keyfile.
 review_provenance_ensure_key() {
-  local keyfile dir
+  local keyfile dir tmp
   keyfile="$(review_provenance_key_file)"
   review_provenance_key_in_tree && return 1
-  [ -f "${keyfile}" ] && return 0
+  [ -s "${keyfile}" ] && return 0
   dir="$(dirname "${keyfile}")"
-  ( umask 077; mkdir -p "${dir}" && openssl rand -hex 32 > "${keyfile}" ) 2>/dev/null || return 1
-  chmod 0600 "${keyfile}" 2>/dev/null || true
+  mkdir -p "${dir}" 2>/dev/null || return 1
+  tmp="$(mktemp "${dir}/.provkey.XXXXXX" 2>/dev/null)" || return 1
+  if ( umask 077; openssl rand -hex 32 > "${tmp}" ) 2>/dev/null && [ -s "${tmp}" ]; then
+    chmod 0600 "${tmp}" 2>/dev/null || true
+    mv -f "${tmp}" "${keyfile}" 2>/dev/null && return 0
+  fi
+  rm -f "${tmp}" 2>/dev/null
+  return 1
 }
 
 # HMAC-SHA256 of stdin keyed by the out-of-tree secret (key read from FILE, never argv/env, so
 # it is not exposed on the process table). Empty output when the key/tool is unavailable or the
 # path is in-tree -> the caller fails closed (no valid HMAC => full review), never a silent skip.
+# Read-side hardening: an EMPTY key (`[ -s ]`), a key not owned by us (`[ -O ]`), or a
+# group/other-accessible key (mode & 077) is UNTRUSTED (planted/leaked) -> empty output.
 review_provenance_hmac() {
-  local keyfile
+  local keyfile mode
   keyfile="$(review_provenance_key_file)"
   review_provenance_key_in_tree && return 0
-  [ -f "${keyfile}" ] || return 0
+  [ -s "${keyfile}" ] || return 0
+  [ -O "${keyfile}" ] || return 0
+  mode="$(stat -c '%a' "${keyfile}" 2>/dev/null || echo 777)"
+  [ $(( 0${mode} & 077 )) -eq 0 ] || return 0
   AI_AUTO_PROV_KEYFILE="${keyfile}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_PROV_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
 }
 
@@ -1005,7 +1061,7 @@ review_provenance_field() {
 # run-ai-reviews, which is where that guard otherwise runs). Returns 0 only for a
 # principal state run-ai-reviews would also accept; else the skip fails open to full.
 review_provenance_principal_evidence_ok() {
-  local workspace ev declared explicit
+  local workspace ev declared explicit _pe_stored _pe_expected
   workspace="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
   ev="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
   explicit="${AI_AUTO_PRINCIPAL:-}"
@@ -1017,6 +1073,11 @@ review_provenance_principal_evidence_ok() {
     declared="$(sed -n 's/^principal_runtime=//p' "${ev}" | head -1)"
     case "${declared}" in codex|claude|gemini) ;; *) return 1 ;; esac
     [ -z "${explicit}" ] || [ "${explicit}" = "${declared}" ] || return 1
+    # Out-of-tree-keyed HMAC: a planted evidence lacking a framework-written evidence_hmac is a
+    # forgery -> a provenance skip must not ride it (fail open to full, as an absent file would).
+    _pe_stored="$(sed -n 's/^evidence_hmac=//p' "${ev}" | head -1)"
+    _pe_expected="$(printf 'principal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${declared}" "${workspace}" | review_provenance_hmac)"
+    [ -n "${_pe_stored}" ] && [ -n "${_pe_expected}" ] && [ "${_pe_stored}" = "${_pe_expected}" ] || return 1
     return 0
   fi
   # No evidence: a non-codex explicit principal would make run-ai-reviews fail, so a
@@ -1032,7 +1093,7 @@ review_provenance_authentic() {
   local keyfile stored rec expected
   keyfile="$(review_provenance_key_file)"
   review_provenance_key_in_tree && return 1
-  [ -f "${keyfile}" ] || return 1
+  [ -s "${keyfile}" ] || return 1
   stored="$(review_provenance_field approved_hmac)"
   [ -n "${stored}" ] || return 1
   rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
@@ -1316,6 +1377,14 @@ if [ -n "${PERSONA_GATE_BLOCK_REASON}" ]; then
     POLICY_BLOCK_REASON="${POLICY_BLOCK_REASON},${PERSONA_GATE_BLOCK_REASON}"
   fi
 fi
+CONTEXT_MISSING_BLOCK_REASON="$(policy_guard_context_missing_block_reason "${REVIEW_CONTEXT_FILE}" || true)"
+if [ -n "${CONTEXT_MISSING_BLOCK_REASON}" ]; then
+  if [ "${POLICY_BLOCK_REASON}" = "none" ]; then
+    POLICY_BLOCK_REASON="${CONTEXT_MISSING_BLOCK_REASON}"
+  else
+    POLICY_BLOCK_REASON="${POLICY_BLOCK_REASON},${CONTEXT_MISSING_BLOCK_REASON}"
+  fi
+fi
 if [ "${POLICY_BLOCK_REASON}" != "none" ] && { [ "${FINAL_DECISION}" = "proceed" ] || [ "${FINAL_DECISION}" = "proceed_degraded" ]; }; then
   FINAL_DECISION="review_manually"
   DECISION_REASON="${POLICY_BLOCK_REASON}"
@@ -1412,9 +1481,16 @@ PY
   SUMMARY_CONTRACT_ERR="$(printf '%s' "${SUMMARY_RECORD_JSON}" | python3 "${SELF_DEMO_CONTRACTS}" review_gate_short_summary 2>&1 1>/dev/null)"
   SUMMARY_CONTRACT_RC=$?
   set -e
-  if [ "${SUMMARY_CONTRACT_RC}" -eq 1 ]; then
+  # F4 fail-open fix: rc==0 is the ONLY pass. rc==1 is a contract violation; any OTHER nonzero rc
+  # (2+ = argparse/uncaught exception/crash) previously left the verdict UNCHANGED (fail-open) —
+  # a crashed self-check silently vanished. Treat rc NOT in {0} as a block (fail-closed).
+  if [ "${SUMMARY_CONTRACT_RC}" -ne 0 ]; then
     FINAL_DECISION="review_manually"
-    DECISION_REASON="summary_contract_violation:${SUMMARY_CONTRACT_ERR}"
+    if [ "${SUMMARY_CONTRACT_RC}" -eq 1 ]; then
+      DECISION_REASON="summary_contract_violation:${SUMMARY_CONTRACT_ERR}"
+    else
+      DECISION_REASON="summary_contract_error_rc${SUMMARY_CONTRACT_RC}:${SUMMARY_CONTRACT_ERR}"
+    fi
     TRUST_LEVEL="blocked_or_needs_attention"
   fi
 fi

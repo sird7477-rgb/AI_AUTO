@@ -60,25 +60,82 @@ _session_lock_expired() {
   [ "$age" -gt "$ttl" ]
 }
 
-# Atomically install a fully-formed lock via an O_EXCL create-or-fail: `set -C` (noclobber)
-# makes the `>` redirect open with O_CREAT|O_EXCL, which is genuinely atomic on EVERY
-# filesystem — including hardlink-less ones (9p / the Windows Z: mount) where the old `ln`
-# hardlink silently failed and dropped to a fail-OPEN `mv -f` (N concurrent sessions ALL won).
-# The metadata is written through that same exclusive fd, so the loser's create fails and it
-# never overwrites the winner. Sets SESSION_LOCK_HELD=1 and returns 0 on win. Returns 1 if we
-# LOST the create race (the lock now exists) so the caller loops to inspect it. Returns 2 only
-# if the create failed for a NON-contention reason (no lock file materialised) -> caller fails
-# open. No temp file is created, so there is nothing to orphan/sweep.
-_session_lock_publish() {
-  local op="$1" self="$2"
-  if ( set -C
-       printf 'holder_pid=%s\nholder_session=%s\nholder_op=%s\nacquired_at=%s\n' \
-         "$$" "$self" "$op" "$(date -Iseconds)" > "$SESSION_LOCK_FILE"
-     ) 2>/dev/null; then
-    SESSION_LOCK_HELD=1; return 0              # O_EXCL create won -> we hold it
+# Emit a fully-formed lock body on stdout (redirected by the caller into the exclusive fd or,
+# in the flock fallback, a plain create the flock already serializes).
+_session_lock_meta() {
+  printf 'holder_pid=%s\nholder_session=%s\nholder_op=%s\nacquired_at=%s\n' \
+    "$$" "$2" "$1" "$(date -Iseconds)"
+}
+
+# Exclusive create-or-fail primitive: `set -C` (noclobber) opens the `>` redirect with
+# O_CREAT|O_EXCL, so a create onto an EXISTING path fails. The SINGLE exclusivity seam — used by
+# BOTH the O_EXCL probe and the fast publish path — so a fixture can shadow this one function to
+# simulate a filesystem that silently ignores O_EXCL and exercise the flock fallback end-to-end.
+_session_lock_excl_create() { ( set -C; : > "$1" ) 2>/dev/null; }
+
+# One-time (per-process) probe of whether O_EXCL is genuinely honored on the FS hosting the lock
+# dir. `set -C` gives O_CREAT|O_EXCL, which is atomic WHERE the server enforces it — but some 9p /
+# Windows Z: mounts silently ignore it, so exactly-one-winner would degrade. Probe: create a temp
+# in the SAME dir, then a SECOND exclusive create onto that now-existing path — under real O_EXCL
+# the second MUST fail; if it "succeeds", O_EXCL is not exclusive here. Result cached in
+# _SESSION_LOCK_OEXCL (1=fast O_EXCL path, 0=flock fallback). AI_AUTO_SESSION_LOCK_OEXCL forces it.
+_SESSION_LOCK_OEXCL=""
+_session_lock_oexcl_ok() {
+  case "${AI_AUTO_SESSION_LOCK_OEXCL:-}" in 0) _SESSION_LOCK_OEXCL=0 ;; 1) _SESSION_LOCK_OEXCL=1 ;; esac
+  if [ -z "$_SESSION_LOCK_OEXCL" ]; then
+    local probe; probe="$(dirname "$SESSION_LOCK_FILE")/.session.lock.oexcl.$$"
+    rm -f "$probe"
+    if _session_lock_excl_create "$probe" && ! _session_lock_excl_create "$probe"; then
+      _SESSION_LOCK_OEXCL=1                    # 2nd exclusive create refused -> O_EXCL honored
+    else
+      _SESSION_LOCK_OEXCL=0                    # 2nd "won" (or 1st failed) -> not exclusive -> flock
+    fi
+    rm -f "$probe"
   fi
-  [ -e "$SESSION_LOCK_FILE" ] && return 1      # lock exists -> lost the race, caller inspects
-  return 2                                     # create failed, no lock -> infra, caller fails open
+  [ "$_SESSION_LOCK_OEXCL" = 1 ]
+}
+
+# Fast path: the O_EXCL create decides the winner (exactly one racer's `_session_lock_excl_create`
+# succeeds); only that sole winner then writes the metadata, so a loser never overwrites it. A
+# loser inspecting the brief empty-body window reads no holder_pid and retries (the empty-pid
+# branch in acquire). Returns 0/1/2 (see _session_lock_publish).
+_session_lock_excl_publish() {
+  local op="$1" self="$2"
+  if _session_lock_excl_create "$SESSION_LOCK_FILE"; then
+    _session_lock_meta "$op" "$self" > "$SESSION_LOCK_FILE"
+    SESSION_LOCK_HELD=1; return 0
+  fi
+  [ -e "$SESSION_LOCK_FILE" ] && return 1
+  return 2
+}
+
+# Fallback for a FS that does not honor O_EXCL on create (probe said so): serialize the
+# check-then-create under an flock on the same stable sidecar the reclaim uses, so exactly one
+# racer wins even though the create itself is not atomic. Same 0/1/2 contract.
+_session_lock_flock_publish() {
+  local op="$1" self="$2" dir sidecar fd rc
+  dir="$(dirname "$SESSION_LOCK_FILE")"
+  sidecar="$dir/.session.lock.reclaim"
+  exec {fd}>>"$sidecar" 2>/dev/null || return 2
+  if ! flock -w 10 "$fd"; then exec {fd}>&-; return 2; fi
+  if [ -e "$SESSION_LOCK_FILE" ]; then flock -u "$fd"; exec {fd}>&-; return 1; fi
+  _session_lock_meta "$op" "$self" > "$SESSION_LOCK_FILE" 2>/dev/null; rc=$?
+  flock -u "$fd"; exec {fd}>&-
+  if [ "$rc" -eq 0 ]; then SESSION_LOCK_HELD=1; return 0; fi
+  [ -e "$SESSION_LOCK_FILE" ] && return 1
+  return 2
+}
+
+# Atomically install a fully-formed lock. On a FS that honors O_EXCL (the common case, confirmed
+# by the one-time probe) this is a genuinely atomic create-or-fail — including hardlink-less 9p /
+# Z: where the old `ln` silently failed and dropped to a fail-OPEN `mv -f` (N sessions ALL won).
+# Where the probe finds O_EXCL is NOT enforced, publish falls back to an flock-serialized create so
+# exactly-one-winner still holds. Sets SESSION_LOCK_HELD=1 and returns 0 on win; 1 if we LOST the
+# race (lock now exists) so the caller loops to inspect it; 2 only if the create failed for a
+# NON-contention reason (no lock file materialised) -> caller fails open.
+_session_lock_publish() {
+  if _session_lock_oexcl_ok; then _session_lock_excl_publish "$1" "$2"
+  else _session_lock_flock_publish "$1" "$2"; fi
 }
 
 # Race-safe reclaim of a STALE (dead-PID or TTL-expired) lock. The critical section is
@@ -105,7 +162,15 @@ _session_lock_reclaim() {
     fi
     rm -f "$SESSION_LOCK_FILE"                  # confirmed still stale -> drop and republish
   fi
-  _session_lock_publish "$op" "$self"; rc=$?
+  if _session_lock_oexcl_ok; then
+    _session_lock_excl_publish "$op" "$self"; rc=$?   # O_EXCL create-or-fail guards the fresh-publisher gap
+  else
+    # Non-exclusive FS: we already hold this sidecar flock and every fresh publisher blocks on
+    # the SAME flock, so no racer can sneak into the post-rm gap -> a plain write is race-free
+    # (and re-calling _session_lock_publish here would re-flock this fd -> self-deadlock).
+    if _session_lock_meta "$op" "$self" > "$SESSION_LOCK_FILE" 2>/dev/null; then
+      SESSION_LOCK_HELD=1; rc=0; else rc=2; fi
+  fi
   flock -u "$fd"; exec {fd}>&-
   return "$rc"
 }
@@ -118,16 +183,30 @@ session_lock_acquire() {
   mkdir -p "$(dirname "$SESSION_LOCK_FILE")"
   ttl="$(_session_lock_ttl)"
 
+  # F4: a lock path that exists but is NOT a regular file (e.g. a pre-planted DIRECTORY) is
+  # anomalous — `[ -f ]` is false so the loop would take the fresh-create path forever (the
+  # O_EXCL create fails "Is a directory" -> publish returns 1 -> spin). Fail deterministically
+  # (2, propagated as a hard error by callers, distinct from 75 contention) instead of hanging.
+  if [ -e "$SESSION_LOCK_FILE" ] && [ ! -f "$SESSION_LOCK_FILE" ]; then
+    printf '%s\n' "[lock] ERROR: lock path exists but is not a regular file (anomalous, e.g. a directory): $SESSION_LOCK_FILE" >&2
+    return 2
+  fi
+
   # Acquire is atomic on the FRESH path: `_session_lock_publish` installs a fully-formed lock
   # with an O_EXCL create (`set -C` noclobber redirect), so exactly one simultaneous racer wins
   # and the loser's create fails -> loops -> inspects (own / live-foreign->75 / stale). This is
-  # atomic on EVERY filesystem including hardlink-less 9p/Z:, unlike the old `ln` that failed
-  # there and dropped to a fail-OPEN `mv`. A STALE lock (dead PID or TTL-expired) is reclaimed
+  # atomic on any FS that honors O_EXCL (confirmed once by `_session_lock_oexcl_ok`); on a FS that
+  # silently ignores it (some 9p / Z: mounts) publish transparently falls back to an flock-
+  # serialized create so exactly-one-winner still holds — unlike the old `ln` that failed on
+  # hardlink-less FS and dropped to a fail-OPEN `mv`. A STALE lock (dead PID or TTL-expired) is reclaimed
   # through the flock-serialized `_session_lock_reclaim`, so N racers reclaiming the SAME stale
   # lock can never all publish into each other's gap. Bounded loop: each iteration returns or
   # resolves to a live holder; the counter is a deadlock backstop.
   while : ; do
     tries=$((tries + 1))
+    # F4: global deadlock backstop for the whole loop (mirrors the empty-pid branch's bound) so
+    # NO unforeseen state can spin forever; real contention resolves in a handful of iterations.
+    [ "$tries" -gt 10000 ] && { printf '%s\n' "[lock] ERROR: acquire loop exceeded bound without resolving; giving up" >&2; return 2; }
     if [ -f "$SESSION_LOCK_FILE" ]; then
       held_sess="$(_session_lock_field holder_session)"
       held_pid="$(_session_lock_field holder_pid)"

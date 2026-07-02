@@ -50,10 +50,21 @@ _EMPTY_TREE = run(["git", "hash-object", "-t", "tree", os.devnull]).strip() \
 
 
 def act_window_dicts(path):
-    """Yield (lineno, end_lineno, res_model) for risky act_window dicts in a file."""
+    """Yield (lineno, end_lineno, res_model) for risky act_window dicts in a file.
+
+    LITERAL-ONLY: matches a dict *literal* whose type/target/views keys are string
+    constants. An action built non-literally (dict(**base, target=t), a subscript- or
+    .update()-mutated dict, keys from variables) is NOT seen — this advisory screen
+    UNDER-approximates; a clean run is not proof the module has no crashing action.
+    """
     try:
         tree = ast.parse(Path(path).read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
+    except SyntaxError:
+        # Unparseable file: the literal scan cannot cover it. Note it (still advisory,
+        # exit 0) instead of skipping silently so a caller does not read "OK" as "scanned".
+        print(f"[action-shape] note: skipped unparseable {path} (not scanned)")
+        return
+    except OSError:
         return
     for node in ast.walk(tree):
         if not isinstance(node, ast.Dict):

@@ -36,6 +36,19 @@ _gate_session_id() {
   printf '%s' "${AI_AUTO_SESSION_ID:-$$@$(hostname 2>/dev/null || echo host)}"
 }
 
+# Boot-unique start-time of a pid (/proc/<pid>/stat field 22), recorded in the override at acquire
+# and re-checked in the stale-guard. `session.json`'s id is PER-TREE-CONSTANT, so holder_session
+# alone is VACUOUS: every gate in the tree matches it and the guard collapses to `kill -0 + TTL` —
+# the recyclable-PID class. Binding to start-time defeats PID recycling: a reused pid (same number,
+# new process) has a different start-time -> STALE. Empty when the pid is dead/unreadable.
+_pid_starttime() {
+  local st
+  st="$(cat /proc/"$1"/stat 2>/dev/null)" || return 1
+  st="${st##*) }"           # strip 'pid (comm) ' — comm may hold spaces/parens; match to last ') '
+  set -- $st                # now $1=state(field 3); starttime(field 22) is positional 20
+  printf '%s' "${20:-}"
+}
+
 # Clear a STALE verify-failure override marker at gate start so an override can only ever apply
 # to the run that explicitly sets it (written later, only on an approved verify failure) — but
 # L1: do NOT clobber a CONCURRENT live session's approved override (summarize-ai-reviews.sh reads
@@ -52,6 +65,7 @@ if [ -f "$VERIFY_OVERRIDE_ENV" ]; then
   _ovr_pid="$(sed -n 's/^holder_pid=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
   _ovr_sess="$(sed -n 's/^holder_session=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
   _ovr_at="$(sed -n 's/^acquired_at=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
+  _ovr_start="$(sed -n 's/^holder_starttime=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
   _ovr_ttl="${AI_AUTO_VERIFY_OVERRIDE_TTL_SECONDS:-14400}"
   case "$_ovr_ttl" in ''|*[!0-9]*) _ovr_ttl=14400 ;; esac
   _ovr_age=-1
@@ -59,14 +73,18 @@ if [ -f "$VERIFY_OVERRIDE_ENV" ]; then
     _ovr_ts="$(date -d "$_ovr_at" +%s 2>/dev/null || echo '')"
     [ -n "$_ovr_ts" ] && _ovr_age=$(( $(date +%s) - _ovr_ts ))
   fi
+  # Preserve ONLY a genuinely-live holder: matching session AND live pid AND its RECORDED start-time
+  # still equals the pid's CURRENT start-time (recycled pid -> mismatch -> STALE) AND fresh acquired_at.
+  # holder_starttime is required: a marker lacking it (legacy / forged / recycled) can never be honored.
   if [ -n "$_ovr_sess" ] && [ "$_ovr_sess" = "$(_gate_session_id)" ] \
      && [ -n "$_ovr_pid" ] && kill -0 "$_ovr_pid" 2>/dev/null \
+     && [ -n "$_ovr_start" ] && [ "$_ovr_start" = "$(_pid_starttime "$_ovr_pid")" ] \
      && [ "$_ovr_age" -ge 0 ] && [ "$_ovr_age" -le "$_ovr_ttl" ]; then
-    : # a genuinely-live SAME-session peer owns this override within TTL -> preserve it
+    : # a genuinely-live SAME-session peer (unrecycled pid) owns this override within TTL -> preserve it
   else
     rm -f "$VERIFY_OVERRIDE_ENV"
   fi
-  unset _ovr_pid _ovr_sess _ovr_at _ovr_ttl _ovr_age
+  unset _ovr_pid _ovr_sess _ovr_at _ovr_start _ovr_ttl _ovr_age
   unset _ovr_ts 2>/dev/null || true
 fi
 
@@ -193,25 +211,42 @@ review_provenance_key_in_tree() {
   return 1
 }
 
-# Generate the key once (0600) if absent. Refuses any in-tree path (realpath inside toplevel).
+# Generate the key once (0600) if absent-OR-EMPTY. Refuses any in-tree path (realpath inside
+# toplevel). CRITICAL fail-open fix: `> "${keyfile}"` truncates the target to 0 bytes BEFORE
+# openssl execs, so a missing/failing openssl (minimal container, PATH gap, transient) left a
+# persistent 0-byte key that later `[ -f ]` checks accepted as valid => HMAC keyed by NO secret
+# => an attacker who owns the tree could forge a valid approved_hmac. Fix: presence test is now
+# `[ -s ]` (empty key == absent), and the secret is written to a SAME-DIR mktemp and mv'd into
+# place ONLY after confirming it is non-empty, so a 0-byte key is never published at keyfile.
 review_provenance_ensure_key() {
-  local keyfile dir
+  local keyfile dir tmp
   keyfile="$(review_provenance_key_file)"
   review_provenance_key_in_tree && return 1
-  [ -f "${keyfile}" ] && return 0
+  [ -s "${keyfile}" ] && return 0
   dir="$(dirname "${keyfile}")"
-  ( umask 077; mkdir -p "${dir}" && openssl rand -hex 32 > "${keyfile}" ) 2>/dev/null || return 1
-  chmod 0600 "${keyfile}" 2>/dev/null || true
+  mkdir -p "${dir}" 2>/dev/null || return 1
+  tmp="$(mktemp "${dir}/.provkey.XXXXXX" 2>/dev/null)" || return 1
+  if ( umask 077; openssl rand -hex 32 > "${tmp}" ) 2>/dev/null && [ -s "${tmp}" ]; then
+    chmod 0600 "${tmp}" 2>/dev/null || true
+    mv -f "${tmp}" "${keyfile}" 2>/dev/null && return 0
+  fi
+  rm -f "${tmp}" 2>/dev/null
+  return 1
 }
 
 # HMAC-SHA256 of stdin keyed by the out-of-tree secret (key read from FILE, never argv/env, so
 # it is not exposed on the process table). Empty output when the key/tool is unavailable or the
 # path is in-tree -> the caller fails closed (no valid HMAC => full review), never a silent skip.
+# Read-side hardening: an EMPTY key (`[ -s ]`), a key not owned by us (`[ -O ]`), or a
+# group/other-accessible key (mode & 077) is UNTRUSTED (planted/leaked) -> empty output.
 review_provenance_hmac() {
-  local keyfile
+  local keyfile mode
   keyfile="$(review_provenance_key_file)"
   review_provenance_key_in_tree && return 0
-  [ -f "${keyfile}" ] || return 0
+  [ -s "${keyfile}" ] || return 0
+  [ -O "${keyfile}" ] || return 0
+  mode="$(stat -c '%a' "${keyfile}" 2>/dev/null || echo 777)"
+  [ $(( 0${mode} & 077 )) -eq 0 ] || return 0
   AI_AUTO_PROV_KEYFILE="${keyfile}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_PROV_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
 }
 
@@ -253,7 +288,7 @@ review_provenance_field() {
 # run-ai-reviews, which is where that guard otherwise runs). Returns 0 only for a
 # principal state run-ai-reviews would also accept; else the skip fails open to full.
 review_provenance_principal_evidence_ok() {
-  local workspace ev declared explicit
+  local workspace ev declared explicit _pe_stored _pe_expected
   workspace="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
   ev="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
   explicit="${AI_AUTO_PRINCIPAL:-}"
@@ -265,6 +300,11 @@ review_provenance_principal_evidence_ok() {
     declared="$(sed -n 's/^principal_runtime=//p' "${ev}" | head -1)"
     case "${declared}" in codex|claude|gemini) ;; *) return 1 ;; esac
     [ -z "${explicit}" ] || [ "${explicit}" = "${declared}" ] || return 1
+    # Out-of-tree-keyed HMAC: a planted evidence lacking a framework-written evidence_hmac is a
+    # forgery -> a provenance skip must not ride it (fail open to full, as an absent file would).
+    _pe_stored="$(sed -n 's/^evidence_hmac=//p' "${ev}" | head -1)"
+    _pe_expected="$(printf 'principal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${declared}" "${workspace}" | review_provenance_hmac)"
+    [ -n "${_pe_stored}" ] && [ -n "${_pe_expected}" ] && [ "${_pe_stored}" = "${_pe_expected}" ] || return 1
     return 0
   fi
   # No evidence: a non-codex explicit principal would make run-ai-reviews fail, so a
@@ -280,7 +320,7 @@ review_provenance_authentic() {
   local keyfile stored rec expected
   keyfile="$(review_provenance_key_file)"
   review_provenance_key_in_tree && return 1
-  [ -f "${keyfile}" ] || return 1
+  [ -s "${keyfile}" ] || return 1
   stored="$(review_provenance_field approved_hmac)"
   [ -n "${stored}" ] || return 1
   rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
@@ -758,8 +798,17 @@ set -e
 if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
    && [ -f "$AH/verify-machinery.sh" ] \
    && [ "$(git rev-parse --show-toplevel 2>/dev/null)" -ef "$(dirname "$AH")" ]; then
-  if { review_git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
-       | grep -Eq '^(scripts/|hooks/)'; then
+  # F3: route BOTH the unstaged and STAGED diffs through the hardened review_git (the staged side
+  # was a bare, un-hardened `git`), and capture each rc. A swallowed git error used to drop the
+  # staged list and MISS a machinery-scope change; fail-closed instead — EITHER git error => treat
+  # as in-scope and run the machinery self-test. (rc captured via `|| rc=$?` so set -e does not abort.)
+  machinery_scope_unstaged_rc=0
+  machinery_scope_unstaged="$(review_git diff --name-only 2>/dev/null)" || machinery_scope_unstaged_rc=$?
+  machinery_scope_staged_rc=0
+  machinery_scope_staged="$(review_git diff --cached --name-only 2>/dev/null)" || machinery_scope_staged_rc=$?
+  if [ "${machinery_scope_unstaged_rc}" -ne 0 ] || [ "${machinery_scope_staged_rc}" -ne 0 ] \
+     || printf '%s\n%s\n' "${machinery_scope_unstaged}" "${machinery_scope_staged}" \
+          | grep -Eq '^(scripts/|hooks/)'; then
     echo "[gate] automation scripts changed; running machinery-scope verify..."
     # OPCOST-HIGH-1: this ~6min self-test also runs in the VERY NEXT commit's pre-commit
     # hook over an IDENTICAL surface, so it ran TWICE per change->commit cycle. Memoize:
@@ -868,17 +917,24 @@ if [ "${verify_status}" -ne 0 ]; then
   # read by summarize as the override source of truth. Cleared at gate start so a
   # stale override can never apply to a later, unrelated run.
   mkdir -p .omx/state
+  # Ownership tag bound to a ROBUST identity (session id + holder start-time + timestamp), not a
+  # recyclable bare PID, so a later gate distinguishes a genuinely-live same-session override from a
+  # dead one whose PID was reused (which must NOT downgrade+misattribute an unrelated clean run).
+  # Consumed by the gate-start stale-guard above; summarize-ai-reviews.sh still reads only reason/approved_by.
+  # Written via same-dir mktemp+mv (like review_provenance_record) so a concurrent reader/stale-guard
+  # sees the OLD-complete or NEW-complete file, never a truncated one (no lost proceed_degraded marker).
+  _ovr_dst="${VERIFY_OVERRIDE_ENV:-.omx/state/verify-override.env}"
+  _ovr_tmp="$(mktemp "$(dirname "$_ovr_dst")/.verify-override.XXXXXX")"
   {
     printf 'reason=%s\n' "${verify_override_reason}"
     printf 'approved_by=%s\n' "${verify_override_by}"
-    # Ownership tag bound to a ROBUST identity (session id + timestamp), not a recyclable bare PID,
-    # so a later gate distinguishes a genuinely-live same-session override from a dead one whose PID
-    # was reused (which must NOT downgrade+misattribute an unrelated clean run). Consumed by the
-    # gate-start stale-guard above; summarize-ai-reviews.sh still reads only reason/approved_by.
     printf 'holder_pid=%s\n' "$$"
     printf 'holder_session=%s\n' "$(_gate_session_id)"
+    printf 'holder_starttime=%s\n' "$(_pid_starttime "$$")"
     printf 'acquired_at=%s\n' "$(date -Iseconds)"
-  } > "${VERIFY_OVERRIDE_ENV:-.omx/state/verify-override.env}"
+  } > "$_ovr_tmp"
+  mv -f "$_ovr_tmp" "$_ovr_dst"
+  unset _ovr_dst _ovr_tmp
 fi
 
 echo "[gate] collecting review context for diff-scope policy..."

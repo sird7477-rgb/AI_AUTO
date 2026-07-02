@@ -874,6 +874,67 @@ echo "[verify] testing safe-push race auto-rebase-retry + non-race stop (ST-P1-7
   [ "$(git rev-parse HEAD)" = "${head_before}" ] || { echo "[verify] safe-push: rewrote local history on a non-race"; exit 1; }
 )
 
+echo "[verify] testing check-manifest-files fail-closed on unparseable + rejects symlink/abs/.. paths (blue-r24)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_manifest_files_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_manifest_files_tmp EXIT
+  check="${repo_root}/templates/domain-packs/odoo/validation-harness/check-manifest-files.py"
+  cd "${tmp_dir}"
+  # (B) an UNPARSEABLE __manifest__.py IS the module-load failure this gate catches; it must
+  # FAIL (exit 1), not green as OK — a bare `except: return []` was a crash-as-pass on the
+  # gate's OWN target class.
+  mkdir -p custom-addons/mod_bad
+  printf '{\n "name":"B",\n "data": [ this is not valid python(((\n}\n' > custom-addons/mod_bad/__manifest__.py
+  if python3 "${check}" --root custom-addons --modules mod_bad >/dev/null 2>&1; then
+    echo "[verify] manifest-files: an UNPARSEABLE manifest wrongly passed (crash-as-pass)"; exit 1
+  fi
+  # (C) data paths Odoo file_open/file_path REJECT must FAIL: a symlink escaping the module
+  # dir (bare is_file() follows it), an absolute path, and a `..` traversal.
+  mkdir -p custom-addons/mod_esc/data
+  printf 'SECRET\n' > custom-addons/outside.txt          # ../../outside.txt from data/
+  ln -s ../../outside.txt custom-addons/mod_esc/data/records.xml
+  printf "{\n 'name':'E',\n 'data':['data/records.xml','/etc/hostname','../../../../../etc/hostname'],\n}\n" > custom-addons/mod_esc/__manifest__.py
+  if python3 "${check}" --root custom-addons --modules mod_esc >/dev/null 2>&1; then
+    echo "[verify] manifest-files: symlink-escape / absolute / '..' data path wrongly passed"; exit 1
+  fi
+  # No-regression: a genuine module-relative data file that exists must STILL pass (exit 0).
+  mkdir -p custom-addons/mod_ok/data
+  printf '<odoo/>\n' > custom-addons/mod_ok/data/records.xml
+  printf "{\n 'name':'OK',\n 'data':['data/records.xml'],\n}\n" > custom-addons/mod_ok/__manifest__.py
+  python3 "${check}" --root custom-addons --modules mod_ok >/dev/null 2>&1 \
+    || { echo "[verify] manifest-files: a valid module-relative data file wrongly failed (regression)"; exit 1; }
+)
+
+echo "[verify] testing safe-push refuses option-injection BRANCH names (blue-r24)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_sp_branch_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_sp_branch_tmp EXIT
+  sp="${repo_root}/templates/domain-packs/odoo/git-tier/safe-push.sh"
+  cd "${tmp_dir}"
+  git -c init.defaultBranch=main init -q --bare origin.git
+  git -c init.defaultBranch=main clone -q origin.git repo 2>/dev/null
+  cd repo
+  git config user.email verify@example.invalid; git config user.name Verify
+  printf 'x\n' > a; git add -A; git commit -q -m base
+  # A hostile HEAD symref whose branch name starts with `--upload-pack=` MUST be refused
+  # (exit 2) before any git fetch/push — else it flows bare to git as an option (local RCE).
+  git update-ref 'refs/heads/--upload-pack=touchPWNED' HEAD
+  git symbolic-ref HEAD 'refs/heads/--upload-pack=touchPWNED'
+  out="$(SAFE_PUSH_MAX_TRIES=1 SAFE_PUSH_BACKOFF=0 bash "${sp}" origin 2>&1)" && rc=0 || rc=$?
+  [ "${rc}" -eq 2 ] || { echo "[verify] safe-push: hostile option-injection BRANCH not refused (rc=${rc})"; exit 1; }
+  printf '%s' "${out}" | grep -qi 'option-injection guard' \
+    || { echo "[verify] safe-push: refusal did not cite the injection guard"; exit 1; }
+  [ ! -e touchPWNED ] || { echo "[verify] safe-push: option-injection actually EXECUTED"; exit 1; }
+  # No-regression: a normal branch name still pushes.
+  git symbolic-ref HEAD refs/heads/main
+  git push -q -u origin main 2>/dev/null || true
+  printf 'y\n' > b; git add -A; git commit -q -m more
+  SAFE_PUSH_MAX_TRIES=2 SAFE_PUSH_BACKOFF=0 bash "${sp}" origin main >/dev/null 2>&1 \
+    || { echo "[verify] safe-push: a normal branch name failed to push (regression)"; exit 1; }
+)
+
 echo "[verify] testing odoo pack ships a runtime-DATA .gitignore scaffold (blue-r17-odoo)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -1080,6 +1141,99 @@ echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
   done
   [ "${reclaim_bad}" -eq 0 ] \
     || { echo "[verify] session-lock/reclaim-race: ${reclaim_bad}/15 trials did NOT have exactly one reclaimer (double-acquire on stale reclaim)"; exit 1; }
+)
+
+echo "[verify] testing session-lock F3 (O_EXCL probe -> flock fallback on a non-exclusive FS; exactly-one-winner in BOTH modes)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  cp "${repo_root}/scripts/session-lock.sh" "${tmp_dir}/session-lock.sh"
+  cd "${tmp_dir}"
+  mkdir -p .omx/state
+  export SESSION_LOCK_FILE=".omx/state/session.lock"
+  # shellcheck source=/dev/null
+  . ./session-lock.sh
+
+  # The one-time probe must report the REAL test FS (which honors O_EXCL) as exclusive -> fast path.
+  _SESSION_LOCK_OEXCL=""
+  _session_lock_oexcl_ok \
+    || { echo "[verify] session-lock/F3: probe misreported the real (O_EXCL-honoring) FS as non-exclusive"; exit 1; }
+
+  # Simulate a FS that silently ignores O_CREAT|O_EXCL by shadowing the SINGLE exclusivity seam so
+  # a second create onto an existing path also "wins"; the probe must then select the flock path.
+  (
+    _session_lock_excl_create() { : > "$1"; }
+    _SESSION_LOCK_OEXCL=""
+    if _session_lock_oexcl_ok; then
+      echo "[verify] session-lock/F3: probe did NOT detect the simulated non-exclusive FS"; exit 1
+    fi
+  ) || exit 1
+
+  # Exactly-one-winner must hold in BOTH modes. K=8 distinct sessions race one fresh lock. In the
+  # `flock` mode the SAME seam is shadowed non-exclusive so the O_EXCL create is NO LONGER
+  # exclusive — only the probe-selected flock fallback keeps exactly one winner. Reverting the
+  # probe/fallback (publish stays on the raw O_EXCL create) makes this mode double-win here.
+  for _mode in excl flock; do
+    _bad=0
+    for _trial in $(seq 1 15); do
+      _d="${tmp_dir}/f3-${_mode}-${_trial}"; mkdir -p "${_d}/.omx/state"; rm -f "${_d}/go" "${_d}/winners"
+      _pids=""
+      for _i in $(seq 1 8); do
+        (
+          cd "${_d}"
+          export SESSION_LOCK_FILE=".omx/state/session.lock"
+          unset AI_AUTO_SESSION_ID
+          export AI_AUTO_SESSION_ID="f3-${_mode}-${_i}-$$@host"
+          _SESSION_LOCK_OEXCL=""   # each racer simulates a SEPARATE process: re-run the one-time probe
+          [ "${_mode}" = flock ] && _session_lock_excl_create() { : > "$1"; }   # non-exclusive FS
+          while [ ! -f go ]; do :; done          # barrier -> tight simultaneity
+          SESSION_LOCK_HELD=0
+          session_lock_acquire validate >/dev/null 2>&1
+          [ "${SESSION_LOCK_HELD}" = "1" ] && echo x >> winners
+        ) & _pids="${_pids} $!"
+      done
+      sleep 0.02
+      : > "${_d}/go"                             # release all racers together
+      # shellcheck disable=SC2086
+      wait ${_pids} 2>/dev/null || true
+      _w="$(wc -l < "${_d}/winners" 2>/dev/null | tr -d ' ')"; _w="${_w:-0}"
+      [ "${_w}" -ne 1 ] && _bad=$((_bad + 1))
+    done
+    [ "${_bad}" -eq 0 ] \
+      || { echo "[verify] session-lock/F3: mode=${_mode}: ${_bad}/15 trials did NOT have exactly one acquirer"; exit 1; }
+  done
+)
+
+echo "[verify] testing session-lock F4 (dir-planted lock path fails deterministically, no infinite spin)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  cp "${repo_root}/scripts/session-lock.sh" "${tmp_dir}/session-lock.sh"
+  cd "${tmp_dir}"
+  mkdir -p .omx/state
+  export SESSION_LOCK_FILE=".omx/state/session.lock"
+
+  # A DIRECTORY pre-planted at the lock path: `[ -f ]` is false so the pre-fix acquire loop takes
+  # the fresh-create path FOREVER (O_EXCL create fails "Is a directory" -> publish returns 1 ->
+  # spin). Acquire must fail DETERMINISTICALLY (non-0, non-75) within a bounded time, NOT hang.
+  # A watchdog `timeout` catches a regression as rc=124 (SIGKILL after the grace window).
+  mkdir -p "${SESSION_LOCK_FILE}"
+  _rc=0
+  timeout -k 2 15 env AI_AUTO_SESSION_ID="self@host" SESSION_LOCK_FILE="${SESSION_LOCK_FILE}" \
+    bash -c '. ./session-lock.sh; session_lock_acquire validate' >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -ne 124 ] \
+    || { echo "[verify] session-lock/F4: acquire HUNG on a dir-planted lock path (infinite spin)"; exit 1; }
+  { [ "${_rc}" -ne 0 ] && [ "${_rc}" -ne 75 ]; } \
+    || { echo "[verify] session-lock/F4: dir-planted lock path did not FAIL deterministically (got ${_rc})"; exit 1; }
+
+  # Control: with the anomalous directory cleared, a normal fresh acquire still holds.
+  rmdir "${SESSION_LOCK_FILE}"
+  _rc=0
+  env AI_AUTO_SESSION_ID="self@host" SESSION_LOCK_FILE="${SESSION_LOCK_FILE}" \
+    bash -c '. ./session-lock.sh; session_lock_acquire validate && [ "${SESSION_LOCK_HELD}" = "1" ]' \
+    >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] \
+    || { echo "[verify] session-lock/F4: normal acquire after clearing the dir did not hold (got ${_rc})"; exit 1; }
 )
 
 echo "[verify] testing guidance document budget missing-file tolerance..."
@@ -2996,6 +3150,16 @@ next_action=user_reset_required
 reset_hint=RESET_DISABLED_AI_REVIEWERS=claude ./scripts/review-gate.sh
 MARKER
 
+  # BLUE-R25: reviewer .disabled markers are now HMAC-authenticated with the out-of-tree key, so a
+  # persisted (genuine prior-run) marker carries a framework marker_hmac. Simulate that here (an
+  # unauthenticated plant would be correctly IGNORED) so the external-runner guidance still surfaces it.
+  # shellcheck disable=SC1090
+  source <(sed -n '/# >>> principal-evidence-auth/,/# <<< principal-evidence-auth/p' scripts/run-ai-reviews.sh)
+  # shellcheck disable=SC1090
+  source <(awk '/^reviewer_marker_canonical\(\)/,/^}/' scripts/run-ai-reviews.sh)
+  principal_evidence_ensure_key >/dev/null 2>&1 || true
+  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical "${tmp_dir}/state/claude.disabled" | principal_evidence_hmac)" >> "${tmp_dir}/state/claude.disabled"
+
   set +e
   # Keep inherited reviewer-reset requests from deleting this fixture marker.
   REVIEW_EXECUTION_MODE=external \
@@ -4263,6 +4427,82 @@ EOF
     || { echo "[verify] BLUE-R20-GUARD-FENCE: the untracked guard did not fire"; cat "${gf_vf}"; exit 1; }
 )
 
+echo "[verify] testing BLUE-FENCE-DESYNC (a backtick-leading untracked FILENAME in '## Untracked Files' — git leaves printable-ASCII backticks unquoted — must NOT desync whole-document fence state and skip the later '## Untracked Review Guard'/'## Phase Scope Guard' headings: both guards STILL block a real material-untracked / out-of-phase change; a benign context yields no false block; and the emitter no longer renders a fence-opening listing line)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  summ="${repo_root}/scripts/summarize-ai-reviews.sh"
+  collect="${repo_root}/scripts/collect-review-context.sh"
+  # Load the two REAL guard parsers straight out of the shipped script.
+  eval "$(sed -n '/^untracked_guard_block_reason() {/,/^}/p' "${summ}")"
+  eval "$(sed -n '/^phase_scope_guard_block_reason() {/,/^}/p' "${summ}")"
+
+  # --- Parser, ATTACK: raw ```zzz desync line inside the fenced listing, then the
+  #     real guard sections. Pre-fix the desync flips in_code ON past both headings. ---
+  atk="${tmp_dir}/attack.md"
+  cat > "${atk}" <<'CTX'
+## Untracked Files
+
+```text
+```zzz
+scripts/new-evil.sh
+```
+
+## Untracked Review Guard
+
+guard_status: material_untracked_artifacts_present
+Material untracked review artifacts are present, but content inclusion is disabled.
+
+## Phase Scope Guard
+
+phase_scope_status: out_of_phase_edit
+
+## Tree Churn Audit
+CTX
+  REVIEW_UNTRACKED_MANUAL_REVIEWED=0 untracked_guard_block_reason "${atk}" >/dev/null \
+    || { echo "[verify] BLUE-FENCE-DESYNC: untracked guard EVADED by a backtick-leading filename (bypass)"; exit 1; }
+  PHASE_SCOPE_MANUAL_REVIEWED=0 phase_scope_guard_block_reason "${atk}" >/dev/null \
+    || { echo "[verify] BLUE-FENCE-DESYNC: phase-scope guard EVADED by a backtick-leading filename (bypass)"; exit 1; }
+
+  # --- Parser, BENIGN control: no desync, guard/phase clear -> NO false block. ---
+  ben="${tmp_dir}/benign.md"
+  cat > "${ben}" <<'CTX'
+## Untracked Files
+
+```text
+    docs/readme.md
+```
+
+## Untracked Review Guard
+
+guard_status: clear
+
+## Phase Scope Guard
+
+phase_scope_status: clear
+
+## Tree Churn Audit
+CTX
+  REVIEW_UNTRACKED_MANUAL_REVIEWED=0 untracked_guard_block_reason "${ben}" >/dev/null \
+    && { echo "[verify] BLUE-FENCE-DESYNC: untracked guard FALSE-BLOCKED a benign context"; exit 1; }
+  PHASE_SCOPE_MANUAL_REVIEWED=0 phase_scope_guard_block_reason "${ben}" >/dev/null \
+    && { echo "[verify] BLUE-FENCE-DESYNC: phase-scope guard FALSE-BLOCKED a benign context"; exit 1; }
+
+  # --- Emitter belt: with a real ```zzz untracked file, the shipped listing render
+  #     must not emit any fence-opening line inside the listing. ---
+  repo="${tmp_dir}/repo"; mkdir -p "${repo}"
+  ( cd "${repo}"
+    export GIT_CONFIG_GLOBAL="${tmp_dir}/gc" GIT_CONFIG_SYSTEM=/dev/null
+    git init -q .; git config user.email a@b.c; git config user.name t
+    echo base > tracked.txt; git add tracked.txt; git commit -qm init
+    printf 'x' > '```zzz'
+    render() { eval "$(sed -n '/echo "## Untracked Files"$/,/echo "## Untracked Review Guard"$/p' "${collect}" \
+                       | sed -n "/echo '\`\`\`text'/,/echo '\`\`\`'/p" | sed '/^[[:space:]]*#/d')"; }
+    # Print any fence-opening line INSIDE the listing (excluding the intended text-fence open/close).
+    leak="$(render | awk 'c<1 && /^```text$/{c=1;next} /^```$/ && c==1{c=2;next} /^```/{print}')"
+    [ -z "${leak}" ] || { echo "[verify] BLUE-FENCE-DESYNC: emitter rendered a fence-opening listing line (${leak})"; exit 1; }
+  ) || exit 1
+)
+
 echo "[verify] testing .omx archive custom result directory preservation..."
 (
   tmp_dir="$(mktemp -d)"
@@ -4802,7 +5042,7 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   grep -q "approved_by=tester" .omx/state/verify-override.env
 )
 
-echo "[verify] testing review-gate verify-override stale-guard is bound to session+acquired_at TTL (recycled-PID/foreign-session marker REMOVED; live same-session marker PRESERVED)..."
+echo "[verify] testing review-gate verify-override stale-guard is bound to session+holder-STARTTIME+acquired_at TTL (recycled-PID/foreign-session/mismatched-starttime marker REMOVED; live same-session marker PRESERVED; session.json-PRESENT path is NOT vacuous)..."
 (
   tmp_dir="$(mktemp -d)"
   _bg_pid=""
@@ -4829,13 +5069,17 @@ echo "[verify] testing review-gate verify-override stale-guard is bound to sessi
 
   # A genuinely-live UNRELATED process to own the (recycled) PID recorded in the marker.
   sleep 300 & _bg_pid=$!
+  # Its REAL boot-unique start-time (/proc/<pid>/stat field 22) — a legit marker records this; a
+  # recycled/forged one cannot match it.
+  _bg_stat="$(cat /proc/${_bg_pid}/stat 2>/dev/null)"; _bg_stat="${_bg_stat##*) }"
+  set -- ${_bg_stat}; _bg_start="${20}"
 
   # (1) recycled/foreign-session override: holder_pid is a LIVE but UNRELATED process, holder_session
   # does NOT match this gate's session, acquired_at fresh. The pre-fix bare-PID guard PRESERVES it
   # (kill -0 on the live PID succeeds) -> it would downgrade+misattribute this clean run. The fix
   # binds ownership to holder_session -> the foreign session is STALE -> the guard REMOVES it.
-  printf 'reason=stale unrelated\napproved_by=ghost-approver\nholder_pid=%s\nholder_session=foreign-session@host\nacquired_at=%s\n' \
-    "${_bg_pid}" "$(date -Iseconds)" > .omx/state/verify-override.env
+  printf 'reason=stale unrelated\napproved_by=ghost-approver\nholder_pid=%s\nholder_session=foreign-session@host\nholder_starttime=%s\nacquired_at=%s\n' \
+    "${_bg_pid}" "${_bg_start}" "$(date -Iseconds)" > .omx/state/verify-override.env
   set +e
   ./scripts/review-gate.sh > "${tmp_dir}/foreign.out" 2>&1
   set -e
@@ -4843,25 +5087,62 @@ echo "[verify] testing review-gate verify-override stale-guard is bound to sessi
     || { echo "[verify] override stale-guard PRESERVED a foreign-session live-PID override (recycled-PID downgrade+misattribution class)"; cat .omx/state/verify-override.env; exit 1; }
 
   # (2) genuinely-live SAME-session override within TTL (a real concurrent peer of THIS session):
-  # matching holder_session, live holder_pid, fresh acquired_at -> MUST be PRESERVED. The gate has
-  # no session.json here, so its identity falls back to ${AI_AUTO_SESSION_ID}; plant that same id.
+  # matching holder_session, live holder_pid, CORRECT holder_starttime, fresh acquired_at -> PRESERVED.
+  # The gate has no session.json here, so its identity falls back to ${AI_AUTO_SESSION_ID}.
   self_sess="peer-session@host"
-  printf 'reason=live peer\napproved_by=peer\nholder_pid=%s\nholder_session=%s\nacquired_at=%s\n' \
-    "${_bg_pid}" "${self_sess}" "$(date -Iseconds)" > .omx/state/verify-override.env
+  printf 'reason=live peer\napproved_by=peer\nholder_pid=%s\nholder_session=%s\nholder_starttime=%s\nacquired_at=%s\n' \
+    "${_bg_pid}" "${self_sess}" "${_bg_start}" "$(date -Iseconds)" > .omx/state/verify-override.env
   set +e
   AI_AUTO_SESSION_ID="${self_sess}" ./scripts/review-gate.sh > "${tmp_dir}/peer.out" 2>&1
   set -e
   test -f .omx/state/verify-override.env \
     || { echo "[verify] override stale-guard REMOVED a genuinely-live SAME-session override within TTL (concurrent-peer regression)"; exit 1; }
 
-  # (3) same-session live PID but acquired_at PAST the TTL -> STALE -> REMOVED (recycled-PID backstop).
-  printf 'reason=expired\napproved_by=old\nholder_pid=%s\nholder_session=%s\nacquired_at=%s\n' \
-    "${_bg_pid}" "${self_sess}" "$(date -d '10 days ago' -Iseconds 2>/dev/null || date -Iseconds)" > .omx/state/verify-override.env
+  # (3) same-session live PID + correct starttime but acquired_at PAST the TTL -> STALE -> REMOVED.
+  printf 'reason=expired\napproved_by=old\nholder_pid=%s\nholder_session=%s\nholder_starttime=%s\nacquired_at=%s\n' \
+    "${_bg_pid}" "${self_sess}" "${_bg_start}" "$(date -d '10 days ago' -Iseconds 2>/dev/null || date -Iseconds)" > .omx/state/verify-override.env
   set +e
   AI_AUTO_VERIFY_OVERRIDE_TTL_SECONDS=3600 AI_AUTO_SESSION_ID="${self_sess}" ./scripts/review-gate.sh > "${tmp_dir}/expired.out" 2>&1
   set -e
   test ! -f .omx/state/verify-override.env \
     || { echo "[verify] override stale-guard PRESERVED a same-session override past its TTL (expired-marker regression)"; exit 1; }
+
+  # (F1) session.json PRESENT -> _gate_session_id() is the PER-TREE constant, so holder_session
+  # ALWAYS matches: the session check is VACUOUS. A ghost from a prior UNRELATED failed gate (matching
+  # per-tree id, a live but recycled pid, MISMATCHED holder_starttime, fresh acquired_at) must NOT be
+  # inherited by this clean passing run. Only the start-time binding distinguishes it -> REMOVED.
+  # (Revert the starttime check -> this ghost is PRESERVED and stamps ghost-approver onto a clean run.)
+  printf '{"session_id":"tree-fixed-id"}\n' > .omx/state/session.json
+  printf 'reason=ghost\napproved_by=ghost-approver\nholder_pid=%s\nholder_session=tree-fixed-id\nholder_starttime=1\nacquired_at=%s\n' \
+    "${_bg_pid}" "$(date -Iseconds)" > .omx/state/verify-override.env
+  set +e
+  ./scripts/review-gate.sh > "${tmp_dir}/f1-ghost.out" 2>&1
+  set -e
+  test ! -f .omx/state/verify-override.env \
+    || { echo "[verify] override stale-guard (session.json PRESENT) INHERITED a mismatched-starttime ghost onto a clean run (F1 recyclable-PID class still open)"; cat .omx/state/verify-override.env; exit 1; }
+
+  # (F1-live) session.json PRESENT + a GENUINE live holder (correct starttime) -> still PRESERVED.
+  printf 'reason=live\napproved_by=peer\nholder_pid=%s\nholder_session=tree-fixed-id\nholder_starttime=%s\nacquired_at=%s\n' \
+    "${_bg_pid}" "${_bg_start}" "$(date -Iseconds)" > .omx/state/verify-override.env
+  set +e
+  ./scripts/review-gate.sh > "${tmp_dir}/f1-live.out" 2>&1
+  set -e
+  test -f .omx/state/verify-override.env \
+    || { echo "[verify] override stale-guard (session.json PRESENT) REMOVED a genuinely-live correct-starttime override (over-eager)"; exit 1; }
+)
+
+echo "[verify] testing review-gate verify-override marker is written ATOMICALLY (same-dir mktemp+mv, never an in-place truncating redirect a concurrent reader could observe partial)..."
+(
+  # Static assertion mirroring review_provenance_record: no in-place '} > VERIFY_OVERRIDE_ENV' write
+  # survives, and the mktemp+mv publish pattern IS present. A truncated marker (missing acquired_at)
+  # would be judged stale (_ovr_age=-1) and rm'd mid-write, losing the proceed_degraded marker.
+  gate="${repo_root}/scripts/review-gate.sh"
+  ! grep -Eq '\}[[:space:]]*>[[:space:]]*"\$\{?VERIFY_OVERRIDE_ENV' "${gate}" \
+    || { echo "[verify] override marker still written via in-place truncating redirect (non-atomic; partial-read fail-open)"; exit 1; }
+  grep -Eq 'mktemp "\$\(dirname "\$_ovr_dst"\)/\.verify-override\.' "${gate}" \
+    || { echo "[verify] override marker missing same-dir mktemp staging (atomic-write pattern absent)"; exit 1; }
+  grep -Eq 'mv -f "\$_ovr_tmp" "\$_ovr_dst"' "${gate}" \
+    || { echo "[verify] override marker missing atomic mv publish (atomic-write pattern absent)"; exit 1; }
 )
 
 echo "[verify] testing review-gate defers (exit 75, no blocked verdict) when its worktree is removed mid-run..."
@@ -6485,6 +6766,59 @@ echo "[verify] testing domain pack status and refresh helper..."
   grep -q $'invalid_pack_name\t../odoo' "${tmp_dir}/domain-traversal-pack.out"
   test ! -e "${guarded_dir}/.omx/odoo"
   test ! -e "${guarded_dir}/.omx/domain-packs/.manifest/../odoo.json"
+
+  # R24: a symlinked pack target_dir (→ external victim) + forged base manifest must be
+  # REFUSED — refresh must NOT follow the symlink to delete/plant OUTSIDE the project.
+  victim_dir="${tmp_dir}/r24-victim"
+  mkdir -p "${victim_dir}"
+  printf 'precious\n' > "${victim_dir}/keep.txt"
+  victim_keep_hash="$(sha256sum "${victim_dir}/keep.txt" | awk '{print $1}')"
+  evil_src="${tmp_dir}/r24-source/evilpack"
+  mkdir -p "${evil_src}"
+  printf 'attacker planted\n' > "${evil_src}/planted.txt"
+  evil_proj="${tmp_dir}/r24-proj"
+  git -c init.defaultBranch=main init -q "${evil_proj}"
+  mkdir -p "${evil_proj}/.omx/domain-packs/.manifest"
+  ln -s "${victim_dir}" "${evil_proj}/.omx/domain-packs/evilpack"
+  printf '{"schema":1,"pack":"evilpack","source":"s","source_root_hash":"x","installed_at":"2020-01-01T00:00:00Z","files":{"keep.txt":"%s"}}\n' \
+    "${victim_keep_hash}" > "${evil_proj}/.omx/domain-packs/.manifest/evilpack.json"
+  if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/r24-source" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${evil_proj}" --pack evilpack refresh --apply > "${tmp_dir}/r24-symlink-target.out" 2>&1; then
+    echo "[verify] R24: ai-domain-pack refreshed through a symlinked pack target_dir"
+    exit 1
+  fi
+  grep -q $'conflict\tevilpack' "${tmp_dir}/r24-symlink-target.out"
+  grep -q "target_symlink_or_escape" "${tmp_dir}/r24-symlink-target.out"
+  test -f "${victim_dir}/keep.txt"
+  test ! -e "${victim_dir}/planted.txt"
+
+  # R24: a symlinked INTERMEDIATE (.omx/domain-packs itself) must likewise be refused.
+  evil_proj2="${tmp_dir}/r24-proj2"
+  git -c init.defaultBranch=main init -q "${evil_proj2}"
+  mkdir -p "${evil_proj2}/.omx"
+  evil_base="${tmp_dir}/r24-evilbase"
+  mkdir -p "${evil_base}/.manifest"
+  ln -s "${victim_dir}" "${evil_base}/evilpack"
+  printf '{"schema":1,"pack":"evilpack","source":"s","source_root_hash":"x","installed_at":"2020-01-01T00:00:00Z","files":{"keep.txt":"%s"}}\n' \
+    "${victim_keep_hash}" > "${evil_base}/.manifest/evilpack.json"
+  ln -s "${evil_base}" "${evil_proj2}/.omx/domain-packs"
+  if AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/r24-source" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${evil_proj2}" --pack evilpack refresh --apply > "${tmp_dir}/r24-symlink-base.out" 2>&1; then
+    echo "[verify] R24: ai-domain-pack refreshed through a symlinked .omx/domain-packs base"
+    exit 1
+  fi
+  grep -q "target_symlink_or_escape" "${tmp_dir}/r24-symlink-base.out"
+  test -f "${victim_dir}/keep.txt"
+  test ! -e "${victim_dir}/planted.txt"
+
+  # R24: a normal in-base pack must still install + refresh (no regression).
+  ok_proj="${tmp_dir}/r24-ok"
+  git -c init.defaultBranch=main init -q "${ok_proj}"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/r24-source" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${ok_proj}" --pack evilpack refresh --apply > "${tmp_dir}/r24-ok-install.out"
+  grep -q $'installed\tevilpack' "${tmp_dir}/r24-ok-install.out"
+  test -f "${ok_proj}/.omx/domain-packs/evilpack/planted.txt"
+  printf '\nsource update\n' >> "${tmp_dir}/r24-source/evilpack/planted.txt"
+  AI_AUTO_DOMAIN_PACK_SOURCE_OVERRIDE="${tmp_dir}/r24-source" AI_AUTO_TEMPLATE_SOURCE_BRANCH_OVERRIDE=main ./tools/ai-domain-pack --target "${ok_proj}" --pack evilpack refresh --apply > "${tmp_dir}/r24-ok-refresh.out"
+  grep -q $'updated\tevilpack' "${tmp_dir}/r24-ok-refresh.out"
+  grep -q "source update" "${ok_proj}/.omx/domain-packs/evilpack/planted.txt"
 )
 
 echo "[verify] testing ai-register and workspace-scan registry integration..."
@@ -7296,6 +7630,49 @@ echo "[verify] testing verify.sh project-verify seam (C4: present->runs, absent-
     || { echo "[verify] H1: default-scope verify not fail-closed exit 1 (got ${def_rc})"; exit 1; }
   echo "${def_out}" | grep -q "NOTHING was verified" \
     || { echo "[verify] H1: default-scope verify missing fail-closed message"; exit 1; }
+)
+
+echo "[verify] testing verify.sh F2 (non-exec verifier that lost its exec bit is dispatched by SHEBANG, not bash)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  mkdir -p "${tmp_dir}/scripts"
+  cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"
+  chmod +x "${tmp_dir}/scripts/verify.sh"
+  printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
+    > "${tmp_dir}/scripts/session-lock.sh"
+
+  # A VALID python verifier that LOST its exec bit: passes the shebang-aware parse gate (bash -n
+  # is NOT applied to a #!python3 verifier) but pre-fix the EXEC fallback ran it via `bash`, which
+  # mis-parses python -> nonzero -> a LEGIT verifier wrongly BLOCKED. The fix dispatches by the
+  # shebang's interpreter. The body uses python-only syntax bash cannot execute, so a bash run
+  # fails loudly (non-vacuous). NOTE: skip if python3 is unavailable on the runner.
+  if command -v python3 >/dev/null 2>&1; then
+    printf '#!/usr/bin/env python3\nimport sys\nprint("PY_VERIFY_RAN")\nd={"a":1}\nfor k,v in d.items():\n    pass\nsys.exit(0)\n' \
+      > "${tmp_dir}/scripts/verify-project.sh"
+    chmod -x "${tmp_dir}/scripts/verify-project.sh"
+    _rc=0
+    _out="$(cd "${tmp_dir}" && AI_AUTO_VERIFY_SCOPE=product bash scripts/verify.sh 2>&1)" || _rc=$?
+    [ "${_rc}" -eq 0 ] \
+      || { echo "[verify] F2: non-exec python verifier BLOCKED (rc=${_rc}) — run via bash instead of its shebang"; echo "${_out}"; exit 1; }
+    echo "${_out}" | grep -q "PY_VERIFY_RAN" \
+      || { echo "[verify] F2: python verifier did not run via its interpreter"; echo "${_out}"; exit 1; }
+    echo "${_out}" | grep -q "dispatching via its shebang interpreter" \
+      || { echo "[verify] F2: exec fallback did not report shebang dispatch"; exit 1; }
+  else
+    echo "[verify] F2: python3 absent on runner — shebang-dispatch sub-control skipped (shell control still asserted)"
+  fi
+
+  # Control: a non-exec SHELL verifier (or one with no/shell shebang) must STILL run via bash.
+  printf '#!/usr/bin/env bash\necho SH_VERIFY_RAN\nexit 0\n' \
+    > "${tmp_dir}/scripts/verify-project.sh"
+  chmod -x "${tmp_dir}/scripts/verify-project.sh"
+  _rc=0
+  _out="$(cd "${tmp_dir}" && AI_AUTO_VERIFY_SCOPE=product bash scripts/verify.sh 2>&1)" || _rc=$?
+  [ "${_rc}" -eq 0 ] && echo "${_out}" | grep -q "SH_VERIFY_RAN" \
+    || { echo "[verify] F2: non-exec shell verifier did not run (rc=${_rc})"; echo "${_out}"; exit 1; }
+  echo "${_out}" | grep -q "running via bash" \
+    || { echo "[verify] F2: shell verifier was not dispatched via bash"; exit 1; }
 )
 
 echo "[verify] testing verify.sh H1 engine-aware default scope (self-host -> folds machinery)..."
@@ -9575,19 +9952,38 @@ def is_text(f):
 # existing attr-source + fsmonitor pins.
 SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file|worktree|ls-files|rebase|cherry-pick|revert|commit|merge|am|push|fetch|pull|clone|rm|mv'
 # INVOKE (R22 command-position hardening): a command-position `git`/`review_git` followed by opts then
-# a STANDALONE subcommand. Command position = start-of-line, one of `;&|(){}` `` ` `` `"` `'`, OR a
+# a STANDALONE subcommand. Command position = start-of-line, one of `;&|(){}` `` ` `` `"` `'` `!`, OR a
 # shell keyword that introduces a command (if/then/do/else/elif/while/until/eval/xargs). PLUS, before
 # git: (a) leading ENV-ASSIGNMENTS (`GIT_OPTIONAL_LOCKS=0 git …`, `FOO=bar git …`), and (b) wrapper
 # commands WITH THEIR OWN ARGS (`env FOO=bar git …`, `sudo -n git …`, `nice -n 10 git …`,
 # `ionice/stdbuf/timeout … git …`). A backslash LINE-CONTINUATION between `git` and its subcommand is
 # handled by the logical-line join in the caller (physical lines are joined before matching).
+# R24 (future-site defense-in-depth): four idiomatic-but-un-hardened forms are ALSO caught so a
+# maintainer cannot land a fresh un-hardened site under them (all currently ZERO shipped sites):
+#   (1) `!` bang-negation in command position (`! git status`, `( ! git status`) — `!` is now in the
+#       introducer class (an `if ! git …` already worked via the keyword branch; this covers the
+#       standalone bang). `! git rev-parse` stays OK (rev-parse is not in SUBS).
+#   (2) SPACE-separated global options that take a SEPARATE arg (`git --git-dir /p status`,
+#       `--work-tree`/`--namespace`/`--super-prefix`/`--exec-path`) — consumed like `-C X`/`-c X` so
+#       the arg is not mistaken for the subcommand (the generic `--foo` alt consumes NO arg).
+#   (3) a LEADING REDIRECTION before git (`2>/dev/null git status`, `>out git …`) is skipped.
+#   (4) an ALIASED/VARIABLE git binary: `\git status` (backslash-escaped alias), and a git-NAMED
+#       shell variable (`"$GIT" status`, `$GIT status`, `$git status`, `${GIT} …`) in command
+#       position (4th alt, group 4). The var alt uses a STRICTER introducer that EXCLUDES the bare
+#       `"`/`'` quote (a quoted string is not a command boundary) so a git-NAMED path ARGUMENT to
+#       another command (e.g. `ai-domain-pack --target "$git_root" status`) is NOT false-flagged; it
+#       requires the variable NAME to contain `git` (case-insensitive) so unrelated `$FOO status`
+#       lines are not scanned.
 INVOKE = re.compile(
-    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:if|then|do|else|elif|while|until|eval|xargs)\b[^;#]*?\s)'
-    r'\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*'
+    r'(?:(?:^|[;&|(){}`"\x27!]|\b(?:if|then|do|else|elif|while|until|eval|xargs)\b[^;#]*?\s)'
+    r'\s*(?:[0-9]*(?:>>?|<)(?:&[0-9-]+|\S+)?\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*'
     r'(?:(?:sudo|env|command|time|nohup|exec|builtin|nice|ionice|stdbuf|timeout)(?:\s+-\S+|\s+[A-Za-z_][A-Za-z0-9_]*=\S*|\s+\d+)*\s+)*'
-    r'(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
+    r'(?:review_)?\\?git\b(?:\s+-(?:C|c)\s+\S+|\s+--(?:git-dir|work-tree|namespace|super-prefix|exec-path)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
     r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(' + SUBS + r')"\s*,?)'
     r'|(?:\[(?:[^\]]*,)?\s*"(' + SUBS + r')")'
+    r'|(?:(?:^|[;&|(){}`]|&&|\|\||\b(?:if|then|do|else|elif|while|until|eval|xargs)\b[^;#]*?\s)'
+    r'\s*"?\$\{?[A-Za-z0-9_]*[Gg][Ii][Tt][A-Za-z0-9_]*\}?"?'
+    r'(?:\s+-(?:C|c)\s+\S+|\s+--(?:git-dir|work-tree|namespace|super-prefix|exec-path)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
 )
 NONPATCH = ("--name-only", "--name-status", "--stat", "--shortstat", "--numstat", "--quiet", "--no-patch", "--check")
 # R22 hooksPath term: subcommands that FIRE A GIT HOOK / WRITE THE INDEX and so must carry
@@ -9659,7 +10055,7 @@ for f in sorted(targets):
         # separator, not a quote, so it is NOT skipped.
         if m.group(1) and re.match(r'\s*(?:echo|printf)\b', line) and m.start() < len(line) and line[m.start()] in ('"', "\x27"):
             continue
-        sub = m.group(1) or m.group(2) or m.group(3)
+        sub = m.group(1) or m.group(2) or m.group(3) or m.group(4)
         # group(3): a python list-literal diff token reached via concat/splitting (over-approx).
         # Only treat as a git invocation when the line carries a git signal -- this keeps plain
         # non-git list literals (e.g. modes=["diff","merge"]) UNSCANNED while still flagging
@@ -10200,6 +10596,50 @@ PYEOF
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     && { echo "[verify] R9-DRIFT: control b22-real (non-test scripts/ git commit) NOT caught — test-harness exemption over-broad"; exit 1; }
   rm -f "${tmp_dir}/fake/scripts/real-fixture.sh"
+  # b23 (R24 command-position defense-in-depth): four idiomatic-but-un-hardened forms of a GUARDED
+  # subcommand that PRE-strengthening the INVOKE matcher scanned to ZERO sites and passed clean —
+  # (1) `!` bang-negation in command position, (2) a SPACE-separated global option that takes a
+  # SEPARATE arg (--git-dir/--work-tree/--namespace/--super-prefix/--exec-path), (3) a LEADING
+  # REDIRECTION before git, (4) an ALIASED/VARIABLE git binary (`\git`, `"$GIT"`/`$GIT`/`${GIT}`).
+  # Each un-hardened `git status` MUST now be FLAGGED (revert the matcher extension -> stops firing).
+  for _b23 in \
+      '! git status --short' \
+      '( ! git status --short )' \
+      'git --git-dir /p status --short' \
+      'git --work-tree /p status --short' \
+      'git --namespace n status --short' \
+      'git --super-prefix p/ status --short' \
+      'git --exec-path /p status --short' \
+      '2>/dev/null git status --short' \
+      '>out git status --short' \
+      '\git status --short' \
+      '"$GIT" status --short' \
+      '$GIT status --short' \
+      '$git status --short' \
+      '${GIT} status --short'; do
+    printf '%s\n' "${_b23}" > "${tmp_dir}/fake/scripts/b23.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b23 (command-position evasion) NOT caught — matcher still evadable: ${_b23}"; exit 1; }
+  done
+  # b23-hardened: each form, fully pinned (status carries rule-4 attr-source+fsmonitor AND rule-7
+  # hooksPath), MUST PASS (proves the extension is non-vacuous — flags UN-hardened, not the FORM).
+  for _b23h in \
+      '! git -c core.hooksPath=/dev/null --attr-source="$ET" -c core.fsmonitor= status --short' \
+      'git -c core.hooksPath=/dev/null --attr-source="$ET" -c core.fsmonitor= --git-dir /p status --short' \
+      '2>/dev/null review_git status --short' \
+      '$GIT -c core.hooksPath=/dev/null --attr-source="$ET" -c core.fsmonitor= status --short'; do
+    printf '%s\n' "${_b23h}" > "${tmp_dir}/fake/scripts/b23.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      || { echo "[verify] R9-DRIFT: control b23-hardened FALSE-POSITIVED: ${_b23h}"; exit 1; }
+  done
+  # b23-nonfp: a git-NAMED shell VARIABLE that is a path ARGUMENT to ANOTHER command (not a git
+  # binary in command position — preceded by a SPACE, not a command boundary) MUST NOT be flagged
+  # (the var alt's strict introducer excludes the bare quote); `! git rev-parse` (rev-parse not in
+  # SUBS) MUST stay OK. Both prove the extension does not over-match unrelated lines.
+  printf 'ai-domain-pack --target "$git_root" status || true\n! git rev-parse --is-inside-work-tree\n' > "${tmp_dir}/fake/scripts/b23.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b23-nonfp (git-named path arg / bang rev-parse) FALSE-POSITIVED — var-form/bang matcher over-broad"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b23.sh"
 )
 
 echo "[verify] testing R13-WORKTREE-RCE (tools/ai-worktree's 'git worktree add' over a HOSTILE repo must NOT execute the in-repo .gitattributes-bound filter.<x>.smudge driver while checking out the new tree; inline --attr-source=<empty-tree> disarms it — this is the tmux-hook auto-invoked RCE)..."
@@ -11444,4 +11884,287 @@ echo "[verify] testing R23-HEARTBEAT (run-ai-reviews.sh with_heartbeat: the back
       && { echo "[verify] R23-HEARTBEAT: printer ${hb2} still alive after normal completion — not reaped"; exit 1; }
   fi
   hb2=""
+)
+
+echo "[verify] testing BLUE-R24-EMPTYKEY (#1 CRITICAL: a 0-byte provenance key is treated as ABSENT [-s] so a forged empty-key-HMAC approval is REJECTED -> decision=full, NOT skip; a genuine non-empty key still authenticates a real approval -> skip. Pre-fix [-f] control ACCEPTS the forgery, proving non-vacuity)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  blk="${tmp_dir}/blk.sh"
+  sed -n '/# >>> review-provenance-shared/,/# <<< review-provenance-shared/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${blk}"
+  test -s "${blk}" || { echo "[verify] BLUE-R24-EMPTYKEY: could not extract provenance block"; exit 1; }
+  # Pre-fix CONTROL: revert the [-s] empty-key discipline back to [-f] (the vulnerable form).
+  ctl="${tmp_dir}/ctl.sh"
+  sed 's/\[ -s "${keyfile}" \]/[ -f "${keyfile}" ]/g' "${blk}" > "${ctl}"
+  grep -q '\[ -f "${keyfile}" \] || return 1' "${ctl}" \
+    || { echo "[verify] BLUE-R24-EMPTYKEY: control revert did not produce the pre-fix [-f] form"; exit 1; }
+  mk_repo() { local p="$1"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf '.omx/\n' > .gitignore; git add .gitignore
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init ); }
+  # Plant a 0-byte key (the exact residue the pre-fix ensure_key left when openssl was absent),
+  # forge an approved-provenance.env whose HMAC is keyed by that EMPTY key, then decide.
+  forge_and_decide() {  # $1 block  $2 proj
+    ( cd "$2"
+      export REVIEW_STATE_DIR="$2/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="$2.key"   # out-of-tree
+      # shellcheck source=/dev/null
+      . "$1"
+      : > "${AI_AUTO_PROVENANCE_KEY_FILE}"; chmod 600 "${AI_AUTO_PROVENANCE_KEY_FILE}"
+      mkdir -p "${REVIEW_STATE_DIR}"
+      local hash head flags ts rec forged
+      hash="$(review_provenance_hash)"; head="$(git rev-parse HEAD 2>/dev/null || true)"
+      flags="$(review_provenance_flags)"; ts="2026-06-30T00:00:00+00:00"
+      rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' "${hash}" "${head}" "${flags}" "${ts}")"
+      forged="$(printf '%s' "${rec}" | AI_AUTO_PROV_KEYFILE="${AI_AUTO_PROVENANCE_KEY_FILE}" python3 -c 'import hmac,hashlib,os,sys;k=open(os.environ["AI_AUTO_PROV_KEYFILE"],"rb").read();sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())')"
+      { printf '%s\n' "${rec}"; printf 'approved_hmac=%s\n' "${forged}"; } > "${REVIEW_STATE_DIR}/approved-provenance.env"
+      review_provenance_decision )
+  }
+  p1="${tmp_dir}/fixed"; mk_repo "${p1}"
+  test "$(forge_and_decide "${blk}" "${p1}")" = "full" \
+    || { echo "[verify] BLUE-R24-EMPTYKEY: forged empty-key approval was NOT rejected (decision != full) — FAIL-OPEN"; exit 1; }
+  p2="${tmp_dir}/ctl"; mk_repo "${p2}"
+  test "$(forge_and_decide "${ctl}" "${p2}")" = "skip" \
+    || { echo "[verify] BLUE-R24-EMPTYKEY: pre-fix [-f] control did NOT accept the forgery — fixture is vacuous"; exit 1; }
+  # Genuine non-empty key + a real recorded approval still authenticates -> skip (optimization kept).
+  p3="${tmp_dir}/good"; mk_repo "${p3}"
+  test "$(
+    cd "${p3}"
+    export REVIEW_STATE_DIR="${p3}/.omx/rs" AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh" AI_AUTO_PROVENANCE_KEY_FILE="${p3}.key"
+    # shellcheck source=/dev/null
+    . "${blk}"
+    review_provenance_record
+    review_provenance_decision )" = "skip" \
+    || { echo "[verify] BLUE-R24-EMPTYKEY: a genuine key + real approval did not authenticate (decision != skip)"; exit 1; }
+)
+
+echo "[verify] testing BLUE-R24-MEMOFORGE (#2: a machinery skip marker carrying the right surface hash but NO valid out-of-tree HMAC does NOT satisfy machinery_memo_should_skip -> the self-test RUNS; a genuine record_pass HMAC-bound marker DOES skip until the tree changes. Pre-fix hash-only compare SKIPS the forgery, proving non-vacuity)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '.omx/\n' > .gitignore; printf 'code\n' > payload.py; git add .; git commit -qm init )
+  ( cd "${proj}"
+    export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+    export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"
+    export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"   # out-of-tree HMAC key
+    # shellcheck source=/dev/null
+    . "${repo_root}/scripts/machinery-memo.sh"
+    # Pre-fix control: hash-only compare (what should_skip used to do).
+    ctl_should_skip() {
+      local hash recorded
+      hash="$(machinery_memo_surface_hash)"; [ -n "${hash}" ] || return 1
+      [ -f "${MACHINERY_MEMO_MARKER}" ] || return 1
+      recorded="$(cat "${MACHINERY_MEMO_MARKER}" 2>/dev/null || true)"
+      [ -n "${recorded}" ] && [ "${recorded}" = "${hash}" ]
+    }
+    # Attacker: mutate to unreviewed code, compute surface hash, forge a hash-only marker.
+    printf 'attacker-unreviewed\n' >> payload.py
+    h="$(machinery_memo_surface_hash)"
+    mkdir -p "$(dirname "${MACHINERY_MEMO_MARKER}")"
+    printf '%s\n' "${h}" > "${MACHINERY_MEMO_MARKER}"
+    machinery_memo_should_skip \
+      && { echo "[verify] BLUE-R24-MEMOFORGE: forged hash-only marker SKIPPED the self-test (FAIL-OPEN)"; exit 1; }
+    ctl_should_skip \
+      || { echo "[verify] BLUE-R24-MEMOFORGE: pre-fix hash-only compare did NOT skip the forgery — fixture is vacuous"; exit 1; }
+    # Genuine marker via record_pass (real out-of-tree key) skips on the unchanged tree...
+    rm -f "${MACHINERY_MEMO_MARKER}"
+    tested="$(machinery_memo_surface_hash)"
+    machinery_memo_record_pass "${tested}"
+    grep -q '^hmac=..*' "${MACHINERY_MEMO_MARKER}" \
+      || { echo "[verify] BLUE-R24-MEMOFORGE: record_pass did not bind an HMAC to the marker"; exit 1; }
+    machinery_memo_should_skip \
+      || { echo "[verify] BLUE-R24-MEMOFORGE: a genuine HMAC-bound marker did NOT skip the unchanged tree"; exit 1; }
+    # ...and re-runs once the tree changes.
+    printf 'new-change\n' >> payload.py
+    machinery_memo_should_skip \
+      && { echo "[verify] BLUE-R24-MEMOFORGE: skipped after a real tree change (surface-hash miss not honored)"; exit 1; }
+    true )
+)
+
+echo "[verify] testing BLUE-R24-CTXMISSING (#3: when a real run summary declared a '- Context:' line whose VALUE is EMPTY/blank (collect-review-context produced no file), the policy guard emits policy_guard_context_missing -> review_manually, NOT a context-blind proceed; a present non-empty context still proceeds)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  d="${tmp_dir}/rr"; out="${tmp_dir}/out"; mkdir -p "${d}" "${out}"
+  mkrev() { printf '# Review\n\n## Verdict\n\n%s\n\n## Direct File Inspection\n\n- f.md\n' "$2" > "$1"; }
+  mkrev "${d}/claude.md" approve
+  mkrev "${d}/gemini.md" approve
+  gen_summary() {  # $1 out  $2 context-path
+    cat > "$1" <<EOF
+# AI Review Summary
+
+## Inputs
+
+- Context: $2
+
+## Outputs
+
+- Claude result: ${d}/claude.md
+- Gemini result: ${d}/gemini.md
+- Codex architect fallback: ${d}/none.md
+- Codex test fallback: ${d}/none.md
+- Principal review summary: ${d}/none.md
+- Split context manifest: none
+EOF
+  }
+  run_summary() {  # -> prints verdict file path
+    ( set +e
+      REVIEW_RUN_ID=REALID RESULT_DIR="${d}" OUT_DIR="${out}" \
+        "${repo_root}/scripts/summarize-ai-reviews.sh" > "${tmp_dir}/s.out" 2>&1 )
+    find "${out}" -maxdepth 1 -name 'review-verdict-*.md' | head -1
+  }
+  # (A) Context line declared with an EMPTY value (collection produced no file) -> must block.
+  rm -f "${out}"/review-verdict-*.md
+  gen_summary "${d}/review-summary-REALID.md" ""
+  vf="$(run_summary)"; test -n "${vf}" || { echo "[verify] BLUE-R24-CTXMISSING: no verdict produced"; exit 1; }
+  grep -q '^- decision: proceed$' "${vf}" \
+    && { echo "[verify] BLUE-R24-CTXMISSING: empty-context PROCEEDED (fail-open)"; cat "${vf}"; exit 1; }
+  grep -q 'policy_guard_context_missing' "${vf}" \
+    || { echo "[verify] BLUE-R24-CTXMISSING: empty-context block reason not emitted"; cat "${vf}"; exit 1; }
+  # (B) Context declared AND present/non-empty -> proceeds (guard inert; matches a run that names
+  # its context, incl. the principal-substitute contract fixtures that point at a since-absent path).
+  rm -f "${out}"/review-verdict-*.md
+  printf '# Review Context\n' > "${d}/context.md"
+  gen_summary "${d}/review-summary-REALID.md" "${d}/context.md"
+  vf="$(run_summary)"; test -n "${vf}" || { echo "[verify] BLUE-R24-CTXMISSING: no verdict produced (present ctx)"; exit 1; }
+  grep -q '^- decision: proceed$' "${vf}" \
+    || { echo "[verify] BLUE-R24-CTXMISSING: a present non-empty context did not proceed (over-block)"; cat "${vf}"; exit 1; }
+  # (C) Context declared with a NON-EMPTY path to a MISSING file -> guard inert (proceeds), so the
+  # unit contract fixtures that use `- Context: <missing>.md` as shorthand are not over-blocked.
+  rm -f "${out}"/review-verdict-*.md
+  gen_summary "${d}/review-summary-REALID.md" "${d}/nonexistent-context.md"
+  vf="$(run_summary)"; test -n "${vf}" || { echo "[verify] BLUE-R24-CTXMISSING: no verdict produced (named-missing ctx)"; exit 1; }
+  if grep -q 'policy_guard_context_missing' "${vf}"; then
+    echo "[verify] BLUE-R24-CTXMISSING: a named-but-missing context path over-blocked (breaks contract fixtures)"; cat "${vf}"; exit 1
+  fi
+  true
+)
+
+echo "[verify] testing BLUE-R24-CONTRACT-RC2 (#5: the summary self-check contract exiting rc=2 (crash/argparse, NOT a rc=1 violation) blocks -> review_manually; rc=0 still proceeds)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  d="${tmp_dir}/rr"; out="${tmp_dir}/out"; sb="${tmp_dir}/scripts"; mkdir -p "${d}" "${out}" "${sb}"
+  cp "${repo_root}/scripts/summarize-ai-reviews.sh" "${sb}/summarize-ai-reviews.sh"; chmod +x "${sb}/summarize-ai-reviews.sh"
+  mkrev() { printf '# Review\n\n## Verdict\n\n%s\n\n## Direct File Inspection\n\n- f.md\n' "$2" > "$1"; }
+  mkrev "${d}/claude.md" approve
+  mkrev "${d}/gemini.md" approve
+  cat > "${d}/review-summary-REALID.md" <<EOF
+# AI Review Summary
+
+## Outputs
+
+- Claude result: ${d}/claude.md
+- Gemini result: ${d}/gemini.md
+- Codex architect fallback: ${d}/none.md
+- Codex test fallback: ${d}/none.md
+- Principal review summary: ${d}/none.md
+- Split context manifest: none
+EOF
+  run_it() {  # $1 stub-exit-code -> verdict path
+    printf '#!/usr/bin/env python3\nimport sys\nsys.exit(%s)\n' "$1" > "${sb}/self_demo_contracts.py"
+    rm -f "${out}"/review-verdict-*.md
+    ( set +e
+      REVIEW_RUN_ID=REALID RESULT_DIR="${d}" OUT_DIR="${out}" \
+        AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh" \
+        "${sb}/summarize-ai-reviews.sh" > "${tmp_dir}/s.out" 2>&1 )
+    find "${out}" -maxdepth 1 -name 'review-verdict-*.md' | head -1
+  }
+  # rc=0: proceeds (baseline — the panel is two approvals).
+  vf="$(run_it 0)"; test -n "${vf}" || { echo "[verify] BLUE-R24-CONTRACT-RC2: no verdict (rc0)"; exit 1; }
+  grep -q '^- decision: proceed$' "${vf}" \
+    || { echo "[verify] BLUE-R24-CONTRACT-RC2: rc=0 contract did not proceed (baseline broken)"; cat "${vf}"; exit 1; }
+  # rc=2: crash must BLOCK (pre-fix left the verdict unchanged = proceed = fail-open).
+  vf="$(run_it 2)"; test -n "${vf}" || { echo "[verify] BLUE-R24-CONTRACT-RC2: no verdict (rc2)"; exit 1; }
+  grep -q '^- decision: proceed$' "${vf}" \
+    && { echo "[verify] BLUE-R24-CONTRACT-RC2: contract rc=2 PROCEEDED (fail-open)"; cat "${vf}"; exit 1; }
+  grep -q '^- decision: review_manually$' "${vf}" \
+    || { echo "[verify] BLUE-R24-CONTRACT-RC2: contract rc=2 did not flip to review_manually"; cat "${vf}"; exit 1; }
+)
+
+echo "[verify] testing BLUE-R25-PRINCIPAL-AUTH F1 (planted principal-runtime evidence WITHOUT a valid out-of-tree-keyed evidence_hmac is REJECTED -> the reader falls to the codex default / full panel and cannot forge a dropped reviewer or launder proceed_degraded->proceed; a launcher-written HMAC-bound evidence is honored; the presence-only pre-fix validation ACCEPTS the forgery => non-vacuous)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"
+  export AI_AUTO_HOME="${tmp_dir}/aihome"; mkdir -p "${AI_AUTO_HOME}"   # isolated OUT-OF-TREE key home
+  unset AI_AUTO_PROVENANCE_KEY_FILE AI_AUTO_PRINCIPAL AI_AUTO_PRINCIPAL_EVIDENCE 2>/dev/null || true
+  # shellcheck disable=SC1090
+  source <(sed -n '/# >>> principal-evidence-auth/,/# <<< principal-evidence-auth/p' scripts/run-ai-reviews.sh)
+  command -v principal_evidence_hmac_ok >/dev/null || { echo "[verify] F1: principal-evidence-auth helper missing (fix reverted?)"; exit 1; }
+  ws="$(pwd -P)"
+  plant="${tmp_dir}/plant.env"
+  printf 'principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${ws}" > "${plant}"
+
+  # pre-fix CONTROL: the presence-only validation the readers used before this fix ACCEPTS the
+  # forgery (every literal trust line is present) -> proves the ONLY thing rejecting it is the HMAC.
+  grep -Fqx "execution_mode=principal" "${plant}" \
+    && grep -Fqx "source=ai-auto-principal-launcher" "${plant}" \
+    && grep -Fqx "workspace=${ws}" "${plant}" \
+    || { echo "[verify] F1 control: forgery is not presence-valid (test bug)"; exit 1; }
+
+  # HARDENED reader REJECTS the plant (no evidence_hmac) -> principal falls to the codex default.
+  if principal_evidence_hmac_ok "${plant}" claude "${ws}"; then
+    echo "[verify] F1: planted evidence WITHOUT a valid HMAC was ACCEPTED (forgery not closed)"; exit 1
+  fi
+
+  # GENUINE: ensure the out-of-tree key + write a launcher HMAC over the canonical fields -> ACCEPTED.
+  principal_evidence_ensure_key || { echo "[verify] F1: could not ensure out-of-tree key"; exit 1; }
+  legit="${tmp_dir}/legit.env"
+  { printf 'principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${ws}"
+    printf 'evidence_hmac=%s\n' "$(principal_evidence_canonical claude "${ws}" | principal_evidence_hmac)"; } > "${legit}"
+  principal_evidence_hmac_ok "${legit}" claude "${ws}" \
+    || { echo "[verify] F1: launcher HMAC-bound evidence was REJECTED (legit path broken)"; exit 1; }
+
+  # The bind is field-specific: the genuine HMAC does NOT validate a different principal or workspace.
+  if principal_evidence_hmac_ok "${legit}" gemini "${ws}"; then
+    echo "[verify] F1: evidence_hmac validated a MISMATCHED principal (canonical binding broken)"; exit 1
+  fi
+  if principal_evidence_hmac_ok "${legit}" claude "${ws}/other"; then
+    echo "[verify] F1: evidence_hmac validated a MISMATCHED workspace (canonical binding broken)"; exit 1
+  fi
+  echo "[verify] BLUE-R25-PRINCIPAL-AUTH F1: pass"
+)
+
+echo "[verify] testing BLUE-R25-PRINCIPAL-AUTH F2 (a planted reviewer .disabled marker WITHOUT a valid out-of-tree-keyed marker_hmac is IGNORED so the reviewer still runs — a project cannot force a codex-only panel; a framework-written HMAC-bound .disabled is honored; the presence-only [-f] pre-fix check HONORS the plant => non-vacuous)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"
+  export AI_AUTO_HOME="${tmp_dir}/aihome"; mkdir -p "${AI_AUTO_HOME}"
+  unset AI_AUTO_PROVENANCE_KEY_FILE 2>/dev/null || true
+  export REVIEW_STATE_DIR="${tmp_dir}/state"; mkdir -p "${REVIEW_STATE_DIR}"
+  # shellcheck disable=SC1090
+  source <(sed -n '/# >>> principal-evidence-auth/,/# <<< principal-evidence-auth/p' scripts/run-ai-reviews.sh)
+  # shellcheck disable=SC1090
+  source <(awk '/^reviewer_disabled_file\(\)/,/^}/' scripts/run-ai-reviews.sh)
+  # shellcheck disable=SC1090
+  source <(awk '/^reviewer_marker_canonical\(\)/,/^}/' scripts/run-ai-reviews.sh)
+  # shellcheck disable=SC1090
+  source <(awk '/^reviewer_disabled_authentic\(\)/,/^}/' scripts/run-ai-reviews.sh)
+  command -v reviewer_disabled_authentic >/dev/null || { echo "[verify] F2: reviewer_disabled_authentic missing (fix reverted?)"; exit 1; }
+
+  plant="$(reviewer_disabled_file claude)"
+  printf 'reviewer=claude\ndisabled_at=%s\nreason=planted\ndetails=planted\ndisable_class=persistent\nsource_run_id=x\n' "$(date -Iseconds)" > "${plant}"
+
+  # pre-fix CONTROL: the presence-only [-f] check the consumers used before this fix HONORS the plant.
+  [ -f "${plant}" ] || { echo "[verify] F2 control: plant not present (test bug)"; exit 1; }
+
+  # HARDENED consumer IGNORES the plant (no valid marker_hmac) -> reviewer runs.
+  if reviewer_disabled_authentic claude; then
+    echo "[verify] F2: planted .disabled WITHOUT a valid HMAC was HONORED (codex-only forced)"; exit 1
+  fi
+
+  # GENUINE: ensure key + append the framework marker_hmac over the canonical fields -> HONORED.
+  principal_evidence_ensure_key || { echo "[verify] F2: could not ensure out-of-tree key"; exit 1; }
+  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical "${plant}" | principal_evidence_hmac)" >> "${plant}"
+  reviewer_disabled_authentic claude \
+    || { echo "[verify] F2: framework HMAC-bound .disabled was IGNORED (genuine disable broken)"; exit 1; }
+
+  # a marker_hmac bound to a DIFFERENT reviewer's canonical fields must NOT authenticate this one.
+  plantg="$(reviewer_disabled_file gemini)"
+  printf 'reviewer=gemini\ndisabled_at=%s\nreason=planted\ndetails=planted\ndisable_class=persistent\nsource_run_id=x\n' "$(date -Iseconds)" > "${plantg}"
+  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical "${plant}" | principal_evidence_hmac)" >> "${plantg}"
+  if reviewer_disabled_authentic gemini; then
+    echo "[verify] F2: a marker_hmac bound to a DIFFERENT reviewer authenticated (canonical binding broken)"; exit 1
+  fi
+  echo "[verify] BLUE-R25-PRINCIPAL-AUTH F2: pass"
 )

@@ -1418,13 +1418,21 @@ case_provenance_principal_evidence_gate() {
     [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] evidence_gate: non-codex explicit + no evidence must be full"; exit 1; }
     unset AI_AUTO_PRINCIPAL
 
-    # valid launcher evidence matching workspace → re-record under it, then skip
+    # valid launcher evidence matching workspace → re-record under it, then skip. Evidence is now
+    # HMAC-authenticated with the out-of-tree key, so write the framework evidence_hmac (as the
+    # launcher would) over the canonical trust fields; the command-substitution strip + trailing
+    # printf '\n' feeds review_provenance_hmac the SAME bytes the reader recomputes.
     mkdir -p "$(dirname "${AI_AUTO_PRINCIPAL_EVIDENCE}")"
-    printf 'principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${dir}" > "${AI_AUTO_PRINCIPAL_EVIDENCE}"
+    ev_rec="$(printf 'principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${dir}")"
+    { printf '%s\n' "${ev_rec}"; printf 'evidence_hmac=%s\n' "$(printf '%s\n' "${ev_rec}" | review_provenance_hmac)"; } > "${AI_AUTO_PRINCIPAL_EVIDENCE}"
     review_provenance_record
     [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] evidence_gate: expected skip with valid matching evidence"; exit 1; }
 
-    # tampered evidence (non-launcher source) but identical fingerprint → fail open full
+    # planted/unauthenticated evidence (no framework HMAC) but identical fingerprint → fail open full
+    printf 'principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${dir}" > "${AI_AUTO_PRINCIPAL_EVIDENCE}"
+    [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] evidence_gate: unauthenticated evidence must fail open to full"; exit 1; }
+
+    # tampered evidence (non-launcher source) → fail open full
     printf 'principal_runtime=claude\nexecution_mode=principal\nsource=hand-edited\nworkspace=%s\n' "${dir}" > "${AI_AUTO_PRINCIPAL_EVIDENCE}"
     [ "$(review_provenance_decision)" = "full" ] || { echo "[summary-test] evidence_gate: tampered source must fail open to full"; exit 1; }
 
