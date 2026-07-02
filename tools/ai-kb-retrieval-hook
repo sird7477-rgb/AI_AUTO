@@ -140,6 +140,11 @@ def main() -> int:
         return 0
     block = (result.stdout or "").strip()
     if block:
+        # Engine-side boundary: the worker's block carries retrieved KB text (untrusted repo data).
+        # Strip control chars (no ANSI/escape smuggling) and hard-cap the injected bytes before it
+        # reaches the agent context. The worker already delimits+labels it as untrusted DATA.
+        block = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", block)[:4000].strip()
+    if block:
         sys.stdout.write(block + "\n")
     return 0
 

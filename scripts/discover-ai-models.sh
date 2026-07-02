@@ -12,6 +12,16 @@ GEMINI_REVIEW_COMMAND="${GEMINI_REVIEW_COMMAND:-agy}"
 
 mkdir -p "${OUT_DIR}" "$(dirname "${ENV_OUT}")" "$(dirname "${REPORT_OUT}")"
 
+# The routing cache is a hit-predicate oracle: readers trust latest.env only if
+# it is fingerprint-fresh + literal. Building it in place (truncate + N appends)
+# exposes a partial file that still satisfies every predicate yet is missing the
+# model keys -> silent degrade for the whole TTL. So the whole body is staged in
+# a same-dir mktemp (rename is atomic on one FS) and published with a single mv;
+# an abandoned partial write is never observable as a valid cache.
+ENV_TMP=""
+cleanup_env_tmp() { [ -n "${ENV_TMP:-}" ] && rm -f "${ENV_TMP}"; return 0; }
+trap cleanup_env_tmp EXIT
+
 shell_quote() {
   printf "%s" "$1" | sed "s/'/'\\\\''/g"
 }
@@ -20,7 +30,7 @@ write_env() {
   local key="$1"
   local value="$2"
 
-  printf "%s='%s'\n" "${key}" "$(shell_quote "${value}")" >> "${ENV_OUT}"
+  printf "%s='%s'\n" "${key}" "$(shell_quote "${value}")" >> "${ENV_TMP:-${ENV_OUT}}"
 }
 
 command_version() {
@@ -144,14 +154,15 @@ if [ "${AI_MODEL_DISCOVERY_REFRESH}" != "1" ] && [ -f "${ENV_OUT}" ] && [ -f "${
 
   cache_age=$((now_epoch - cached_epoch))
   if [ "${cached_override_fingerprint}" = "${current_override_fingerprint}" ] && [ "${cache_age}" -ge 0 ] && [ "${cache_age}" -le "${AI_MODEL_ROUTING_TTL_SECONDS}" ] && env_body_is_literal "${ENV_OUT}"; then
-    tmp_env="${ENV_OUT}.tmp.$$"
-    grep -v -E "^(AI_MODEL_ROUTING_CACHE_STATUS|AI_MODEL_ROUTING_CACHE_AGE_SECONDS|AI_MODEL_ROUTING_CACHE_TTL_SECONDS|AI_MODEL_ROUTING_OBSERVATIONS|AI_MODEL_ROUTING_OBSERVATIONS_STATUS)=" "${ENV_OUT}" > "${tmp_env}" || true
-    mv "${tmp_env}" "${ENV_OUT}"
+    ENV_TMP="$(mktemp "${ENV_OUT}.XXXXXX")"
+    grep -v -E "^(AI_MODEL_ROUTING_CACHE_STATUS|AI_MODEL_ROUTING_CACHE_AGE_SECONDS|AI_MODEL_ROUTING_CACHE_TTL_SECONDS|AI_MODEL_ROUTING_OBSERVATIONS|AI_MODEL_ROUTING_OBSERVATIONS_STATUS)=" "${ENV_OUT}" > "${ENV_TMP}" || true
     write_env "AI_MODEL_ROUTING_CACHE_TTL_SECONDS" "${AI_MODEL_ROUTING_TTL_SECONDS}"
     write_env "AI_MODEL_ROUTING_CACHE_STATUS" "reused"
     write_env "AI_MODEL_ROUTING_CACHE_AGE_SECONDS" "${cache_age}"
     write_env "AI_MODEL_ROUTING_OBSERVATIONS" "${OBSERVATIONS_OUT}"
     write_env "AI_MODEL_ROUTING_OBSERVATIONS_STATUS" "not_updated_cache_reused"
+    mv "${ENV_TMP}" "${ENV_OUT}"
+    ENV_TMP=""
     update_cached_report_status "${cache_age}" "not_updated_cache_reused"
     echo "${ENV_OUT}"
     exit 0
@@ -317,7 +328,7 @@ if [ "${codex_supports_model}" -ne 1 ]; then
   codex_test_model_source="unsupported"
 fi
 
-: > "${ENV_OUT}"
+ENV_TMP="$(mktemp "${ENV_OUT}.XXXXXX")"
 discovered_at="$(date -Iseconds)"
 write_env "AI_MODEL_ROUTING_DISCOVERED_AT" "${discovered_at}"
 write_env "AI_MODEL_ROUTING_DISCOVERED_EPOCH" "${now_epoch}"
@@ -391,6 +402,8 @@ if ! write_observations; then
   observations_status="unavailable"
 fi
 write_env "AI_MODEL_ROUTING_OBSERVATIONS_STATUS" "${observations_status}"
+mv "${ENV_TMP}" "${ENV_OUT}"
+ENV_TMP=""
 
 cat > "${REPORT_OUT}" <<REPORT
 # AI Model Routing Inventory

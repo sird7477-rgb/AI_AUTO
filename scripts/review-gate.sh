@@ -24,22 +24,50 @@ fi
 
 VERIFY_OUTPUT_FILE="${VERIFY_OUTPUT_FILE:-.omx/review-context/latest-verify-output.txt}"
 mkdir -p "$(dirname "$VERIFY_OUTPUT_FILE")"
+# Stable identity for THIS gate session (mirrors session-lock.sh: session.json id, else $$@host).
+# The override marker is OWNED by this identity so a later gate can distinguish a genuinely-live
+# same-session override from a dead one whose bare PID was recycled.
+_gate_session_id() {
+  local sid
+  if [ -f .omx/state/session.json ]; then
+    sid="$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' .omx/state/session.json | head -1)"
+    [ -n "$sid" ] && { printf '%s' "$sid"; return; }
+  fi
+  printf '%s' "${AI_AUTO_SESSION_ID:-$$@$(hostname 2>/dev/null || echo host)}"
+}
+
 # Clear a STALE verify-failure override marker at gate start so an override can only ever apply
 # to the run that explicitly sets it (written later, only on an approved verify failure) — but
 # L1: do NOT clobber a CONCURRENT live session's approved override (summarize-ai-reviews.sh reads
-# it as source of truth). Ownership = the writer pid recorded in the file; if that pid is a
-# DIFFERENT live process, another gate owns it -> leave it. Otherwise (our own prior run's pid,
-# a dead pid, or no pid field) it is stale -> remove. Single-session flow is unchanged: a prior
-# run's pid is dead, so the override is always cleared.
+# it as source of truth). Ownership is bound to a ROBUST identity (holder_session + acquired_at
+# TTL + pid liveness), NOT a bare holder_pid: a bare PID is RECYCLABLE, so after the writing gate
+# exits and its PID is reused by any unrelated process, `kill -0` still succeeds and the old guard
+# PRESERVED the dead override — which then downgrades an unrelated clean run to proceed_degraded and
+# MISATTRIBUTES the prior run's approved_by/reason onto it (audit-provenance corruption). PRESERVE
+# ONLY a genuinely-live SAME-session override still within TTL (a real concurrent peer sharing this
+# tree/session): matching holder_session AND holder_pid alive AND fresh acquired_at. A foreign/absent
+# session, a recycled-but-unrelated PID, or a missing/expired acquired_at is STALE -> remove.
 VERIFY_OVERRIDE_ENV="${VERIFY_OVERRIDE_ENV:-.omx/state/verify-override.env}"
 if [ -f "$VERIFY_OVERRIDE_ENV" ]; then
   _ovr_pid="$(sed -n 's/^holder_pid=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
-  if [ -n "$_ovr_pid" ] && [ "$_ovr_pid" != "$$" ] && kill -0 "$_ovr_pid" 2>/dev/null; then
-    : # a concurrent live session owns this override -> preserve it
+  _ovr_sess="$(sed -n 's/^holder_session=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
+  _ovr_at="$(sed -n 's/^acquired_at=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
+  _ovr_ttl="${AI_AUTO_VERIFY_OVERRIDE_TTL_SECONDS:-14400}"
+  case "$_ovr_ttl" in ''|*[!0-9]*) _ovr_ttl=14400 ;; esac
+  _ovr_age=-1
+  if [ -n "$_ovr_at" ]; then
+    _ovr_ts="$(date -d "$_ovr_at" +%s 2>/dev/null || echo '')"
+    [ -n "$_ovr_ts" ] && _ovr_age=$(( $(date +%s) - _ovr_ts ))
+  fi
+  if [ -n "$_ovr_sess" ] && [ "$_ovr_sess" = "$(_gate_session_id)" ] \
+     && [ -n "$_ovr_pid" ] && kill -0 "$_ovr_pid" 2>/dev/null \
+     && [ "$_ovr_age" -ge 0 ] && [ "$_ovr_age" -le "$_ovr_ttl" ]; then
+    : # a genuinely-live SAME-session peer owns this override within TTL -> preserve it
   else
     rm -f "$VERIFY_OVERRIDE_ENV"
   fi
-  unset _ovr_pid
+  unset _ovr_pid _ovr_sess _ovr_at _ovr_ttl _ovr_age
+  unset _ovr_ts 2>/dev/null || true
 fi
 
 # Concurrency guard: warn / soft-block when another live session shares this working tree
@@ -843,7 +871,13 @@ if [ "${verify_status}" -ne 0 ]; then
   {
     printf 'reason=%s\n' "${verify_override_reason}"
     printf 'approved_by=%s\n' "${verify_override_by}"
-    printf 'holder_pid=%s\n' "$$"   # L1: ownership tag so a concurrent gate won't clobber this
+    # Ownership tag bound to a ROBUST identity (session id + timestamp), not a recyclable bare PID,
+    # so a later gate distinguishes a genuinely-live same-session override from a dead one whose PID
+    # was reused (which must NOT downgrade+misattribute an unrelated clean run). Consumed by the
+    # gate-start stale-guard above; summarize-ai-reviews.sh still reads only reason/approved_by.
+    printf 'holder_pid=%s\n' "$$"
+    printf 'holder_session=%s\n' "$(_gate_session_id)"
+    printf 'acquired_at=%s\n' "$(date -Iseconds)"
   } > "${VERIFY_OVERRIDE_ENV:-.omx/state/verify-override.env}"
 fi
 

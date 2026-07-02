@@ -85,6 +85,15 @@ unset _gcv 2>/dev/null || true
 # SITE instead: review_git() passes `-c diff.external= --no-ext-diff --no-textconv` on every
 # patch-producing diff, and the shipped odoo QC validators pass `--attr-source=<empty-tree>
 # --no-ext-diff --no-textconv` (the clean filter needs the attr-source, not just the two flags).
-export GIT_CONFIG_COUNT=1
+# R22-F1 (post-index-change/hook RCE): pin core.hooksPath to a guaranteed-non-hooks path
+# (/dev/null — `/dev/null/<hook>` can never exist) so EVERY git call in this process ignores a
+# hostile repo-local `core.hooksPath` AND the DEFAULT `.git/hooks/*` of a directory-copied
+# untrusted repo -> no `post-index-change`/pre-commit/post-merge/… fires. Env config has HIGHER
+# precedence than the repo-local key, and pinning it to a non-hooks path overrides the built-in
+# `.git/hooks` default too (empirically disarms both the default-hooks and hostile-hooksPath
+# vectors). This is the chokepoint the R9-DRIFT guard rule-7 `sources_scrub` credit relies on for
+# ai-rebuild-plan/automation-doctor/ai-home (env-pin-reliant `git status`/reset sites).
+export GIT_CONFIG_COUNT=2
 export GIT_CONFIG_KEY_0='core.fsmonitor' GIT_CONFIG_VALUE_0=''
+export GIT_CONFIG_KEY_1='core.hooksPath' GIT_CONFIG_VALUE_1='/dev/null'
 # --- R7-F1 defensive config override (END) ----------------------------------

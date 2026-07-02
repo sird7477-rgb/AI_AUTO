@@ -73,7 +73,29 @@ run_product() {
   # `grep -qv` finds NO remaining line, there is no statement to run -> BLOCK. (Out of scope:
   # a project deliberately opting into a trivial `exit 0`/`:` verifier — that leaves an
   # executable statement, so it runs and its exit propagates; only content-free files block.)
-  if [ -e "${vp}" ] && { [ ! -s "${vp}" ] || ! bash -n "${vp}" 2>/dev/null \
+  # R23: the parse-gate uses `bash -n`, which is valid ONLY for a shell verifier. A verifier with
+  # a NON-shell shebang (#!/usr/bin/env python3, ruby, node…) is executed via that shebang, so a
+  # bash-parse would WRONGLY reject a perfectly valid verifier. Apply `bash -n` only when the
+  # shebang is absent or names a shell; the empty (-s) and no-executable-content gates still apply
+  # to every verifier, so the fail-closed behavior for empty/no-op/broken bash verifiers is intact.
+  local apply_bashn=1 shebang base
+  if [ -e "${vp}" ]; then
+    IFS= read -r shebang < "${vp}" || true
+    case "${shebang}" in
+      '#!'*)
+        # shellcheck disable=SC2086  # deliberate word-split of the shebang's interpreter args
+        set -- ${shebang#\#!}
+        base="${1##*/}"
+        [ "${base}" = env ] && { base="${2:-}"; base="${base##*/}"; }
+        case "${base}" in
+          sh|bash|dash|ksh|zsh|'') apply_bashn=1 ;;
+          *) apply_bashn=0 ;;
+        esac
+        ;;
+    esac
+  fi
+  if [ -e "${vp}" ] && { [ ! -s "${vp}" ] \
+      || { [ "${apply_bashn}" = 1 ] && ! bash -n "${vp}" 2>/dev/null; } \
       || ! grep -qvE '^[[:space:]]*(#|$)' "${vp}"; }; then
     echo "[verify] scripts/verify-project.sh is empty or does not parse or has no executable content — FAIL-CLOSED (NOTHING was verified)" >&2
     exit 1

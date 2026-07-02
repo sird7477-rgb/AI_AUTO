@@ -320,6 +320,10 @@ SPLIT_CONTEXT_MANIFEST="${PROMPT_DIR}/split-review-manifest.md"
 if [ ! -f "${SPLIT_CONTEXT_MANIFEST}" ]; then
   SPLIT_CONTEXT_MANIFEST="none"
 fi
+# make-review-prompts.sh drops this flag when the context would split into more parts than
+# REVIEW_MAX_PARTS. Fail CLOSED: short-circuit each reviewer to a single request_changes
+# verdict with NO model call, instead of fanning out one call per part (denial-of-wallet).
+OVERSIZED_CONTEXT_FLAG="${PROMPT_DIR}/oversized-review-context.flag"
 
 reset_disabled_reviewers() {
   case "${RESET_DISABLED_AI_REVIEWERS:-}" in
@@ -876,9 +880,40 @@ run_review_command_stdin() {
   "$@" < "${input_file}" > "${output_file}" 2>&1
 }
 
+write_oversized_context_verdict() {
+  # Fail-closed request_changes for an over-ceiling context; no external model call.
+  local reviewer="$1"
+  local output_file="$2"
+  local reason
+  reason="$(head -n 2 "${OVERSIZED_CONTEXT_FLAG}" 2>/dev/null | tr '\n' ' ')"
+  {
+    echo "# ${reviewer} Review"
+    echo
+    echo "## Verdict"
+    echo
+    echo "request_changes"
+    echo
+    echo "## Findings"
+    echo
+    echo "- severity: high"
+    echo "- file or area: review context"
+    echo "- reason: ${reason:-Review context exceeds REVIEW_MAX_PARTS; not reviewed to avoid unbounded reviewer fan-out.}"
+    echo "- suggested fix: narrow the change scope or split it into smaller reviewable commits."
+    echo
+    echo "## Final Recommendation"
+    echo
+    echo "Do not proceed: the review context is too large for bounded external review."
+  } > "${output_file}"
+  echo "[review] ${reviewer} context over REVIEW_MAX_PARTS; wrote fail-closed request_changes with no model call: ${output_file}"
+}
+
 run_claude_prompt_file() {
   local output_file="$1"
   local prompt_file="$2"
+  if [ -f "${OVERSIZED_CONTEXT_FLAG}" ]; then
+    write_oversized_context_verdict "Claude" "${output_file}"
+    return 0
+  fi
   local adapter_args=(
     run-readonly
     --runtime claude
@@ -902,6 +937,11 @@ run_gemini_prompt_file() {
   local prompt_file="$2"
   local prompt_bytes
   local adapter_args=()
+
+  if [ -f "${OVERSIZED_CONTEXT_FLAG}" ]; then
+    write_oversized_context_verdict "Gemini" "${output_file}"
+    return 0
+  fi
 
   prompt_bytes="$(wc -c < "${prompt_file}")"
 
@@ -2315,13 +2355,22 @@ with_heartbeat() {
 
   if [ "${interval}" -gt 0 ] 2>/dev/null; then
     (
-      while true; do
+      # Self-terminate within one interval if the parent shell is gone. A
+      # SIGKILL / OOM-kill of the parent cannot run its EXIT trap, so this
+      # liveness check is the load-bearing guard that stops this backgrounded
+      # printer from being reparented to init and looping forever. ("$$" keeps
+      # the parent shell's PID inside a subshell — it is this printer's real
+      # parent — whereas $PPID would resolve to the grandparent.)
+      while kill -0 "$$" 2>/dev/null; do
         sleep "${interval}"
         hb_now="$(date +%s 2>/dev/null || echo 0)"
         echo "[review] ${label} still running… (elapsed $(( hb_now - start_ts ))s)"
       done
     ) &
     hb_pid=$!
+    # If the parent is signalled/exits while the reviewer phase runs, reap the
+    # printer instead of leaking it.
+    trap 'kill "${hb_pid}" 2>/dev/null' EXIT INT TERM
   fi
 
   if "$@"; then
@@ -2331,6 +2380,9 @@ with_heartbeat() {
   fi
 
   if [ -n "${hb_pid}" ]; then
+    # Normal return: clear the trap first so it cannot double-kill or fire on a
+    # later (already-reaped) hb_pid, then reap exactly once.
+    trap - EXIT INT TERM
     kill "${hb_pid}" 2>/dev/null || true
     wait "${hb_pid}" 2>/dev/null || true
   fi

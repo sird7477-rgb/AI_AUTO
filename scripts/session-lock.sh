@@ -60,41 +60,30 @@ _session_lock_expired() {
   [ "$age" -gt "$ttl" ]
 }
 
-# LOW: sweep obviously-orphaned reclaim temps left by a SIGKILL between mktemp and ln. Only
-# removes .session.lock.XXXXXX temps older than 60min (never the live lock itself).
-_session_lock_sweep_orphans() {
-  local dir; dir="$(dirname "$SESSION_LOCK_FILE")"
-  find "$dir" -maxdepth 1 -type f -name '.session.lock.??????' -mmin +60 -delete 2>/dev/null || true
-}
-
-# Build a fully-formed lock temp and atomically install it via `ln` (O_EXCL create-or-fail).
-# Sets SESSION_LOCK_HELD=1 and returns 0 on win. Returns 1 if we LOST the create race (the
-# lock now exists, published by someone else) so the caller loops to inspect it. Returns 2 on
-# mktemp failure (caller fails open). Every path removes its own temp; a temp orphaned by a
-# SIGKILL between mktemp and ln (uncatchable, so no trap can help) is reaped by the orphan
-# sweep on a later acquire.
+# Atomically install a fully-formed lock via an O_EXCL create-or-fail: `set -C` (noclobber)
+# makes the `>` redirect open with O_CREAT|O_EXCL, which is genuinely atomic on EVERY
+# filesystem — including hardlink-less ones (9p / the Windows Z: mount) where the old `ln`
+# hardlink silently failed and dropped to a fail-OPEN `mv -f` (N concurrent sessions ALL won).
+# The metadata is written through that same exclusive fd, so the loser's create fails and it
+# never overwrites the winner. Sets SESSION_LOCK_HELD=1 and returns 0 on win. Returns 1 if we
+# LOST the create race (the lock now exists) so the caller loops to inspect it. Returns 2 only
+# if the create failed for a NON-contention reason (no lock file materialised) -> caller fails
+# open. No temp file is created, so there is nothing to orphan/sweep.
 _session_lock_publish() {
-  local op="$1" self="$2" dir tmp
-  dir="$(dirname "$SESSION_LOCK_FILE")"
-  tmp="$(mktemp "$dir/.session.lock.XXXXXX")" || return 2
-  {
-    printf 'holder_pid=%s\n' "$$"
-    printf 'holder_session=%s\n' "$self"
-    printf 'holder_op=%s\n' "$op"
-    printf 'acquired_at=%s\n' "$(date -Iseconds)"
-  } > "$tmp"
-  if ln "$tmp" "$SESSION_LOCK_FILE" 2>/dev/null; then
-    rm -f "$tmp"; SESSION_LOCK_HELD=1; return 0
+  local op="$1" self="$2"
+  if ( set -C
+       printf 'holder_pid=%s\nholder_session=%s\nholder_op=%s\nacquired_at=%s\n' \
+         "$$" "$self" "$op" "$(date -Iseconds)" > "$SESSION_LOCK_FILE"
+     ) 2>/dev/null; then
+    SESSION_LOCK_HELD=1; return 0              # O_EXCL create won -> we hold it
   fi
-  if [ ! -e "$SESSION_LOCK_FILE" ]; then       # hardlinks unsupported -> non-atomic fallback
-    mv -f "$tmp" "$SESSION_LOCK_FILE"; SESSION_LOCK_HELD=1; return 0
-  fi
-  rm -f "$tmp"; return 1                        # lost the race -> caller loops to inspect
+  [ -e "$SESSION_LOCK_FILE" ] && return 1      # lock exists -> lost the race, caller inspects
+  return 2                                     # create failed, no lock -> infra, caller fails open
 }
 
 # Race-safe reclaim of a STALE (dead-PID or TTL-expired) lock. The critical section is
 # serialized by an flock on a stable sidecar, so N racers that all saw the SAME stale lock
-# can never all `rm`+`ln` into each other's gap (the old bug: 100+/250 double-wins). Under the
+# can never all `rm`+publish into each other's gap (the old bug: 100+/250 double-wins). Under the
 # flock we RE-VERIFY the lock is still the stale one before dropping it: if a live session
 # already reclaimed it we back off (return 1) instead of stealing a now-LIVE lock.
 # Returns 0 if WE now hold it (SESSION_LOCK_HELD set by publish, or 0 if it became ours),
@@ -128,15 +117,15 @@ session_lock_acquire() {
   self="$AI_AUTO_SESSION_ID"
   mkdir -p "$(dirname "$SESSION_LOCK_FILE")"
   ttl="$(_session_lock_ttl)"
-  _session_lock_sweep_orphans
 
   # Acquire is atomic on the FRESH path: `_session_lock_publish` installs a fully-formed lock
-  # with `ln` (O_EXCL create-or-fail), so exactly one simultaneous racer wins and the loser's
-  # `ln` fails -> loops -> inspects (own / live-foreign->75 / stale). A STALE lock (dead PID or
-  # TTL-expired) is reclaimed through the flock-serialized `_session_lock_reclaim`, so N racers
-  # reclaiming the SAME stale lock can never all `rm`+`ln` into each other's gap (the old blind
-  # rm+ln double-win). Bounded loop: each iteration returns or resolves to a live holder; the
-  # counter is a deadlock backstop.
+  # with an O_EXCL create (`set -C` noclobber redirect), so exactly one simultaneous racer wins
+  # and the loser's create fails -> loops -> inspects (own / live-foreign->75 / stale). This is
+  # atomic on EVERY filesystem including hardlink-less 9p/Z:, unlike the old `ln` that failed
+  # there and dropped to a fail-OPEN `mv`. A STALE lock (dead PID or TTL-expired) is reclaimed
+  # through the flock-serialized `_session_lock_reclaim`, so N racers reclaiming the SAME stale
+  # lock can never all publish into each other's gap. Bounded loop: each iteration returns or
+  # resolves to a live holder; the counter is a deadlock backstop.
   while : ; do
     tries=$((tries + 1))
     if [ -f "$SESSION_LOCK_FILE" ]; then
@@ -176,7 +165,7 @@ session_lock_acquire() {
     # Fresh path: no lock present -> atomic publish.
     _session_lock_publish "$op" "$self"; prc=$?
     [ "$prc" -eq 0 ] && return 0      # we won
-    [ "$prc" -eq 2 ] && return 0      # mktemp failure -> fail open, proceed
+    [ "$prc" -eq 2 ] && return 0      # create infra failure -> fail open, proceed
     # prc=1: lost the create race, a racer just published -> loop to inspect it.
   done
 }

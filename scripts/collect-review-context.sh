@@ -27,6 +27,10 @@ fi
 OUT_DIR="${OUT_DIR:-.omx/review-context}"
 INCLUDE_UNTRACKED_CONTENT="${INCLUDE_UNTRACKED_CONTENT:-0}"
 MAX_UNTRACKED_BYTES="${MAX_UNTRACKED_BYTES:-102400}"
+# A hostile project can present thousands of untracked files; each one spawns a
+# `git diff --no-index` (the per-file byte cap only skips content, still pays the spawn).
+# Cap the file COUNT and emit a truncation marker, mirroring the 200-entry nested cap.
+MAX_UNTRACKED_FILES="${MAX_UNTRACKED_FILES:-200}"
 # Optional comma/newline-separated path allowlist (exact paths, directory
 # prefixes, or globs). When set, only matching untracked artifacts count as
 # blocking review material; others are reported but treated as out of the
@@ -1427,7 +1431,13 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
     echo "### Untracked File Content Diff"
     echo
     echo '```diff'
+    untracked_n=0
     while IFS= read -r -d '' file; do
+      untracked_n=$((untracked_n + 1))
+      if [ "$untracked_n" -gt "$MAX_UNTRACKED_FILES" ]; then
+        echo "# untracked file listing truncated at ${MAX_UNTRACKED_FILES} files (more untracked files present but not expanded)"
+        break
+      fi
       # Nested untracked git repo / gitlink boundary: `git ls-files --others` reports it as ONE
       # directory entry (trailing slash) and never descends, so code stashed in a nested .git is
       # invisible to reviewers. Fail-closed against silent omission: emit a clear present-but-not-

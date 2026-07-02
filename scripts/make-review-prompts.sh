@@ -6,9 +6,18 @@ OUT_DIR="${OUT_DIR:-.omx/review-prompts}"
 REVIEW_CONTEXT_MAX_BYTES="${REVIEW_CONTEXT_MAX_BYTES:-300000}"
 REVIEW_CONTEXT_SPLIT_LINES="${REVIEW_CONTEXT_SPLIT_LINES:-400}"
 REVIEW_CONTEXT_SPLIT_BYTES="${REVIEW_CONTEXT_SPLIT_BYTES:-${REVIEW_CONTEXT_MAX_BYTES}}"
+# Denial-of-wallet ceiling: an attacker-controlled oversized diff splits linearly into
+# part-NNNN.md, and run-ai-reviews.sh fans out ONE real model call per part per reviewer
+# (+retry, +synthesis). Cap the part count; past the ceiling we do NOT fan out — we emit a
+# single fail-closed verdict (mirrors the GEMINI_PROMPT_MAX_BYTES fail-closed in
+# run-ai-reviews.sh). A few dozen parts is plenty for a legitimately scoped change.
+REVIEW_MAX_PARTS="${REVIEW_MAX_PARTS:-40}"
+OVERSIZED_CONTEXT_FLAG="${OUT_DIR}/oversized-review-context.flag"
+OVERSIZED_CONTEXT=0
 
 mkdir -p "${OUT_DIR}"
 rm -f "${OUT_DIR}/split-review-manifest.md"
+rm -f "${OVERSIZED_CONTEXT_FLAG}"
 rm -rf "${OUT_DIR}/split-review-context"
 
 if [ ! -f "${CONTEXT_FILE}" ]; then
@@ -28,6 +37,10 @@ if [ "${context_bytes}" -gt "${REVIEW_CONTEXT_MAX_BYTES}" ]; then
   fi
   if ! printf '%s\n' "${REVIEW_CONTEXT_SPLIT_BYTES}" | grep -Eq "${is_positive_integer}" || [ "${REVIEW_CONTEXT_SPLIT_BYTES}" -lt 1 ]; then
     echo "Invalid REVIEW_CONTEXT_SPLIT_BYTES=${REVIEW_CONTEXT_SPLIT_BYTES}; expected a positive integer" >&2
+    exit 2
+  fi
+  if ! printf '%s\n' "${REVIEW_MAX_PARTS}" | grep -Eq "${is_positive_integer}" || [ "${REVIEW_MAX_PARTS}" -lt 1 ]; then
+    echo "Invalid REVIEW_MAX_PARTS=${REVIEW_MAX_PARTS}; expected a positive integer" >&2
     exit 2
   fi
 
@@ -53,7 +66,21 @@ if [ "${context_bytes}" -gt "${REVIEW_CONTEXT_MAX_BYTES}" ]; then
   ' "${CONTEXT_FILE}"
 
   part_count="$(find "${SPLIT_DIR}" -maxdepth 1 -type f -name 'part-*.body.md' | wc -l | tr -d ' ')"
+  if [ "${part_count}" -gt "${REVIEW_MAX_PARTS}" ]; then
+    # Fail CLOSED: do NOT fan out unbounded per-part reviewer calls. Drop the split
+    # artifacts, drop the manifest (so run-ai-reviews.sh does not enter the split loop),
+    # and drop an oversized flag that run-ai-reviews.sh reads to short-circuit each
+    # reviewer to a single request_changes verdict with NO model call.
+    rm -rf "${SPLIT_DIR}"
+    OVERSIZED_CONTEXT=1
+    {
+      echo "Review context split into ${part_count} parts, over REVIEW_MAX_PARTS=${REVIEW_MAX_PARTS}."
+      echo "Context too large for bounded external review; narrow scope or split manually."
+    } > "${OVERSIZED_CONTEXT_FLAG}"
+    echo "Review context too large: ${part_count} parts exceed REVIEW_MAX_PARTS=${REVIEW_MAX_PARTS}; emitting fail-closed request_changes." >&2
+  fi
   for body in "${SPLIT_DIR}"/part-*.body.md; do
+    [ "${OVERSIZED_CONTEXT}" = "1" ] && break
     [ -f "${body}" ] || continue
     part_name="$(basename "${body}" .body.md)"
     part_number="$(printf '%s\n' "${part_name}" | sed 's/^part-//; s/^0*//')"
@@ -83,6 +110,7 @@ if [ "${context_bytes}" -gt "${REVIEW_CONTEXT_MAX_BYTES}" ]; then
     rm -f "${body}"
   done
 
+  if [ "${OVERSIZED_CONTEXT}" != "1" ]; then
   SPLIT_MANIFEST_FILE="${OUT_DIR}/split-review-manifest.md"
   {
     echo "# Split Review Manifest"
@@ -104,6 +132,7 @@ if [ "${context_bytes}" -gt "${REVIEW_CONTEXT_MAX_BYTES}" ]; then
     echo
     find "${SPLIT_DIR}" -maxdepth 1 -type f -name 'part-*.md' | sort | sed 's/^/- /'
   } > "${SPLIT_MANIFEST_FILE}"
+  fi
 fi
 
 CLAUDE_PROMPT="${OUT_DIR}/claude-review.md"
@@ -166,7 +195,9 @@ Give a short final recommendation.
 ---
 PROMPT
 
-if [ -n "${SPLIT_MANIFEST_FILE}" ]; then
+if [ "${OVERSIZED_CONTEXT}" = "1" ]; then
+  cat "${OVERSIZED_CONTEXT_FLAG}" >> "${CLAUDE_PROMPT}"
+elif [ -n "${SPLIT_MANIFEST_FILE}" ]; then
   cat >> "${CLAUDE_PROMPT}" <<PROMPT
 # Review Context Overflow
 
@@ -238,7 +269,9 @@ Give a short final recommendation.
 ---
 PROMPT
 
-if [ -n "${SPLIT_MANIFEST_FILE}" ]; then
+if [ "${OVERSIZED_CONTEXT}" = "1" ]; then
+  cat "${OVERSIZED_CONTEXT_FLAG}" >> "${GEMINI_PROMPT}"
+elif [ -n "${SPLIT_MANIFEST_FILE}" ]; then
   cat >> "${GEMINI_PROMPT}" <<PROMPT
 # Review Context Overflow
 
