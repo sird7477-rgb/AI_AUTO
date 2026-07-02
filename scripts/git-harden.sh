@@ -9,6 +9,11 @@
 #   - `-c diff.external=`           kills a config-level external diff program.
 #   - `-c core.attributesFile=/dev/null` ignores a user/global attributes file.
 #   - `-c core.fsmonitor=`         kills an fsmonitor hook program.
+#   - `-c core.hooksPath=/dev/null` kills a repo-local `core.hooksPath` (and any tracked
+#     `.git/hooks/*`) — a checkout/worktree-add/remove SUBCOMMAND runs the repo's post-checkout
+#     hook (and honors a hostile hooksPath) as the operator. The env scrub does NOT reach a
+#     REPO-LOCAL `core.hooksPath` (only the GIT_CONFIG_* env family), so this hook-exec vector
+#     is closed at the call site for EVERY current/future `review_git checkout`/`worktree` op.
 #   - `--attr-source=<empty-tree>` (global, BEFORE the subcommand) makes git read .gitattributes
 #     from the EMPTY TREE, so an IN-REPO `.gitattributes` (which `core.attributesFile` does NOT
 #     override) cannot bind a clean/smudge/textconv/external-diff driver on ANY worktree-side diff
@@ -138,8 +143,8 @@ review_git() {
   # worktree ones, and the comprehensive clean/textconv/external defense on worktree diffs.
   case " $* " in
     *" --no-index "*)
-      git -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null --no-pager "$@" ;;
+      git -c diff.external= -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null --no-pager "$@" ;;
     *)
-      git --attr-source="${_REVIEW_GIT_ATTR_NONE}" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null --no-pager "$@" ;;
+      git --attr-source="${_REVIEW_GIT_ATTR_NONE}" -c diff.external= -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null --no-pager "$@" ;;
   esac
 }

@@ -103,8 +103,12 @@ remove_one() {  # <window_id>
   case "$verdict" in
     removable)
       primary="$(primary_root_of "$path")" || { log "remove $wid: no primary for $path"; return 0; }
-      if git -C "$primary" worktree remove "$path" 2>>"$LOG_FILE"; then
-        git -C "$primary" worktree prune 2>/dev/null || true
+      # `git worktree remove` runs a clean-CHECK on the target (in-repo .gitattributes CLEAN filter
+      # + core.fsmonitor hook fire on that index refresh) and honors a hostile core.hooksPath — an
+      # RCE over an untrusted worktree. Canonical pin set disarms all three; prune pinned for parity.
+      local _et; _et="$(git -C "$primary" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+      if git -C "$primary" --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null worktree remove "$path" 2>>"$LOG_FILE"; then
+        git -C "$primary" --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null worktree prune 2>/dev/null || true
         rm -f "$CACHE_DIR/$wid" 2>/dev/null || true
         log "remove $wid: removed $path"
       else

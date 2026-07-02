@@ -62,8 +62,12 @@ case "${1:-}" in
     [ "$target" != "$cur" ] || die "refusing to remove the worktree you are standing in"
     [ "$target" != "$primary_root" ] || die "refusing to remove the primary worktree"
     [ -n "$(registered_path "$name")" ] || die "no worktree named '${name}' (${target})"
-    git worktree remove "$target" || die "remove failed (use a clean tree, or 'git worktree remove --force')"
-    git worktree prune
+    # `git worktree remove` runs a clean-CHECK on the target (in-repo .gitattributes CLEAN filter
+    # + core.fsmonitor hook fire on that index refresh) and honors a hostile core.hooksPath; prune
+    # touches admin metadata but is pinned for parity. Canonical pin set disarms all three vectors.
+    _et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+    git --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null worktree remove "$target" || die "remove failed (use a clean tree, or 'git worktree remove --force')"
+    git --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null worktree prune
     log "[worktree] removed ${target}"
     exit 0
     ;;
@@ -99,15 +103,20 @@ fi
 #   -c core.fsmonitor=          kills an in-repo `.git/config` fsmonitor HOOK PROGRAM — a CONFIG
 #                               (not attribute) code-exec vector that --attr-source does NOT reach
 #                               and that fires while `worktree add` refreshes/checks out the tree;
+#   -c core.hooksPath=/dev/null  kills the repo's `post-checkout` HOOK — `git worktree add`
+#                               CHECKS OUT the new tree and then runs `.git/hooks/post-checkout`
+#                               (and honors a hostile in-repo `core.hooksPath`) as the OPERATOR:
+#                               a distinct RCE class the attr-source/fsmonitor/diff.external pins
+#                               do NOT stop, auto-triggered by the tmux after-new-window hook;
 #   -c diff.external= / -c core.attributesFile=/dev/null  complete the canonical pin set.
 _et="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
 if git show-ref --verify --quiet "refs/heads/${wt_branch}"; then
   # Reuse an existing wt/<name> branch (not checked out elsewhere -> attach).
-  git --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null worktree add "$target" "$wt_branch" >&2
+  git --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null worktree add "$target" "$wt_branch" >&2
 else
   # New branch wt/<name> off the chosen base (default: current HEAD). Using a NEW branch
   # avoids the multi-terminal footgun of checking out a branch already live elsewhere.
-  git --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null worktree add -b "$wt_branch" "$target" "${BRANCH_BASE:-HEAD}" >&2
+  git --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null worktree add -b "$wt_branch" "$target" "${BRANCH_BASE:-HEAD}" >&2
 fi
 log "[worktree] created ${target} on branch ${wt_branch}"
 printf '%s\n' "$target"

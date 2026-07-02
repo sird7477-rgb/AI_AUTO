@@ -8,6 +8,21 @@ set -euo pipefail
 CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=scripts/git-harden.sh
 . "${AI_AUTO_GIT_HARDEN_SH:-${CRC_DIR}/git-harden.sh}"
+# R21-STANDALONE: this collector is a DOCUMENTED standalone entrypoint (`./scripts/collect-review-
+# context.sh`; also run mid-`ai-auto gate`). review_git closes the clean-filter vector, but several
+# BARE (non-review_git) worktree-scanning calls remain — `git diff --cached --name-only` (index vs
+# HEAD), `git ls-files --others`, `if git diff --cached --quiet` — each REFRESHES THE INDEX and so
+# EXECUTES an untrusted project's in-repo `.git/config core.fsmonitor` HOOK-PROGRAM. `--attr-source`
+# does NOT reach that fsmonitor vector. When launched via `ai-auto` the launcher sources git-scrub so
+# the env pin is inherited, but a STANDALONE run had NO pin (the only standalone entrypoint sourcing
+# git-harden but NOT git-scrub). Source the canonical scrub HERE — exactly as automation-doctor.sh /
+# review-gate.sh do — so the process-wide GIT_CONFIG `core.fsmonitor=''` env pin covers EVERY bare
+# git call in this process. Presence-guarded (ai-auto BLAST-H1 idiom) so a partial scripts/-only copy
+# (no hooks/) cannot abort under set -e.
+# shellcheck source=../hooks/git-scrub.sh
+if [ -f "${CRC_DIR}/../hooks/git-scrub.sh" ] && bash -n "${CRC_DIR}/../hooks/git-scrub.sh" 2>/dev/null; then
+  . "${CRC_DIR}/../hooks/git-scrub.sh"
+fi
 
 OUT_DIR="${OUT_DIR:-.omx/review-context}"
 INCLUDE_UNTRACKED_CONTENT="${INCLUDE_UNTRACKED_CONTENT:-0}"

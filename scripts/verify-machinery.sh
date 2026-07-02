@@ -8813,14 +8813,20 @@ echo "[verify] testing R7-F1 (process-level git-scrub chokepoint: in-repo .git/c
   # env UNSET alone CANNOT reach an in-repo .git/config). The SAME poisoned repo MUST now fire
   # core.fsmonitor at the collector's first plain worktree-scanning git call (e.g. `git ls-files
   # --others`), proving the negative above is non-vacuous AND that the config-override export
-  # (not the env unset) is the load-bearing defense.
-  ctl_scrub="${tmp_dir}/git-scrub-noexport.sh"
-  sed '/R7-F1 defensive config override (BEGIN)/,/R7-F1 defensive config override (END)/d' "${scrub}" > "${ctl_scrub}"
+  # (not the env unset) is the load-bearing defense. R21: collect-review-context.sh now SOURCES
+  # hooks/git-scrub.sh ITSELF (its OWN standalone fsmonitor defense), so the control must run a
+  # COPY whose sibling hooks/git-scrub.sh is ALSO the override-stripped scrub — else the collector
+  # re-pins core.fsmonitor from the real sibling and the control goes inert (a false green).
+  ctl_root="${tmp_dir}/ctl"; mkdir -p "${ctl_root}/scripts" "${ctl_root}/hooks"
+  cp "${repo_root}/scripts/git-harden.sh" "${ctl_root}/scripts/git-harden.sh"
+  cp "${collector}" "${ctl_root}/scripts/collect-review-context.sh"
+  sed '/R7-F1 defensive config override (BEGIN)/,/R7-F1 defensive config override (END)/d' "${scrub}" > "${ctl_root}/hooks/git-scrub.sh"
+  ctl_scrub="${ctl_root}/hooks/git-scrub.sh"
   proj2="${tmp_dir}/proj2"; mk_poisoned "${proj2}"
   # shellcheck disable=SC1090  # dynamic source of the override-stripped control scrub
-  ( cd "${proj2}"; . "${ctl_scrub}"; OUT_DIR="${tmp_dir}/rcctl" bash "${collector}" >/dev/null 2>&1 || true )
+  ( cd "${proj2}"; . "${ctl_scrub}"; OUT_DIR="${tmp_dir}/rcctl" bash "${ctl_root}/scripts/collect-review-context.sh" >/dev/null 2>&1 || true )
   test -e "${tmp_dir}/FSM" \
-    || { echo "[verify] R7-F1: control (override stripped) inert — fixture would not catch a regression"; exit 1; }
+    || { echo "[verify] R7-F1: control (override stripped, incl. collector's own sibling scrub) inert — fixture would not catch a regression"; exit 1; }
 )
 
 echo "[verify] testing R7-F1-STANDALONE (the DOCUMENTED standalone entrypoints — './scripts/automation-doctor.sh --project' and the review-gate->run-ai-reviews worktree scans — must NOT exec an untrusted project's in-repo core.fsmonitor hook when run WITHOUT the ai-auto launcher; they now source git-scrub.sh themselves)..."
@@ -9047,14 +9053,16 @@ def is_text(f):
 # stash/apply/archive/cat-file (rule 4) ALSO run the in-repo `.gitattributes`+`.git/config`
 # filter driver on worktree blobs — `git status` runs `filter.<x>.clean` on a stat-dirty
 # tracked file (R12 RCE), the write-side (checkout/restore/reset --hard/stash/apply) runs
-# smudge, archive runs export filters, cat-file --filters runs clean. `worktree` (rule 5, R13)
+# smudge, archive runs export filters, cat-file --filters runs clean. `worktree` (rule 5, R13+R21)
 # runs SMUDGE while `git worktree add` checks out the new tree (tools/ai-worktree, auto-invoked
-# by the tmux hook) — so `worktree add` MUST carry --attr-source/review_git, while the pure-
-# metadata forms (worktree list/remove/prune) run no filter and are exempt. So EACH filter-
-# touching sub is scanned and required to be hardened. `add`/`ls-files` are DELIBERATELY
-# excluded: no shipped `git add` STAGING invocation exists (`git worktree add` is a distinct
-# sub handled by rule 5; bare `git add` appears only as suggestion TEXT, which would false-
-# positive), and `git ls-files --others` lists untracked NAMES and runs no filter.
+# by the tmux hook) — so `worktree add` MUST carry --attr-source/review_git. R21: `worktree add`/
+# `checkout` ALSO run the repo's post-checkout HOOK (and honor a hostile core.hooksPath) as the
+# operator — a NEW RCE class the attr-source/fsmonitor pins do NOT stop — so they additionally
+# require `-c core.hooksPath=`; and `worktree remove` (runs a clean-check → fsmonitor) / `prune`
+# are pinned too (`worktree list` alone stays pure-metadata exempt). `ls-files` is now IN SUBS
+# (rule 6): it lists NAMES (no clean/smudge filter) but its index refresh QUERIES core.fsmonitor
+# (canary-proven RCE), so it carries the fsmonitor requirement ONLY. `add` (bare STAGING) stays
+# excluded: no shipped `git add` STAGING site exists (it appears only as suggestion TEXT).
 #
 # END-THE-REGRESS classification (R13) — the COMPLETE distinct git-subcommand set actually
 # invoked in the shipped trust-path tree (scripts/ hooks/ tools/ templates/domain-packs/**;
@@ -9065,22 +9073,26 @@ def is_text(f):
 #        checkout/restore/reset/stash/apply/archive/cat-file: NO shipped site — pre-emptive in SUBS
 #        rebase (safe-push.sh): smudge driver must live in YOUR local .git/config, not
 #          attacker CONTENT -> not a hostile-repo RCE -> intentionally NOT guarded
+#   (b2) post-checkout HOOK / core.hooksPath . worktree(add), checkout ...... GUARDED hooks (rules 4/5)
+#        worktree(remove/prune) pinned for parity — hooksPath not env-defended (repo-local config)
 #   (c) textconv/external-diff readers ...... show (collect-review-context, review_git-hardened),
 #        log (workspace-scan `log -1 --format`, no -p -> no diff -> no textconv/filter) . in SUBS
 #        blame: NO shipped site — pre-emptive in SUBS
+#   (c2) fsmonitor index-refresh (NAMES only) . ls-files (rule 6) ............ GUARDED fsmonitor only
 #   (d) FILTER-SAFE, intentionally NOT guarded (read no worktree blob / run no attr driver):
-#        rev-parse, config/`-c`, init, hash-object(--no-filters), ls-files, merge-base,
+#        rev-parse, config/`-c`, init, hash-object(--no-filters), merge-base,
 #        merge-file, rev-list, remote, push, fetch, branch, commit, diff-tree, show-ref,
-#        show-toplevel/show-current(options), worktree list/remove/prune.
-SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file|worktree'
+#        show-toplevel/show-current(options), worktree list.
+SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|cat-file|worktree|ls-files'
 INVOKE = re.compile(
-    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:then|do|else|elif|eval|xargs)\b[^;#]*?\s)\s*(?:(?:sudo|env|command|time|nohup|exec|builtin)\s+)*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
+    r'(?:(?:^|[;&|(){}`"\x27]|\b(?:if|then|do|else|elif|while|until|eval|xargs)\b[^;#]*?\s)\s*(?:(?:sudo|env|command|time|nohup|exec|builtin)\s+)*(?:review_)?git\b(?:\s+-(?:C|c)\s+\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*\s+(' + SUBS + r')(?![\w.=-]))'
     r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(' + SUBS + r')"\s*,?)'
     r'|(?:\[(?:[^\]]*,)?\s*"(' + SUBS + r')")'
 )
 NONPATCH = ("--name-only", "--name-status", "--stat", "--shortstat", "--numstat", "--quiet", "--no-patch", "--check")
-# FSMONITOR (R20): the WORKTREE-scanning subcommands (diff worktree / status / checkout / restore /
-# reset / stash / apply / archive / cat-file / worktree-add — rules 3/4/5) query core.fsmonitor while
+# FSMONITOR (R20 + R21): the WORKTREE/INDEX-scanning subcommands (diff worktree AND --cached / status /
+# checkout / restore / reset / stash / apply / archive / cat-file / worktree add|remove / ls-files —
+# rules 3/4/5/6) query core.fsmonitor while
 # they refresh/scan the index, so a hostile project's IN-REPO `.git/config core.fsmonitor=<program>`
 # EXECUTES on the call. `--attr-source=<empty-tree>` closes only the SEPARATE `.gitattributes`
 # clean/smudge vector; it does NOT reach the fsmonitor HOOK-PROGRAM (config, not attribute). So a
@@ -9158,13 +9170,24 @@ for f in sorted(targets):
         # (domain-pack validators, which have no wrapper) OR routing through `review_git` (the
         # engine wrapper in scripts/git-harden.sh, which injects --attr-source=<empty-tree>
         # centrally). is_dp is no longer a gate: the requirement is uniform tree-wide.
-        if sub == "diff" and not noindex \
-                and "--cached" not in line and "--staged" not in line and ".." not in line:
+        if sub == "diff" and not noindex:
             via_review_git = "review_git" in m.group(0)
-            if "--attr-source=" not in line and not via_review_git:
-                violations.append("%s: worktree `git diff` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
-            if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
-                violations.append("%s: worktree `git diff` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, s))
+            is_range = ".." in line
+            is_cached = ("--cached" in line or "--staged" in line)
+            # clean-filter: ONLY a true WORKTREE diff runs the in-repo .gitattributes clean filter.
+            # --cached/--staged (tree-vs-index) and a `..`/`...` range (tree-vs-tree) read NO
+            # worktree blob -> exempt from the attr-source requirement (unchanged).
+            if not is_cached and not is_range:
+                if "--attr-source=" not in line and not via_review_git:
+                    violations.append("%s: worktree `git diff` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
+            # fsmonitor: git REFRESHES THE INDEX (querying core.fsmonitor) on a worktree diff AND on
+            # a `--cached` diff (canary-proven: `git diff --cached` fires an in-repo core.fsmonitor
+            # hook). So --cached is NOT exempt from the fsmonitor requirement -- the clean-filter
+            # exemption above is the ONLY --cached exemption. A `..`/`...` RANGE (tree-vs-tree)
+            # touches no index -> still exempt.
+            if not is_range:
+                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
+                    violations.append("%s: `git diff` (fsmonitor HOOK-PROGRAM RCE vector; index refresh incl. --cached) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, s))
         # rule 4 (R12): OTHER worktree clean/smudge-filter-running subcommands. Unlike `git diff`
         # there is NO --cached/range escape — EVERY `git status` (and checkout/restore/reset/
         # stash/apply/archive/cat-file) over the project runs the in-repo `.gitattributes`+
@@ -9178,27 +9201,63 @@ for f in sorted(targets):
                 violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
             if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
                 violations.append("%s: worktree `git %s` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
-        # rule 5 (R13 + R14-#2): `git worktree add` checks out a NEW working tree and therefore
-        # runs the in-repo `.gitattributes`+`.git/config` SMUDGE filter on every blob written — a
-        # hostile-repo RCE auto-invoked by the tmux after-new-window hook (tools/ai-worktree). It
-        # MUST carry --attr-source=<empty-tree> or route through review_git. Scoped to the `add`
-        # form ONLY: `git worktree list/remove/prune` touch no blob and run no filter (would false-
-        # positive). `sub == "worktree"` here means the token after git+opts is `worktree`. The
-        # `add` proximity check matches BOTH the bash form (`worktree add`, whitespace-separated)
-        # AND the Python-argv form (`["git","worktree","add",...]`, comma/quote-separated) — the
-        # old `\bworktree\s+add\b` was BLIND to the list form (like rule 4's group(2)/(3) path).
-        if sub == "worktree" and re.search(r'\bworktree\b["\x27,\s]+add\b', line):
+            # HOOKS (R21): `git checkout` runs the repo post-checkout hook and honors a hostile
+            # repo-local core.hooksPath as the operator -> RCE. git-scrub does NOT defend
+            # core.hooksPath (repo-local config, not env-overridden) so sources_scrub does NOT
+            # satisfy this -> only inline `-c core.hooksPath=` or review_git (which now carries it).
+            if sub == "checkout" and not via_review_git and "core.hooksPath=" not in line:
+                violations.append("%s: `git checkout` (post-checkout / core.hooksPath hook RCE vector) MISSING `-c core.hooksPath=/dev/null` (or review_git wrapper): %s" % (loc, s))
+        # rule 5 (R13 + R14-#2 + R21): `git worktree add` checks out a NEW working tree and so runs
+        # the in-repo SMUDGE filter on every blob written AND the repo's post-checkout HOOK (honoring
+        # a hostile core.hooksPath) as the operator — a hostile-repo RCE class auto-invoked by the
+        # tmux after-new-window hook (tools/ai-worktree). `add` MUST carry --attr-source=<empty-tree>
+        # (smudge) + `-c core.fsmonitor=` (index-refresh hook) + `-c core.hooksPath=` (post-checkout
+        # hook), or route through review_git. `worktree remove` runs a clean-CHECK (→ fsmonitor) and
+        # honors core.hooksPath, so it + `prune` (parity) require fsmonitor + hooksPath (not smudge).
+        # `worktree list` alone stays pure-metadata EXEMPT. `sub == "worktree"` here means the token
+        # after git+opts is `worktree`; the add/remove/prune proximity checks match BOTH the bash form
+        # (whitespace-separated) AND the Python-argv form (comma/quote-separated).
+        if sub == "worktree":
             via_review_git = "review_git" in m.group(0)
-            if "--attr-source=" not in line and not via_review_git:
+            is_add = bool(re.search(r'\bworktree\b["\x27,\s]+add\b', line))
+            is_rm_prune = bool(re.search(r'\bworktree\b["\x27,\s]+(?:remove|prune)\b', line))
+            # `git worktree add` checks out a NEW tree -> runs the in-repo SMUDGE filter on every
+            # blob written (attr-source/review_git required). list/remove/prune write no blob.
+            if is_add and "--attr-source=" not in line and not via_review_git:
                 violations.append("%s: `git worktree add` (smudge-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
-            if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
-                violations.append("%s: `git worktree add` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, s))
+            # `worktree add` (checkout) AND `worktree remove` (runs a clean-check on the target)
+            # refresh/scan the index -> query core.fsmonitor (canary-proven: `worktree remove`
+            # fires an in-repo core.fsmonitor hook). `worktree prune` pinned for parity. `worktree
+            # list` is pure metadata (no index refresh) -> NOT matched here.
+            if is_add or is_rm_prune:
+                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
+                    violations.append("%s: `git worktree %s` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, ("add" if is_add else "remove/prune"), s))
+                # HOOKS (R21 -- NEW RCE class): `git worktree add` runs the repo post-checkout hook
+                # (and honors a hostile core.hooksPath) as the operator -> unattended RCE auto-
+                # invoked by the tmux after-new-window hook (ai-tmux-worktree -> ai-worktree).
+                # remove/prune pinned for parity. git-scrub does NOT defend core.hooksPath (repo-
+                # local config) -> only inline `-c core.hooksPath=` or review_git counts.
+                if not via_review_git and "core.hooksPath=" not in line:
+                    violations.append("%s: `git worktree %s` (post-checkout / core.hooksPath hook RCE vector) MISSING `-c core.hooksPath=/dev/null` (or review_git wrapper): %s" % (loc, ("add" if is_add else "remove/prune"), s))
+        # rule 6 (R21): `git ls-files` refreshes the index (to learn what is tracked) and that
+        # refresh QUERIES core.fsmonitor -> a hostile in-repo `.git/config core.fsmonitor` EXECUTES
+        # (canary-proven for BOTH `ls-files --others` and tracked `ls-files`). ls-files lists NAMES
+        # (no clean/smudge filter, no hook) -> needs ONLY the fsmonitor defense. EXEMPT: domain-pack
+        # PYTHON validators (templates/domain-packs/**.py) -- invoked ONLY as subprocesses of the
+        # ai-auto gate/verify launcher (which sources git-scrub.sh) so they INHERIT the process-wide
+        # core.fsmonitor= env pin; a python module cannot itself source the shell scrub (their
+        # worktree diff/status calls are STILL required to carry an inline `-c core.fsmonitor=`).
+        if sub == "ls-files":
+            via_review_git = "review_git" in m.group(0)
+            is_py_dp = is_dp and rel.endswith(".py")
+            if not via_review_git and not sources_scrub and not is_py_dp and "core.fsmonitor=" not in line:
+                violations.append("%s: `git ls-files` (fsmonitor HOOK-PROGRAM RCE vector; index refresh) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, s))
 if violations:
     sys.stderr.write("R9-DRIFT VIOLATIONS:\n")
     for v in violations:
         sys.stderr.write("  " + v + "\n")
     sys.exit(1)
-print("R9-DRIFT OK: %d git diff/show/log/blame/status(+checkout/restore/reset/stash/apply/archive/cat-file/worktree-add) site(s) scanned, all hardened" % scanned)
+print("R9-DRIFT OK: %d git diff/show/log/blame/status/ls-files(+checkout/restore/reset/stash/apply/archive/cat-file/worktree add|remove|prune) site(s) scanned, all hardened (clean-filter + fsmonitor + post-checkout/hooksPath)" % scanned)
 PYEOF
   # (a) the real shipped tree MUST pass.
   out="$( python3 "${guard}" "${repo_root}" 2>&1 )" \
@@ -9369,20 +9428,41 @@ PYEOF
     python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
       && { echo "[verify] R9-DRIFT: control b12 (un-hardened git worktree add smudge RCE) NOT caught — guard blind to worktree add (R13 regress): ${_b12}"; exit 1; }
   done
-  # b12-hardened: `worktree add` carrying BOTH --attr-source AND `-c core.fsmonitor=` (the shipped
-  # ai-worktree form), and via review_git, MUST pass. (R20: --attr-source ALONE no longer certifies
-  # a worktree-touching subcommand — worktree add refreshes/checks out the tree and queries fsmonitor.)
-  printf '#!/usr/bin/env bash\ngit --attr-source="$_et" -c core.fsmonitor= worktree add "$target" "$wt_branch"\n' > "${tmp_dir}/fake/tools/ai-worktree"
+  # b12-hardened: `worktree add` carrying ALL THREE (--attr-source smudge + `-c core.fsmonitor=`
+  # index-refresh + `-c core.hooksPath=` post-checkout hook — the shipped ai-worktree form), and via
+  # review_git, MUST pass. (R20/R21: neither --attr-source NOR fsmonitor ALONE certifies a worktree
+  # add — it checks out the tree AND runs the post-checkout hook.)
+  printf '#!/usr/bin/env bash\ngit --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null worktree add "$target" "$wt_branch"\n' > "${tmp_dir}/fake/tools/ai-worktree"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
-    || { echo "[verify] R9-DRIFT: control b12-hardened (worktree add via inline --attr-source) FALSE-POSITIVED"; exit 1; }
+    || { echo "[verify] R9-DRIFT: control b12-hardened (worktree add via inline --attr-source + fsmonitor + hooksPath) FALSE-POSITIVED"; exit 1; }
   printf '#!/usr/bin/env bash\nreview_git worktree add "$target" HEAD\n' > "${tmp_dir}/fake/tools/ai-worktree"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     || { echo "[verify] R9-DRIFT: control b12-hardened (worktree add via review_git) FALSE-POSITIVED"; exit 1; }
-  # b12-exempt: pure-metadata worktree forms (list/remove/prune) run NO filter — MUST NOT fire
-  # (else every ai-worktree/ai-tmux-worktree management call false-positives).
-  printf '#!/usr/bin/env bash\ngit worktree list --porcelain\ngit -C "$p" worktree remove "$path"\ngit worktree prune\n' > "${tmp_dir}/fake/tools/ai-worktree"
+  # b12-hooks (R21 root-cause fixture): `worktree add` carrying --attr-source + `-c core.fsmonitor=`
+  # but NO `-c core.hooksPath=` (the PRE-R21 "hardened" ai-worktree form) is STILL the post-checkout/
+  # core.hooksPath hook RCE — the strengthened rule 5 MUST FLAG it. Revert the hooks term -> stops firing.
+  printf '#!/usr/bin/env bash\ngit --attr-source="$_et" -c core.fsmonitor= worktree add "$target" "$wt_branch"\n' > "${tmp_dir}/fake/tools/ai-worktree"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
-    || { echo "[verify] R9-DRIFT: control b12-exempt (worktree list/remove/prune) FALSE-POSITIVED — rule 5 not scoped to `add`"; exit 1; }
+    && { echo "[verify] R9-DRIFT: control b12-hooks (worktree add with --attr-source+fsmonitor but NO -c core.hooksPath=) NOT caught — guard still certifies the post-checkout hook RCE form (R21 root-cause regression)"; exit 1; }
+  # b12-exempt: `worktree list` alone is pure-metadata (no index refresh, no checkout, no hook) —
+  # MUST NOT fire (else every ai-worktree/ai-tmux-worktree listing call false-positives).
+  printf '#!/usr/bin/env bash\ngit worktree list --porcelain\n' > "${tmp_dir}/fake/tools/ai-worktree"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b12-exempt (worktree list) FALSE-POSITIVED — rule 5 over-broad"; exit 1; }
+  # b12-rmprune (R21): `git worktree remove` runs a clean-CHECK (→ fsmonitor) and honors core.hooksPath;
+  # `prune` pinned for parity. An UN-hardened remove/prune MUST now fire (fsmonitor + hooks) — the R21
+  # coverage extension beyond `add`. (Pre-R21 these were EXEMPT, hiding the ai-tmux-worktree gc RCE.)
+  for _b12rp in \
+      'git -C "$p" worktree remove "$path"' \
+      'git worktree prune'; do
+    printf '#!/usr/bin/env bash\n%s\n' "${_b12rp}" > "${tmp_dir}/fake/tools/ai-worktree"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b12-rmprune (un-hardened worktree remove/prune) NOT caught — rule 5 still exempts remove/prune (R21 regress): ${_b12rp}"; exit 1; }
+  done
+  # b12-rmprune-hardened: remove/prune carrying `-c core.fsmonitor= -c core.hooksPath=` MUST pass.
+  printf '#!/usr/bin/env bash\ngit -C "$p" --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null worktree remove "$path"\ngit --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null worktree prune\n' > "${tmp_dir}/fake/tools/ai-worktree"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b12-rmprune-hardened (worktree remove/prune via inline fsmonitor + hooksPath) FALSE-POSITIVED"; exit 1; }
   rm -f "${tmp_dir}/fake/tools/ai-worktree"
   # b12-python (R14-#2): the SAME `git worktree add` expressed as a Python argv LIST
   # (["git","worktree","add",...] — comma/quote separated, NOT `worktree add` whitespace) is the
@@ -9391,11 +9471,68 @@ PYEOF
   printf '%s\n' 'run(["git", "worktree", "add", target, base])' > "${tmp_dir}/fake/scripts/b12py.py"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
     && { echo "[verify] R9-DRIFT: control b12-python (un-hardened python-argv git worktree add) NOT caught — rule 5 blind to list form (R14-#2 regress)"; exit 1; }
-  # b12-python-hardened: the SAME list form carrying --attr-source MUST pass (no false-positive).
-  printf '%s\n' 'run(["git", "--attr-source=%s" % et, "-c", "core.fsmonitor=", "worktree", "add", target, base])' > "${tmp_dir}/fake/scripts/b12py.py"
+  # b12-python-hardened: the SAME list form carrying --attr-source + fsmonitor + hooksPath MUST pass.
+  printf '%s\n' 'run(["git", "--attr-source=%s" % et, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "worktree", "add", target, base])' > "${tmp_dir}/fake/scripts/b12py.py"
   python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
-    || { echo "[verify] R9-DRIFT: control b12-python-hardened (python-argv worktree add via --attr-source + -c core.fsmonitor=) FALSE-POSITIVED"; exit 1; }
+    || { echo "[verify] R9-DRIFT: control b12-python-hardened (python-argv worktree add via --attr-source + -c core.fsmonitor= + -c core.hooksPath=) FALSE-POSITIVED"; exit 1; }
   rm -f "${tmp_dir}/fake/scripts/b12py.py"
+  # b13-checkout-hooks (R21): `git checkout` runs the post-checkout hook / honors core.hooksPath.
+  # An un-hardened checkout (even WITH --attr-source + fsmonitor) MUST fire the hooks term; via
+  # review_git (now carries -c core.hooksPath=) MUST pass.
+  printf '#!/usr/bin/env bash\ngit --attr-source="$_et" -c core.fsmonitor= checkout -q -b feature\n' > "${tmp_dir}/fake/scripts/b13.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b13-checkout-hooks (checkout w/o -c core.hooksPath=) NOT caught — post-checkout hook RCE uncovered"; exit 1; }
+  printf '#!/usr/bin/env bash\ngit --attr-source="$_et" -c core.fsmonitor= -c core.hooksPath=/dev/null checkout -q -b feature\n' > "${tmp_dir}/fake/scripts/b13.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b13-checkout-hooks-hardened (inline hooksPath) FALSE-POSITIVED"; exit 1; }
+  printf '#!/usr/bin/env bash\nreview_git checkout -q -b feature\n' > "${tmp_dir}/fake/scripts/b13.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b13-checkout-hooks (checkout via review_git) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b13.sh"
+  # b14-lsfiles (R21): `git ls-files` refreshes the index -> fires core.fsmonitor. An un-hardened
+  # SHELL `git ls-files --others` MUST fire rule 6; inline `-c core.fsmonitor=`, review_git, and a
+  # file that SOURCES git-scrub.sh all pass; it needs NO attr-source/hooksPath (lists NAMES only).
+  printf 'git ls-files --others --exclude-standard\n' > "${tmp_dir}/fake/scripts/b14.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b14-lsfiles (un-hardened git ls-files) NOT caught — ls-files fsmonitor RCE uncovered (R21)"; exit 1; }
+  printf 'git -c core.fsmonitor= ls-files --others --exclude-standard\n' > "${tmp_dir}/fake/scripts/b14.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b14-lsfiles-hardened (inline -c core.fsmonitor=) FALSE-POSITIVED"; exit 1; }
+  printf '. ../hooks/git-scrub.sh\ngit ls-files --others --exclude-standard\n' > "${tmp_dir}/fake/scripts/b14.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b14-lsfiles-scrub (file sourcing git-scrub.sh) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b14.sh"
+  # b14-lsfiles-dp-py-exempt: a domain-pack PYTHON validator's bare `git ls-files` is EXEMPT (it
+  # inherits the launcher's process-wide core.fsmonitor= env pin; a python module cannot source the
+  # shell scrub). Same bare form in a SHELL domain-pack file is NOT exempt (still flagged).
+  printf 'run(["git", "ls-files", "--others", "--exclude-standard"])\n' > "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness/vpy.py"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b14-lsfiles-dp-py-exempt (domain-pack python ls-files) FALSE-POSITIVED — should be env-pin exempt"; exit 1; }
+  rm -f "${tmp_dir}/fake/templates/domain-packs/odoo/validation-harness/vpy.py"
+  # b15-cached-fsmonitor (R21): a `git diff --cached` is EXEMPT from the clean-filter rule (reads no
+  # worktree blob) but NOT from the fsmonitor rule (index refresh fires core.fsmonitor). An un-
+  # hardened `git diff --cached --name-only` MUST fire the fsmonitor term ONLY (not clean-filter);
+  # `if git diff --cached --quiet` (command position via the `if` keyword) MUST be caught too.
+  printf 'git diff --cached --name-only 2>/dev/null || true\n' > "${tmp_dir}/fake/scripts/b15.sh"
+  out15="$( python3 "${guard}" "${tmp_dir}/fake" 2>&1 )" && { echo "[verify] R9-DRIFT: control b15-cached-fsmonitor (un-hardened git diff --cached) NOT caught"; exit 1; }
+  printf '%s' "${out15}" | grep -q 'fsmonitor' || { echo "[verify] R9-DRIFT: control b15-cached-fsmonitor did not flag the FSMONITOR term: ${out15}"; exit 1; }
+  printf '%s' "${out15}" | grep -q 'clean-filter' && { echo "[verify] R9-DRIFT: control b15-cached-fsmonitor WRONGLY flagged --cached for the clean-filter rule (should be exempt): ${out15}"; exit 1; }
+  printf 'if git diff --cached --quiet --exit-code >/dev/null 2>&1; then :; fi\n' > "${tmp_dir}/fake/scripts/b15.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    && { echo "[verify] R9-DRIFT: control b15-if-cached (if-git-diff-cached command-position) NOT caught — if/while/until keyword scan missing"; exit 1; }
+  printf 'git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true\n' > "${tmp_dir}/fake/scripts/b15.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b15-cached-hardened (diff --cached via inline -c core.fsmonitor=) FALSE-POSITIVED"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b15.sh"
+  # b16-while-until (R21): worktree `git diff` in `while`/`until` command position MUST be caught.
+  for _b16 in \
+      'while read l; do git diff --name-only HEAD; done' \
+      'until git diff --quiet; do sleep 1; done'; do
+    printf '%s\n' "${_b16}" > "${tmp_dir}/fake/scripts/b16.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b16-while-until (keyword-prefixed evasion) NOT caught: ${_b16}"; exit 1; }
+  done
+  rm -f "${tmp_dir}/fake/scripts/b16.sh"
 )
 
 echo "[verify] testing R13-WORKTREE-RCE (tools/ai-worktree's 'git worktree add' over a HOSTILE repo must NOT execute the in-repo .gitattributes-bound filter.<x>.smudge driver while checking out the new tree; inline --attr-source=<empty-tree> disarms it — this is the tmux-hook auto-invoked RCE)..."
@@ -9777,6 +9914,118 @@ echo "[verify] testing R14-#1-FSMONITOR-RCE (standalone tools ai-worktree/ai-tmu
     eval "${removability_ctl}"; removability "${proj4}" "" >/dev/null 2>&1 || true )
   test -e "${tmp_dir}/PWNED_FSMON_STATUS_CTL" \
     || { echo "[verify] R14-#1-FSMONITOR-RCE: control (removability with core.fsmonitor pin stripped) did NOT fire the hook — status-path fixture is vacuous"; exit 1; }
+)
+
+echo "[verify] testing R21-HOOK-RCE / b13 hostile-hook (tools/ai-worktree's 'git worktree add' over a HOSTILE repo must NOT execute the repo's post-checkout HOOK — neither a tracked-into .git/hooks/post-checkout NOR a hostile core.hooksPath variant; the -c core.hooksPath=/dev/null pin disarms BOTH. This is a NEW RCE class the attr-source/fsmonitor pins do NOT stop, auto-invoked via the tmux after-new-window hook)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  aiwt="${repo_root}/tools/ai-worktree"
+  test -s "${aiwt}" || { echo "[verify] R21-HOOK-RCE: ai-worktree not found"; exit 1; }
+  mk_hookrepo() {  # hostile repo: post-checkout hook (variant A = .git/hooks; B = core.hooksPath) that
+                   # touches $2 when `git worktree add` checks out the new tree. Marker written to $2.
+    local p="$1" marker="$2" variant="$3"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      if [ "${variant}" = "hookspath" ]; then
+        mkdir -p .evilhooks
+        printf '#!/bin/sh\ntouch %s\n' "${marker}" > .evilhooks/post-checkout; chmod +x .evilhooks/post-checkout
+        git config core.hooksPath "${p}/.evilhooks"     # in-repo core.hooksPath -> RCE
+      else
+        printf '#!/bin/sh\ntouch %s\n' "${marker}" > .git/hooks/post-checkout; chmod +x .git/hooks/post-checkout
+      fi )
+  }
+  for _variant in dirhook hookspath; do
+    # HARDENED (real tool): its `-c core.hooksPath=/dev/null` means the post-checkout hook NEVER runs.
+    proj="${tmp_dir}/repo_${_variant}"; mk_hookrepo "${proj}" "${tmp_dir}/PWNED_HOOK_${_variant}" "${_variant}"
+    rm -f "${tmp_dir}/PWNED_HOOK_${_variant}"
+    ( cd "${proj}"; bash "${aiwt}" wtsafe >/dev/null 2>&1 || true )
+    test ! -e "${tmp_dir}/PWNED_HOOK_${_variant}" \
+      || { echo "[verify] R21-HOOK-RCE: post-checkout HOOK (${_variant}) EXECUTED during ai-worktree 'git worktree add' (uid=0 RCE)"; exit 1; }
+    # POSITIVE CONTROL: a copy with ONLY the `-c core.hooksPath=/dev/null` pin stripped (attr-source +
+    # fsmonitor remain, so it still runs `worktree add`) MUST fire the hook — the pin is what stops it.
+    ctl="${tmp_dir}/ai-worktree-ctl-${_variant}"
+    sed -E 's/-c core\.hooksPath=\/dev\/null //' "${aiwt}" > "${ctl}"; chmod +x "${ctl}"
+    proj2="${tmp_dir}/repo2_${_variant}"; mk_hookrepo "${proj2}" "${tmp_dir}/PWNED_HOOK_CTL_${_variant}" "${_variant}"
+    rm -f "${tmp_dir}/PWNED_HOOK_CTL_${_variant}"
+    ( cd "${proj2}"; bash "${ctl}" wtctl >/dev/null 2>&1 || true )
+    test -e "${tmp_dir}/PWNED_HOOK_CTL_${_variant}" \
+      || { echo "[verify] R21-HOOK-RCE: control (ai-worktree with core.hooksPath pin stripped, ${_variant}) did NOT fire the post-checkout hook — fixture is vacuous"; exit 1; }
+  done
+)
+
+echo "[verify] testing R21-COLLECT-FSMONITOR (scripts/collect-review-context.sh run STANDALONE — no ai-auto launcher, so no INHERITED core.fsmonitor= env pin — must NOT execute a hostile project's in-repo core.fsmonitor hook on its BARE 'git diff --cached'/'git ls-files --others' index-refresh calls; it now SOURCES hooks/git-scrub.sh itself. With git-scrub absent/unsourced the SAME bare calls fire the hook)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  collect="${repo_root}/scripts/collect-review-context.sh"
+  test -s "${collect}" || { echo "[verify] R21-COLLECT-FSMONITOR: collect-review-context.sh not found"; exit 1; }
+  mk_fsmon_proj() {  # hostile project: in-repo core.fsmonitor hook + an untracked file (ls-files --others
+                     # scan) + a staged commit base (diff --cached). Marker -> $2.
+    local p="$1" marker="$2"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      printf 'untracked\n' > u.txt                                 # -> git ls-files --others
+      git config core.fsmonitor "touch ${marker}; true" )          # in-repo fsmonitor hook (RCE)
+  }
+  # HARDENED (real, in-place collect): sources ${repo_root}/hooks/git-scrub.sh itself -> process-wide
+  # core.fsmonitor= env pin -> its bare index-refresh calls do NOT fire the hook. Unset any inherited
+  # git-scrub env pin first so we prove COLLECT'S OWN source is what protects it, not the parent.
+  proj="${tmp_dir}/p"; mk_fsmon_proj "${proj}" "${tmp_dir}/PWNED_COLLECT"
+  rm -f "${tmp_dir}/PWNED_COLLECT"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    cd "${proj}"; bash "${collect}" >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED_COLLECT" \
+    || { echo "[verify] R21-COLLECT-FSMONITOR: standalone collect EXECUTED in-repo core.fsmonitor on a bare diff --cached/ls-files (RCE — is it still sourcing hooks/git-scrub.sh?)"; exit 1; }
+  # POSITIVE CONTROL: a copy of collect + git-harden.sh in a scripts/ dir with NO hooks/ sibling ->
+  # the presence-guard finds no git-scrub.sh -> it is NOT sourced (the PRE-R21 state). With the
+  # inherited env pin unset, the SAME shipped bare calls fire the hook — proving the fixture is
+  # non-vacuous and that git-scrub sourcing is what closes it.
+  ctl_scripts="${tmp_dir}/ctl/scripts"; mkdir -p "${ctl_scripts}"
+  cp "${repo_root}/scripts/git-harden.sh" "${ctl_scripts}/git-harden.sh"
+  cp "${collect}" "${ctl_scripts}/collect-review-context.sh"
+  proj2="${tmp_dir}/p2"; mk_fsmon_proj "${proj2}" "${tmp_dir}/PWNED_COLLECT_CTL"
+  rm -f "${tmp_dir}/PWNED_COLLECT_CTL"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    cd "${proj2}"; bash "${ctl_scripts}/collect-review-context.sh" >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_COLLECT_CTL" \
+    || { echo "[verify] R21-COLLECT-FSMONITOR: control (collect with no git-scrub sibling, env pin unset) did NOT fire the hook — fixture is vacuous (are the bare diff --cached/ls-files calls still reached?)"; exit 1; }
+)
+
+echo "[verify] testing R21-WORKTREE-REMOVE-FSMONITOR (tools/ai-worktree --remove's 'git worktree remove'/'prune' over a HOSTILE repo must NOT execute the in-repo core.fsmonitor hook that fires as remove runs its clean-check index refresh; the inline -c core.fsmonitor= pin disarms it. Pin-stripped control fires)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  aiwt="${repo_root}/tools/ai-worktree"
+  test -s "${aiwt}" || { echo "[verify] R21-WORKTREE-REMOVE-FSMONITOR: ai-worktree not found"; exit 1; }
+  mk_rm_setup() {  # primary repo ${1}/myrepo + a CLEAN linked worktree ${1}/myrepo-foo, then a hostile
+                   # in-repo core.fsmonitor. Marker -> $2. (worktree add here uses safe git; the RCE we
+                   # test is the later `worktree remove`.)
+    local work="$1" marker="$2"; local prim="${work}/myrepo"
+    mkdir -p "${work}"
+    ( git init -q "${prim}"; cd "${prim}"; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      git -c core.fsmonitor= worktree add -q "${work}/myrepo-foo" -b foo >/dev/null 2>&1
+      git config core.fsmonitor "touch ${marker}; true" )          # in-repo fsmonitor hook (RCE)
+    printf '%s\n' "${prim}"
+  }
+  # HARDENED (real tool): `git --attr-source= -c core.fsmonitor= -c core.hooksPath= worktree remove`
+  # -> the hook is NEVER run. Unset any inherited env pin so the tool's INLINE pin is what is tested.
+  work="${tmp_dir}/w1"; prim="$(mk_rm_setup "${work}" "${tmp_dir}/PWNED_RM")"
+  rm -f "${tmp_dir}/PWNED_RM"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    cd "${prim}"; bash "${aiwt}" --remove foo >/dev/null 2>&1 || true )
+  test ! -e "${tmp_dir}/PWNED_RM" \
+    || { echo "[verify] R21-WORKTREE-REMOVE-FSMONITOR: in-repo core.fsmonitor EXECUTED during ai-worktree --remove 'git worktree remove' (config RCE)"; exit 1; }
+  # POSITIVE CONTROL: a copy of ai-worktree with the `-c core.fsmonitor=` pin stripped MUST fire.
+  ctl="${tmp_dir}/ai-worktree-rm-ctl"
+  sed -E 's/-c core\.fsmonitor= //' "${aiwt}" > "${ctl}"; chmod +x "${ctl}"
+  work2="${tmp_dir}/w2"; prim2="$(mk_rm_setup "${work2}" "${tmp_dir}/PWNED_RM_CTL")"
+  rm -f "${tmp_dir}/PWNED_RM_CTL"
+  ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+    cd "${prim2}"; bash "${ctl}" --remove foo >/dev/null 2>&1 || true )
+  test -e "${tmp_dir}/PWNED_RM_CTL" \
+    || { echo "[verify] R21-WORKTREE-REMOVE-FSMONITOR: control (ai-worktree --remove with core.fsmonitor pin stripped) did NOT fire the hook — fixture is vacuous"; exit 1; }
 )
 
 echo "[verify] running ai-lab bootstrap check..."
