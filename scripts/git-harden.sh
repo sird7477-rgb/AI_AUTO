@@ -57,9 +57,30 @@ _REVIEW_GIT_ATTR_NONE="$(git hash-object -t tree /dev/null 2>/dev/null || echo 4
 # driver (git's own FILTER-SAFE class), so resolving the git dir through it is safe.
 _review_git_attr_guard() {
   local _gd _ia
+  # Resolve the git dir the OP ACTUALLY READS, not the one in the PROCESS CWD. review_git runs
+  # `git [-C <dir> ...] <subcmd>`, and git applies each `-C <dir>` (a chdir) cumulatively BEFORE
+  # the subcommand. A bare `git rev-parse` here inspected the CALLER's CWD repo, so `review_git
+  # -C "$target" status` run from a cwd that is NOT the target (the canonical `ai-auto setup`
+  # flow: `review_git -C "$top" status --porcelain` from setup's own cwd) checked the WRONG repo's
+  # info/attributes and MISSED a hostile one in the target — the clean/diff driver then executed.
+  # Fix: collect the op's leading `-C <dir>` pair(s) and forward them to the (filter-safe) rev-parse
+  # so it resolves EXACTLY the git dir the op will read; `--path-format=absolute` makes the result
+  # cwd-independent (a `-C` target's `--git-dir` is otherwise `.git`, relative to the target, not us).
+  # No `-C` -> empty array -> falls back to the CWD repo (the prior, still-correct cwd==target path).
+  local -a _cd=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -C) [ "$#" -ge 2 ] && { _cd+=(-C "$2"); shift 2; } || shift ;;
+      -c) shift 2 ;;                       # `-c key=val`: config, not a chdir — skip the pair
+      --) break ;;
+      -*) shift ;;                         # any other leading global option
+      *) break ;;                          # subcommand token reached; op args follow
+    esac
+  done
   # A linked worktree reads info/attributes from the COMMON dir, a plain repo from the git dir;
   # check both. Either resolution failing (e.g. a `--no-index` compare outside any repo) is fine.
-  for _gd in "$(git rev-parse --git-dir 2>/dev/null)" "$(git rev-parse --git-common-dir 2>/dev/null)"; do
+  for _gd in "$(git "${_cd[@]}" rev-parse --path-format=absolute --git-dir 2>/dev/null)" \
+             "$(git "${_cd[@]}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; do
     [ -n "${_gd}" ] && _ia="${_gd}/info/attributes" && [ -f "${_ia}" ] || continue
     # A non-comment line binding a `filter=`/`diff=` DRIVER to ANY non-empty driver NAME is the RCE.
     # Match a POSITIVE name token `=[^[:space:]]` (`=` + ANY non-space, INCLUDING a leading `-`).
@@ -106,7 +127,9 @@ _review_git_attr_guard() {
 review_git() {
   # Fail-closed: refuse if the untrusted repo carries a hostile info/attributes driver binding —
   # the residual RCE that bypasses the --attr-source neutralization below (see guard rationale).
-  _review_git_attr_guard || return
+  # Pass the op's args so the guard resolves the git dir via the SAME `-C <dir>` the op uses
+  # (not the process CWD) — else a `review_git -C <target> …` run from elsewhere is unguarded.
+  _review_git_attr_guard "$@" || return
   # `--no-index` content reads (two raw filesystem paths, not a worktree-vs-tree diff) are NOT
   # given --attr-source: their attribute-driver defense is the `--no-filters` flag the caller
   # already passes (which fully disables clean/smudge/textconv). attr-source is irrelevant there

@@ -2712,6 +2712,43 @@ echo "[verify] testing review-context R19 (untracked-content drop / nested repo 
       || { echo "[verify] R19(d): partial/misleading context written despite corrupt index"; exit 1; } )
 )
 
+echo "[verify] testing review-context R20 (nested-repo ls-files fsmonitor pin / symlinked untracked dir external-name leak)..."
+(
+  context_script="${repo_root}/scripts/collect-review-context.sh"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  # (a) STANDALONE collector (NO git-scrub env pin) over a repo whose nested UNTRACKED git repo
+  #     carries a hostile `.git/config core.fsmonitor=<prog>`: the nested-listing `git ls-files`
+  #     must be pinned (`-c core.fsmonitor=`) so the payload NEVER executes. Non-vacuous: drop the
+  #     pin (bare `git ls-files`) -> the canary fires standalone -> assertion fails.
+  a_dir="${tmp_dir}/a"; git -c init.defaultBranch=main init -q "${a_dir}"
+  ( cd "${a_dir}"; git config user.email t@e.x; git config user.name T
+    printf 'base\n' > keep.txt; git add keep.txt; git -c user.email=t@e.x -c user.name=T commit -qm init
+    mkdir nested; ( cd nested; git -c init.defaultBranch=main init -q .
+      printf 'STASHED\n' > inner.txt; git config core.fsmonitor "touch ${tmp_dir}/CANARY" )
+    OUT_DIR="${a_dir}/.rc" INCLUDE_UNTRACKED_CONTENT=1 bash "${context_script}" >/dev/null 2>&1 )
+  [ ! -e "${tmp_dir}/CANARY" ] \
+    || { echo "[verify] R20(a): nested-repo ls-files ran hostile core.fsmonitor (RCE, unpinned)"; exit 1; }
+  grep -q '#   nested/inner.txt' "${a_dir}/.rc/latest-review-context.md" \
+    || { echo "[verify] R20(a): nested entry not listed (pin broke listing)"; exit 1; }
+
+  # (b) An UNTRACKED SYMLINK to an EXTERNAL dir must NOT be descended into: refuse symlinked dir
+  #     entries so a `cd "$file"` cannot escape and leak the external repo's untracked filenames.
+  #     Non-vacuous: drop the `[ ! -L ]` guard -> the external secret name leaks -> assertion fails.
+  ext="${tmp_dir}/external"; git -c init.defaultBranch=main init -q "${ext}"
+  ( cd "${ext}"; git config user.email t@e.x; git config user.name T
+    printf 'x\n' > a.txt; git add a.txt; git -c user.email=t@e.x -c user.name=T commit -qm init
+    printf 's\n' > EXTERNAL_SECRET_FILENAME.txt )
+  b_dir="${tmp_dir}/b"; git -c init.defaultBranch=main init -q "${b_dir}"
+  ( cd "${b_dir}"; git config user.email t@e.x; git config user.name T
+    printf 'base\n' > keep.txt; git add keep.txt; git -c user.email=t@e.x -c user.name=T commit -qm init
+    ln -s "${ext}" linkdir
+    OUT_DIR="${b_dir}/.rc" INCLUDE_UNTRACKED_CONTENT=1 bash "${context_script}" >/dev/null 2>&1 )
+  grep -q 'EXTERNAL_SECRET_FILENAME' "${b_dir}/.rc/latest-review-context.md" \
+    && { echo "[verify] R20(b): symlinked untracked dir leaked external repo filenames"; exit 1; } || true
+)
+
 if [ "${AI_AUTO_IN_REVIEW_GATE:-0}" = "1" ]; then
   echo "[verify] skipping nested external-review self-tests inside review-gate..."
 else
@@ -7739,6 +7776,64 @@ echo "[verify] testing BLUE-R19-PROVENANCE-FORGERY (a forged approved-provenance
     || { echo "[verify] BLUE-R19-FORGERY: a tampered HMAC still SKIPPED — authenticity not enforced"; exit 1; }
 )
 
+echo "[verify] testing BLUE-R19B-INTREE-KEY (an in-tree provenance-key path — a RELATIVE .omx/... path OR any in-tree path OUTSIDE .omx/.git — is REFUSED via realpath+toplevel, so the gate does NOT skip (no valid HMAC => full) even with a genuine record present; an OUT-OF-TREE key still skips)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # The pre-fix guard refused an in-tree key by SUBSTRING (*"/.omx/"*|*"/.git/"*), which a RELATIVE
+  # path (.omx/reviewer-state/x.key — no leading slash) and any in-tree path OUTSIDE .omx/.git
+  # (keys/x.key) both slip past: the secret then lives in the attacker-controlled tree, so the
+  # stated "in-tree key is REFUSED" invariant was FALSE and a forged record HMAC'd with a
+  # tree-readable key would SKIP. The fix resolves the candidate to an ABSOLUTE realpath and
+  # refuses it when it lands inside `git rev-parse --show-toplevel` => no valid key => full.
+  blk="${tmp_dir}/blk.sh"; r17="${tmp_dir}/r17.sh"; r18="${tmp_dir}/r18.sh"
+  sed -n '/# >>> review-provenance-shared/,/# <<< review-provenance-shared/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${blk}"
+  sed -n '/# >>> blue-r17-provenance-failclosed/,/# <<< blue-r17-provenance-failclosed/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r17}"
+  sed -n '/# >>> blue-r18-provenance-blindbits/,/# <<< blue-r18-provenance-blindbits/p' \
+    "${repo_root}/scripts/review-gate.sh" > "${r18}"
+  test -s "${blk}" && test -s "${r17}" && test -s "${r18}" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: could not extract shared block + R17 + R18 overrides"; exit 1; }
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '.omx/\nkeys/\n' > .gitignore; git add .gitignore   # .omx + keys gitignored: neither perturbs the untracked hash
+    printf 'hello\n' > a.txt; git add a.txt; git commit -qm init )   # CLEAN tree (a skip is possible)
+  decide() {  # ${KF} selects the provenance key file under test
+    ( cd "${proj}"
+      export REVIEW_STATE_DIR="${proj}/.omx/rs"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${KF}"
+      # shellcheck source=/dev/null
+      . "${blk}"
+      # shellcheck source=/dev/null
+      . "${r17}"
+      # shellcheck source=/dev/null
+      . "${r18}"
+      "$@" )
+  }
+  # ONE genuine record signed by the OUT-OF-TREE key; then vary ONLY the CONFIGURED key path over the
+  # SAME record + SAME (clean, unchanged) tree. A `full` can then come ONLY from the key-path refusal,
+  # not a hash drift or a missing/mismatched record. The in-tree probe files carry the SAME key BYTES,
+  # so pre-fix (substring miss) the HMAC still verifies => SKIP; post-fix realpath refuses => FULL.
+  key="${tmp_dir}/prov.key"; ( umask 077; openssl rand -hex 32 > "${key}" )   # out-of-tree secret
+  KF="${key}"; decide review_provenance_record
+  # CONTROL (non-vacuous): the out-of-tree key verifies the record => skip, proving the `full`
+  # assertions below are the in-tree refusal firing, not an unconditional full or a broken record.
+  test "$(decide review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: out-of-tree key did NOT skip (optimization broken)"; exit 1; }
+  # (a) RELATIVE in-tree path under .omx (no leading /.omx/ -> pre-fix substring MISSED it).
+  ( cd "${proj}"; mkdir -p .omx/reviewer-state; cp "${key}" .omx/reviewer-state/x.key )
+  KF=".omx/reviewer-state/x.key"
+  test "$(decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: RELATIVE in-tree .omx key was trusted/SKIPPED (substring-bypass reopened)"; exit 1; }
+  # (b) in-tree path OUTSIDE .omx/.git (substring never matched); same key bytes so pre-fix verifies.
+  ( cd "${proj}"; mkdir -p keys; cp "${key}" keys/x.key )
+  KF="keys/x.key"
+  test "$(decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: in-tree key OUTSIDE .omx/.git was trusted/SKIPPED (substring-bypass reopened)"; exit 1; }
+)
+
 echo "[verify] testing BLUE-R19-PROVENANCE-NESTEDREPO (a nested untracked git repo/worktree lists as one gitlink boundary dir that hash-object cannot hash; the gate must force a FULL review, never carry forward a skip on its unreviewed content; a clean tree with no such entry still skips)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -8004,7 +8099,7 @@ echo "[verify] testing R16-INFO-ATTRIBUTES-RCE (review_git REFUSES a hostile \$G
   # pre-fix review_git) MUST fire the canary on the SAME repo — proving the guard is load-bearing
   # AND that --attr-source/-c/core.attributesFile do NOT, by themselves, cover info/attributes.
   ctl="${tmp_dir}/harden-noguard.sh"
-  grep -v '_review_git_attr_guard || return' "${harden}" > "${ctl}"
+  grep -Fv '_review_git_attr_guard "$@" || return' "${harden}" > "${ctl}"
   proj2="${tmp_dir}/proj2"; mk_hostile "${proj2}"
   # shellcheck source=/dev/null
   ( cd "${proj2}"; . "${ctl}"
@@ -8193,6 +8288,74 @@ echo "[verify] testing R16-INFO-ATTRIBUTES-RCE (review_git REFUSES a hostile \$G
     review_git status --porcelain >/dev/null 2>&1 || { echo "[verify] R16-INFO-ATTRIBUTES-RCE: review_git status failed on benign info/attributes"; exit 1; } )
 )
 
+echo "[verify] testing R20-ATTRGUARD-C-TARGET (the info/attributes fail-closed guard inspects the repo the op ACTUALLY reads via its \`-C <dir>\`, NOT the process CWD: \`review_git -C <hostile> status/diff\` run from a DIFFERENT cwd — the canonical \`ai-auto setup\` F7 probe — must REFUSE rc3 with NO canary; before this fix the guard checked the caller's cwd repo, missed the target's hostile driver, and the clean filter EXECUTED)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  # The guard resolved the git dir with a BARE \`git rev-parse\` in the PROCESS CWD, ignoring the
+  # \`-C <dir>\` that review_git runs the op with. So \`review_git -C <target> status\` invoked from a
+  # cwd that is NOT the target (exactly \`tools/ai-auto setup <path>\`, whose F7 probe
+  # \`review_git -C "\$top" status --porcelain\` is the first hardened read over the untrusted repo,
+  # run from setup's own cwd) inspected the WRONG repo's info/attributes and MISSED a hostile one in
+  # the target — the clean/diff driver then executed (canary-proven RCE, setup exits 0 green). Fixed:
+  # the guard forwards the op's \`-C\` to the (filter-safe) rev-parse so it checks the repo the op reads.
+  harden="${repo_root}/scripts/git-harden.sh"
+  test -s "${harden}" || { echo "[verify] R20-ATTRGUARD-C-TARGET: git-harden.sh not found"; exit 1; }
+  mk_hostile() {  # $1 dest: info/attributes binds a clean filter -> .git/config exec; STAT-DIRTY file
+    local p="$1"; rm -rf "${p}"; mkdir -p "${p}"
+    ( cd "${p}"; git init -q; git config user.email t@e.x; git config user.name T
+      printf 'hello\n' > a.txt; git add a.txt; git commit -qm init
+      printf 'a.txt filter=evil\n' > .git/info/attributes
+      git config filter.evil.clean "touch ${tmp_dir}/CBYPASS; cat"
+      # STAT-DIRTY, SAME SIZE (mtime bump only): forces \`git status\` to run the clean filter to
+      # decide if content changed (a size-changing edit would mark dirty by stat alone, no filter).
+      sleep 0.02; touch a.txt )
+  }
+  neutral="${tmp_dir}/neutral"; mkdir -p "${neutral}"   # a cwd that is NOT any hostile repo
+  # (1) SHIPPED guard, op run from the NEUTRAL cwd via \`-C <hostile>\`: MUST refuse (rc 3), NO canary.
+  for op in "status --porcelain" "diff --no-ext-diff --no-textconv --quiet"; do
+    h="${tmp_dir}/h_$(printf '%s' "${op}" | tr -c 'a-z' _)"; mk_hostile "${h}"; rm -f "${tmp_dir}/CBYPASS"
+    # shellcheck source=/dev/null
+    ( cd "${neutral}"; . "${harden}"; rc=0
+      review_git -C "${h}" ${op} >/dev/null 2>&1 || rc=$?
+      test "${rc}" -eq 3 || { echo "[verify] R20-ATTRGUARD-C-TARGET: \`review_git -C <hostile> ${op}\` from a neutral cwd did NOT refuse (rc=${rc}) — guard inspected the wrong (cwd) repo"; exit 1; } )
+    test ! -e "${tmp_dir}/CBYPASS" \
+      || { echo "[verify] R20-ATTRGUARD-C-TARGET: info/attributes clean filter EXECUTED through \`review_git -C <hostile> ${op}\` from a neutral cwd (RCE — guard bypassed by -C target)"; exit 1; }
+  done
+  # (2) CONTROL cwd==target: the pre-existing correct refusal must be preserved (no -C, guard uses CWD).
+  hc="${tmp_dir}/h_ctl"; mk_hostile "${hc}"; rm -f "${tmp_dir}/CBYPASS"
+  # shellcheck source=/dev/null
+  ( cd "${hc}"; . "${harden}"; rc=0; review_git status --porcelain >/dev/null 2>&1 || rc=$?
+    test "${rc}" -eq 3 || { echo "[verify] R20-ATTRGUARD-C-TARGET: cwd==target hostile repo no longer refuses (rc=${rc}) — regressed the base guard"; exit 1; } )
+  test ! -e "${tmp_dir}/CBYPASS" || { echo "[verify] R20-ATTRGUARD-C-TARGET: canary fired on cwd==target control"; exit 1; }
+  # (3) LEGIT repo via \`-C\` from outside: a tracked-.gitattributes filter (git-lfs pattern) binds via
+  # \`.gitattributes\`, NEVER info/attributes -> must NOT be falsely refused (rc != 3); status must work.
+  legit="${tmp_dir}/legit"; mkdir -p "${legit}"
+  ( cd "${legit}"; git init -q; git config user.email t@e.x; git config user.name T
+    printf '*.dat filter=lfsish\n' > .gitattributes
+    git config filter.lfsish.clean cat; git config filter.lfsish.smudge cat
+    printf 'blob\n' > f.dat; git add .gitattributes f.dat; git commit -qm init
+    printf 'more\n' >> f.dat )
+  # shellcheck source=/dev/null
+  ( cd "${neutral}"; . "${harden}"; rc=0; review_git -C "${legit}" status --porcelain >/dev/null 2>&1 || rc=$?
+    test "${rc}" -ne 3 || { echo "[verify] R20-ATTRGUARD-C-TARGET: FALSE REFUSAL — legit tracked-.gitattributes repo refused via -C from outside"; exit 1; }
+    review_git -C "${legit}" status --porcelain | grep -q 'f.dat' || { echo "[verify] R20-ATTRGUARD-C-TARGET: review_git -C legit status wrong"; exit 1; } )
+  # (4) NON-VACUOUS: rebuild the wrapper with ONLY the args-forwarding reverted (the pre-fix guard call
+  # \`_review_git_attr_guard\` without \`"\$@"\` -> empty \$@ -> the -C parse loop no-ops -> bare rev-parse
+  # in the CWD, i.e. exactly the old CWD-inspecting guard). The SAME hostile \`-C\` op from the neutral
+  # cwd MUST then SLIP (rc != 3) and EXECUTE the canary — so reverting the forwarding fails HERE.
+  ctl="${tmp_dir}/harden-nocargs.sh"
+  sed 's/_review_git_attr_guard "\$@"/_review_git_attr_guard/' "${harden}" > "${ctl}"
+  ! grep -Fq '_review_git_attr_guard "$@"' "${ctl}" && grep -Fq '_review_git_attr_guard || return' "${ctl}" \
+    || { echo "[verify] R20-ATTRGUARD-C-TARGET: non-vacuous control build failed (sed did not strip the \$@ forwarding)"; exit 1; }
+  hv="${tmp_dir}/h_nv"; mk_hostile "${hv}"; rm -f "${tmp_dir}/CBYPASS"
+  # shellcheck source=/dev/null
+  ( cd "${neutral}"; . "${ctl}"; rc=0; review_git -C "${hv}" status --porcelain >/dev/null 2>&1 || rc=$?
+    test "${rc}" -ne 3 || { echo "[verify] R20-ATTRGUARD-C-TARGET: pre-fix control unexpectedly refused — non-vacuity broken"; exit 1; } )
+  test -e "${tmp_dir}/CBYPASS" \
+    || { echo "[verify] R20-ATTRGUARD-C-TARGET: non-vacuous control inert — the CWD-inspecting guard should EXECUTE the -C target's filter from a neutral cwd; fixture would not catch reverting the fix"; exit 1; }
+)
+
 echo "[verify] testing R19-GIT3 (doc-budget/write-session-checkpoint/micro-check route worktree git through hardened review_git — hostile info/attributes+config clean-filter + core.fsmonitor RCE neutralized through ALL THREE; atomic symlink-safe checkpoint write; doc-budget counts a no-final-newline last line)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -8280,6 +8443,54 @@ echo "[verify] testing R19-GIT3 (doc-budget/write-session-checkpoint/micro-check
       || { echo "[verify] R19-GIT3: doc-budget undercounted a no-final-newline file (expected 221)"; cat "${tmp_dir}/linecount.out"; exit 1; }
     test "${rc}" -ne 0 \
       || { echo "[verify] R19-GIT3: doc-budget did NOT FAIL on a 221-line file over the 220 hard cap"; exit 1; } )
+)
+
+echo "[verify] testing BLUE-R19B-DOCBUDGET-FSMONITOR (doc-budget's worktree-scanning 'git ls-files --others' carries an INLINE -c core.fsmonitor= pin, so a hostile .git/config core.fsmonitor hook does NOT execute even when hooks/git-scrub.sh is absent/unsourced; with the inline pin STRIPPED and no scrub sibling the canary FIRES)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"; export GIT_CONFIG_NOSYSTEM=1
+  # Simulate "git-scrub absent": strip the process-wide core.fsmonitor= env pin that
+  # `. hooks/git-scrub.sh` exports into the environment (the scrub-SOURCED verify run). Without
+  # this both sub-runs below would inherit that pin and the positive control could not fire —
+  # the fixture must isolate the INLINE `-c core.fsmonitor=` as the only fsmonitor defense.
+  unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 2>/dev/null || true
+  git config --global user.email t@e.x; git config --global user.name T
+  git config --global init.defaultBranch main
+  # doc-budget's untracked-scan `git ls-files --others` is NOT routed through review_git; its
+  # fsmonitor defense was the process-wide git-scrub.sh env pin, which the presence-guard
+  # ([ -f ] && bash -n && .) SILENTLY skips if the sibling is absent/unparseable — the bare call
+  # then fires a hostile core.fsmonitor hook (RCE). The fix inlines `-c core.fsmonitor=` on those
+  # specific calls so they stay hardened regardless of the scrub source. This isolates that path:
+  # an fsmonitor-ONLY hostile repo (no clean filter), git-harden.sh shipped (review_git hardened),
+  # git-scrub.sh DELIBERATELY absent.
+  mk_fsmon() {  # $1 dest  $2 canary : fsmonitor-only hostile repo; NO git-scrub sibling
+    local p="$1" c="$2"; rm -rf "${p}"; mkdir -p "${p}/docs" "${p}/scripts"
+    ( cd "${p}"; git init -q
+      seq 1 3 > AGENTS.md; printf '# workflow\n' > docs/WORKFLOW.md
+      git add AGENTS.md docs; git commit -qm init
+      printf '#!/bin/sh\ntouch %s\n' "${c}" > .git/fsm.sh; chmod +x .git/fsm.sh
+      git config core.fsmonitor "${p}/.git/fsm.sh"                  # fires on any worktree scan
+      printf 'untracked guidance\n' > docs/EXTRA.md )               # untracked -> ls-files --others scans worktree
+    cp "${repo_root}/scripts/git-harden.sh" "${p}/scripts/"         # review_git hardened (isolate the bare ls-files path)
+    # NOTE: hooks/git-scrub.sh DELIBERATELY NOT shipped -> the presence-guard skips the env pin.
+  }
+  # FIXED doc-budget over the fsmonitor-hostile, scrub-absent repo: the inline pin holds -> NO canary.
+  p="${tmp_dir}/fx"; c="${tmp_dir}/FSCANARY"; rm -f "${c}"; mk_fsmon "${p}" "${c}"
+  cp "${repo_root}/scripts/doc-budget.sh" "${p}/scripts/doc-budget.sh"; chmod +x "${p}/scripts/doc-budget.sh"
+  ( cd "${p}"; ./scripts/doc-budget.sh >/dev/null 2>&1 || true )
+  test ! -e "${c}" \
+    || { echo "[verify] BLUE-R19B-DOCBUDGET-FSMONITOR: bare ls-files EXECUTED a core.fsmonitor hook with git-scrub absent (inline pin missing/ineffective)"; exit 1; }
+  # NON-VACUOUS positive control: the SAME script with the inline `-c core.fsmonitor=` STRIPPED and
+  # git-scrub STILL absent MUST fire the canary — proving the inline pin (not something else) closes
+  # the hole. If ls-files did not fire fsmonitor at all here this control also fails, so the test
+  # cannot pass vacuously.
+  pc="${tmp_dir}/pc"; cc="${tmp_dir}/FSCTLCANARY"; rm -f "${cc}"; mk_fsmon "${pc}" "${cc}"
+  sed 's/git -c core\.fsmonitor= ls-files/git ls-files/g' "${repo_root}/scripts/doc-budget.sh" > "${pc}/scripts/doc-budget.sh"
+  chmod +x "${pc}/scripts/doc-budget.sh"
+  ( cd "${pc}"; ./scripts/doc-budget.sh >/dev/null 2>&1 || true )
+  test -e "${cc}" \
+    || { echo "[verify] BLUE-R19B-DOCBUDGET-FSMONITOR: positive control inert — a bare (un-pinned) ls-files did NOT fire the fsmonitor canary with git-scrub absent (fixture would not catch a revert)"; exit 1; }
 )
 
 echo "[verify] testing R6-1 (collect-review-context.sh patch calls INERT to project-local .gitattributes diff/textconv RCE — the gate's FIRST git work, run before any skip)..."

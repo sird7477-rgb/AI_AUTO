@@ -1417,7 +1417,9 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
       # directory entry (trailing slash) and never descends, so code stashed in a nested .git is
       # invisible to reviewers. Fail-closed against silent omission: emit a clear present-but-not-
       # expanded marker and list its untracked entries (read-only, bounded), never skip it.
-      if [ -d "$file" ]; then
+      # Refuse to descend into a SYMLINKED entry: `cd "$file"` would escape into an external
+      # directory and leak that repo's untracked filenames into the review context. Skip symlinks.
+      if [ -d "$file" ] && [ ! -L "$file" ]; then
         echo "# nested untracked repo present-but-not-expanded: ${file}"
         echo "# (content lives in a nested .git; not inlined in this diff — listing entries)"
         nested_n=0
@@ -1425,7 +1427,9 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
           nested_n=$((nested_n + 1))
           if [ "$nested_n" -gt 200 ]; then echo "#   … (nested listing truncated at 200)"; break; fi
           echo "#   ${file}${nf}"
-        done < <(cd "$file" 2>/dev/null && git ls-files -z --others --exclude-standard 2>/dev/null || true)
+        # Pin core.fsmonitor= so a hostile nested `.git/config core.fsmonitor=<prog>` cannot execute
+        # when this runs STANDALONE (no inherited git-scrub env pin from the gate path).
+        done < <(cd "$file" 2>/dev/null && git -c core.fsmonitor= ls-files -z --others --exclude-standard 2>/dev/null || true)
         continue
       fi
       [ -f "$file" ] || continue

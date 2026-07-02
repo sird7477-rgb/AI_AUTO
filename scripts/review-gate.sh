@@ -145,11 +145,31 @@ review_provenance_key_file() {
   else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
 }
 
-# Generate the key once (0600) if absent. Refuses any in-tree path (.omx/.git).
+# Refuse an in-tree key path via realpath+toplevel (NOT a fragile substring). Returns 0
+# (=in-tree, REFUSE) when the candidate key path — after resolving relative paths, `..`, and
+# symlinks — lands INSIDE the project's git toplevel, where the attacker-controlled tree could
+# read/forge the secret; callers then fail closed (treat as missing key => full review). A
+# substring guard (*"/.omx/"*|*"/.git/"*) missed a RELATIVE path (.omx/x.key, no leading slash),
+# a `..` escape, and any in-tree path OUTSIDE .omx/.git, so the stated "in-tree key is REFUSED"
+# invariant was FALSE. Out-of-tree keys ($AI_AUTO_HOME/.provenance-key, ~/.config/ai-auto, an
+# out-of-tree $AI_AUTO_PROVENANCE_KEY_FILE) resolve OUTSIDE the toplevel => return 1 (allowed).
+# git is routed through hardened review_git (drift-guard: no bare git).
+review_provenance_key_in_tree() {
+  local keyfile top rp
+  keyfile="$(review_provenance_key_file)"
+  top="$(review_git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "${top}" ] || return 1
+  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
+  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  case "${rp}/" in "${top}/"*) return 0 ;; esac
+  return 1
+}
+
+# Generate the key once (0600) if absent. Refuses any in-tree path (realpath inside toplevel).
 review_provenance_ensure_key() {
   local keyfile dir
   keyfile="$(review_provenance_key_file)"
-  case "${keyfile}" in *"/.omx/"*|*"/.git/"*) return 1 ;; esac
+  review_provenance_key_in_tree && return 1
   [ -f "${keyfile}" ] && return 0
   dir="$(dirname "${keyfile}")"
   ( umask 077; mkdir -p "${dir}" && openssl rand -hex 32 > "${keyfile}" ) 2>/dev/null || return 1
@@ -162,7 +182,7 @@ review_provenance_ensure_key() {
 review_provenance_hmac() {
   local keyfile
   keyfile="$(review_provenance_key_file)"
-  case "${keyfile}" in *"/.omx/"*|*"/.git/"*) return 0 ;; esac
+  review_provenance_key_in_tree && return 0
   [ -f "${keyfile}" ] || return 0
   AI_AUTO_PROV_KEYFILE="${keyfile}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_PROV_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
 }
@@ -175,7 +195,10 @@ review_provenance_record() {
   head="$(review_provenance_head)"
   flags="$(review_provenance_flags)"
   ts="$(date -Iseconds)"
-  review_provenance_ensure_key
+  # `|| return 0`: if no out-of-tree key can be ensured (in-tree path refused, or key creation
+  # failed) do NOT write a record — any record we could write would carry an empty/invalid HMAC
+  # and force a full review anyway, and a bare call would abort this proceed under `set -e`.
+  review_provenance_ensure_key || return 0
   mkdir -p "${REVIEW_STATE_DIR}"
   tmp="$(mktemp "${REVIEW_STATE_DIR}/.approved-provenance.XXXXXX")" || return 0
   # Canonical record + an HMAC over it keyed by the OUT-OF-TREE secret. The attacker owns the
@@ -228,7 +251,7 @@ review_provenance_principal_evidence_ok() {
 review_provenance_authentic() {
   local keyfile stored rec expected
   keyfile="$(review_provenance_key_file)"
-  case "${keyfile}" in *"/.omx/"*|*"/.git/"*) return 1 ;; esac
+  review_provenance_key_in_tree && return 1
   [ -f "${keyfile}" ] || return 1
   stored="$(review_provenance_field approved_hmac)"
   [ -n "${stored}" ] || return 1

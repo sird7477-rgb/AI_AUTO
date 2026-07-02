@@ -7,10 +7,13 @@ set -euo pipefail
 # `core.fsmonitor=` pin, and `diff.external=`, so a hostile project repo still executes its
 # `.git/config` clean/diff driver on a worktree read (RCE — this runs over the untrusted project
 # repo via verify-machinery.sh). review_git carries the full defense on the diffs routed through
-# it. This script ALSO makes BARE worktree-scanning calls (`git ls-files --others`) that are NOT
-# routed through review_git and would still fire a `.git/config core.fsmonitor` hook; the
-# process-wide git-scrub.sh env pin (GIT_CONFIG core.fsmonitor='') closes that for EVERY git call
-# in this process — the same standalone-entrypoint defense automation-doctor.sh/review-gate.sh use.
+# it. This script ALSO makes worktree-scanning `git ls-files --others` calls that are NOT routed
+# through review_git and would still fire a `.git/config core.fsmonitor` hook. The process-wide
+# git-scrub.sh env pin (GIT_CONFIG core.fsmonitor='') closes that for EVERY git call in this
+# process — the same standalone-entrypoint defense automation-doctor.sh/review-gate.sh use — BUT
+# that pin only fires when the sibling below is present+parseable (the guard silently skips it
+# otherwise), so those specific ls-files calls ALSO carry an INLINE `-c core.fsmonitor=`
+# (belt-and-suspenders): they stay hardened even if git-scrub did not source.
 # Source both siblings when present+parseable (BLAST-H1 idiom, so `set -e` cannot abort a partial copy).
 _sd="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../hooks/git-scrub.sh
@@ -199,7 +202,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   diff_added="$(printf '%s\n' "${diff_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   diff_removed="$(printf '%s\n' "${diff_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   untracked_added="$(
-    git ls-files -z --others --exclude-standard -- AGENTS.md docs 2>/dev/null |
+    git -c core.fsmonitor= ls-files -z --others --exclude-standard -- AGENTS.md docs 2>/dev/null |
       while IFS= read -r -d '' path; do
         if doc_budget_is_exempt "$path"; then
           continue
@@ -252,7 +255,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   label_added="$(printf '%s\n' "${label_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   label_removed="$(printf '%s\n' "${label_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
   label_untracked_added="$(
-    git ls-files -z --others --exclude-standard 2>/dev/null |
+    git -c core.fsmonitor= ls-files -z --others --exclude-standard 2>/dev/null |
       while IFS= read -r -d '' path; do
         case "$path" in
           *.plan.md|*.spec.md)
