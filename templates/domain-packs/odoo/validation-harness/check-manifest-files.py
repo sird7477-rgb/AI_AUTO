@@ -76,7 +76,7 @@ def manifest_refs(manifest_path):
 
 
 def changed_modules(base, root):
-    files = run(["git", "--attr-source=" + _EMPTY_TREE, "diff", "--name-only", base, "--"]).splitlines()
+    files = run(["git", "--attr-source=" + _EMPTY_TREE, "-c", "core.fsmonitor=", "diff", "--name-only", base, "--"]).splitlines()
     files += run(["git", "ls-files", "--others", "--exclude-standard", "--"]).splitlines()
     prefix = root.rstrip("/") + "/"
     mods = set()

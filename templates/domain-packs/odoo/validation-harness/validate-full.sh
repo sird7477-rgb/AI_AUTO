@@ -68,8 +68,12 @@ else
   # silently "skip" the very commits being pushed (the gap the README warns about).
   # --attr-source=<empty-tree>: the worktree `--name-only` diff over the (untrusted) project runs
   # the in-repo clean filter to detect changes, so it is an RCE vector; ignore .gitattributes here.
+  # -c core.fsmonitor= kills the SEPARATE in-repo `.git/config` fsmonitor HOOK-PROGRAM exec vector
+  # (config, not attribute — --attr-source does NOT reach it) that fires as the worktree diff
+  # refreshes the index. This standalone validator does not source hooks/git-scrub.sh, so it pins
+  # both defenses inline. (The @{u}...HEAD diff below is tree-vs-tree — no worktree scan — so needs neither.)
   _attr_none="$(git -C "$PROJECT" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  RANGE_FILES="$(git -C "$PROJECT" --attr-source="$_attr_none" diff --name-only HEAD 2>/dev/null)"
+  RANGE_FILES="$(git -C "$PROJECT" --attr-source="$_attr_none" -c core.fsmonitor= diff --name-only HEAD 2>/dev/null)"
   if git -C "$PROJECT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
     RANGE_FILES="$RANGE_FILES
 $(git -C "$PROJECT" diff --name-only '@{u}...HEAD' 2>/dev/null)"

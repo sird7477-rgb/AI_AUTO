@@ -888,6 +888,22 @@ if [ "${REVIEW_INTEGRATION_ONLY:-0}" = "1" ]; then
   echo "[gate] integration-only pass: cross-task interaction review on light context (REVIEW_CONTEXT_DETAIL=${REVIEW_CONTEXT_DETAIL})"
 fi
 
+# R20 (CRITICAL): bind this gate run's verdict to a fresh, purged results dir.
+# (1) A copy/tarball tree can carry a hostile .omx/review-results/ holding `approve`
+# result files + a redirecting summary stamped at a FUTURE mtime; the old mtime-based
+# discovery in summarize-ai-reviews.sh would select that planted set over the real
+# reviewers and mint a genuine `proceed`. So PURGE every foreign/stale entry (keep only
+# the archive/ subdir) before the panel runs. (2) Export a unique REVIEW_RUN_ID so
+# run-ai-reviews.sh names its summary review-summary-<run-id>.md and summarize consumes
+# THAT exact file by run id (never by mtime). A planted file for any other/unknown run
+# id is neither retained by the purge nor selectable by run id.
+REVIEW_RESULTS_DIR="${OUT_DIR:-.omx/review-results}"
+if [ -d "${REVIEW_RESULTS_DIR}" ]; then
+  find "${REVIEW_RESULTS_DIR}" -mindepth 1 -maxdepth 1 ! -name 'archive' -exec rm -rf {} + 2>/dev/null || true
+fi
+REVIEW_RUN_ID="gate-$$-$(date +%s)-${RANDOM}"
+export REVIEW_RUN_ID
+
 echo "[gate] running AI reviews..."
 set +e
 "$AH/run-ai-reviews.sh"

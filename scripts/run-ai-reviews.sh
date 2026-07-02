@@ -257,7 +257,11 @@ GEMINI_OUT="${OUT_DIR}/gemini-review-${TIMESTAMP}.md"
 CODEX_ARCHITECT_FALLBACK_OUT="${OUT_DIR}/codex-architect-fallback-${TIMESTAMP}.md"
 CODEX_TEST_FALLBACK_OUT="${OUT_DIR}/codex-test-fallback-${TIMESTAMP}.md"
 CODEX_FALLBACK_SUMMARY_OUT="${OUT_DIR}/codex-fallback-summary-${TIMESTAMP}.md"
-SUMMARY_OUT="${OUT_DIR}/review-summary-${TIMESTAMP}.md"
+# R20: name the verdict-bearing summary by REVIEW_RUN_ID (not a bare timestamp) so
+# summarize-ai-reviews.sh can select THIS run's summary deterministically by run id
+# instead of by modification time. A planted future-mtime summary for a different /
+# unknown run id is therefore not selectable as the current run's verdict source.
+SUMMARY_OUT="${OUT_DIR}/review-summary-${REVIEW_RUN_ID}.md"
 MANIFEST_OUT="${OUT_DIR}/review-run-${REVIEW_RUN_ID}.md"
 EXTERNAL_RUNNER="${EXTERNAL_REVIEW_DIR}/run-reviewers-${TIMESTAMP}.sh"
 EXTERNAL_LATEST="${EXTERNAL_REVIEW_DIR}/run-reviewers-latest.sh"
@@ -407,6 +411,9 @@ cd "\${repo_root}"
 : "\${AI_AUTO_PRINCIPAL:=${ACTIVE_PRINCIPAL}}"
 : "\${AI_AUTO_PRINCIPAL_EVIDENCE:=${AI_AUTO_PRINCIPAL_EVIDENCE:-}}"
 : "\${REVIEW_RUN_ID:=${REVIEW_RUN_ID}}"
+# R20: export so the summarize-ai-reviews.sh call below (unchanged invocation) inherits
+# REVIEW_RUN_ID and binds to THIS run's summary by run id instead of by mtime.
+export REVIEW_RUN_ID
 : "\${RUNTIME_ADAPTER_SCRIPT:=${RUNTIME_ADAPTER_SCRIPT}}"
 : "\${RUNTIME_ADAPTER_CLAUDE_COMMAND:=${RUNTIME_ADAPTER_CLAUDE_COMMAND:-claude}}"
 : "\${RUNTIME_ADAPTER_AGY_COMMAND:=${RUNTIME_ADAPTER_AGY_COMMAND}}"

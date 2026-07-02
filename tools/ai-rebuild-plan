@@ -89,6 +89,16 @@ done
 TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
 
+# Source the canonical git-exec-env scrub (hooks/git-scrub.sh) BEFORE any worktree-scanning git
+# call below. This standalone entrypoint is pointed at ARBITRARY target repos and is NOT run under
+# the ai-auto launcher, so it does not otherwise carry the process-wide core.fsmonitor='' env pin;
+# without it a hostile target `.git/config core.fsmonitor=<program>` EXECUTES on our `git status`
+# (RCE). The pin is env-config (higher precedence than the target's repo-local config), so it
+# overrides the target's hostile value for every `git -C "$git_root"` call here. Presence-guarded
+# (`[ -f ] && bash -n` first) so `set -e` cannot abort on an absent/partial copy.
+# shellcheck source=../hooks/git-scrub.sh
+if [ -f "${AI_LAB_ROOT}/hooks/git-scrub.sh" ] && bash -n "${AI_LAB_ROOT}/hooks/git-scrub.sh" 2>/dev/null; then . "${AI_LAB_ROOT}/hooks/git-scrub.sh"; fi
+
 if ! git_root="$(git -C "$target_abs" rev-parse --show-toplevel 2>/dev/null)"; then
   echo "Target is not inside a git repository: ${target_abs}"
   exit 1

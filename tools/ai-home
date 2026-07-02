@@ -18,6 +18,15 @@ done
 TOOL_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 AI_LAB_ROOT="$(cd "${TOOL_DIR}/.." && pwd)"
 
+# Source the canonical git-exec-env scrub (hooks/git-scrub.sh) so `--status`'s worktree-scanning
+# `git status` below cannot execute a hostile `.git/config core.fsmonitor=<program>` (RCE). This
+# standalone entrypoint is NOT run under the ai-auto launcher, so it lacks the process-wide
+# core.fsmonitor='' env pin otherwise; the pin (env-config, higher precedence than repo-local
+# config) closes the fsmonitor HOOK-PROGRAM vector that --attr-source cannot reach. Presence-guarded
+# so `set -e` cannot abort on an absent/partial copy.
+# shellcheck source=../hooks/git-scrub.sh
+if [ -f "${AI_LAB_ROOT}/hooks/git-scrub.sh" ] && bash -n "${AI_LAB_ROOT}/hooks/git-scrub.sh" 2>/dev/null; then . "${AI_LAB_ROOT}/hooks/git-scrub.sh"; fi
+
 case "${1:-}" in
   -h|--help)
     cat <<'USAGE'

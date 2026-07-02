@@ -22,6 +22,25 @@ normalize_principal_runtime() {
 
 ACTIVE_PRINCIPAL="$(normalize_principal_runtime)"
 
+# R20 (HIGH): the ONLY trusted principal source besides an explicit AI_AUTO_PRINCIPAL.
+# Echo the launcher-declared principal_runtime iff the evidence file is a valid,
+# launcher-owned, workspace-matched, non-symlink principal record (mirrors
+# run-ai-reviews.sh's read_valid_launcher_principal); otherwise echo nothing. A
+# planted results/summary "Active principal:" line is NEVER consulted, so it can't
+# flip the excluded self or steer the quorum. (git rev-parse is not worktree-
+# scanning, so it needs no review_git hardening; matches the in-file uses below.)
+trusted_launcher_principal() {
+  local workspace ev declared
+  workspace="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+  ev="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
+  [ -f "${ev}" ] && [ ! -L "${ev}" ] || return 0
+  grep -Fqx "execution_mode=principal" "${ev}" || return 0
+  grep -Fqx "source=ai-auto-principal-launcher" "${ev}" || return 0
+  grep -Fqx "workspace=${workspace}" "${ev}" || return 0
+  declared="$(sed -n 's/^principal_runtime=//p' "${ev}" | head -1)"
+  case "${declared}" in codex|claude|gemini) printf '%s\n' "${declared}" ;; *) return 0 ;; esac
+}
+
 latest_file() {
   local pattern="$1"
   find "${RESULT_DIR}" -maxdepth 1 -type f -name "${pattern}" -printf '%T@ %p\n' 2>/dev/null \
@@ -30,21 +49,17 @@ latest_file() {
     | cut -d' ' -f2-
 }
 
+# R20 (CRITICAL): consume ONLY the CURRENT run's summary labels. A verdict-bearing
+# file is NEVER re-discovered by modification time here: mtime discovery let an
+# attacker plant future-mtime result files that summarize selected over the real
+# run. REVIEW_RUN_SUMMARY_FILE is bound to the current run below (by run id, not
+# mtime). When the bound summary or a label is absent, return empty so the verdict
+# fails CLOSED (missing -> blocked) rather than binding to a foreign/stale file.
 manifest_file() {
   local label="$1"
-  local fallback_pattern="$2"
-  local value=""
-
-  if [ -n "${REVIEW_RUN_SUMMARY_FILE:-}" ] && [ -f "${REVIEW_RUN_SUMMARY_FILE}" ]; then
-    value="$(sed -n "s/^- ${label}: //p" "${REVIEW_RUN_SUMMARY_FILE}" | tail -1)"
-  fi
-
-  if [ -n "${value}" ]; then
-    echo "${value}"
-    return 0
-  fi
-
-  latest_file "${fallback_pattern}"
+  # $2 (legacy mtime fallback pattern) is intentionally ignored: mtime is refused.
+  [ -n "${REVIEW_RUN_SUMMARY_FILE:-}" ] && [ -f "${REVIEW_RUN_SUMMARY_FILE}" ] || return 0
+  sed -n "s/^- ${label}: //p" "${REVIEW_RUN_SUMMARY_FILE}" | tail -1
 }
 
 is_failure_result() {
@@ -444,6 +459,12 @@ untracked_guard_block_reason() {
 
   [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
   guard_text="$(awk '
+    # R20 (MED): skip fenced code blocks (mirrors extract_verdict) so a forged
+    # "## Untracked Review Guard" section injected inside raw untracked-file bodies
+    # (embedded in ```markdown fences by collect-review-context.sh) cannot suppress
+    # a real material-untracked block.
+    /^```/ { in_code = !in_code; next }
+    in_code { next }
     /^## Untracked Review Guard$/ { in_guard=1; next }
     /^## / && in_guard { exit }
     in_guard { print }
@@ -465,6 +486,10 @@ phase_scope_guard_block_reason() {
 
   [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
   guard_text="$(awk '
+    # R20 (MED): skip fenced code blocks so a forged "## Phase Scope Guard" section
+    # inside raw untracked-file bodies cannot suppress a real out-of-phase block.
+    /^```/ { in_code = !in_code; next }
+    in_code { next }
     /^## Phase Scope Guard$/ { in_guard=1; next }
     /^## / && in_guard { exit }
     in_guard { print }
@@ -485,6 +510,10 @@ persona_gate_guard_block_reason() {
 
   [ -n "${context_file}" ] && [ -f "${context_file}" ] || return 1
   summary_text="$(awk '
+    # R20 (MED): skip fenced code blocks so a forged "## Diff Scope Summary" section
+    # inside raw untracked-file bodies cannot flip the persona-gate classifier.
+    /^```/ { in_code = !in_code; next }
+    in_code { next }
     /^## Diff Scope Summary$/ { in_summary=1; next }
     /^## / && in_summary { exit }
     in_summary { print }
@@ -1186,12 +1215,42 @@ TASK
   echo "${task_file}"
 }
 
-REVIEW_RUN_SUMMARY_FILE="$(latest_file 'review-summary-*.md')"
-if [ -z "${AI_AUTO_PRINCIPAL:-}" ] && [ -n "${REVIEW_RUN_SUMMARY_FILE}" ] && [ -f "${REVIEW_RUN_SUMMARY_FILE}" ]; then
-  # Strip a trailing CR so a CRLF-written summary does not yield an unsupported
-  # principal token. Keep the existing default when the inferred value is empty
-  # or unsupported, instead of blanking ACTIVE_PRINCIPAL.
-  INFERRED_ACTIVE_PRINCIPAL="$(sed -n 's/^- Active principal: //p' "${REVIEW_RUN_SUMMARY_FILE}" | tail -1 | tr -d '\r')"
+# R20 (CRITICAL): bind the verdict-bearing summary to the CURRENT run. When the run
+# id is known (the gate and the external runner always export REVIEW_RUN_ID) select
+# the summary by run id — NEVER by modification time — so a planted future-mtime
+# summary for a different / unknown run id can't be chosen. If that file is absent,
+# leave the binding empty so every verdict reads "missing" and the gate fails CLOSED.
+# The gate also PURGES foreign/stale entries from the results dir at run start, so a
+# planted set cannot survive into (or be named as) the current run.
+if [ -z "${REVIEW_RUN_SUMMARY_FILE:-}" ]; then
+  if [ -n "${REVIEW_RUN_ID:-}" ]; then
+    REVIEW_RUN_SUMMARY_FILE="${RESULT_DIR}/review-summary-${REVIEW_RUN_ID}.md"
+    [ -f "${REVIEW_RUN_SUMMARY_FILE}" ] || REVIEW_RUN_SUMMARY_FILE=""
+  else
+    # Legacy / isolated invocation with no run id: the caller owns RESULT_DIR (single-
+    # run fixtures, archive housekeeping) so its sole summary is the current run's.
+    REVIEW_RUN_SUMMARY_FILE="$(latest_file 'review-summary-*.md')"
+  fi
+fi
+
+# R20 (HIGH): derive the active principal from a TRUSTED source in strict precedence:
+#   1. explicit AI_AUTO_PRINCIPAL (already applied to ACTIVE_PRINCIPAL above);
+#   2. the validated launcher-owned principal-runtime evidence file;
+#   3. only then the "Active principal:" line of the CURRENT-RUN-BOUND summary.
+# The old code read (3) from an mtime-selected summary, so a planted future-mtime
+# results file could inject "Active principal: claude" and flip the excluded self /
+# steer the quorum. (3) is now safe ONLY because the summary is bound to this run
+# (run-id selected + results dir purged by the gate) and is written by run-ai-reviews
+# from ITS trusted principal derivation, never from an attacker file. If none of the
+# sources resolve, ACTIVE_PRINCIPAL stays at the default codex, which requires the
+# FULL external panel (claude AND gemini) and so fails SAFE (no reduced quorum).
+if [ -z "${AI_AUTO_PRINCIPAL:-}" ]; then
+  INFERRED_ACTIVE_PRINCIPAL="$(trusted_launcher_principal)"
+  if [ -z "${INFERRED_ACTIVE_PRINCIPAL}" ] && \
+     [ -n "${REVIEW_RUN_SUMMARY_FILE:-}" ] && [ -f "${REVIEW_RUN_SUMMARY_FILE}" ]; then
+    # Strip a trailing CR so a CRLF-written summary does not yield an unsupported token.
+    INFERRED_ACTIVE_PRINCIPAL="$(sed -n 's/^- Active principal: //p' "${REVIEW_RUN_SUMMARY_FILE}" | tail -1 | tr -d '\r')"
+  fi
   if [ -n "${INFERRED_ACTIVE_PRINCIPAL}" ]; then
     if INFERRED_NORMALIZED_PRINCIPAL="$(normalize_principal_runtime "${INFERRED_ACTIVE_PRINCIPAL}" 2>/dev/null)"; then
       ACTIVE_PRINCIPAL="${INFERRED_NORMALIZED_PRINCIPAL}"

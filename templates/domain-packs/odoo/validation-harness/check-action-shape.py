@@ -80,7 +80,7 @@ def changed_files(base, root):
     files = set()
     # --attr-source even here: git runs the in-repo clean filter to decide whether a worktree
     # file changed, so a `--name-only` worktree diff is ALSO a clean-filter RCE vector.
-    out = run(["git", "--attr-source=" + _EMPTY_TREE, "diff", "--name-only", base, "--", "*.py"])
+    out = run(["git", "--attr-source=" + _EMPTY_TREE, "-c", "core.fsmonitor=", "diff", "--name-only", base, "--", "*.py"])
     files.update(line for line in out.splitlines() if line.endswith(".py"))
     out = run(["git", "ls-files", "--others", "--exclude-standard", "--", "*.py"])
     files.update(line for line in out.splitlines() if line.endswith(".py"))
@@ -96,7 +96,7 @@ def added_lines(base, path, untracked):
         except OSError:
             return set()
         return set(range(1, n + 1))
-    out = run(["git", "--attr-source=" + _EMPTY_TREE, "diff", "--no-ext-diff", "--no-textconv", "-U0", base, "--", path])
+    out = run(["git", "--attr-source=" + _EMPTY_TREE, "-c", "core.fsmonitor=", "diff", "--no-ext-diff", "--no-textconv", "-U0", base, "--", path])
     lines = set()
     for line in out.splitlines():
         if line.startswith("@@"):

@@ -16,7 +16,11 @@ BASE_DB="${ODOO_BASE_DB:-base}"
 # git diff over the (untrusted) project IGNORE its in-repo .gitattributes, so an attacker's
 # attribute-driven clean/smudge/textconv/diff driver cannot exec. NOTE: git runs the clean filter
 # to detect a content change even on a `--name-only` worktree diff, so name-only is NOT exempt from
-# the clean-filter RCE vector — every worktree `git diff` below carries --attr-source.
+# the clean-filter RCE vector — every worktree `git diff` below carries --attr-source. Each worktree
+# diff ALSO carries `-c core.fsmonitor=` to kill the SEPARATE in-repo `.git/config` fsmonitor
+# HOOK-PROGRAM exec vector (config, not attribute — --attr-source does NOT reach it) that fires as
+# the diff refreshes the index; this standalone validator does not source hooks/git-scrub.sh. The
+# up...HEAD diffs are tree-vs-tree (no worktree scan) so they need neither.
 PROJ_ATTR_NONE="$(git -C "$PROJECT" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
 cd "$HERE"   # so `docker compose -f docker-compose.validate.yml` avoids spaces in $HERE
 dc() { docker compose -f docker-compose.validate.yml "$@"; }
@@ -39,7 +43,7 @@ else
   # not-yet-pushed changes (@{u}...HEAD). After commit the working tree is clean, so
   # `git diff HEAD` alone would skip the very commits being pushed in a pre-push hook.
   up="$(git -C "$PROJECT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
-  MODCOMMA="$({ git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" diff --name-only HEAD 2>/dev/null;
+  MODCOMMA="$({ git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" -c core.fsmonitor= diff --name-only HEAD 2>/dev/null;
                 [ -n "$up" ] && git -C "$PROJECT" diff --name-only "$up...HEAD" 2>/dev/null; } \
     | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
 fi
@@ -61,7 +65,7 @@ manifest_version_only_change() {  # $1=path ; 0 iff the only changed content lin
   # is worktree-vs-tree and STILL runs the clean filter even with --no-ext-diff --no-textconv).
   # The up...HEAD diff is tree-vs-tree (committed blobs, no worktree-blob conversion) so the flags
   # alone suffice there.
-  d="$( { git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" diff --no-ext-diff --no-textconv HEAD -- "$f" 2>/dev/null;
+  d="$( { git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" -c core.fsmonitor= diff --no-ext-diff --no-textconv HEAD -- "$f" 2>/dev/null;
           [ -n "${up:-}" ] && git -C "$PROJECT" diff --no-ext-diff --no-textconv "${up}...HEAD" -- "$f" 2>/dev/null; } \
         | grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' || true )"
   [ -n "$d" ] || return 1   # no detectable content change -> be safe, validate
@@ -75,7 +79,7 @@ asset_only_noop() {
   [ "${WARM_NO_ASSET_SKIP:-0}" = "1" ] && return 1
   [ "${EXPLICIT_MODS:-0}" = "1" ] && return 1
   local ca f
-  ca="$({ git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" diff --name-only HEAD 2>/dev/null;
+  ca="$({ git -C "$PROJECT" --attr-source="$PROJ_ATTR_NONE" -c core.fsmonitor= diff --name-only HEAD 2>/dev/null;
           [ -n "${up:-}" ] && git -C "$PROJECT" diff --name-only "${up}...HEAD" 2>/dev/null; } \
         | sort -u | sed -n 's#^custom-addons/.*#&#p' || true)"
   [ -n "$ca" ] || return 1   # nothing under custom-addons -> let the normal flow run
