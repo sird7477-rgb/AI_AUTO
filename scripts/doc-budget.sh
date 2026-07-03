@@ -127,6 +127,23 @@ check_current_guidance_diff() {
   fi
 }
 
+check_cumulative_guidance_diff() {
+  local cumulative_value="$1" own_value="$2" label="${3:-current guidance diff}" warn_at=150 fail_at=300
+
+  if [ "$own_value" -gt "$fail_at" ]; then
+    check_current_guidance_diff "$own_value" "own-change guidance diff"
+    return
+  fi
+
+  printf '[budget] %s net added lines: %s\n' "$label" "$cumulative_value"
+  if [ "$cumulative_value" -gt "$fail_at" ]; then
+    warn "${label} net added lines exceeds hard limit ${fail_at}; own-change guidance diff is ${own_value}, so cumulative debt is warning-only for this change"
+    echo "[budget] diff-scope reason: branch/completion guidance debt is outside this change's own guidance delta"
+  elif [ "$cumulative_value" -gt "$warn_at" ]; then
+    warn "${label} net added lines exceeds warning budget ${warn_at}"
+  fi
+}
+
 line_count() {
   local path="$1"
   if [ ! -f "$path" ]; then
@@ -198,6 +215,29 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     set +f
   fi
 
+  own_worktree_changed="$(
+    {
+      review_git diff --name-only 2>/dev/null || true
+      git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true
+      git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true
+    } | sed '/^[[:space:]]*$/d'
+  )"
+  own_tracked_changed="$(
+    {
+      review_git diff --name-only -- "${guidance_pathspecs[@]}" 2>/dev/null || true
+      git -c core.fsmonitor= diff --cached --name-only -- "${guidance_pathspecs[@]}" 2>/dev/null || true
+    } | sed '/^[[:space:]]*$/d'
+  )"
+  own_numstat="$(
+    {
+      review_git diff --no-ext-diff --no-textconv --numstat -- "${guidance_pathspecs[@]}" 2>/dev/null || true
+      git -c core.fsmonitor= diff --cached --no-ext-diff --no-textconv --numstat -- "${guidance_pathspecs[@]}" 2>/dev/null || true
+    }
+  )"
+  if [ -z "${own_worktree_changed}" ] && [ -z "${own_tracked_changed}" ] && git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    own_numstat="$(review_git diff --no-ext-diff --no-textconv --numstat HEAD^ HEAD -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
+  fi
+
   diff_numstat="$(review_git diff --no-ext-diff --no-textconv --numstat "${base_ref}" -- "${guidance_pathspecs[@]}" 2>/dev/null || true)"
   diff_added="$(printf '%s\n' "${diff_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
   diff_removed="$(printf '%s\n' "${diff_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
@@ -216,12 +256,21 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         esac
       done | awk '{ total += $1 } END { print total + 0 }'
   )"
+  own_added="$(printf '%s\n' "${own_numstat}" | awk '{ added += $1 } END { print added + 0 }')"
+  own_removed="$(printf '%s\n' "${own_numstat}" | awk '{ removed += $2 } END { print removed + 0 }')"
+  own_added=$((own_added + untracked_added))
+  own_net=$((own_added - own_removed))
+  if [ "$own_net" -lt 0 ]; then
+    own_net=0
+  fi
   diff_added=$((diff_added + untracked_added))
   diff_net=$((diff_added - diff_removed))
   if [ "$diff_net" -lt 0 ]; then
     diff_net=0
   fi
   printf '[budget] current guidance diff added lines: %s\n' "$diff_added"
+  printf '[budget] own-change guidance diff added lines: %s\n' "$own_added"
+  printf '[budget] own-change guidance diff net added lines: %s\n' "$own_net"
   if [ -n "${COMPLETION_BASE_REF}" ]; then
     check_current_guidance_diff "$diff_net" "branch-cumulative guidance diff" "warn"
 
@@ -239,10 +288,10 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       fi
       printf '[budget] completion-scoped guidance diff base: %s\n' "${completion_base_ref}"
       printf '[budget] completion-scoped guidance diff added lines: %s\n' "$completion_added"
-      check_current_guidance_diff "$completion_net" "completion-scoped guidance diff"
+      check_cumulative_guidance_diff "$completion_net" "$own_net" "completion-scoped guidance diff"
     fi
   else
-    check_current_guidance_diff "$diff_net" "current guidance diff"
+    check_cumulative_guidance_diff "$diff_net" "$own_net" "current guidance diff"
   fi
 
   # Plan/spec labeled artifacts are exempt from the guidance budget above, but

@@ -555,8 +555,18 @@ EOF
   return 1
 }
 
+default_untracked_doc_plan_allowed() {
+  local path="$1"
+  case "${path}" in
+    docs/*.md|docs/*.mdx|docs/*.txt|plans/*.md|plans/*.mdx|plans/*.txt)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 write_untracked_review_guard() {
-  local material allowlist allowlist_source in_scope filtered file
+  local material allowlist allowlist_source in_scope filtered file default_relaxed remaining
   material="$(
     git ls-files --others --exclude-standard 2>/dev/null |
       grep -E '^(plans|docs|scripts|tools|tests|templates)/|^AGENTS\.md$' || true
@@ -568,9 +578,25 @@ write_untracked_review_guard() {
     return 0
   fi
 
+  default_relaxed=""
+  remaining=""
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    if default_untracked_doc_plan_allowed "${file}"; then
+      default_relaxed="${default_relaxed}${default_relaxed:+
+}${file}"
+    else
+      remaining="${remaining}${remaining:+
+}${file}"
+    fi
+  done <<EOF
+${material}
+EOF
+  material="${remaining}"
+
   # Scope blocking material to an explicit allowlist, or derive one from tracked
   # changed paths. Out-of-scope files are still reported for transparency.
-  filtered=""
+  filtered="${default_relaxed}"
   allowlist="$(split_csv_lines "${REVIEW_UNTRACKED_ALLOWLIST}")"
   allowlist_source="explicit"
   if [ -z "${allowlist}" ]; then
@@ -597,6 +623,9 @@ EOF
   if [ -z "${material}" ]; then
     echo "guard_status: clear"
     if [ -n "${filtered}" ]; then
+      if [ -n "${default_relaxed}" ]; then
+        echo "default_docs_plans_allowlist: document_files_only"
+      fi
       echo "scope_allowlist_source: ${allowlist_source}"
       echo "scope_allowlist: $(printf '%s\n' "${allowlist}" | paste -sd ',' -)"
       echo "No in-scope untracked review artifacts. The following untracked files are outside the declared review scope and were not treated as blocking material:"
@@ -613,6 +642,9 @@ EOF
   echo "guard_status: material_untracked_artifacts_present"
   echo "manual_review_required: true"
   echo "manual_review_override: ${REVIEW_UNTRACKED_MANUAL_REVIEWED:-0}"
+  if [ -n "${default_relaxed}" ]; then
+    echo "default_docs_plans_allowlist: document_files_only"
+  fi
   if [ -n "${allowlist}" ]; then
     echo "scope_allowlist_source: ${allowlist_source}"
     echo "scope_allowlist: $(printf '%s\n' "${allowlist}" | paste -sd ',' -)"

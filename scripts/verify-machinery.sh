@@ -490,8 +490,37 @@ echo "[verify] testing guidance document budget cumulative-vs-base accounting...
   ./scripts/doc-budget.sh > "${tmp_dir}/budget-cumulative-main.out"
   grep -q "current guidance diff net added lines: 0" "${tmp_dir}/budget-cumulative-main.out"
 
+  # AA-1 / ST-P1-75: shared-branch guidance debt must remain visible but must
+  # not hard-block a current change whose own guidance delta is zero.
+  git checkout -q -b shared-debt-diff-scope
+  : > docs/SHARED_DEBT.md
+  for i in $(seq 1 310); do
+    printf 'shared branch guidance debt %s\n' "$i" >> docs/SHARED_DEBT.md
+  done
+  git add docs/SHARED_DEBT.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed shared guidance debt"
+  mkdir -p custom-addons
+  printf '.o_form_view { color: #123456; }\n' > custom-addons/current.css
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-own-zero-pass.out"
+  grep -q "current guidance diff net added lines: 310" "${tmp_dir}/budget-own-zero-pass.out"
+  grep -q "own-change guidance diff net added lines: 0" "${tmp_dir}/budget-own-zero-pass.out"
+  grep -q "diff-scope reason: branch/completion guidance debt is outside this change's own guidance delta" "${tmp_dir}/budget-own-zero-pass.out"
+
+  : > docs/OWN_BLOAT.md
+  for i in $(seq 1 310); do
+    printf 'own guidance bloat %s\n' "$i" >> docs/OWN_BLOAT.md
+  done
+  if ./scripts/doc-budget.sh > "${tmp_dir}/budget-own-bloat-fail.out" 2>&1; then
+    echo "[verify] doc-budget accepted own-change guidance bloat"
+    exit 1
+  fi
+  grep -q "own-change guidance diff net added lines: 310" "${tmp_dir}/budget-own-bloat-fail.out"
+  grep -q "own-change guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-own-bloat-fail.out"
+  rm -rf custom-addons docs/OWN_BLOAT.md
+
   # A task/run baseline can narrow the hard-fail decision to the current work
   # while still reporting the branch-cumulative bloat as a warning.
+  git checkout -q main
   git checkout -q -b bloated-feature
   : > docs/BLOAT.md
   for i in $(seq 1 310); do
@@ -514,7 +543,7 @@ echo "[verify] testing guidance document budget cumulative-vs-base accounting...
     echo "[verify] doc-budget accepted completion-scoped guidance bloat"
     exit 1
   fi
-  grep -q "completion-scoped guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-completion-scope-fail.out"
+  grep -q "own-change guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-completion-scope-fail.out"
 )
 
 echo "[verify] testing doc-budget completion base auto-derivation from launcher evidence (ST-P1-64)..."
@@ -567,13 +596,13 @@ echo "[verify] testing doc-budget completion base auto-derivation from launcher 
   grep -q "completion-scoped guidance diff net added lines: 1" "${tmp_dir}/evidence-pass.out"
 
   # Anti-evasion: if THIS run itself adds >300 guidance lines AFTER launch, the
-  # completion-scoped check still hard-fails (split-to-evade stays closed).
+  # own-change check still hard-fails.
   : > docs/TASK_BLOAT.md
   for i in $(seq 1 310); do printf 'this-run guidance line %s\n' "$i" >> docs/TASK_BLOAT.md; done
   if DOC_BUDGET_COMPLETION_BASE_REF="${got}" ./scripts/doc-budget.sh > "${tmp_dir}/evidence-fail.out" 2>&1; then
     echo "[verify] completion base let this-run guidance bloat through"; exit 1
   fi
-  grep -q "completion-scoped guidance diff net added lines exceeds hard limit" "${tmp_dir}/evidence-fail.out"
+  grep -q "own-change guidance diff net added lines exceeds hard limit" "${tmp_dir}/evidence-fail.out"
   rm -f docs/TASK_BLOAT.md
 
   # Tampered / wrong-state evidence must fail closed (no base -> branch-cumulative).
@@ -3223,6 +3252,17 @@ echo "[verify] testing review context edge cases..."
   grep -q "test-spec-fixture.md" .omx/review-context/latest-review-context.md
   mkdir -p plans
   printf '# Candidate Plan\n' > plans/candidate.md
+  "${context_script}" >/dev/null
+  grep -q "guard_status: clear" .omx/review-context/latest-review-context.md
+  grep -q "default_docs_plans_allowlist: document_files_only" .omx/review-context/latest-review-context.md
+  grep -q "plans/candidate.md" .omx/review-context/latest-review-context.md
+
+  printf 'print("not a plan")\n' > plans/candidate.py
+  "${context_script}" >/dev/null
+  grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md
+  grep -q "plans/candidate.py" .omx/review-context/latest-review-context.md
+  rm plans/candidate.py
+
   mkdir -p tests
   printf 'def test_candidate():\n    assert True\n' > tests/test_candidate.py
   "${context_script}" >/dev/null
@@ -3232,11 +3272,12 @@ echo "[verify] testing review context edge cases..."
 
   # Untracked scope allowlist: a docs/spec-draft targeted review can scope the
   # untracked guard to declared paths so unrelated untracked files are reported
-  # but do not block, while in-scope material still requires review.
+  # but do not block. The plan markdown itself is covered by the default
+  # docs/plans document allowlist, so no in-scope material remains.
   REVIEW_UNTRACKED_ALLOWLIST="plans/candidate.md" "${context_script}" >/dev/null
-  grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md
+  grep -q "guard_status: clear" .omx/review-context/latest-review-context.md
   grep -q "scope_allowlist: plans/candidate.md" .omx/review-context/latest-review-context.md
-  grep -q "Untracked files outside the declared review scope" .omx/review-context/latest-review-context.md
+  grep -q "outside the declared review scope" .omx/review-context/latest-review-context.md
   grep -q "tests/test_candidate.py" .omx/review-context/latest-review-context.md
 
   # An allowlist that matches no material untracked file clears the guard while

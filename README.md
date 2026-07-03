@@ -104,6 +104,9 @@ REVIEW_INCLUDE_UNTRACKED_CONTENT=1 REVIEW_UNTRACKED_MANUAL_REVIEWED=1 ./scripts/
 For targeted diffs, review context derives the untracked allowlist from tracked
 changed paths. Set `REVIEW_UNTRACKED_ALLOWLIST` only when you need to override
 that scope; unrelated untracked files are reported but do not block the gate.
+Untracked document-shaped files under `docs/` or `plans/` (`.md`, `.mdx`,
+`.txt`) are treated as local planning/docs artifacts by default. Code-like files
+in those directories still count as material untracked review artifacts.
 
 Check first-time ai-lab checkout setup:
 
