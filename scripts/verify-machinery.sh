@@ -10175,7 +10175,15 @@ SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|c
 # shell keyword that introduces a command (if/then/do/else/elif/while/until/eval/xargs). PLUS, before
 # git: (a) leading ENV-ASSIGNMENTS (`GIT_OPTIONAL_LOCKS=0 git …`, `FOO=bar git …`), and (b) wrapper
 # commands WITH THEIR OWN ARGS (`env FOO=bar git …`, `sudo -n git …`, `nice -n 10 git …`,
-# `ionice/stdbuf/timeout … git …`). A backslash LINE-CONTINUATION between `git` and its subcommand is
+# `ionice/stdbuf/timeout … git …`). R27 (future-site defense-in-depth): the WRAPPER alphabet is a
+# WIDENED explicit list — beyond the exec/env wrappers it now covers process/namespace wrappers
+# (`setsid|flock|chrt|strace|ltrace|setpriv|proot|unshare|taskset|catchsegv|nsenter|runuser|doas`)
+# so a NON-enumerated exec wrapper (`setsid git status`, `flock /tmp/l git status`, `chrt -f 1 git …`)
+# no longer slips the guard over an untrusted repo. Wrappers taking a POSITIONAL arg before the
+# command (`flock <path>`, `taskset 0x1`, `setpriv --reuid 1`) are handled by the arg group's third
+# alt `\s+(?!-)(?!…git…)\S+` — a NON-dash, NON-git word (git-excluded so it stops AT the command);
+# the whole arg group is ATOMIC `(?>…)` so it stays LINEAR (the git-exclusion removes all backtrack).
+# A backslash LINE-CONTINUATION between `git` and its subcommand is
 # handled by the logical-line join in the caller (physical lines are joined before matching).
 # R24 (future-site defense-in-depth): four idiomatic-but-un-hardened forms are ALSO caught so a
 # maintainer cannot land a fresh un-hardened site under them (all currently ZERO shipped sites):
@@ -10201,7 +10209,7 @@ SUBS = r'diff|show|log|blame|status|checkout|restore|reset|stash|apply|archive|c
 #       lines are not scanned.
 INVOKE = re.compile(
     r'(?:(?:^|[;&|(){}`"\x27!]|\b(?:if|then|do|else|elif|while|until|eval|xargs)\b[^;#]*?\s)'
-    r'\s*(?:[0-9]*(?:>>?|<)(?:&[0-9-]+|\S+)?\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+|(?:sudo|env|command|time|nohup|exec|builtin|nice|ionice|stdbuf|timeout)(?:\s+-\S+|\s+[A-Za-z_][A-Za-z0-9_]*=\S*|\s+\d+)*\s+)*'
+    r'\s*(?:[0-9]*(?:>>?|<)(?:&[0-9-]+|\S+)?\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+|(?:sudo|env|command|time|nohup|exec|builtin|nice|ionice|stdbuf|timeout|setsid|flock|chrt|strace|ltrace|setpriv|proot|unshare|taskset|catchsegv|nsenter|runuser|doas)(?>(?:\s+-\S+|\s+[A-Za-z_][A-Za-z0-9_]*=\S*|\s+(?!-)(?!(?:review_)?\\?git\b)\S+)*)\s+)*'
     r'(?:review_)?\\?git\b(?>(?:\s+-[Cc]\s+(?!-)\S+|\s+--(?:git-dir|work-tree|namespace|super-prefix|exec-path)\s+(?!-)\S+|\s+--[A-Za-z][\w-]*(?:=\S*)?|\s+-\w+)*)\s+(' + SUBS + r')(?![\w.=-]))'
     r'|(?:"git"\s*,(?:[^]]*?,)?\s*"(' + SUBS + r')"\s*,?)'
     r'|(?:\[(?:[^\]]*,)?\s*"(' + SUBS + r')")'
@@ -10893,6 +10901,36 @@ PY
   _rc=0; timeout 10 python3 "${guard}" "${tmp_dir}/redos" >/dev/null 2>&1 || _rc=$?
   [ "${_rc}" -ne 124 ] \
     || { echo "[verify] R9-DRIFT: control b24-redos (N=40 option-token line) did NOT complete within 10s — INVOKE option group is non-linear (ReDoS)"; exit 1; }
+  # b25 (R27 WRAPPER-alphabet widening): a GUARDED subcommand behind a NON-enumerated process/exec/
+  # namespace wrapper (`setsid|flock|chrt|strace|setpriv|unshare|taskset|…`) PRE-fix slipped the guard
+  # (INVOKE.search -> None -> the un-hardened status site was skipped, an RCE false-green). Each such
+  # UN-hardened `git status` MUST now be FLAGGED — including the forms whose wrapper takes a POSITIONAL
+  # arg before the command (`flock <path>`, `chrt -f 1`, `setpriv --reuid 1`, `taskset 0x1`).
+  for _b25 in \
+      'setsid git status --short' \
+      'flock /tmp/l git status --short' \
+      'chrt -f 1 git status --short' \
+      'strace -f git status --short' \
+      'setpriv --reuid 1 git status --short' \
+      'unshare git status --short' \
+      'taskset 0x1 git status --short'; do
+    printf '%s\n' "${_b25}" > "${tmp_dir}/fake/scripts/b25.sh"
+    python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+      && { echo "[verify] R9-DRIFT: control b25 (wrapper-alphabet evasion) NOT caught — non-enumerated wrapper still slips: ${_b25}"; exit 1; }
+  done
+  # b25-hardened: a properly-pinned status behind a POSITIONAL-arg wrapper (rule-4 attr-source+fsmonitor
+  # AND rule-7 hooksPath) MUST PASS — proves the widening flags the UN-hardened site, not the wrapper.
+  printf '%s\n' 'flock /tmp/l git -c core.hooksPath=/dev/null --attr-source="$ET" -c core.fsmonitor= status --short' \
+    > "${tmp_dir}/fake/scripts/b25.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b25-hardened (wrapper + fully-pinned status) FALSE-POSITIVED"; exit 1; }
+  # b25-nonfp: the shipped `flock <fd>` fd-lock (NO git on the line) and a git-NAMED PATH ARG to a
+  # non-git command MUST stay CLEAN — the widened wrapper set must not manufacture a new false-positive.
+  printf 'flock 8 || exit 1\nexec 9>"$lock"; flock 9\nai-domain-pack --target "$git_root" status || true\n' \
+    > "${tmp_dir}/fake/scripts/b25.sh"
+  python3 "${guard}" "${tmp_dir}/fake" >/dev/null 2>&1 \
+    || { echo "[verify] R9-DRIFT: control b25-nonfp (flock fd-lock / git-named path arg) FALSE-POSITIVED — widened wrapper set over-broad"; exit 1; }
+  rm -f "${tmp_dir}/fake/scripts/b25.sh"
 )
 
 echo "[verify] testing R13-WORKTREE-RCE (tools/ai-worktree's 'git worktree add' over a HOSTILE repo must NOT execute the in-repo .gitattributes-bound filter.<x>.smudge driver while checking out the new tree; inline --attr-source=<empty-tree> disarms it — this is the tmux-hook auto-invoked RCE)..."
