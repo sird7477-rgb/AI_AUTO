@@ -107,7 +107,7 @@ principal_evidence_hmac() {
 # Canonical trust record the evidence_hmac covers (args: principal workspace). Always PIPED
 # directly into the hmac (never via $()) so writer and readers hash byte-identical input.
 principal_evidence_canonical() {
-  printf 'principal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "$1" "$2"
+  printf 'marker_type=principal_evidence\nprincipal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "$1" "$2"
 }
 # 0 iff <file> carries a framework-written evidence_hmac matching canonical(<principal>,<workspace>).
 principal_evidence_hmac_ok() {

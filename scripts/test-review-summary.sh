@@ -1423,7 +1423,7 @@ case_provenance_principal_evidence_gate() {
     # launcher would) over the canonical trust fields; the command-substitution strip + trailing
     # printf '\n' feeds review_provenance_hmac the SAME bytes the reader recomputes.
     mkdir -p "$(dirname "${AI_AUTO_PRINCIPAL_EVIDENCE}")"
-    ev_rec="$(printf 'principal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${dir}")"
+    ev_rec="$(printf 'marker_type=principal_evidence\nprincipal_runtime=claude\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${dir}")"
     { printf '%s\n' "${ev_rec}"; printf 'evidence_hmac=%s\n' "$(printf '%s\n' "${ev_rec}" | review_provenance_hmac)"; } > "${AI_AUTO_PRINCIPAL_EVIDENCE}"
     review_provenance_record
     [ "$(review_provenance_decision)" = "skip" ] || { echo "[summary-test] evidence_gate: expected skip with valid matching evidence"; exit 1; }

@@ -120,11 +120,35 @@ machinery_memo_ensure_key() {
   return 1
 }
 
+# Refuse an in-tree key path (attacker-readable) exactly like the other 3 marker readers. Delegates
+# to review_provenance_key_in_tree when the shared block is sourced (the gate); else a standalone
+# realpath-vs-toplevel check (the pre-commit hook). 0 == in-tree == REFUSE.
+machinery_memo_key_in_tree() {
+  if command -v review_provenance_key_in_tree >/dev/null 2>&1; then review_provenance_key_in_tree; return; fi
+  local keyfile top rp
+  keyfile="$(machinery_memo_key_file)"
+  top="$(review_git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "${top}" ] || return 1
+  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
+  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  case "${rp}/" in "${top}/"*) return 0 ;; esac
+  return 1
+}
+
+# Domain-tag the signed surface hash so a valid HMAC of one marker type cannot be replayed as a
+# machinery-memo skip under the shared key. Writer and reader BOTH pipe through this.
+machinery_memo_canonical() {
+  printf 'marker_type=machinery_memo\n%s' "$1"
+}
+
 # HMAC-SHA256(stdin) keyed by the out-of-tree secret (read from FILE, never argv/env). Empty output
-# when the key is absent/empty/untrusted -> caller fails closed (no valid HMAC => run the suite).
+# when the key is absent/empty/untrusted/IN-TREE -> caller fails closed (no valid HMAC => run the
+# suite). The in-tree refusal matches review_provenance_hmac / principal_evidence_hmac (F2): an
+# attacker-readable in-tree key path must NOT mint a forgeable skip HMAC.
 machinery_memo_hmac() {
   local keyfile mode
   keyfile="$(machinery_memo_key_file)"
+  machinery_memo_key_in_tree && return 0
   [ -s "${keyfile}" ] || return 0
   [ -O "${keyfile}" ] || return 0
   mode="$(stat -c '%a' "${keyfile}" 2>/dev/null || echo 777)"
@@ -144,7 +168,7 @@ machinery_memo_should_skip() {
   [ -n "${recorded}" ] && [ "${recorded}" = "${hash}" ] || return 1
   stored="$(sed -n 's/^hmac=//p' "${MACHINERY_MEMO_MARKER}" 2>/dev/null | head -1)"
   [ -n "${stored}" ] || return 1
-  expected="$(printf '%s' "${recorded}" | machinery_memo_hmac)"
+  expected="$(machinery_memo_canonical "${recorded}" | machinery_memo_hmac)"
   [ -n "${expected}" ] || return 1
   [ "${expected}" = "${stored}" ]
 }
@@ -169,7 +193,7 @@ machinery_memo_record_pass() {
   # and the marker will NOT satisfy a future skip (fail-closed -> the suite re-runs), so a forger
   # can never ride it.
   machinery_memo_ensure_key >/dev/null 2>&1 || true
-  mac="$(printf '%s' "${rec}" | machinery_memo_hmac)"
+  mac="$(machinery_memo_canonical "${rec}" | machinery_memo_hmac)"
   mkdir -p "$(dirname "${MACHINERY_MEMO_MARKER}")" 2>/dev/null || return 0
   printf '%s\nhmac=%s\n' "${rec}" "${mac}" > "${MACHINERY_MEMO_MARKER}" 2>/dev/null || true
 }

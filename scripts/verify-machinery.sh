@@ -3300,7 +3300,7 @@ MARKER
   # shellcheck disable=SC1090
   source <(awk '/^reviewer_marker_canonical\(\)/,/^}/' scripts/run-ai-reviews.sh)
   principal_evidence_ensure_key >/dev/null 2>&1 || true
-  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical "${tmp_dir}/state/claude.disabled" | principal_evidence_hmac)" >> "${tmp_dir}/state/claude.disabled"
+  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical claude "${tmp_dir}/state/claude.disabled" | principal_evidence_hmac)" >> "${tmp_dir}/state/claude.disabled"
 
   set +e
   # Keep inherited reviewer-reset requests from deleting this fixture marker.
@@ -12169,7 +12169,7 @@ echo "[verify] testing BLUE-R24-EMPTYKEY (#1 CRITICAL: a 0-byte provenance key i
       local hash head flags ts rec forged
       hash="$(review_provenance_hash)"; head="$(git rev-parse HEAD 2>/dev/null || true)"
       flags="$(review_provenance_flags)"; ts="2026-06-30T00:00:00+00:00"
-      rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' "${hash}" "${head}" "${flags}" "${ts}")"
+      rec="$(printf 'marker_type=review_provenance\napproved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' "${hash}" "${head}" "${flags}" "${ts}")"
       forged="$(printf '%s' "${rec}" | AI_AUTO_PROV_KEYFILE="${AI_AUTO_PROVENANCE_KEY_FILE}" python3 -c 'import hmac,hashlib,os,sys;k=open(os.environ["AI_AUTO_PROV_KEYFILE"],"rb").read();sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())')"
       { printf '%s\n' "${rec}"; printf 'approved_hmac=%s\n' "${forged}"; } > "${REVIEW_STATE_DIR}/approved-provenance.env"
       review_provenance_decision )
@@ -12408,16 +12408,146 @@ echo "[verify] testing BLUE-R25-PRINCIPAL-AUTH F2 (a planted reviewer .disabled 
 
   # GENUINE: ensure key + append the framework marker_hmac over the canonical fields -> HONORED.
   principal_evidence_ensure_key || { echo "[verify] F2: could not ensure out-of-tree key"; exit 1; }
-  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical "${plant}" | principal_evidence_hmac)" >> "${plant}"
+  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical claude "${plant}" | principal_evidence_hmac)" >> "${plant}"
   reviewer_disabled_authentic claude \
     || { echo "[verify] F2: framework HMAC-bound .disabled was IGNORED (genuine disable broken)"; exit 1; }
 
   # a marker_hmac bound to a DIFFERENT reviewer's canonical fields must NOT authenticate this one.
   plantg="$(reviewer_disabled_file gemini)"
   printf 'reviewer=gemini\ndisabled_at=%s\nreason=planted\ndetails=planted\ndisable_class=persistent\nsource_run_id=x\n' "$(date -Iseconds)" > "${plantg}"
-  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical "${plant}" | principal_evidence_hmac)" >> "${plantg}"
+  printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical claude "${plant}" | principal_evidence_hmac)" >> "${plantg}"
   if reviewer_disabled_authentic gemini; then
     echo "[verify] F2: a marker_hmac bound to a DIFFERENT reviewer authenticated (canonical binding broken)"; exit 1
   fi
   echo "[verify] BLUE-R25-PRINCIPAL-AUTH F2: pass"
+)
+
+echo "[verify] testing BLUE-R26-REVIEWER-BIND F1 (a genuine framework claude.disabled copied to gemini.disabled is REJECTED for gemini [reviewer identity is bound into the SIGNED canonical] so gemini still runs; a genuine gemini.disabled is honored; a cross-repo replay [different workspace] is rejected. Pre-fix content-only canonical ACCEPTS the cp forgery => non-vacuous)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"
+  export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key"; ( umask 077; openssl rand -hex 32 > "${AI_AUTO_PROVENANCE_KEY_FILE}" ); chmod 600 "${AI_AUTO_PROVENANCE_KEY_FILE}"
+  # shellcheck disable=SC1090
+  source <(sed -n '/# >>> principal-evidence-auth/,/# <<< principal-evidence-auth/p' scripts/run-ai-reviews.sh)
+  # shellcheck disable=SC1090
+  source <(awk '/^reviewer_disabled_file\(\)/,/^}/' scripts/run-ai-reviews.sh)
+  # shellcheck disable=SC1090
+  source <(awk '/^reviewer_marker_canonical\(\)/,/^}/' scripts/run-ai-reviews.sh)
+  # shellcheck disable=SC1090
+  source <(awk '/^reviewer_disabled_authentic\(\)/,/^}/' scripts/run-ai-reviews.sh)
+
+  mkrepo() { mkdir -p "$1"; ( cd "$1"; git init -q; git config user.email t@e.x; git config user.name T; printf 'x\n' > a; git add a; git -c user.email=t@e.x -c user.name=T commit -qm init ); }
+  mkrepo "${tmp_dir}/repoA"
+
+  ( cd "${tmp_dir}/repoA"
+    export REVIEW_STATE_DIR="${tmp_dir}/repoA/.omx/rs"; mkdir -p "${REVIEW_STATE_DIR}"
+    cf="$(reviewer_disabled_file claude)"
+    printf 'reviewer=claude\ndisabled_at=%s\nreason=usage_limit\ndetails=transient\ndisable_class=transient\nsource_run_id=genuine\n' "$(date -Iseconds)" > "${cf}"
+    principal_evidence_ensure_key || { echo "[verify] BLUE-R26 F1: could not ensure out-of-tree key"; exit 1; }
+    printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical claude "${cf}" | principal_evidence_hmac)" >> "${cf}"
+    reviewer_disabled_authentic claude || { echo "[verify] BLUE-R26 F1: genuine claude.disabled REJECTED (bind broke the honest path)"; exit 1; }
+
+    # ATTACK: cp the genuine claude marker into the gemini slot (attacker has NO key). Reviewer
+    # identity is reconstructed from the ARG, so verifying AS gemini yields reviewer=gemini and the
+    # HMAC fails -> IGNORED -> gemini runs.
+    gf="$(reviewer_disabled_file gemini)"
+    cp "${cf}" "${gf}"
+    if reviewer_disabled_authentic gemini; then
+      echo "[verify] BLUE-R26 F1: cp claude.disabled->gemini.disabled HONORED for gemini (cross-identity replay OPEN)"; exit 1
+    fi
+
+    # Pre-fix CONTROL: the OLD content-only canonical (no identity/workspace binding) HONORS the cp
+    # forgery -> proves the rejection above is the identity binding, not something incidental.
+    old_canonical() { grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id)=' "$1" 2>/dev/null; }
+    printf 'reviewer=claude\ndisabled_at=x\nreason=usage_limit\ndetails=transient\ndisable_class=transient\nsource_run_id=genuine\n' > "${gf}"
+    printf 'marker_hmac=%s\n' "$(old_canonical "${gf}" | principal_evidence_hmac)" >> "${gf}"
+    old_got="$(sed -n 's/^marker_hmac=//p' "${gf}" | head -n 1)"
+    old_exp="$(old_canonical "${gf}" | principal_evidence_hmac)"
+    [ -n "${old_got}" ] && [ "${old_got}" = "${old_exp}" ] || { echo "[verify] BLUE-R26 F1 control: old content-only scheme did NOT accept the forgery (fixture vacuous)"; exit 1; }
+    rm -f "${gf}"
+
+    # A GENUINE gemini.disabled IS honored (the bind is correct, not a blanket deny).
+    printf 'reviewer=gemini\ndisabled_at=%s\nreason=usage_limit\ndetails=transient\ndisable_class=transient\nsource_run_id=genuine\n' "$(date -Iseconds)" > "${gf}"
+    printf 'marker_hmac=%s\n' "$(reviewer_marker_canonical gemini "${gf}" | principal_evidence_hmac)" >> "${gf}"
+    reviewer_disabled_authentic gemini || { echo "[verify] BLUE-R26 F1: genuine gemini.disabled was IGNORED (bind too strict)"; exit 1; }
+  ) || exit 1
+
+  # CROSS-REPO REPLAY: the genuine repoA claude.disabled copied into repoB (different git toplevel)
+  # is rejected there — the live workspace is bound into the signed canonical.
+  mkrepo "${tmp_dir}/repoB"
+  ( cd "${tmp_dir}/repoB"
+    export REVIEW_STATE_DIR="${tmp_dir}/repoB/.omx/rs"; mkdir -p "${REVIEW_STATE_DIR}"
+    cp "${tmp_dir}/repoA/.omx/rs/claude.disabled" "${REVIEW_STATE_DIR}/claude.disabled"
+    if reviewer_disabled_authentic claude; then
+      echo "[verify] BLUE-R26 F1: cross-repo replay of claude.disabled HONORED in repoB (workspace not bound)"; exit 1
+    fi
+  ) || exit 1
+  echo "[verify] BLUE-R26-REVIEWER-BIND F1: pass"
+)
+
+echo "[verify] testing BLUE-R26-MEMO-INTREE F2 (machinery_memo_hmac REFUSES an in-tree [attacker-readable] key path — realpath resolves inside the git toplevel — so no forgeable self-test SKIP HMAC can be minted; an out-of-tree key still works. Pre-fix [no in-tree refusal] control MINTS an HMAC from the in-tree key => non-vacuous)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T; printf '.omx/\n' > .gitignore; printf 'x\n' > a; git add .; git -c user.email=t@e.x -c user.name=T commit -qm init )
+  ( cd "${proj}"
+    export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+    # shellcheck source=/dev/null
+    . "${repo_root}/scripts/machinery-memo.sh"
+    # IN-TREE key (inside the project toplevel, attacker-readable).
+    mkdir -p "${proj}/.omx/state"
+    export AI_AUTO_PROVENANCE_KEY_FILE="${proj}/.omx/state/intree.key"
+    ( umask 077; openssl rand -hex 32 > "${AI_AUTO_PROVENANCE_KEY_FILE}" ); chmod 600 "${AI_AUTO_PROVENANCE_KEY_FILE}"
+    machinery_memo_key_in_tree || { echo "[verify] BLUE-R26 F2: in-tree key path not detected as in-tree (guard broken)"; exit 1; }
+    out="$(printf 'attacker-surface' | machinery_memo_hmac)"
+    [ -z "${out}" ] || { echo "[verify] BLUE-R26 F2: machinery_memo_hmac minted an HMAC from an IN-TREE key (forgeable skip)"; exit 1; }
+    # Pre-fix CONTROL: a copy of machinery_memo_hmac WITHOUT the in-tree refusal mints a non-empty HMAC.
+    ctl_hmac() {
+      local keyfile mode
+      keyfile="$(machinery_memo_key_file)"
+      [ -s "${keyfile}" ] || return 0
+      [ -O "${keyfile}" ] || return 0
+      mode="$(stat -c '%a' "${keyfile}" 2>/dev/null || echo 777)"
+      [ $(( 0${mode} & 077 )) -eq 0 ] || return 0
+      AI_AUTO_MEMO_KEYFILE="${keyfile}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_MEMO_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
+    }
+    ctl_out="$(printf 'attacker-surface' | ctl_hmac)"
+    [ -n "${ctl_out}" ] || { echo "[verify] BLUE-R26 F2 control: pre-fix hmac did NOT mint from the in-tree key (fixture vacuous)"; exit 1; }
+    # OUT-OF-TREE key still works (refusal is not a blanket deny).
+    export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/out.key"; ( umask 077; openssl rand -hex 32 > "${AI_AUTO_PROVENANCE_KEY_FILE}" ); chmod 600 "${AI_AUTO_PROVENANCE_KEY_FILE}"
+    out2="$(printf 'surface' | machinery_memo_hmac)"
+    [ -n "${out2}" ] || { echo "[verify] BLUE-R26 F2: out-of-tree key HMAC was empty (control path broken)"; exit 1; }
+  ) || exit 1
+  echo "[verify] BLUE-R26-MEMO-INTREE F2: pass"
+)
+
+echo "[verify] testing BLUE-R26-DOMAIN-SEP F3 (each of the 4 markers signs under a UNIQUE marker_type domain tag, so a valid HMAC minted for one marker type is NOT accepted as another — cross-type isolation is enforced by the tag, not accidental field disjointness. Pre-fix [no tag] control shows an identical payload collides across types => non-vacuous)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"
+  export AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/k"; ( umask 077; openssl rand -hex 32 > "${AI_AUTO_PROVENANCE_KEY_FILE}" ); chmod 600 "${AI_AUTO_PROVENANCE_KEY_FILE}"
+  # shellcheck disable=SC1090
+  source <(sed -n '/# >>> principal-evidence-auth/,/# <<< principal-evidence-auth/p' scripts/run-ai-reviews.sh)
+  # Each writer canonical must carry its OWN domain tag (revert any tag -> this grep FAILs).
+  grep -q 'marker_type=reviewer_disabled' scripts/run-ai-reviews.sh || { echo "[verify] BLUE-R26 F3: reviewer_disabled tag missing"; exit 1; }
+  grep -q 'marker_type=principal_evidence' scripts/ai-principal-runtime.sh || { echo "[verify] BLUE-R26 F3: principal_evidence tag missing (ai-principal-runtime)"; exit 1; }
+  grep -q 'marker_type=principal_evidence' scripts/run-ai-reviews.sh || { echo "[verify] BLUE-R26 F3: principal_evidence tag missing (run-ai-reviews)"; exit 1; }
+  grep -q 'marker_type=machinery_memo' scripts/machinery-memo.sh || { echo "[verify] BLUE-R26 F3: machinery_memo tag missing"; exit 1; }
+  grep -q 'marker_type=review_provenance' scripts/review-gate.sh || { echo "[verify] BLUE-R26 F3: review_provenance tag missing"; exit 1; }
+  # Same underlying payload, different domain tags -> DISTINCT HMACs (cross-type replay closed).
+  pay='shared-collision-payload'
+  h_memo="$(printf 'marker_type=machinery_memo\n%s' "${pay}" | principal_evidence_hmac)"
+  h_rev="$(printf 'marker_type=reviewer_disabled\n%s' "${pay}" | principal_evidence_hmac)"
+  h_pe="$(printf 'marker_type=principal_evidence\n%s' "${pay}" | principal_evidence_hmac)"
+  h_prov="$(printf 'marker_type=review_provenance\n%s' "${pay}" | principal_evidence_hmac)"
+  [ -n "${h_memo}" ] && [ -n "${h_rev}" ] && [ -n "${h_pe}" ] && [ -n "${h_prov}" ] || { echo "[verify] BLUE-R26 F3: an HMAC was empty (key setup broken)"; exit 1; }
+  [ "${h_memo}" != "${h_rev}" ] && [ "${h_memo}" != "${h_pe}" ] && [ "${h_memo}" != "${h_prov}" ] \
+    && [ "${h_rev}" != "${h_pe}" ] && [ "${h_rev}" != "${h_prov}" ] && [ "${h_pe}" != "${h_prov}" ] \
+    || { echo "[verify] BLUE-R26 F3: two marker types produced the SAME HMAC for one payload (domain separation broken)"; exit 1; }
+  # Pre-fix CONTROL: with NO domain tag, an identical payload yields an identical HMAC across types.
+  u1="$(printf '%s' "${pay}" | principal_evidence_hmac)"
+  u2="$(printf '%s' "${pay}" | principal_evidence_hmac)"
+  [ -n "${u1}" ] && [ "${u1}" = "${u2}" ] || { echo "[verify] BLUE-R26 F3 control: untagged payloads did not collide (fixture vacuous)"; exit 1; }
+  echo "[verify] BLUE-R26-DOMAIN-SEP F3: pass"
 )

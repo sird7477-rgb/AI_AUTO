@@ -283,7 +283,7 @@ review_provenance_record() {
   # Canonical record + an HMAC over it keyed by the OUT-OF-TREE secret. The attacker owns the
   # tree and can forge every field incl. a matching approved_hash, but NOT this HMAC, so a
   # forged approved-provenance.env cannot pass review_provenance_authentic (=> full review).
-  rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
+  rec="$(printf 'marker_type=review_provenance\napproved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
     "${hash}" "${head}" "${flags}" "${ts}")"
   {
     printf '%s\n' "${rec}"
@@ -320,7 +320,7 @@ review_provenance_principal_evidence_ok() {
     # Out-of-tree-keyed HMAC: a planted evidence lacking a framework-written evidence_hmac is a
     # forgery -> a provenance skip must not ride it (fail open to full, as an absent file would).
     _pe_stored="$(sed -n 's/^evidence_hmac=//p' "${ev}" | head -1)"
-    _pe_expected="$(printf 'principal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${declared}" "${workspace}" | review_provenance_hmac)"
+    _pe_expected="$(printf 'marker_type=principal_evidence\nprincipal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${declared}" "${workspace}" | review_provenance_hmac)"
     [ -n "${_pe_stored}" ] && [ -n "${_pe_expected}" ] && [ "${_pe_stored}" = "${_pe_expected}" ] || return 1
     return 0
   fi
@@ -340,7 +340,7 @@ review_provenance_authentic() {
   [ -s "${keyfile}" ] || return 1
   stored="$(review_provenance_field approved_hmac)"
   [ -n "${stored}" ] || return 1
-  rec="$(printf 'approved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
+  rec="$(printf 'marker_type=review_provenance\napproved_hash=%s\napproved_head=%s\napproved_flags=%s\napproved_at=%s\n' \
     "$(review_provenance_field approved_hash)" \
     "$(review_provenance_field approved_head)" \
     "$(review_provenance_field approved_flags)" \

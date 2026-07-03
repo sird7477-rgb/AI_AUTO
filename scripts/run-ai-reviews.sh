@@ -83,7 +83,7 @@ principal_evidence_hmac() {
 # Canonical trust record the evidence_hmac covers (args: principal workspace). Always PIPED
 # directly into the hmac (never via $()) so writer and readers hash byte-identical input.
 principal_evidence_canonical() {
-  printf 'principal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "$1" "$2"
+  printf 'marker_type=principal_evidence\nprincipal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "$1" "$2"
 }
 # 0 iff <file> carries a framework-written evidence_hmac matching canonical(<principal>,<workspace>).
 principal_evidence_hmac_ok() {
@@ -118,8 +118,17 @@ principal_evidence_ensure_key() {
 # ONLY if it carries a framework-written marker_hmac over its canonical fields keyed by the same
 # out-of-tree secret. A planted/unauthenticated marker is IGNORED (the reviewer runs); disable_reviewer
 # writes the HMAC so genuine runtime disables still work.
+# Canonical SIGNED message ($1=reviewer identity to BIND, $2=marker file). The reviewer identity
+# and live repo are bound via the ARG + live git-toplevel (NOT the file body), plus a domain-tag
+# line, so a marker signed for one reviewer/repo cannot be replayed as another: a cp'd
+# claude.disabled verified as gemini reconstructs reviewer=gemini and fails the HMAC, and a
+# cross-repo copy reconstructs a different workspace= and fails. Domain tag keeps it non-collidable
+# with the other 3 marker types under the shared key.
 reviewer_marker_canonical() {
-  grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id)=' "$1" 2>/dev/null
+  local top
+  top="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+  printf 'marker_type=reviewer_disabled\nreviewer=%s\nworkspace=%s\n' "$1" "${top}"
+  grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id)=' "$2" 2>/dev/null
 }
 reviewer_disabled_authentic() {
   local f stored expected
@@ -127,7 +136,7 @@ reviewer_disabled_authentic() {
   [ -f "${f}" ] || return 1
   stored="$(sed -n 's/^marker_hmac=//p' "${f}" | head -n 1)"
   [ -n "${stored}" ] || return 1
-  expected="$(reviewer_marker_canonical "${f}" | principal_evidence_hmac)"
+  expected="$(reviewer_marker_canonical "$1" "${f}" | principal_evidence_hmac)"
   [ -n "${expected}" ] || return 1
   [ "${expected}" = "${stored}" ]
 }
@@ -798,7 +807,7 @@ disable_reviewer() {
   # project-controlled) cannot force a codex-only panel; only the framework, holding the key,
   # writes an authoritative marker. A genuine runtime disable ensures the key so it stays honored.
   if principal_evidence_ensure_key; then
-    _mk_hmac="$(reviewer_marker_canonical "${disabled_file}" | principal_evidence_hmac)"
+    _mk_hmac="$(reviewer_marker_canonical "${reviewer}" "${disabled_file}" | principal_evidence_hmac)"
     if [ -n "${_mk_hmac}" ]; then printf 'marker_hmac=%s\n' "${_mk_hmac}" >> "${disabled_file}"; fi
   fi
 
