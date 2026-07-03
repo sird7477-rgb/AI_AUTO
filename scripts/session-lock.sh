@@ -40,14 +40,26 @@ _session_lock_ttl() {
   printf '%s' "$t"
 }
 
+# Backward-clock-step tolerance (seconds). A LIVE holder's acquired_at is wall-clock, so an
+# NTP/WSL/VM backstep makes its age NEGATIVE — indistinguishable, by sign alone, from a forged
+# future lock. Treat a small negative age (-GRACE <= age < 0) as a plausible skew of a FRESH
+# lock (respect it); only age < -GRACE is implausibly-future (forged/planted) -> stale.
+_session_lock_skew_grace() {
+  local g="${AI_AUTO_CLOCK_SKEW_GRACE_SECONDS:-300}"
+  case "$g" in ''|*[!0-9]*) g=300 ;; esac
+  printf '%s' "$g"
+}
+
 # Expired iff acquired_at is present AND (its age exceeds the TTL, OR its age is implausible:
-# NEGATIVE / future-dated, OR present-but-unparseable) — all with TTL>0. A future acquired_at
-# (clock roll-back, or a forged/planted lock) yields a NEGATIVE age that can never exceed the
-# TTL, so without this clamp a future-dated always-alive holder_pid (e.g. planted holder_pid=1)
-# would wedge the tree FOREVER, defeating the very TTL added to close that wedge. Clamping an
-# implausible age to STALE routes it through the race-safe reclaim instead. A MISSING/empty
-# acquired_at is still NOT expired (falls back to PID-liveness), so pre-TTL locks and a genuine
-# fresh legit lock (whose acquired_at ≈ now, age ≈ 0) are never reclaimed instantly.
+# past -GRACE into the future, OR present-but-unparseable) — all with TTL>0. A future acquired_at
+# yields a NEGATIVE age that can never exceed the TTL, so without a clamp a future-dated
+# always-alive holder_pid (e.g. planted holder_pid=1) would wedge the tree FOREVER, defeating the
+# TTL. BUT a bare `age<0 -> STALE` clamp is TOO strong: a LIVE holder's wall-clock acquired_at
+# goes negative under a real backward clock step (NTP/WSL/VM), and reclaiming it STEALS a live
+# lock (fail-open concurrency). So only age < -GRACE (implausibly future = forged/planted) is
+# STALE; a small backstep (-GRACE <= age < 0) is treated as a FRESH live lock and respected. A
+# MISSING/empty acquired_at is still NOT expired (falls back to PID-liveness), so pre-TTL locks and
+# a genuine fresh legit lock (whose acquired_at ≈ now, age ≈ 0) are never reclaimed instantly.
 _session_lock_expired() {
   local at="$1" ttl="$2" ts now age
   [ "$ttl" -gt 0 ] 2>/dev/null || return 1
@@ -56,7 +68,11 @@ _session_lock_expired() {
   [ -n "$ts" ] || return 0                             # ditto
   now="$(date +%s)"
   age=$((now - ts))
-  [ "$age" -lt 0 ] && return 0                         # future-dated (clock skew/forged) -> STALE
+  if [ "$age" -lt 0 ]; then
+    local grace; grace="$(_session_lock_skew_grace)"
+    [ "$age" -lt $(( -grace )) ] && return 0           # implausibly future (forged/planted) -> STALE
+    return 1                                            # within skew grace (backward step) -> FRESH, respect a live holder
+  fi
   [ "$age" -gt "$ttl" ]
 }
 

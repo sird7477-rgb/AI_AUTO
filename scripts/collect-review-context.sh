@@ -230,12 +230,22 @@ write_diff() {
   echo "No staged or unstaged tracked diff detected. Untracked files, if any, are shown in the Untracked Files section."
 }
 
+# Fence-break belt for INLINED file/verify BODIES (R26, HIGH): a body line that is a
+# bare ``` (optionally ```lang, or >=3 backticks) would CLOSE the surrounding
+# ```markdown/```text fence early, hoisting following attacker lines to column-0
+# instruction position — an indirect prompt injection of the LLM reviewer. Indent any
+# leading-backtick-fence line 4 spaces so it can never open/close a fence (mirrors the
+# R24 untracked-listing `sed 's/^/    /'` belt) while the body stays fully readable.
+neutralize_fence_breaks() {
+  sed 's/^\( *\)```/\1    ```/'
+}
+
 write_markdown_file() {
   local file="$1"
   echo "### $file"
   echo
   echo '```markdown'
-  sed -n '1,200p' "$file"
+  sed -n '1,200p' "$file" | neutralize_fence_breaks
   echo '```'
   echo
 }
@@ -457,7 +467,11 @@ write_diff_scope_summary() {
   echo "| --- | --- |"
   printf '%s\n' "${files}" | while IFS= read -r file; do
     [ -n "${file}" ] || continue
-    echo "| ${file} | $(classify_review_scope_for_path "${file}") |"
+    # F4 (R26): a filename may carry `|`; escape the cell delimiter so a hostile path
+    # cannot forge extra table columns or break out of the table cell.
+    local safe_file
+    safe_file="$(printf '%s' "${file}" | sed 's/|/\\|/g')"
+    echo "| ${safe_file} | $(classify_review_scope_for_path "${file}") |"
   done
 }
 
@@ -1486,13 +1500,13 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
       echo '```text'
       if [ "${LIGHTWEIGHT_CONTEXT}" -eq 1 ]; then
         echo "### Tail"
-        tail -"${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES}" "${OUT_DIR}/latest-verify-output.txt"
+        tail -"${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES}" "${OUT_DIR}/latest-verify-output.txt" | neutralize_fence_breaks
       else
         echo "### Head"
-        sed -n '1,160p' "${OUT_DIR}/latest-verify-output.txt"
+        sed -n '1,160p' "${OUT_DIR}/latest-verify-output.txt" | neutralize_fence_breaks
         echo
         echo "### Tail"
-        tail -120 "${OUT_DIR}/latest-verify-output.txt"
+        tail -120 "${OUT_DIR}/latest-verify-output.txt" | neutralize_fence_breaks
       fi
       echo '```'
       echo
@@ -1525,7 +1539,7 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
       echo "### $file"
       echo
       echo '```markdown'
-      sed -n '1,240p' "$file"
+      sed -n '1,240p' "$file" | neutralize_fence_breaks
       echo '```'
       echo
     done

@@ -1037,6 +1037,14 @@ review_provenance_record() {
   review_provenance_ensure_key || return 0
   mkdir -p "${REVIEW_STATE_DIR}"
   tmp="$(mktemp "${REVIEW_STATE_DIR}/.approved-provenance.XXXXXX")" || return 0
+  # Trap-clean the random-suffixed temp so a SIGINT/SIGTERM/timeout (the gate is exactly what
+  # gets Ctrl-C'd/timed-out) in the mktemp..mv window strands NO litter in .omx/reviewer-state
+  # (the suffix is NOT pid-bounded, so it would accumulate unboundedly). RETURN covers every
+  # function-exit path; INT/TERM clean then honor the signal (exit) so a real interrupt is not
+  # masked. All cleared after the atomic mv (temp path is gone -> the rm becomes a harmless no-op).
+  trap 'rm -f "${tmp:-}"' RETURN
+  trap 'rm -f "${tmp:-}"; exit 130' INT
+  trap 'rm -f "${tmp:-}"; exit 143' TERM
   # Canonical record + an HMAC over it keyed by the OUT-OF-TREE secret. The attacker owns the
   # tree and can forge every field incl. a matching approved_hash, but NOT this HMAC, so a
   # forged approved-provenance.env cannot pass review_provenance_authentic (=> full review).
@@ -1047,6 +1055,7 @@ review_provenance_record() {
     printf 'approved_hmac=%s\n' "$(printf '%s' "${rec}" | review_provenance_hmac)"
   } > "${tmp}"
   mv -f "${tmp}" "${REVIEW_PROVENANCE_ENV}"
+  trap - RETURN INT TERM
   printf '%s\t%s\t%s\t%s\n' "${ts}" "${head:-NO_HEAD}" "${hash}" "${flags}" >> "${REVIEW_PROVENANCE_LOG}"
 }
 

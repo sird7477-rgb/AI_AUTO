@@ -19,8 +19,15 @@ mkdir -p "${OUT_DIR}" "$(dirname "${ENV_OUT}")" "$(dirname "${REPORT_OUT}")"
 # a same-dir mktemp (rename is atomic on one FS) and published with a single mv;
 # an abandoned partial write is never observable as a valid cache.
 ENV_TMP=""
-cleanup_env_tmp() { [ -n "${ENV_TMP:-}" ] && rm -f "${ENV_TMP}"; return 0; }
-trap cleanup_env_tmp EXIT
+# EXIT alone leaks on an INT/TERM in the mktemp..mv window (ENV_TMP is random-suffixed, unbounded);
+# add INT/TERM so a Ctrl-C'd/timed-out run strands no cache temp. Also sweep the pid-suffixed
+# report/observations rewrite temps (predictable ${…}.tmp.$$), which had no cleanup on interrupt.
+cleanup_env_tmp() {
+  [ -n "${ENV_TMP:-}" ] && rm -f "${ENV_TMP}"
+  rm -f "${REPORT_OUT}.tmp.$$" "${OBSERVATIONS_OUT}.tmp.$$" 2>/dev/null || true
+  return 0
+}
+trap cleanup_env_tmp EXIT INT TERM
 
 shell_quote() {
   printf "%s" "$1" | sed "s/'/'\\\\''/g"

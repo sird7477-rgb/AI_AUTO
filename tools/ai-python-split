@@ -8,6 +8,7 @@ import ast
 import difflib
 import json
 import shutil
+import string
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -177,6 +178,14 @@ def destination_from_rule(repo: Path, source: Path, rule: dict[str, Any]) -> Pat
     raw = rule.get("destination")
     if not isinstance(raw, str) or not raw:
         return None
+    # Domain-pack JSON is untrusted: only {source_dir}/{source_stem} may expand.
+    # Reject any other replacement field (e.g. {source_dir.__class__}) so that
+    # str.format cannot be abused to walk object attributes for info disclosure.
+    for _, field, spec, conv in string.Formatter().parse(raw):
+        if field is None:
+            continue
+        if field not in ("source_dir", "source_stem") or spec or conv:
+            fail(f"Invalid destination placeholder in split rule: {raw!r}")
     source_dir = rel(repo, source.parent)
     value = raw.format(source_dir=source_dir, source_stem=source.stem)
     dest = Path(value)

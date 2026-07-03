@@ -139,6 +139,8 @@ reviewer_disabled_authentic() {
 expire_transient_disabled_reviewers() {
   local cooldown="${REVIEW_REVIEWER_DISABLE_COOLDOWN_SECONDS:-0}"
   [ "${cooldown}" -gt 0 ] 2>/dev/null || return 0
+  local grace="${AI_AUTO_CLOCK_SKEW_GRACE_SECONDS:-300}"
+  case "${grace}" in ''|*[!0-9]*) grace=300 ;; esac
   local reviewer disabled_file disable_class disabled_at disabled_epoch now age
   now="$(date +%s)"
   for reviewer in claude gemini; do
@@ -148,8 +150,16 @@ expire_transient_disabled_reviewers() {
     [ "${disable_class}" = "transient" ] || continue
     disabled_at="$(sed -n 's/^disabled_at=//p' "${disabled_file}" 2>/dev/null | head -n 1)"
     disabled_epoch="$(date -d "${disabled_at}" +%s 2>/dev/null || echo 0)"
-    [ "${disabled_epoch}" -gt 0 ] 2>/dev/null || continue
+    [ "${disabled_epoch}" -gt 0 ] 2>/dev/null || continue   # unparseable -> keep disabled (fail-closed)
     age=$(( now - disabled_epoch ))
+    # disabled_at is wall-clock: a backward step / future timestamp makes age NEGATIVE, and a bare
+    # `age>=cooldown` would then NEVER fire -> the reviewer stays suppressed indefinitely (an
+    # under-strength panel). Skew-normalize: a small backstep (-grace..0) is treated as "just
+    # disabled" (age=0, cooldown counts fresh from now, still eventually elapses); an implausibly
+    # future disabled_at (age < -grace, forged/large skew) is re-enabled NOW (fail toward full panel).
+    if [ "${age}" -lt 0 ]; then
+      if [ "${age}" -lt $(( -grace )) ]; then age="${cooldown}"; else age=0; fi
+    fi
     if [ "${age}" -ge "${cooldown}" ]; then
       rm -f "${disabled_file}"
       echo "[review] ${reviewer} review auto re-enabled after ${age}s (transient disable cooldown expired)"
@@ -1101,10 +1111,14 @@ run_with_retries() {
 
   local attempt=1
   local status=0
+  local attempt_log=""
+  # Clean the random-suffixed adapter log on EVERY function-exit path (incl. a set -e abort
+  # between mktemp and the explicit rm), so an interrupted retry loop leaves no unbounded litter
+  # under OUT_DIR. RETURN (not INT/TERM) to avoid disturbing the heartbeat's own signal traps.
+  trap 'rm -f "${attempt_log:-}"' RETURN
 
   while [ "${attempt}" -le "${REVIEW_RETRY_LIMIT}" ]; do
     echo "[review] ${reviewer} attempt ${attempt}/${REVIEW_RETRY_LIMIT}"
-    local attempt_log
     attempt_log="$(mktemp "${OUT_DIR}/.${reviewer}-adapter-${attempt}.XXXXXX.log")"
     "$@" > "${attempt_log}" 2>&1
     status=$?

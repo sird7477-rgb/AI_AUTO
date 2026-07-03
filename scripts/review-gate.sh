@@ -68,7 +68,11 @@ if [ -f "$VERIFY_OVERRIDE_ENV" ]; then
   _ovr_start="$(sed -n 's/^holder_starttime=//p' "$VERIFY_OVERRIDE_ENV" 2>/dev/null | head -1)"
   _ovr_ttl="${AI_AUTO_VERIFY_OVERRIDE_TTL_SECONDS:-14400}"
   case "$_ovr_ttl" in ''|*[!0-9]*) _ovr_ttl=14400 ;; esac
-  _ovr_age=-1
+  _ovr_grace="${AI_AUTO_CLOCK_SKEW_GRACE_SECONDS:-300}"
+  case "$_ovr_grace" in ''|*[!0-9]*) _ovr_grace=300 ;; esac
+  # _ovr_age default of -(grace+1) keeps a marker with a MISSING/unparseable acquired_at STALE
+  # (below the skew floor), so absent-timestamp markers are never preserved.
+  _ovr_age=$(( -_ovr_grace - 1 ))
   if [ -n "$_ovr_at" ]; then
     _ovr_ts="$(date -d "$_ovr_at" +%s 2>/dev/null || echo '')"
     [ -n "$_ovr_ts" ] && _ovr_age=$(( $(date +%s) - _ovr_ts ))
@@ -76,15 +80,19 @@ if [ -f "$VERIFY_OVERRIDE_ENV" ]; then
   # Preserve ONLY a genuinely-live holder: matching session AND live pid AND its RECORDED start-time
   # still equals the pid's CURRENT start-time (recycled pid -> mismatch -> STALE) AND fresh acquired_at.
   # holder_starttime is required: a marker lacking it (legacy / forged / recycled) can never be honored.
+  # Age gate carries the SAME backward-clock-step grace as the session lock: a live SAME-session peer
+  # whose acquired_at goes slightly negative under an NTP/WSL/VM backstep (-GRACE..0) is still FRESH,
+  # so its live override is NOT rm'd (which would launder a failed-verify run to clean proceed); only
+  # age > TTL (stale) or age < -GRACE (implausibly future/forged) drops it.
   if [ -n "$_ovr_sess" ] && [ "$_ovr_sess" = "$(_gate_session_id)" ] \
      && [ -n "$_ovr_pid" ] && kill -0 "$_ovr_pid" 2>/dev/null \
      && [ -n "$_ovr_start" ] && [ "$_ovr_start" = "$(_pid_starttime "$_ovr_pid")" ] \
-     && [ "$_ovr_age" -ge 0 ] && [ "$_ovr_age" -le "$_ovr_ttl" ]; then
+     && [ "$_ovr_age" -ge $(( -_ovr_grace )) ] && [ "$_ovr_age" -le "$_ovr_ttl" ]; then
     : # a genuinely-live SAME-session peer (unrecycled pid) owns this override within TTL -> preserve it
   else
     rm -f "$VERIFY_OVERRIDE_ENV"
   fi
-  unset _ovr_pid _ovr_sess _ovr_at _ovr_start _ovr_ttl _ovr_age
+  unset _ovr_pid _ovr_sess _ovr_at _ovr_start _ovr_ttl _ovr_grace _ovr_age
   unset _ovr_ts 2>/dev/null || true
 fi
 
@@ -264,6 +272,14 @@ review_provenance_record() {
   review_provenance_ensure_key || return 0
   mkdir -p "${REVIEW_STATE_DIR}"
   tmp="$(mktemp "${REVIEW_STATE_DIR}/.approved-provenance.XXXXXX")" || return 0
+  # Trap-clean the random-suffixed temp so a SIGINT/SIGTERM/timeout (the gate is exactly what
+  # gets Ctrl-C'd/timed-out) in the mktemp..mv window strands NO litter in .omx/reviewer-state
+  # (the suffix is NOT pid-bounded, so it would accumulate unboundedly). RETURN covers every
+  # function-exit path; INT/TERM clean then honor the signal (exit) so a real interrupt is not
+  # masked. All cleared after the atomic mv (temp path is gone -> the rm becomes a harmless no-op).
+  trap 'rm -f "${tmp:-}"' RETURN
+  trap 'rm -f "${tmp:-}"; exit 130' INT
+  trap 'rm -f "${tmp:-}"; exit 143' TERM
   # Canonical record + an HMAC over it keyed by the OUT-OF-TREE secret. The attacker owns the
   # tree and can forge every field incl. a matching approved_hash, but NOT this HMAC, so a
   # forged approved-provenance.env cannot pass review_provenance_authentic (=> full review).
@@ -274,6 +290,7 @@ review_provenance_record() {
     printf 'approved_hmac=%s\n' "$(printf '%s' "${rec}" | review_provenance_hmac)"
   } > "${tmp}"
   mv -f "${tmp}" "${REVIEW_PROVENANCE_ENV}"
+  trap - RETURN INT TERM
   printf '%s\t%s\t%s\t%s\n' "${ts}" "${head:-NO_HEAD}" "${hash}" "${flags}" >> "${REVIEW_PROVENANCE_LOG}"
 }
 
