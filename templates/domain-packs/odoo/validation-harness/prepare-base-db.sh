@@ -113,4 +113,8 @@ if [ -n "$PARITY_POINT_RELEASE" ]; then
 else
   echo "[base] WARNING parity point release not provided; validate-warm will BLOCK until rebuilt with ODOO_SH_POINT_RELEASE=<point-release>."
 fi
+if [ -x "${HARNESS_DIR}/dump-schema-catalog.sh" ]; then
+  "${HARNESS_DIR}/dump-schema-catalog.sh" "$BASE_DB" "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.schema-catalog.json" "$MODULE_SET_SHA" \
+    || echo "[base] WARNING schema catalog dump failed; check-schema-catalog.py will report NOT screened."
+fi
 echo "[base] '$BASE_DB' ready. Fast validate: validate-warm.sh \"$PROJECT\" [module ...]"

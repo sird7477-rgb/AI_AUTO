@@ -1027,6 +1027,101 @@ echo "[verify] testing check-manifest-files fail-closed on unparseable + rejects
     || { echo "[verify] manifest-files: a valid module-relative data file wrongly failed (regression)"; exit 1; }
 )
 
+echo "[verify] testing odoo schema catalog screen (ORACLE-3)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_schema_catalog_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_schema_catalog_tmp EXIT
+  check="${repo_root}/templates/domain-packs/odoo/validation-harness/check-schema-catalog.py"
+  cd "${tmp_dir}"
+  mkdir -p custom-addons/mod_ok/models custom-addons/mod_ok/views custom-addons/mod_bad/models custom-addons/mod_bad/views custom-addons/mod_collision/models
+  for mod in mod_ok mod_bad mod_collision; do
+    printf "{'name':'%s','depends':['base']}\n" "${mod}" > "custom-addons/${mod}/__manifest__.py"
+  done
+  cat > catalog.json <<'JSON'
+{
+  "schema": 1,
+  "models": {
+    "res.partner": {
+      "fields": {
+        "name": {"ttype": "char", "relation": "", "modules": ["base"]},
+        "parent_id": {"ttype": "many2one", "relation": "res.partner", "modules": ["base"]},
+        "existing_code": {"ttype": "char", "relation": "", "modules": ["base_custom"]}
+      }
+    }
+  }
+}
+JSON
+  cat > custom-addons/mod_ok/models/m.py <<'PY'
+from odoo import models, fields
+class PartnerOk(models.Model):
+    _inherit = "res.partner"
+    x_parent_name = fields.Char(related="parent_id.name")
+PY
+  cat > custom-addons/mod_ok/views/v.xml <<'XML'
+<odoo>
+  <record id="view_partner_ok" model="ir.ui.view">
+    <field name="model">res.partner</field>
+    <field name="arch" type="xml">
+      <form><field name="name"/></form>
+    </field>
+  </record>
+</odoo>
+XML
+  python3 "${check}" --catalog catalog.json --root custom-addons --modules mod_ok --strict > "${tmp_dir}/ok.out" \
+    || { echo "[verify] schema-catalog: known fields/related chain wrongly failed"; exit 1; }
+  grep -q "OK: screened 1 module" "${tmp_dir}/ok.out" \
+    || { echo "[verify] schema-catalog: valid fixture did not report a screened module"; exit 1; }
+
+  cat > custom-addons/mod_bad/models/m.py <<'PY'
+from odoo import models, fields
+class PartnerBad(models.Model):
+    _inherit = "res.partner"
+    x_bad = fields.Char(related="parent_id.missing_child")
+class MissingModel(models.Model):
+    _inherit = "missing.model"
+    x_name = fields.Char()
+PY
+  cat > custom-addons/mod_bad/views/v.xml <<'XML'
+<odoo>
+  <record id="view_partner_bad" model="ir.ui.view">
+    <field name="model">res.partner</field>
+    <field name="arch" type="xml">
+      <form><field name="missing_field"/></form>
+    </field>
+  </record>
+</odoo>
+XML
+  if python3 "${check}" --catalog catalog.json --root custom-addons --modules mod_bad --strict > "${tmp_dir}/bad.out" 2>&1; then
+    echo "[verify] schema-catalog: invalid model/field references wrongly passed"; exit 1
+  fi
+  grep -q "Invalid field res.partner.missing_field" "${tmp_dir}/bad.out" \
+    || { echo "[verify] schema-catalog: XML missing field not reported"; exit 1; }
+  grep -q "Invalid field res.partner.missing_child" "${tmp_dir}/bad.out" \
+    || { echo "[verify] schema-catalog: Python related missing field not reported"; exit 1; }
+  grep -q "Invalid model missing.model" "${tmp_dir}/bad.out" \
+    || { echo "[verify] schema-catalog: missing _inherit model not reported"; exit 1; }
+
+  cat > custom-addons/mod_collision/models/m.py <<'PY'
+from odoo import models, fields
+class PartnerCollision(models.Model):
+    _inherit = "res.partner"
+    existing_code = fields.Char()
+PY
+  python3 "${check}" --catalog catalog.json --root custom-addons --modules mod_collision --strict > "${tmp_dir}/collision.out" \
+    || { echo "[verify] schema-catalog: advisory catalog collision must not be a strict invalid-field failure"; exit 1; }
+  grep -q "catalog collision advisory res.partner.existing_code already owned by base_custom" "${tmp_dir}/collision.out" \
+    || { echo "[verify] schema-catalog: existing-addon collision advisory missing"; exit 1; }
+
+  python3 "${check}" --catalog missing.json --root custom-addons --modules mod_ok > "${tmp_dir}/missing.out" \
+    || { echo "[verify] schema-catalog: default missing catalog should be report-only"; exit 1; }
+  grep -q "catalog unavailable, NOT screened" "${tmp_dir}/missing.out" \
+    || { echo "[verify] schema-catalog: missing catalog did not report NOT screened"; exit 1; }
+  if python3 "${check}" --catalog missing.json --root custom-addons --modules mod_ok --strict >/dev/null 2>&1; then
+    echo "[verify] schema-catalog: strict missing catalog did not fail closed"; exit 1
+  fi
+)
+
 echo "[verify] testing safe-push refuses option-injection BRANCH names (blue-r24)..."
 (
   tmp_dir="$(mktemp -d)"

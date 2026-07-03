@@ -36,7 +36,8 @@ Do not apply this pack to non-Odoo projects.
 - `verify-patterns.md` - verification patterns for `scripts/verify.sh`
 - `review-checklist.md` - review checklist for Odoo changes
 - `validation-harness/` - optional parity-pinned local registry-load harness for
-  odoo.sh point-release/module-set validation before push or in CI
+  odoo.sh point-release/module-set validation, schema-catalog screening before
+  push, or CI
 
 ## Onboarding Prompt
 
@@ -46,6 +47,8 @@ confirm:
 - Odoo version
 - odoo.sh point-release/source parity procedure for the local/CI warm registry
   harness, if the project uses odoo.sh
+- whether the warm-base schema catalog should be generated and enforced in
+  pre-push/CI
 - whether the project is locked to one Odoo major version
 - addon paths
 - test database strategy

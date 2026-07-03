@@ -46,6 +46,8 @@ Korean projects default to `ko_KR` / `base.kr`; override with
 | `validate-full.sh` | **on-demand / pre-PR** test + demo pass (scoped `--test-enable` on `base` + `-u` on `base_demo`), reverse-dep closure |
 | `check-parity.sh` | fail-closed guard for the warm base's odoo.sh point-release stamp and full module-set hash |
 | `changed-module-scope.py` | deterministic changed-module scope helper; `--reverse-deps` expands to custom addons that depend on changed addons |
+| `dump-schema-catalog.sh` | dump the warm base's registry schema (`ir.model.fields`) into a regenerable catalog |
+| `check-schema-catalog.py` | pre-build screen for changed addon Python/XML references against the registry-derived schema catalog |
 | `gen-requirements.sh` | generate / `--check` root `requirements.txt` from manifest `external_dependencies.python` (deps parity with odoo.sh) |
 | `harness-slug.sh` | derive a per-project `COMPOSE_PROJECT_NAME` slug so each project gets its own container/network/**volume**/base — different projects run fully parallel |
 | `harness-lock.sh` | reader/writer lock on the shared base (`validate-*` = read, `prepare-base-db` = write) so concurrent validations coexist but never clone a base mid-rebuild |
@@ -156,6 +158,25 @@ ODOO_SH_POINT_RELEASE=<odoo.sh-build-point-release> \
 This is intentionally fail-closed. A local green registry load on an unknown or
 stale Odoo point release is not odoo.sh evidence.
 
+## Schema catalog screen
+
+`prepare-base-db.sh` also writes
+`.warm-base.<project>.<base>.schema-catalog.json`, a regenerable snapshot of
+Odoo's registry schema from `ir.model.fields`. `check-schema-catalog.py` uses it
+as a cheap pre-build screen for changed addon Python/XML references:
+
+```bash
+ODOO_SCHEMA_CATALOG=/path/to/.warm-base.<project>.base.schema-catalog.json \
+  python3 check-schema-catalog.py --root /path/to/project/custom-addons --modules <module> --strict
+```
+
+It flags missing models/fields and broken `related=` chains before paying for a
+registry load, and it reports an advisory when a changed addon writes a
+catalog-owned `(model, field)` pair. It is not a static lint replacement and it
+does not prove installability: registry-load remains the oracle. Missing,
+unreadable, or module-set-stale catalog prints `catalog unavailable, NOT
+screened`; a quiet green is never emitted when the catalog was not used.
+
 ## Pre-push gate
 Install a `pre-push` hook (project `core.hooksPath`) that **computes changed
 `custom-addons` modules from the pushed ref range (pre-push stdin), or relies on
@@ -166,6 +187,11 @@ module set through reverse custom-addon dependencies before calling
 `validate-warm.sh`. A change in module `A` therefore also updates custom module
 `B` when `B` depends on `A`, catching dependent view inheritance/registry errors
 that a changed-only `-u A` could miss.
+When `check-schema-catalog.py` is present and the harness is configured, the
+hook runs it in strict mode before the warm registry load so invalid
+field/model references fail early. If the catalog is missing/stale, the strict
+run blocks with `NOT screened`; rebuild the warm base/catalog or record an
+explicit bypass.
 
 > Module detection: no-arg `validate-warm.sh`/`validate-odoo.sh` detect both
 > uncommitted changes and committed-but-not-yet-pushed changes (`@{u}...HEAD`).

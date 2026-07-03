@@ -52,6 +52,11 @@ changes.
   green but does not exercise the behavioral interaction (compute/related/store,
   override order) — require `validate-full.sh` (post-install test tier) before PR;
   if skipped, record it as at-risk per the harness honesty rule.
+- If `check-schema-catalog.py` reports `Invalid field` / `Invalid model`, treat
+  it as a pre-build schema failure until fixed or disproved by an explicit Odoo
+  registry-load. If it reports `catalog unavailable, NOT screened`, do not count
+  that as static evidence; rebuild the warm base/catalog or record the runtime
+  alternative.
 
 ## Completion Evidence
 

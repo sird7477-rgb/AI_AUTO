@@ -99,6 +99,21 @@ if [ -x "$HARNESS/check-inherited-field-overlap.py" ]; then
   ( cd "$PROJECT" && python3 "$HARNESS/check-inherited-field-overlap.py" ) || true
 fi
 
+if [ -n "$mods" ] && [ -x "$HARNESS/check-schema-catalog.py" ]; then
+  schema_catalog="$HARNESS/.odoo-schema-catalog.json"
+  if [ -x "$HARNESS/harness-slug.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$HARNESS/harness-slug.sh"
+    schema_catalog="$HARNESS/.warm-base.$(harness_proj_slug "$PROJECT").${ODOO_BASE_DB:-base}.schema-catalog.json"
+  fi
+  # shellcheck disable=SC2086  # $mods is an intentional space-separated module list.
+  if ! ( cd "$PROJECT" && ODOO_SCHEMA_CATALOG="$schema_catalog" python3 "$HARNESS/check-schema-catalog.py" --modules $mods --strict ); then
+    echo "[pre-push] ❌ BLOCKED: schema catalog screen found invalid model/field references (see above)."
+    echo "[pre-push]     Rebuild the warm base/catalog, fix the reference, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
+    exit 1
+  fi
+fi
+
 if [ -n "$mods" ] && [ -x "$HARNESS/check-parity.sh" ]; then
   if ! "$HARNESS/check-parity.sh" "$PROJECT"; then
     echo "[pre-push] ❌ BLOCKED: warm base parity is unconfirmed/stale. Rebuild with ODOO_SH_POINT_RELEASE=<point-release> \"$HARNESS/prepare-base-db.sh\" \"$PROJECT\""

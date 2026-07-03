@@ -109,6 +109,22 @@ addons-root-relative and may be globs, so the warm-base/web build stays their
 oracle. Run standalone with `python3 validation-harness/check-manifest-files.py
 --all` (or `--modules <mod> ...`).
 
+### Schema Catalog Screen
+
+`validation-harness/check-schema-catalog.py` compares changed addon Python/XML
+references to a warm-base registry catalog dumped by
+`validation-harness/dump-schema-catalog.sh` from `ir.model.fields`. This catches
+cheap renamed/removed schema mistakes before a Docker registry-load run:
+unknown view fields, unknown inherited models, and broken `related=` chains. It
+also reports an advisory when a changed addon writes a `(model, field)` pair
+that the catalog says is already owned by another installed addon.
+
+This is a registry snapshot screen, not an OCA/static lint replacement and not
+an installability proof. Missing or stale catalog prints `catalog unavailable,
+NOT screened`; treat that as absent evidence, never as a clean pass. In projects
+that adopt the harness pre-push hook, it runs in `--strict` mode before
+`validate-warm.sh`, then the registry load remains the oracle.
+
 ## Module Install Or Update
 
 This is the **only complete detection** for view-inheritance/registry errors and
