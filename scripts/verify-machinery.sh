@@ -5507,6 +5507,128 @@ SH
   ! grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
 )
 
+echo "[verify] testing review-gate does not run checksheet runner without checksheet diff..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_no_checksheet_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_no_checksheet_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts docs
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/checksheet-run.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "checksheet runner should not run" > ../called-checksheet
+exit 64
+SH
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run for verify-only docs diffs" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run for verify-only docs diffs" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/*.sh
+  printf 'baseline\n' > docs/note.md
+  git add .gitignore scripts docs
+  git commit -q -m baseline
+  printf 'changed docs\n' > docs/note.md
+
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out"
+
+  grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
+  test ! -f "${tmp_dir}/called-checksheet"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
+)
+
+echo "[verify] testing review-gate blocks on changed failing checksheet artifact..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_checksheet_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_checksheet_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts checksheets
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/checksheet-run.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$1" > ../called-checksheet
+exit 23
+SH
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run after checksheet failure" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run after checksheet failure" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/*.sh
+  printf '{"expected_items":["x"],"items":[{"id":"x","oracle":"safe_path","target":"x.py"}]}\n' > checksheets/demo.checksheet.json
+  git add .gitignore scripts checksheets
+  git commit -q -m baseline
+  printf '{"expected_items":["x"],"items":[{"id":"x","oracle":"safe_path","target":"x.py","implicit":true}]}\n' > checksheets/demo.checksheet.json
+
+  set +e
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out" 2>"${tmp_dir}/review-gate.err"
+  rc=$?
+  set -e
+
+  test "${rc}" -ne 0
+  grep -q "checksheet gate failed" "${tmp_dir}/review-gate.err"
+  grep -q "checksheets/demo.checksheet.json" "${tmp_dir}/called-checksheet"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
+)
+
 echo "[verify] testing knowledge note helper..."
 (
 	  tmp_dir="$(mktemp -d)"

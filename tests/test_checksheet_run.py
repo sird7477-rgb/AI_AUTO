@@ -27,6 +27,7 @@ GOOD_DB = "def get_user(conn, name):\n    return conn.execute('SELECT * FROM use
 BAD_DB = "def get_user(conn, name):\n    return conn.execute(\"SELECT * FROM users WHERE name = '%s'\" % name).fetchall()\n"
 
 SHEET = {
+    "expected_items": ["upload-path", "user-lookup"],
     "items": [
         {"id": "upload-path", "oracle": "safe_path", "target": "uploads.py", "implicit": ["no_traversal"]},
         {"id": "user-lookup", "oracle": "sql_param", "target": "db.py", "implicit": ["no_sql_injection"]},
@@ -94,11 +95,52 @@ def test_missing_target_is_a_rejection(tmp_path):
 
 def test_unknown_oracle_exits_two(tmp_path):
     (tmp_path / "x.py").write_text("y=1\n")
-    sheet = tmp_path / "sheet.json"
-    sheet.write_text(json.dumps({"items": [{"id": "x", "oracle": "nope", "target": "x.py"}]}))
+    sheet = tmp_path / "invalid.checksheet.json"
+    sheet.write_text(json.dumps({"expected_items": ["x"], "items": [{"id": "x", "oracle": "nope", "target": "x.py"}]}))
     result = _run(str(sheet))
     assert result.returncode == 2
     assert "unknown oracle" in result.stderr
+
+
+def test_schema_violation_exits_two(tmp_path):
+    sheet = tmp_path / "invalid.checksheet.json"
+    sheet.write_text(json.dumps({"items": [{"id": "missing-target", "oracle": "safe_path"}]}))
+    result = _run(str(sheet))
+    assert result.returncode == 2
+    assert "schema_invalid" in result.stderr
+    assert "target must be a non-empty string" in result.stderr
+
+
+def test_expected_item_omission_is_rejected_by_id(tmp_path):
+    (tmp_path / "uploads.py").write_text(GOOD_UPLOADS)
+    sheet = tmp_path / "omission.checksheet.json"
+    sheet.write_text(
+        json.dumps(
+            {
+                "expected_items": ["upload-path", "user-lookup"],
+                "items": [{"id": "upload-path", "oracle": "safe_path", "target": "uploads.py"}],
+            }
+        )
+    )
+    result = _run(str(sheet))
+    assert result.returncode == 1
+    assert "expected_item_missing: user-lookup" in result.stderr
+
+
+def test_implicit_true_item_is_an_assertion_not_output_only(tmp_path):
+    (tmp_path / "db.py").write_text(BAD_DB)
+    sheet = tmp_path / "implicit.checksheet.json"
+    sheet.write_text(
+        json.dumps(
+            {
+                "expected_items": ["user-lookup"],
+                "items": [{"id": "user-lookup", "oracle": "sql_param", "target": "db.py", "implicit": True}],
+            }
+        )
+    )
+    result = _run(str(sheet))
+    assert result.returncode == 1
+    assert "REJECT sql_injection_leaks_rows implicit=true" in result.stderr
 
 
 def test_missing_argument_exits_two():

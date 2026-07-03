@@ -49,6 +49,10 @@ class Verdict:
     data: dict[str, Any] = field(default_factory=dict)
 
 
+class ChecksheetSchemaError(ValueError):
+    """Raised when a checksheet cannot be trusted as a machine-readable contract."""
+
+
 # --- isolated artifact loading (pattern 3) ---------------------------------
 _load_n = 0
 
@@ -192,20 +196,96 @@ def selftest() -> tuple[bool, list[str]]:
     return (not failures, failures)
 
 
+def _require_string(value: Any, field_name: str, item_id: str | None = None) -> str:
+    if isinstance(value, str) and value:
+        return value
+    prefix = f"item {item_id}: " if item_id else ""
+    raise ChecksheetSchemaError(f"{prefix}{field_name} must be a non-empty string")
+
+
+def _validate_implicit(value: Any, item_id: str) -> bool | list[str]:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, list) and all(isinstance(v, str) and v for v in value):
+        return value
+    raise ChecksheetSchemaError(f"item {item_id}: implicit must be true/false or a list of strings")
+
+
+def _validate_checksheet(data: Any) -> tuple[list[dict[str, Any]], list[str] | None]:
+    if not isinstance(data, dict):
+        raise ChecksheetSchemaError("checksheet root must be an object")
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        raise ChecksheetSchemaError("items must be a non-empty list")
+
+    seen: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            raise ChecksheetSchemaError("each item must be an object")
+        item_id = _require_string(raw.get("id"), "id")
+        if item_id in seen:
+            raise ChecksheetSchemaError(f"duplicate item id {item_id!r}")
+        seen.add(item_id)
+        normalized.append(
+            {
+                "id": item_id,
+                "oracle": _require_string(raw.get("oracle"), "oracle", item_id),
+                "target": _require_string(raw.get("target"), "target", item_id),
+                "implicit": _validate_implicit(raw.get("implicit"), item_id),
+            }
+        )
+
+    expected_raw = data.get("expected_items")
+    if expected_raw is None:
+        return normalized, None
+    if not isinstance(expected_raw, list) or not all(isinstance(v, str) and v for v in expected_raw):
+        raise ChecksheetSchemaError("expected_items must be a list of non-empty strings")
+    if len(set(expected_raw)) != len(expected_raw):
+        raise ChecksheetSchemaError("expected_items must not contain duplicate ids")
+    return normalized, expected_raw
+
+
+def _implicit_label(value: bool | list[str]) -> str:
+    if value is True:
+        return " implicit=true"
+    if isinstance(value, list) and value:
+        return f" implicit={','.join(value)}"
+    return ""
+
+
 # --- checksheet run --------------------------------------------------------
 def run_checksheet(path: Path) -> int:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        items, expected_items = _validate_checksheet(data)
+    except (OSError, json.JSONDecodeError, ChecksheetSchemaError) as exc:
+        print(f"[checksheet] ERROR schema_invalid: {exc}", file=sys.stderr)
+        return 2
+
+    actual_ids = [item["id"] for item in items]
+    if expected_items is not None:
+        missing = sorted(set(expected_items) - set(actual_ids))
+        unexpected = sorted(set(actual_ids) - set(expected_items))
+        if missing or unexpected:
+            if missing:
+                print(f"[checksheet] ERROR expected_item_missing: {','.join(missing)}", file=sys.stderr)
+            if unexpected:
+                print(f"[checksheet] ERROR unexpected_item: {','.join(unexpected)}", file=sys.stderr)
+            return 1
+
     base = path.parent
     rejected = 0
-    for item in data.get("items", []):
+    for item in items:
         item_id = item.get("id", "<no-id>")
-        oracle_name = item.get("oracle", "")
+        oracle_name = item["oracle"]
         spec = ORACLES.get(oracle_name)
         if spec is None:
             print(f"[checksheet] {item_id}: ERROR unknown oracle {oracle_name!r}", file=sys.stderr)
             return 2
         target = (base / item["target"]).resolve()
-        implicit = item.get("implicit", [])
         try:
             mod = _load_module(target)
         except Exception as exc:  # noqa: BLE001 -- a missing/broken artifact is a rejection
@@ -214,7 +294,7 @@ def run_checksheet(path: Path) -> int:
             continue
         v = spec["fn"](mod)
         tag = "PASS" if v.accepted else "REJECT"
-        impl = f" implicit={','.join(implicit)}" if implicit else ""
+        impl = _implicit_label(item["implicit"])
         line = f"[checksheet] {item_id} ({oracle_name}): {tag} {v.reason}{impl}"
         print(line if v.accepted else line, file=sys.stderr if not v.accepted else sys.stdout)
         if not v.accepted:

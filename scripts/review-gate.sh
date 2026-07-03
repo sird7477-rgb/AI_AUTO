@@ -761,6 +761,44 @@ print_diff_scope_gate() {
   printf '%s\n' "${scope_summary}" | sed 's/^/[gate] /'
 }
 
+changed_checksheet_files() {
+  {
+    review_git diff --name-only 2>/dev/null || true
+    git diff --cached --name-only 2>/dev/null || true
+    git ls-files --others --exclude-standard 2>/dev/null || true
+  } | sort -u | while IFS= read -r file; do
+    case "${file}" in
+      *.checksheet.json|checksheets/*.json)
+        printf '%s\n' "${file}"
+        ;;
+    esac
+  done
+}
+
+run_changed_checksheet_gate() {
+  local file rc found=0 failed=0
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    found=1
+    if [ ! -f "${file}" ]; then
+      echo "[gate] checksheet artifact changed but missing: ${file}" >&2
+      failed=1
+      continue
+    fi
+    echo "[gate] running checksheet artifact: ${file}"
+    rc=0
+    "$AH/checksheet-run.sh" "${file}" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+      echo "[gate] checksheet artifact FAILED (${file}, exit ${rc})" >&2
+      failed=1
+    fi
+  done < <(changed_checksheet_files)
+
+  [ "${found}" -eq 1 ] || return 0
+  [ "${failed}" -eq 0 ] || return 1
+  echo "[gate] checksheet artifacts passed"
+}
+
 if command -v session_lock_acquire >/dev/null 2>&1; then
   # The gate's own acquire happens BEFORE verify. A live sibling holding this tree returns
   # 75 (retryable contention) — surface it as a clear "deferred, use aiwt" and exit 75
@@ -957,6 +995,13 @@ fi
 echo "[gate] collecting review context for diff-scope policy..."
 "$AH/collect-review-context.sh"
 print_diff_scope_gate
+
+if ! run_changed_checksheet_gate; then
+  echo "[gate] checksheet gate failed; stopping before external review." >&2
+  review_gate_housekeeping 1
+  echo "[gate] complete"
+  exit 1
+fi
 
 if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" != "1" ] && verify_only_diff_scope_ready; then
   echo "[gate] review skipped: docs-only"
