@@ -78,6 +78,10 @@ if [ -z "$HARNESS" ]; then
   exit 0
 fi
 
+if [ -n "$mods" ] && [ -x "$HARNESS/changed-module-scope.py" ]; then
+  mods="$(python3 "$HARNESS/changed-module-scope.py" --addons-root "$PROJECT/custom-addons" --changed $mods --reverse-deps --format space)"
+fi
+
 # Static action-shape screen (no docker needed): flag CHANGED act_window popups
 # missing `views` — the Odoo 19 raw-doAction(dict) crash class. Advisory only: it
 # lists popups to CONFIRM on local serve (popup-smoke.mjs, console-error=0); it
@@ -93,6 +97,13 @@ fi
 # validate-full.sh (post-install test tier); it never blocks the push.
 if [ -x "$HARNESS/check-inherited-field-overlap.py" ]; then
   ( cd "$PROJECT" && python3 "$HARNESS/check-inherited-field-overlap.py" ) || true
+fi
+
+if [ -n "$mods" ] && [ -x "$HARNESS/check-parity.sh" ]; then
+  if ! "$HARNESS/check-parity.sh" "$PROJECT"; then
+    echo "[pre-push] ❌ BLOCKED: warm base parity is unconfirmed/stale. Rebuild with ODOO_SH_POINT_RELEASE=<point-release> \"$HARNESS/prepare-base-db.sh\" \"$PROJECT\""
+    exit 1
+  fi
 fi
 
 if ! docker info >/dev/null 2>&1; then

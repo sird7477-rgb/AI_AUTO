@@ -25,6 +25,7 @@ copies it, points it at its parity-pinned Odoo source, and wires the pre-push ga
 ```bash
 export ODOO_COMMUNITY=/path/to/odoo-community-source      # e.g. fetched src/odoo
 export ODOO_ENTERPRISE=/path/to/odoo-enterprise-source    # e.g. fetched src/enterprise
+export ODOO_SH_POINT_RELEASE=<odoo.sh-build-point-release>
 # one-time (or to rebuild the cache): full module set + locale baseline
 ./prepare-base-db.sh /path/to/project_repo
 # per change: fast (~tens of s) — clone base, -u changed modules, drop
@@ -43,6 +44,8 @@ Korean projects default to `ko_KR` / `base.kr`; override with
 | `prepare-base-db.sh` | build the **regenerable warm base**; `ODOO_WITH_DEMO=1` builds a `base_demo` (demo kept) for the demo pass |
 | `validate-warm.sh` | routine fast validation: clone base, `-u` changed, drop |
 | `validate-full.sh` | **on-demand / pre-PR** test + demo pass (scoped `--test-enable` on `base` + `-u` on `base_demo`), reverse-dep closure |
+| `check-parity.sh` | fail-closed guard for the warm base's odoo.sh point-release stamp and full module-set hash |
+| `changed-module-scope.py` | deterministic changed-module scope helper; `--reverse-deps` expands to custom addons that depend on changed addons |
 | `gen-requirements.sh` | generate / `--check` root `requirements.txt` from manifest `external_dependencies.python` (deps parity with odoo.sh) |
 | `harness-slug.sh` | derive a per-project `COMPOSE_PROJECT_NAME` slug so each project gets its own container/network/**volume**/base — different projects run fully parallel |
 | `harness-lock.sh` | reader/writer lock on the shared base (`validate-*` = read, `prepare-base-db` = write) so concurrent validations coexist but never clone a base mid-rebuild |
@@ -132,11 +135,37 @@ image from **it** (not the manifest scan) and drift-checks it, so the local imag
 odoo.sh install the same set automatically. Versions are unpinned (names only) — pin in
 `requirements.txt` if odoo.sh parity needs exact versions.
 
+## Registry parity stamp
+
+`prepare-base-db.sh` writes a warm-base parity stamp next to the base epoch:
+
+- `point_release` from `ODOO_SH_POINT_RELEASE` (or `ODOO_PARITY_POINT_RELEASE`)
+- `module_set`, the full installable custom addon set installed into the base
+- `module_set_sha`, a hash of that set
+
+`validate-warm.sh` and the pre-push hook call `check-parity.sh` before carrying a
+cached pass or running `-u`. Missing stamp, missing point release, or module-set
+drift exits nonzero with `BLOCKED (parity unconfirmed)`. Rebuild the base from the
+same odoo.sh source/module set to refresh it:
+
+```bash
+ODOO_SH_POINT_RELEASE=<odoo.sh-build-point-release> \
+  ./prepare-base-db.sh /path/to/project_repo
+```
+
+This is intentionally fail-closed. A local green registry load on an unknown or
+stale Odoo point release is not odoo.sh evidence.
+
 ## Pre-push gate
 Install a `pre-push` hook (project `core.hooksPath`) that **computes changed
 `custom-addons` modules from the pushed ref range (pre-push stdin), or relies on
 the upstream-aware default**, runs `validate-warm.sh` on them, and **blocks push
 on failure**; allow `SKIP_ODOO_VALIDATE=1` for an explicit emergency override.
+When `changed-module-scope.py` is present, the hook expands the pushed changed
+module set through reverse custom-addon dependencies before calling
+`validate-warm.sh`. A change in module `A` therefore also updates custom module
+`B` when `B` depends on `A`, catching dependent view inheritance/registry errors
+that a changed-only `-u A` could miss.
 
 > Module detection: no-arg `validate-warm.sh`/`validate-odoo.sh` detect both
 > uncommitted changes and committed-but-not-yet-pushed changes (`@{u}...HEAD`).
@@ -197,3 +226,19 @@ the risk, not imply success.)
   dependent errors are best-effort — odoo.sh staging remains the final validator.
 - Custom modules that assume the full installed set (undeclared deps) are
   validated against the **full module set**, mirroring odoo.sh.
+
+## CI shape
+
+Use the same scripts in CI or an odoo.sh-adjacent job:
+
+```bash
+export ODOO_COMMUNITY=/ci/odoo/src/odoo
+export ODOO_ENTERPRISE=/ci/odoo/src/enterprise
+export ODOO_SH_POINT_RELEASE="$ODOO_SH_BUILD_POINT_RELEASE"
+./validation-harness/prepare-base-db.sh "$PROJECT_DIR"   # cache/rebuild step
+./validation-harness/validate-warm.sh "$PROJECT_DIR"     # changed modules, or pass explicit scope
+```
+
+If CI restores a prebuilt warm-base volume, run `check-parity.sh "$PROJECT_DIR"`
+before `validate-warm.sh`. A failed parity check is a blocked validation, not a
+passing skip.

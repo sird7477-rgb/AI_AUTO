@@ -52,6 +52,7 @@ PY
 )"
 [ -n "$MODS" ] || { echo "[base] no installable custom modules" >&2; exit 2; }
 echo "[base] full module set: $MODS"
+MODULE_SET_SHA="$(printf '%s' "$MODS" | sha256sum | cut -d' ' -f1)"
 
 # Deps source of truth: install EXACTLY what odoo.sh installs. If the project has a
 # root requirements.txt (U-C1), the local image installs from it (drift-checked vs
@@ -99,4 +100,17 @@ python3 /mnt/community/odoo-bin $OPTS -i $MODS $DEMO_FLAG --stop-after-init
 # module set means a prior PASS no longer proves installability. A nanosecond stamp differs
 # across rebuilds.
 date +%s%N > "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.epoch" 2>/dev/null || true
+PARITY_POINT_RELEASE="$(printf '%s' "${ODOO_PARITY_POINT_RELEASE:-${ODOO_SH_POINT_RELEASE:-}}" | tr -d '\r\n')"
+{
+  printf 'point_release=%s\n' "${PARITY_POINT_RELEASE:-unconfirmed}"
+  printf 'module_set=%s\n' "$MODS"
+  printf 'module_set_sha=%s\n' "$MODULE_SET_SHA"
+  printf 'built_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.parity.env.tmp" 2>/dev/null \
+  && mv "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.parity.env.tmp" "${HARNESS_DIR}/.warm-base.${HARNESS_SLUG}.${BASE_DB}.parity.env" 2>/dev/null || true
+if [ -n "$PARITY_POINT_RELEASE" ]; then
+  echo "[base] parity stamp: odoo.sh point_release=$PARITY_POINT_RELEASE module_set_sha=${MODULE_SET_SHA:0:12}"
+else
+  echo "[base] WARNING parity point release not provided; validate-warm will BLOCK until rebuilt with ODOO_SH_POINT_RELEASE=<point-release>."
+fi
 echo "[base] '$BASE_DB' ready. Fast validate: validate-warm.sh \"$PROJECT\" [module ...]"

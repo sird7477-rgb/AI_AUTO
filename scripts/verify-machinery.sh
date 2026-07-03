@@ -733,7 +733,7 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   trap cleanup_warm_cache_tmp EXIT
   hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
   mkdir -p "${tmp_dir}/harness"
-  cp "${hp}/validate-warm.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
+  cp "${hp}/validate-warm.sh" "${hp}/check-parity.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
   git -c init.defaultBranch=main init -q --bare "${tmp_dir}/origin.git"
   proj="${tmp_dir}/proj"
   git -c init.defaultBranch=main clone -q "${tmp_dir}/origin.git" "${proj}" 2>/dev/null
@@ -748,6 +748,12 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "${proj}")"
   epoch="${tmp_dir}/harness/.warm-base.${slug}.base.epoch"
   echo EP1 > "${epoch}"   # a base epoch must EXIST for caching to engage (absent epoch disables it)
+  mod_sha="$(printf '%s' mod_a | sha256sum | cut -d' ' -f1)"
+  {
+    printf 'point_release=19.0-verify\n'
+    printf 'module_set=mod_a\n'
+    printf 'module_set_sha=%s\n' "${mod_sha}"
+  } > "${tmp_dir}/harness/.warm-base.${slug}.base.parity.env"
   cl() { WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p'; }
   want() { [ "$3" = "$1" ] || { echo "[verify] validate-warm cache: ${2} -> got '${3}', expected '${1}'"; exit 1; }; }
 
@@ -767,6 +773,121 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   want validate "absent base epoch disables caching (no false hit)" "$(cl)"
   echo EP1 > "${epoch}"
   want validate "WARM_NO_CACHE=1 bypasses a hit" "$(WARM_NO_CACHE=1 WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p')"
+)
+
+echo "[verify] testing odoo warm-base parity blocks unconfirmed or stale bases (ORACLE-1)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_odoo_parity_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_odoo_parity_tmp EXIT
+  hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
+  mkdir -p "${tmp_dir}/harness"
+  cp "${hp}/check-parity.sh" "${hp}/harness-slug.sh" "${tmp_dir}/harness/"
+  git -c init.defaultBranch=main init -q "${tmp_dir}/proj"
+  proj="${tmp_dir}/proj"
+  mkdir -p "${proj}/custom-addons/mod_a"
+  printf "{'name': 'A', 'depends': ['base']}\n" > "${proj}/custom-addons/mod_a/__manifest__.py"
+  check="${tmp_dir}/harness/check-parity.sh"
+  if bash "$check" "$proj" > "${tmp_dir}/missing.out" 2>&1; then
+    echo "[verify] odoo parity: missing stamp passed"; exit 1
+  fi
+  grep -q "BLOCKED (parity unconfirmed)" "${tmp_dir}/missing.out"
+  ! grep -q "PASS" "${tmp_dir}/missing.out" \
+    || { echo "[verify] odoo parity: missing stamp printed PASS"; exit 1; }
+
+  slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "${proj}")"
+  stamp="${tmp_dir}/harness/.warm-base.${slug}.base.parity.env"
+  mod_sha="$(printf '%s' mod_a | sha256sum | cut -d' ' -f1)"
+  {
+    printf 'point_release=19.0-verify\n'
+    printf 'module_set=mod_a\n'
+    printf 'module_set_sha=%s\n' "${mod_sha}"
+  } > "$stamp"
+  bash "$check" "$proj" > "${tmp_dir}/pass.out"
+  grep -q "PASS" "${tmp_dir}/pass.out"
+
+  mkdir -p "${proj}/custom-addons/mod_b"
+  printf "{'name': 'B', 'depends': ['base']}\n" > "${proj}/custom-addons/mod_b/__manifest__.py"
+  if bash "$check" "$proj" > "${tmp_dir}/stale.out" 2>&1; then
+    echo "[verify] odoo parity: stale module-set passed"; exit 1
+  fi
+  grep -q "module-set drift" "${tmp_dir}/stale.out"
+)
+
+echo "[verify] testing odoo changed-module reverse-dependency closure (ORACLE-1)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_odoo_scope_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_odoo_scope_tmp EXIT
+  scope="${repo_root}/templates/domain-packs/odoo/validation-harness/changed-module-scope.py"
+  mkdir -p "${tmp_dir}/custom-addons/mod_a" "${tmp_dir}/custom-addons/mod_b" "${tmp_dir}/custom-addons/mod_c" "${tmp_dir}/custom-addons/mod_x"
+  printf "{'name': 'A', 'depends': ['base']}\n" > "${tmp_dir}/custom-addons/mod_a/__manifest__.py"
+  printf "{'name': 'B', 'depends': ['mod_a']}\n" > "${tmp_dir}/custom-addons/mod_b/__manifest__.py"
+  printf "{'name': 'C', 'depends': ['mod_b']}\n" > "${tmp_dir}/custom-addons/mod_c/__manifest__.py"
+  printf "{'name': 'X', 'depends': ['base']}\n" > "${tmp_dir}/custom-addons/mod_x/__manifest__.py"
+  got="$(python3 "$scope" --addons-root "${tmp_dir}/custom-addons" --changed mod_a --reverse-deps --format comma)"
+  [ "$got" = "mod_a,mod_b,mod_c" ] \
+    || { echo "[verify] odoo scope: got '${got}', expected mod_a,mod_b,mod_c"; exit 1; }
+  got2="$(python3 "$scope" --addons-root "${tmp_dir}/custom-addons" --changed mod_x --reverse-deps --format space)"
+  [ "$got2" = "mod_x" ] \
+    || { echo "[verify] odoo scope: independent module closure got '${got2}'"; exit 1; }
+)
+
+echo "[verify] testing validate-warm rejects bad view-inheritance registry load output (ORACLE-1)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_odoo_bad_view_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_odoo_bad_view_tmp EXIT
+  hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
+  mkdir -p "${tmp_dir}/harness" "${tmp_dir}/bin"
+  cp "${hp}/validate-warm.sh" "${hp}/check-parity.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
+  git -c init.defaultBranch=main init -q --bare "${tmp_dir}/origin.git"
+  git -c init.defaultBranch=main clone -q "${tmp_dir}/origin.git" "${tmp_dir}/proj" 2>/dev/null
+  proj="${tmp_dir}/proj"
+  cd "$proj"
+  git config user.email verify@example.invalid; git config user.name Verify
+  mkdir -p custom-addons/mod_a/views
+  printf "{'name': 'A', 'depends': ['base']}\n" > custom-addons/mod_a/__manifest__.py
+  printf '<odoo/>\n' > custom-addons/mod_a/views/a.xml
+  git add -A; git commit -q -m base; git push -q -u origin main 2>/dev/null
+  printf '<odoo><record id="bad" model="ir.ui.view"><field name="arch" type="xml"><xpath expr="//field[@name=&quot;missing_anchor&quot;]"/></field></record></odoo>\n' > custom-addons/mod_a/views/a.xml
+  slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "$proj")"
+  echo EP1 > "${tmp_dir}/harness/.warm-base.${slug}.base.epoch"
+  mod_sha="$(printf '%s' mod_a | sha256sum | cut -d' ' -f1)"
+  {
+    printf 'point_release=19.0-verify\n'
+    printf 'module_set=mod_a\n'
+    printf 'module_set_sha=%s\n' "${mod_sha}"
+  } > "${tmp_dir}/harness/.warm-base.${slug}.base.parity.env"
+  cat > "${tmp_dir}/bin/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "rm" ]; then exit 0; fi
+if [ "${1:-}" = "compose" ]; then
+  shift
+  while [ "${1:-}" = "-f" ]; do shift 2; done
+  case "${1:-}" in
+    up) exit 0 ;;
+    exec)
+      if printf '%s\n' "$*" | grep -q "psql"; then printf 'base\n'; fi
+      exit 0
+      ;;
+    run)
+      echo "Element '<field name=\"missing_anchor\">' cannot be located in parent view"
+      exit 1
+      ;;
+  esac
+fi
+exit 0
+SH
+  chmod +x "${tmp_dir}/bin/docker"
+  if PATH="${tmp_dir}/bin:$PATH" bash "${tmp_dir}/harness/validate-warm.sh" "$proj" mod_a > "${tmp_dir}/warm.out" 2>&1; then
+    echo "[verify] validate-warm bad view inheritance fixture passed"; cat "${tmp_dir}/warm.out"; exit 1
+  fi
+  grep -q "cannot be located" "${tmp_dir}/warm.out"
+  grep -q "FAIL" "${tmp_dir}/warm.out"
+  ! grep -q "\[warm\] PASS" "${tmp_dir}/warm.out" \
+    || { echo "[verify] validate-warm bad view fixture printed PASS"; exit 1; }
 )
 
 echo "[verify] testing odoo __manifest__.py version merge driver (ST-P1-74)..."

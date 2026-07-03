@@ -202,6 +202,14 @@ See `validation-harness/README.md`. Wire it as a `pre-push` gate. Enterprise
 source is mounted, never baked; reliability requires odoo.sh module-set +
 point-release parity.
 
+The warm base must carry a parity stamp. Build or rebuild it with
+`ODOO_SH_POINT_RELEASE=<odoo.sh-build-point-release> prepare-base-db.sh ...`;
+`check-parity.sh` blocks when the stamp is missing, the point release is
+unconfirmed, or the current full custom module set differs from the base stamp.
+For CI, run `check-parity.sh "$PROJECT_DIR"` before any cached warm validation.
+When `changed-module-scope.py --reverse-deps` is available, expand changed
+modules before `validate-warm.sh` so dependents' inherited views are updated too.
+
 ## Validation Tiers (commit → push → merge)
 
 Match cost to cadence; do not stack everything on one stage:
