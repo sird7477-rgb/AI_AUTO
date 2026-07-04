@@ -125,6 +125,32 @@ NOT screened`; treat that as absent evidence, never as a clean pass. In projects
 that adopt the harness pre-push hook, it runs in `--strict` mode before
 `validate-warm.sh`, then the registry load remains the oracle.
 
+### Manifest Version Bump Policy
+
+For shared Odoo branches, prefer push-time manifest version bumps over a
+per-commit pre-commit hook. The git-tier reference command is:
+
+```bash
+templates/domain-packs/odoo/git-tier/safe-push.sh --bump-manifest-version origin main
+```
+
+This creates one local bump commit before pushing: every changed module under
+`custom-addons/` gets one monotonic `__manifest__.py` `version` increment, even
+when that module changed across many commits. It must not run from a raw
+`pre-push` hook that creates commits, because Git has already selected the
+pushed SHA by then.
+
+Keep the `odoo-manifest-version-merge.sh` merge driver installed while migrating
+off per-commit hooks. It remains the safety net for concurrent sessions and
+older clones: version-only conflicts converge by taking the higher standalone
+version line, while mixed-content conflicts stay manual.
+
+`validation-harness/validate-warm.sh` treats a standalone version-line-only
+manifest diff as install-irrelevant for the warm registry-load tier. That remains
+safe with push-time bumping: the bump commit changes only the version line, and
+any real module code/data/view change is still validated by the push that carries
+the code.
+
 ## Module Install Or Update
 
 This is the **only complete detection** for view-inheritance/registry errors and

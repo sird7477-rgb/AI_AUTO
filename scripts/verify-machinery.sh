@@ -1024,6 +1024,144 @@ echo "[verify] testing safe-push race auto-rebase-retry + non-race stop (ST-P1-7
   [ "$(git rev-parse HEAD)" = "${head_before}" ] || { echo "[verify] safe-push: rewrote local history on a non-race"; exit 1; }
 )
 
+echo "[verify] testing AA-3 push-time Odoo manifest version bump..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_aa3_bump_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_aa3_bump_tmp EXIT
+  sp="${repo_root}/templates/domain-packs/odoo/git-tier/safe-push.sh"
+  bump="${repo_root}/templates/domain-packs/odoo/git-tier/odoo-manifest-version-bump.py"
+  drv="${repo_root}/templates/domain-packs/odoo/git-tier/odoo-manifest-version-merge.sh"
+  cd "${tmp_dir}"
+  git -c init.defaultBranch=main init -q --bare origin.git
+  setup() {
+    git config user.email verify@example.invalid
+    git config user.name Verify
+    git config merge.odoo-manifest-version.driver "${drv} %O %A %B"
+    git config merge.odoo-manifest-version.name vmax
+  }
+  mkman() {
+    mkdir -p custom-addons/mod_a
+    printf "{\n 'name':'A',\n 'version':'%s',\n}\n" "$1" > custom-addons/mod_a/__manifest__.py
+  }
+
+  git clone -q origin.git seed 2>/dev/null
+  (
+    cd seed
+    setup
+    echo '**/__manifest__.py merge=odoo-manifest-version' > .gitattributes
+    mkman 1.0.100
+    printf 'base\n' > custom-addons/mod_a/models.py
+    git add -A
+    git commit -q -m base
+    git push -q -u origin main
+  )
+
+  # One module changed across three commits is bumped once, in one generated commit.
+  git clone -q origin.git A 2>/dev/null
+  (
+    cd A
+    setup
+    for n in 1 2 3; do
+      printf 'a%s\n' "$n" >> custom-addons/mod_a/models.py
+      git add custom-addons/mod_a/models.py
+      git commit -q -m "A code ${n}"
+    done
+    SAFE_PUSH_BACKOFF=0 bash "${sp}" --bump-manifest-version origin main >out 2>&1 \
+      || { echo "[verify] AA-3: safe-push bump failed"; cat out; exit 1; }
+    grep -q "\[manifest-bump\] mod_a: 1.0.100 -> 1.0.101" out \
+      || { echo "[verify] AA-3: bump output missing monotonic increment"; cat out; exit 1; }
+    [ "$(git log --format=%s --grep='chore: bump Odoo manifest versions for push' | wc -l)" -eq 1 ] \
+      || { echo "[verify] AA-3: expected exactly one local bump commit for three code commits"; exit 1; }
+    grep -q "'version':'1.0.101'" custom-addons/mod_a/__manifest__.py \
+      || { echo "[verify] AA-3: manifest was not bumped once"; exit 1; }
+  )
+
+  # A normal rebase must not create another bump commit; the helper is not a commit hook.
+  git clone -q origin.git R 2>/dev/null
+  git clone -q origin.git Advancer 2>/dev/null
+  (
+    cd R
+    setup
+    printf 'r\n' >> custom-addons/mod_a/models.py
+    git add custom-addons/mod_a/models.py
+    git commit -q -m "R code"
+    python3 "${bump}" --base refs/remotes/origin/main --commit >/dev/null
+    before="$(git log --format=%s --grep='chore: bump Odoo manifest versions for push' | wc -l)"
+    (
+      cd "${tmp_dir}/Advancer"
+      setup
+      printf 'advance\n' > README.md
+      git add README.md
+      git commit -q -m advance
+      git push -q origin main
+    )
+    git fetch -q origin
+    git -c core.hooksPath=/dev/null rebase origin/main >/dev/null
+    after="$(git log --format=%s --grep='chore: bump Odoo manifest versions for push' | wc -l)"
+    [ "${before}" = "${after}" ] \
+      || { echo "[verify] AA-3: rebase replay created an extra bump commit"; exit 1; }
+  )
+
+  # Two stale clones both compute a push-time bump; safe-push rebases and the merge
+  # driver/same-line convergence keeps both code changes without a silent drop.
+  git clone -q origin.git Race1 2>/dev/null
+  git clone -q origin.git Race2 2>/dev/null
+  (
+    cd Race1
+    setup
+    printf 'race1\n' > custom-addons/mod_a/race1.py
+    git add custom-addons/mod_a/race1.py
+    git commit -q -m race1
+    SAFE_PUSH_BACKOFF=0 bash "${sp}" --bump-manifest-version origin main >/dev/null 2>&1 \
+      || { echo "[verify] AA-3: first race push failed"; exit 1; }
+  )
+  (
+    cd Race2
+    setup
+    printf 'race2\n' > custom-addons/mod_a/race2.py
+    git add custom-addons/mod_a/race2.py
+    git commit -q -m race2
+    SAFE_PUSH_BACKOFF=0 bash "${sp}" --bump-manifest-version origin main >out 2>&1 \
+      || { echo "[verify] AA-3: second race push did not converge"; cat out; exit 1; }
+    git fetch -q origin
+    git show origin/main:custom-addons/mod_a/race1.py >/dev/null \
+      || { echo "[verify] AA-3: race1 code dropped"; exit 1; }
+    git show origin/main:custom-addons/mod_a/race2.py >/dev/null \
+      || { echo "[verify] AA-3: race2 code dropped"; exit 1; }
+    git show origin/main:custom-addons/mod_a/__manifest__.py | grep -q "'version':'1.0.10" \
+      || { echo "[verify] AA-3: race result lost the manifest version line"; exit 1; }
+  )
+
+  # Refuse to create generated commits over unrelated dirty work or ambiguous manifests.
+  git clone -q origin.git Dirty 2>/dev/null
+  (
+    cd Dirty
+    setup
+    printf 'dirty\n' >> custom-addons/mod_a/models.py
+    head_before="$(git rev-parse HEAD)"
+    if python3 "${bump}" --base refs/remotes/origin/main --commit >/dev/null 2>&1; then
+      echo "[verify] AA-3: dirty worktree was not refused"; exit 1
+    fi
+    [ "$(git rev-parse HEAD)" = "${head_before}" ] \
+      || { echo "[verify] AA-3: dirty refusal still created a commit"; exit 1; }
+  )
+  git clone -q origin.git MissingVersion 2>/dev/null
+  (
+    cd MissingVersion
+    setup
+    printf "{\n 'name':'A',\n}\n" > custom-addons/mod_a/__manifest__.py
+    git add custom-addons/mod_a/__manifest__.py
+    git commit -q -m "remove version"
+    head_before="$(git rev-parse HEAD)"
+    if python3 "${bump}" --base refs/remotes/origin/main --commit >/dev/null 2>&1; then
+      echo "[verify] AA-3: missing version line was not refused"; exit 1
+    fi
+    [ "$(git rev-parse HEAD)" = "${head_before}" ] \
+      || { echo "[verify] AA-3: missing-version refusal still created a commit"; exit 1; }
+  )
+)
+
 echo "[verify] testing check-manifest-files fail-closed on unparseable + rejects symlink/abs/.. paths (blue-r24)..."
 (
   tmp_dir="$(mktemp -d)"
