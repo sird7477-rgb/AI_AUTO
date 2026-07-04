@@ -5662,6 +5662,9 @@ echo "[verify] testing review-gate verify-only diff skip..."
   cat > scripts/verify.sh <<-'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+test "${AI_AUTO_VERIFY_DIFF_SCOPE:-}" = "1"
+test "${AI_AUTO_VERIFY_SCOPES:-}" = "docs"
+printf '%s\n' "${AI_AUTO_VERIFY_CHANGED_PATHS:-}" | grep -q '^docs/note.md$'
 echo "verify fixture ok"
 SH
   cat > scripts/run-ai-reviews.sh <<-'SH'
@@ -5701,6 +5704,7 @@ SH
   test -f "${verdict}"
   grep -q "verify_only_diff_scope" "${verdict}"
   grep -q "review skipped: docs-only" "${verdict}"
+  grep -q "Verify changed paths: docs/note.md" .omx/review-results/review-run-*.md
 )
 
 echo "[verify] testing review-gate code diff keeps external review..."
@@ -8163,6 +8167,80 @@ echo "[verify] testing verify.sh project-verify seam (C4: present->runs, absent-
     || { echo "[verify] H1: default-scope verify not fail-closed exit 1 (got ${def_rc})"; exit 1; }
   echo "${def_out}" | grep -q "NOTHING was verified" \
     || { echo "[verify] H1: default-scope verify missing fail-closed message"; exit 1; }
+)
+
+echo "[verify] testing AA-2 verify diff-scope contract (docs-only skip, known mapping, unknown fallback, fail-closed failure)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  mkdir -p "${tmp_dir}/scripts" "${tmp_dir}/.venv/bin" "${tmp_dir}/bin"
+  cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"
+  cp scripts/verify-project.sh "${tmp_dir}/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/scripts/verify.sh" "${tmp_dir}/scripts/verify-project.sh"
+  printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
+    > "${tmp_dir}/scripts/session-lock.sh"
+
+  cat > "${tmp_dir}/.venv/bin/python" <<-'PYSH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> PYTEST_ARGS
+exit 0
+PYSH
+  chmod +x "${tmp_dir}/.venv/bin/python"
+
+  cat > "${tmp_dir}/bin/docker" <<-'DKSH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> DOCKER_ARGS
+exit 0
+DKSH
+  chmod +x "${tmp_dir}/bin/docker"
+
+  cat > "${tmp_dir}/bin/curl" <<-'CURSH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"/todos"*) printf '[]' ;;
+  *) printf '{"status":"ok"}' ;;
+esac
+CURSH
+  chmod +x "${tmp_dir}/bin/curl"
+
+  run_scoped() {
+    ( cd "${tmp_dir}" && PATH="${tmp_dir}/bin:${PATH}" \
+        AI_AUTO_VERIFY_SCOPE=product \
+        AI_AUTO_VERIFY_DIFF_SCOPE=1 \
+        AI_AUTO_VERIFY_CHANGED_PATHS="${AI_AUTO_VERIFY_CHANGED_PATHS:-}" \
+        AI_AUTO_VERIFY_INJECT_SCOPED_FAILURE="${AI_AUTO_VERIFY_INJECT_SCOPED_FAILURE:-0}" \
+        bash scripts/verify.sh ) > "${tmp_dir}/out" 2>&1
+  }
+
+  # Docs/plans-only changes are independently safe: skip product pytest/smoke loudly.
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'docs/note.md\nplans/aa.md' run_scoped
+  grep -q "docs/plans-only change; skipping product pytest and docker smoke" "${tmp_dir}/out"
+  test ! -f "${tmp_dir}/PYTEST_ARGS"
+  ! grep -q "compose up --build -d" "${tmp_dir}/DOCKER_ARGS" 2>/dev/null
+
+  # Known sample-app changes use the mapped product checks.
+  rm -f "${tmp_dir}/PYTEST_ARGS" "${tmp_dir}/DOCKER_ARGS"
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'app.py\ntests/test_app.py' run_scoped
+  grep -q "known sample-app mapping" "${tmp_dir}/out"
+  grep -q -- "-m pytest -q tests/test_app.py" "${tmp_dir}/PYTEST_ARGS"
+  grep -q "compose up --build -d" "${tmp_dir}/DOCKER_ARGS"
+
+  # Unknown mappings fail open to the full product verifier.
+  rm -f "${tmp_dir}/PYTEST_ARGS" "${tmp_dir}/DOCKER_ARGS"
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'scripts/unknown-helper.sh' run_scoped
+  grep -q "mapping unknown; falling back to full product verification" "${tmp_dir}/out"
+  grep -q -- "-m pytest -q tests/test_app.py" "${tmp_dir}/PYTEST_ARGS"
+  grep -q "compose up --build -d" "${tmp_dir}/DOCKER_ARGS"
+
+  # Scoped failures still block.
+  scoped_rc=0
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'docs/note.md' AI_AUTO_VERIFY_INJECT_SCOPED_FAILURE=1 run_scoped || scoped_rc=$?
+  test "${scoped_rc}" -ne 0
+  grep -q "scoped verification failure injected" "${tmp_dir}/out"
 )
 
 echo "[verify] testing verify.sh F2 (non-exec verifier that lost its exec bit is dispatched by SHEBANG, not bash)..."

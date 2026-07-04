@@ -71,6 +71,11 @@ By default, `./scripts/verify.sh` runs the full machinery suite and product
 smoke. Use `AI_AUTO_VERIFY_SCOPE=product ./scripts/verify.sh` only for
 review-gate-style product smoke, or `AI_AUTO_VERIFY_SCOPE=machinery
 ./scripts/verify.sh` for the self-test/tooling suite without Docker smoke.
+When `review-gate.sh` has a Diff Scope Summary, it passes
+`AI_AUTO_VERIFY_DIFF_SCOPE`, `AI_AUTO_VERIFY_SCOPES`, and
+`AI_AUTO_VERIFY_CHANGED_PATHS` into `scripts/verify-project.sh`. Project
+verifiers may narrow checks only when their module-to-test mapping is explicit;
+unknown mappings must print the reason and fall back to full product verify.
 
 ShellCheck info/style findings are not part of the required gate yet. Treat them
 as cleanup candidates unless a later plan promotes a narrower rule set.

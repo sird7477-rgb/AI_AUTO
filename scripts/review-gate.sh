@@ -468,6 +468,13 @@ diff_scope_field() {
   ' "${context_file}"
 }
 
+diff_scope_changed_paths() {
+  local encoded
+  encoded="$(diff_scope_field "changed paths b64")"
+  [ -n "${encoded}" ] || return 0
+  printf '%s' "${encoded}" | base64 -d 2>/dev/null || return 1
+}
+
 review_gate_housekeeping() {
   local summary_status="$1"
 
@@ -605,13 +612,14 @@ warn_stale_disabled_reviewers() {
 }
 
 write_verify_only_skip_verdict() {
-  local timestamp verdict_file summary_file run_file scopes
+  local timestamp verdict_file summary_file run_file scopes changed_paths
   timestamp="$(date +%Y%m%dT%H%M%S)"
   mkdir -p .omx/review-results
   verdict_file=".omx/review-results/review-verdict-${timestamp}.md"
   summary_file=".omx/review-results/review-summary-${timestamp}.md"
   run_file=".omx/review-results/review-run-${timestamp}.md"
   scopes="$(diff_scope_field "scopes")"
+  changed_paths="$(diff_scope_changed_paths || true)"
 
   cat > "${verdict_file}" <<EOF
 # AI Review Verdict
@@ -644,6 +652,13 @@ external_review_skipped
 
 ${scopes}
 
+## Verify Scope
+
+policy: $(diff_scope_field "review gate policy")
+scopes: ${scopes}
+changed paths:
+$(printf '%s\n' "${changed_paths:-none}" | sed 's/^/- /')
+
 ## Reviewer Verdicts
 
 review skipped: docs-only
@@ -657,6 +672,7 @@ review skipped: docs-only
 - decision: proceed
 - reason: verify_only_diff_scope
 - scopes: ${scopes}
+- verify_scope_changed_paths: $(printf '%s\n' "${changed_paths:-none}" | paste -sd ';' -)
 EOF
 
   cat > "${run_file}" <<EOF
@@ -665,6 +681,8 @@ EOF
 Review run id: ${timestamp}
 Mode: verify_only_diff_scope
 Review context: $(latest_review_context)
+Verify scopes: ${scopes}
+Verify changed paths: $(printf '%s\n' "${changed_paths:-none}" | paste -sd ';' -)
 EOF
 
   echo "${verdict_file}"
@@ -829,7 +847,17 @@ fi
 warn_broken_git_sandbox
 warn_stale_disabled_reviewers
 
+echo "[gate] collecting review context for diff-scope policy..."
+"$AH/collect-review-context.sh"
+print_diff_scope_gate
+
 echo "[gate] running verification..."
+verify_scope_scopes="$(diff_scope_field "scopes")"
+verify_scope_policy="$(diff_scope_field "review gate policy")"
+verify_scope_changed_paths="$(diff_scope_changed_paths || true)"
+if [ -n "${verify_scope_scopes}" ] || [ -n "${verify_scope_changed_paths}" ]; then
+  echo "[gate] passing diff scope to verify: scopes=${verify_scope_scopes:-unknown}"
+fi
 set +e
 env \
   -u RUN_CLAUDE_REVIEW \
@@ -839,6 +867,10 @@ env \
   -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
   AI_AUTO_IN_REVIEW_GATE=1 \
   AI_AUTO_VERIFY_SCOPE=product \
+  AI_AUTO_VERIFY_DIFF_SCOPE=1 \
+  AI_AUTO_VERIFY_SCOPES="${verify_scope_scopes}" \
+  AI_AUTO_VERIFY_SCOPE_POLICY="${verify_scope_policy}" \
+  AI_AUTO_VERIFY_CHANGED_PATHS="${verify_scope_changed_paths}" \
   "$AH/verify.sh" 2>&1 | tee "$VERIFY_OUTPUT_FILE"
 verify_status="${PIPESTATUS[0]}"
 set -e
@@ -991,10 +1023,6 @@ if [ "${verify_status}" -ne 0 ]; then
   mv -f "$_ovr_tmp" "$_ovr_dst"
   unset _ovr_dst _ovr_tmp
 fi
-
-echo "[gate] collecting review context for diff-scope policy..."
-"$AH/collect-review-context.sh"
-print_diff_scope_gate
 
 if ! run_changed_checksheet_gate; then
   echo "[gate] checksheet gate failed; stopping before external review." >&2

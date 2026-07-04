@@ -462,6 +462,11 @@ write_diff_scope_summary() {
   echo "- review gate policy: ${gate_policy}"
   echo "- review gate reasons: scopes=${scopes}; lenses=${active_lenses:-none}"
   echo "- required checks: $(required_checks_for_scopes "${scopes}")"
+  if command -v base64 >/dev/null 2>&1; then
+    printf '%s' "- changed paths b64: "
+    printf '%s\n' "${files}" | base64 | tr -d '\n'
+    echo
+  fi
   echo
   echo "| File | Scope |"
   echo "| --- | --- |"
