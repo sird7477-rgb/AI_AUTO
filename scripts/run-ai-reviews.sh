@@ -176,6 +176,16 @@ expire_transient_disabled_reviewers() {
   done
 }
 
+review_changed_files_for_prompt() {
+  if [ -n "$(printf '%s' "${REVIEW_TARGETED_RECHECK_FILES:-}" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "${REVIEW_TARGETED_RECHECK_FILES}" | sed '/^[[:space:]]*$/d'
+    return 0
+  fi
+  git -c core.fsmonitor= --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true
+  git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true
+  git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true
+}
+
 # Fast path for tests/ops: expire stale transient disables, then exit before any
 # context collection or reviewer execution.
 if [ "${AI_REVIEWS_EXPIRE_ONLY:-0}" = "1" ]; then
@@ -2050,9 +2060,7 @@ Before issuing a verdict, read the referenced files directly from the workspace 
 Changed files visible to git:
 
 \`\`\`text
-$(git -c core.fsmonitor= --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
-$(git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true)
-$(git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true)
+$(review_changed_files_for_prompt)
 \`\`\`
 
 You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.
@@ -2120,9 +2128,7 @@ Before issuing a verdict, read the referenced files directly from the workspace 
 Changed files visible to git:
 
 \`\`\`text
-$(git -c core.fsmonitor= --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
-$(git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true)
-$(git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true)
+$(review_changed_files_for_prompt)
 \`\`\`
 
 You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.
@@ -2191,9 +2197,7 @@ Before issuing a verdict, read the referenced files directly from the workspace 
 Changed files visible to git:
 
 \`\`\`text
-$(git -c core.fsmonitor= --attr-source="${REVIEW_ATTR_NONE}" diff --name-only 2>/dev/null || true)
-$(git -c core.fsmonitor= diff --cached --name-only 2>/dev/null || true)
-$(git -c core.fsmonitor= ls-files --others --exclude-standard 2>/dev/null || true)
+$(review_changed_files_for_prompt)
 \`\`\`
 
 You may use read-only inspection commands such as sed, rg, git diff, and git status. In the Direct File Inspection section, state which files you inspected and which relevant files were not inspected.

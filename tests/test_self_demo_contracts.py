@@ -1270,6 +1270,14 @@ def test_browser_qa_evidence_policy_stays_report_only_and_credential_safe() -> N
         "visual_verdict": True,
         "verify_evidence": True,
         "review_gate_evidence": True,
+        "micro_plan_rows": {
+            "layout": "evidence",
+            "click_targets": "evidence",
+            "input_handling": "evidence",
+            "alerts_errors": "not_applicable",
+            "sync_update": "evidence",
+            "business_mapping": "evidence",
+        },
     }
     assert browser_qa_evidence_policy(valid).accepted
     assert browser_qa_evidence_policy({**valid, "attempts_patch": True}).reason == "browser_qa_must_be_report_only"
@@ -1360,6 +1368,16 @@ def test_browser_qa_evidence_policy_requires_micro_plan_for_detailed_behavior() 
         },
     }
     assert browser_qa_evidence_policy(complete).accepted
+
+    cdp_without_plan = {
+        **valid,
+        "cdp_access": True,
+        "loopback_bound": True,
+        "user_launched_or_isolated": True,
+        "approval_recorded": True,
+        "exports_cookies_or_tokens": False,
+    }
+    assert browser_qa_evidence_policy(cdp_without_plan).reason == "browser_qa_micro_plan_required"
 
 
 def test_tool_adoption_status_policy_is_read_only_and_blocks_silent_promotion() -> None:

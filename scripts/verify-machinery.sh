@@ -5032,6 +5032,7 @@ CTX
     git init -q .; git config user.email a@b.c; git config user.name t
     echo base > tracked.txt; git add tracked.txt; git commit -qm init
     printf 'x' > '```zzz'
+    filter_targeted_recheck_files() { cat; }
     render() { eval "$(sed -n '/echo "## Untracked Files"$/,/echo "## Untracked Review Guard"$/p' "${collect}" \
                        | sed -n "/echo '\`\`\`text'/,/echo '\`\`\`'/p" | sed '/^[[:space:]]*#/d')"; }
     # Print any fence-opening line INSIDE the listing (excluding the intended text-fence open/close).
@@ -5294,7 +5295,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   tmp_dir="$(mktemp -d)"
 
   cleanup_doctor_optional_tmp() {
-    rm -rf "${tmp_dir}"
+    rm -rf "${tmp_dir:-}"
   }
 
   trap cleanup_doctor_optional_tmp EXIT

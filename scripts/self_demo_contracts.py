@@ -1205,7 +1205,7 @@ def browser_qa_evidence_policy(record: dict[str, Any]) -> ContractResult:
         return ContractResult(False, "browser_qa_redaction_required", {})
     if record.get("visual_verdict") and not (record.get("verify_evidence") and record.get("review_gate_evidence")):
         return ContractResult(False, "visual_verdict_not_completion_authority", {})
-    if record.get("detailed_behavior_request"):
+    if record.get("detailed_behavior_request") or record.get("cdp_access"):
         required_rows = {
             "layout",
             "click_targets",

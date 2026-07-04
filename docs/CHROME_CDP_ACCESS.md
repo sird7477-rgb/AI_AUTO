@@ -57,6 +57,17 @@ When CDP access is used, report:
 - what DOM, console, storage, network, extension, or page-model evidence was
   observed
 
+## Micro-Plan Before CDP
+
+Before opening or attaching to a CDP session, record a Browser QA micro-plan with
+these rows: `layout`, `click_targets`, `input_handling`, `alerts_errors`,
+`sync_update`, and `business_mapping`. Each row must be marked `evidence` or
+`not_applicable`.
+
+The micro-plan does not grant credential authority. Loopback binding, isolated or
+user-launched browser state, approval, and no cookie/token export remain required
+for CDP access.
+
 Project-specific wrappers should keep the command prefix stable while moving
 changeable values into validated arguments or `.env` files that are not
 committed. The wrapper is a friction-reduction surface only; it must not widen

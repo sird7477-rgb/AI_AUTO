@@ -71,7 +71,23 @@ def test_browser_qa_audit_blocks_fix_loop_and_unsafe_cdp(tmp_path: Path) -> None
         APPROVAL_RECORDED="1",
         EXPORTS_COOKIES_OR_TOKENS="0",
     )
-    assert "qa_status: qa_ok:cdp_report_only" in safe_cdp
+    assert "micro_plan_required: true" in safe_cdp
+    assert "qa_status: qa_attention:micro_plan_required" in safe_cdp
+
+    planned_cdp = _run_context(
+        repo,
+        CDP_ACCESS="1",
+        LOOPBACK_BOUND="1",
+        USER_LAUNCHED_OR_ISOLATED="1",
+        APPROVAL_RECORDED="1",
+        EXPORTS_COOKIES_OR_TOKENS="0",
+        MICRO_PLAN=(
+            "layout:evidence,click_targets:evidence,input_handling:evidence,"
+            "alerts_errors:not_applicable,sync_update:evidence,business_mapping:evidence"
+        ),
+    )
+    assert "micro_plan_status: complete" in planned_cdp
+    assert "qa_status: qa_ok:cdp_report_only" in planned_cdp
 
 
 def test_browser_qa_audit_flags_redaction_and_visual_authority(tmp_path: Path) -> None:

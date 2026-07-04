@@ -844,8 +844,60 @@ if [ "${REVIEW_DECISION_GATE:-0}" = "1" ]; then
   echo "[gate] decision gate: full unanimous panel (provenance skip / targeted recheck / integration-only OFF, context=full)"
 fi
 
+accepted_finding_files() {
+  local findings_file="${REVIEW_ACCEPTED_FINDINGS_FILE:-}"
+  [ -n "${findings_file}" ] || return 0
+  [ -f "${findings_file}" ] || return 0
+  awk -F'|' '$1 == "accepted" && $4 != "" { print $4 }' "${findings_file}" | sort -u
+}
+
+current_changed_files_for_targeted_recheck() {
+  {
+    review_git diff --name-only 2>/dev/null || true
+    git diff --cached --name-only 2>/dev/null || true
+    git ls-files --others --exclude-standard 2>/dev/null || true
+  } | sort -u
+}
+
+prepare_targeted_recheck_scope() {
+  local targeted="${REVIEW_TARGETED_RECHECK:-1}"
+  local cycle_count="${REVIEW_REVISION_CYCLE_COUNT:-1}"
+  local accepted changed out_of_scope
+
+  unset REVIEW_TARGETED_RECHECK_FILES
+
+  [ "${REVIEW_DECISION_GATE:-0}" != "1" ] || return 0
+  [ "${targeted}" = "1" ] || return 0
+  [ -f "${REVIEW_ACCEPTED_FINDINGS_FILE:-}" ] || return 0
+  case "${cycle_count}" in
+    1|2) ;;
+    *) return 0 ;;
+  esac
+
+  accepted="$(accepted_finding_files)"
+  [ -n "${accepted}" ] || return 0
+  changed="$(current_changed_files_for_targeted_recheck)"
+  [ -n "${changed}" ] || return 0
+
+  out_of_scope="$(
+    awk 'NR == FNR { if ($0 != "") accepted[$0] = 1; next } $0 != "" && !($0 in accepted)' \
+      <(printf '%s\n' "${accepted}") \
+      <(printf '%s\n' "${changed}")
+  )"
+  if [ -n "${out_of_scope}" ]; then
+    export REVIEW_TARGETED_RECHECK_SCOPE_OK=0
+    echo "[gate] targeted recheck scope expanded; falling back to full review target"
+    return 0
+  fi
+
+  export REVIEW_TARGETED_RECHECK_SCOPE_OK=1
+  export REVIEW_TARGETED_RECHECK_FILES="${accepted}"
+  echo "[gate] targeted recheck scope: accepted finding file set"
+}
+
 warn_broken_git_sandbox
 warn_stale_disabled_reviewers
+prepare_targeted_recheck_scope
 
 echo "[gate] collecting review context for diff-scope policy..."
 "$AH/collect-review-context.sh"
