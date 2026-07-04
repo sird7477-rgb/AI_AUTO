@@ -239,9 +239,9 @@ change: it must report that validation was **not performed** and that changed
 addon view XML therefore carries **build-blocking risk** (per `../verify-patterns.md`
 and ST-P1-51) — record the `odoo-view-registry: NOT validated locally` marker and
 alternative evidence, and treat the staging registry load as the gate. Not running
-is an unvalidated/at-risk state, never a clean pass. (The hook may avoid a hard
-process block so missing tooling does not halt unrelated work, but it must surface
-the risk, not imply success.)
+is an unvalidated/at-risk state, never a clean pass. The pre-push hook blocks
+changed custom-addons pushes in this state unless the push carries
+launcher-backed human acknowledgement evidence; an env-only skip is refused.
 
 ## Boundaries
 - Reliability == odoo.sh **module-set + point-release parity**; rebuild the base

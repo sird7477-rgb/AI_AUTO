@@ -12068,6 +12068,84 @@ echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed 
     || { echo "[verify] D1: header does not describe the real ai-domain-pack install path"; exit 1; }
 )
 
+echo "[verify] testing SPEC-AUD-3 Odoo pre-push fails closed when validator is unavailable..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  pp="${repo_root}/templates/domain-packs/odoo/hooks/pre-push"
+  proj="${tmp_dir}/proj"
+  harness="${tmp_dir}/harness"
+  bin="${tmp_dir}/bin"
+  mkdir -p "${proj}" "${harness}" "${bin}"
+  git init -q "${proj}"
+  git -C "${proj}" config user.email t@e.x
+  git -C "${proj}" config user.name T
+  printf 'base\n' > "${proj}/README.md"
+  git -C "${proj}" add README.md
+  git -C "${proj}" commit -qm base
+  base_sha="$(git -C "${proj}" rev-parse HEAD)"
+  mkdir -p "${proj}/custom-addons/mod_a"
+  printf 'x\n' > "${proj}/custom-addons/mod_a/__manifest__.py"
+  git -C "${proj}" add custom-addons/mod_a/__manifest__.py
+  git -C "${proj}" commit -qm addon
+  head_sha="$(git -C "${proj}" rev-parse HEAD)"
+  refs="refs/heads/main ${head_sha} refs/heads/main ${base_sha}\n"
+
+  cat > "${bin}/docker" <<'DOCKER'
+#!/usr/bin/env bash
+exit 1
+DOCKER
+  chmod +x "${bin}/docker"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${harness}/validate-warm.sh"
+  chmod +x "${harness}/validate-warm.sh"
+
+  if ( cd "${proj}" && printf '%b' "${refs}" | ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/docker-down.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: docker unavailable pre-push passed open"
+    cat "${tmp_dir}/docker-down.out"
+    exit 1
+  fi
+  grep -q 'NOT VALIDATED (validator unavailable)' "${tmp_dir}/docker-down.out" \
+    || { echo "[verify] SPEC-AUD-3: missing NOT VALIDATED unavailable line"; cat "${tmp_dir}/docker-down.out"; exit 1; }
+
+  if ( cd "${proj}" && printf '%b' "${refs}" | SKIP_ODOO_VALIDATE=1 ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/env-only.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: env-only SKIP_ODOO_VALIDATE passed without launcher evidence"
+    cat "${tmp_dir}/env-only.out"
+    exit 1
+  fi
+  grep -q 'explicit validation skip requested' "${tmp_dir}/env-only.out" \
+    || { echo "[verify] SPEC-AUD-3: env-only skip did not hit the explicit skip guard"; cat "${tmp_dir}/env-only.out"; exit 1; }
+
+  key="${tmp_dir}/prov.key"
+  ( cd "${proj}" && AI_AUTO_PRINCIPAL_LAUNCHER=1 AI_AUTO_PROVENANCE_KEY_FILE="${key}" "${repo_root}/scripts/ai-principal-runtime.sh" record-launch codex >/dev/null )
+  if ! ( cd "${proj}" && printf '%b' "${refs}" | SKIP_ODOO_VALIDATE=1 AI_AUTO_ODOO_UNVALIDATED_ACK_BY=codex AI_AUTO_PROVENANCE_KEY_FILE="${key}" ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/acked.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: launcher-backed unvalidated ack was rejected"
+    cat "${tmp_dir}/acked.out"
+    exit 1
+  fi
+  grep -q 'unvalidated push, human-acked' "${tmp_dir}/acked.out" \
+    || { echo "[verify] SPEC-AUD-3: ack path did not report human-acked unvalidated push"; cat "${tmp_dir}/acked.out"; exit 1; }
+
+  cat > "${bin}/docker" <<'DOCKER'
+#!/usr/bin/env bash
+[ "${1:-}" = "info" ] && exit 0
+exit 1
+DOCKER
+  chmod +x "${bin}/docker"
+  cat > "${harness}/validate-warm.sh" <<'WARM'
+#!/usr/bin/env bash
+printf 'VALIDATE_WARM_REACHED %s\n' "$*"
+exit 0
+WARM
+  chmod +x "${harness}/validate-warm.sh"
+  if ! ( cd "${proj}" && printf '%b' "${refs}" | ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/warm-ok.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: warm validator happy path failed"
+    cat "${tmp_dir}/warm-ok.out"
+    exit 1
+  fi
+  grep -q 'VALIDATE_WARM_REACHED' "${tmp_dir}/warm-ok.out" \
+    || { echo "[verify] SPEC-AUD-3: warm validator was not invoked"; cat "${tmp_dir}/warm-ok.out"; exit 1; }
+)
+
 echo "[verify] testing R14-#1-FSMONITOR-RCE (standalone tools ai-worktree/ai-tmux-worktree pin core.fsmonitor= so a HOSTILE repo's IN-REPO core.fsmonitor HOOK PROGRAM does NOT execute during their 'git worktree add'/'git status' calls — the CONFIG-level RCE that --attr-source does NOT neutralize, and that these tools previously left open because they inlined ONLY --attr-source; auto-invoked via the tmux after-new-window hook)..."
 (
   tmp_dir="$(mktemp -d)"

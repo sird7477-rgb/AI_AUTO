@@ -102,8 +102,11 @@ advisory**: the pre-push hook blocks the push. It needs no docker and is co-inst
 next to the pre-push hook (`.githooks/`, wired by the pack's validation-harness
 setup), so -- unlike the docker
 warm-base validation -- it runs even when `ODOO_HARNESS_DIR` is unset, before the
-harness/docker skips. That closes the gap where a stale-path or never-committed data
-file reached odoo.sh because the warm-base validation was skipped.
+harness/docker availability gate. If the warm validator is unavailable, changed
+custom-addons pushes are blocked as `NOT VALIDATED (validator unavailable)` unless
+launcher-backed human acknowledgement evidence is present. That closes the gap
+where a stale-path or never-committed data file reached odoo.sh because the
+warm-base validation was skipped.
 Only `data`/`demo` (exact module-relative paths) are checked; `assets` entries are
 addons-root-relative and may be globs, so the warm-base/web build stays their
 oracle. Run standalone with `python3 validation-harness/check-manifest-files.py
