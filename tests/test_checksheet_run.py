@@ -172,3 +172,82 @@ def test_real_run_aborts_when_an_oracle_fails_selftest(tmp_path, monkeypatch):
     mod.ORACLES["weak"] = {"fn": lambda m: mod.Verdict(True, "always_ok"), "good": "x=1\n", "bad": "x=1\n"}
     rc = mod.main([str(sheet)])
     assert rc == 2
+
+
+def _write_registry(path: Path, items: list[dict], expected: list[str] | None = None) -> Path:
+    registry = path / "closed.registry.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "kind": "closed_defect_regression_registry",
+                "expected_items": expected or [item["id"] for item in items],
+                "items": items,
+            }
+        )
+    )
+    return registry
+
+
+def _command_item(item_id: str, predicate: dict | None, non_vacuity: dict | None = None, enforcement: str = "mechanized") -> dict:
+    item = {
+        "id": item_id,
+        "source": "test",
+        "severity": "high",
+        "protects": "test guard",
+        "closed_at": "2026-07-05",
+        "enforcement": enforcement,
+    }
+    if predicate is not None:
+        item["predicate"] = predicate
+    if non_vacuity is not None:
+        item["non_vacuity"] = non_vacuity
+    return item
+
+
+def test_regression_registry_accepts_mechanized_and_author_asserted_items(tmp_path):
+    good = {"argv": [sys.executable, "-c", "print('ok')"], "expect_exit": 0, "stdout_contains": "ok"}
+    adversarial = {"argv": [sys.executable, "-c", "import sys; print('blocked', file=sys.stderr); sys.exit(3)"], "expect_exit": 3, "stderr_contains": "blocked"}
+    registry = _write_registry(
+        tmp_path,
+        [
+            _command_item("mechanized", good, adversarial),
+            _command_item("author", good, None, enforcement="author_asserted"),
+        ],
+    )
+    result = _run("--regression-registry", str(registry))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "mechanized" in result.stdout
+    assert "author_asserted" in result.stdout
+
+
+def test_regression_registry_missing_predicate_fails_completeness(tmp_path):
+    registry = _write_registry(tmp_path, [_command_item("missing", None, None, enforcement="author_asserted")])
+    result = _run("--regression-registry", str(registry))
+    assert result.returncode == 1
+    assert "predicate_missing" in result.stderr
+
+
+def test_regression_registry_vacuous_mechanized_item_is_rejected(tmp_path):
+    good = {"argv": [sys.executable, "-c", "print('ok')"], "expect_exit": 0}
+    stub = {"argv": [sys.executable, "-c", "print('stub green')"], "expect_exit": 7}
+    registry = _write_registry(tmp_path, [_command_item("vacuous", good, stub)])
+    result = _run("--regression-registry", str(registry))
+    assert result.returncode == 1
+    assert "non_vacuity_exit_mismatch" in result.stderr
+
+
+def test_regression_registry_expected_item_omission_blocks(tmp_path):
+    good = {"argv": [sys.executable, "-c", "print('ok')"], "expect_exit": 0}
+    registry = _write_registry(tmp_path, [_command_item("present", good, None, enforcement="author_asserted")], expected=["present", "missing"])
+    result = _run("--regression-registry", str(registry))
+    assert result.returncode == 1
+    assert "expected_item_missing: missing" in result.stderr
+
+
+def test_shipped_closed_defect_regression_registry_passes():
+    registry = ROOT / "checksheets" / "closed-defect-regression.registry.json"
+    result = _run("--regression-registry", str(registry))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "AUD-GATE-CHECKSHEET-OMISSION" in result.stdout
+    assert "BLUE-R24-EMPTYKEY" in result.stdout

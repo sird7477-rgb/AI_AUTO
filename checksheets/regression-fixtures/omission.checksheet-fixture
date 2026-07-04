@@ -1,0 +1,6 @@
+{
+  "expected_items": ["upload-path", "user-lookup"],
+  "items": [
+    {"id": "upload-path", "oracle": "safe_path", "target": "uploads.py", "implicit": ["no_traversal"]}
+  ]
+}

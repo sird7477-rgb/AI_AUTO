@@ -811,7 +811,7 @@ changed_checksheet_files() {
     git ls-files --others --exclude-standard 2>/dev/null || true
   } | sort -u | while IFS= read -r file; do
     case "${file}" in
-      *.checksheet.json|checksheets/*.json)
+      *.checksheet.json|*.registry.json|checksheets/*.json)
         printf '%s\n' "${file}"
         ;;
     esac
@@ -830,7 +830,10 @@ run_changed_checksheet_gate() {
     fi
     echo "[gate] running checksheet artifact: ${file}"
     rc=0
-    "$AH/checksheet-run.sh" "${file}" || rc=$?
+    case "${file}" in
+      *.registry.json) "$AH/checksheet-run.sh" --regression-registry "${file}" || rc=$? ;;
+      *) "$AH/checksheet-run.sh" "${file}" || rc=$? ;;
+    esac
     if [ "${rc}" -ne 0 ]; then
       echo "[gate] checksheet artifact FAILED (${file}, exit ${rc})" >&2
       failed=1

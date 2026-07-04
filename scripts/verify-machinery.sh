@@ -6140,6 +6140,74 @@ SH
   test ! -f "${tmp_dir}/called-summary"
 )
 
+echo "[verify] testing review-gate runs changed closed-defect regression registries before external review..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_registry_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_registry_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts checksheets
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/checksheet-run.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > ../called-registry
+case "$*" in
+  *--regression-registry*closed-defect.regression.registry.json*) exit 37 ;;
+  *) exit 64 ;;
+esac
+SH
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run after regression registry failure" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run after regression registry failure" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/*.sh
+  printf '{"version":1,"kind":"closed_defect_regression_registry","expected_items":["x"],"items":[]}\n' > checksheets/closed-defect.regression.registry.json
+  git add .gitignore scripts checksheets
+  git commit -q -m baseline
+  printf '{"version":1,"kind":"closed_defect_regression_registry","expected_items":["x"],"items":[{"id":"x"}]}\n' > checksheets/closed-defect.regression.registry.json
+
+  set +e
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out" 2>"${tmp_dir}/review-gate.err"
+  rc=$?
+  set -e
+
+  test "${rc}" -ne 0
+  grep -q "checksheet gate failed" "${tmp_dir}/review-gate.err"
+  grep -q -- "--regression-registry checksheets/closed-defect.regression.registry.json" "${tmp_dir}/called-registry"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
+)
+
 echo "[verify] testing knowledge note helper..."
 (
 	  tmp_dir="$(mktemp -d)"

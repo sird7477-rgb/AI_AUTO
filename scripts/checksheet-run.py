@@ -35,6 +35,7 @@ import importlib.util
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -51,6 +52,10 @@ class Verdict:
 
 class ChecksheetSchemaError(ValueError):
     """Raised when a checksheet cannot be trusted as a machine-readable contract."""
+
+
+class RegressionRegistryError(ValueError):
+    """Raised when a closed-defect regression registry is malformed."""
 
 
 # --- isolated artifact loading (pattern 3) ---------------------------------
@@ -248,6 +253,97 @@ def _validate_checksheet(data: Any) -> tuple[list[dict[str, Any]], list[str] | N
     return normalized, expected_raw
 
 
+def _repo_root_for(path: Path) -> Path:
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return Path(out.strip()).resolve()
+    except (OSError, subprocess.CalledProcessError):
+        return path.resolve()
+
+
+def _validate_command(value: Any, item_id: str, field_name: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RegressionRegistryError(f"item {item_id}: {field_name} must be an object")
+    argv = value.get("argv")
+    if not isinstance(argv, list) or not argv or not all(isinstance(v, str) and v for v in argv):
+        raise RegressionRegistryError(f"item {item_id}: {field_name}.argv must be a non-empty string list")
+    expect_exit = value.get("expect_exit", 0)
+    if not isinstance(expect_exit, int) or expect_exit < 0 or expect_exit > 255:
+        raise RegressionRegistryError(f"item {item_id}: {field_name}.expect_exit must be an integer 0..255")
+    timeout = value.get("timeout_seconds", 30)
+    if not isinstance(timeout, int) or timeout <= 0 or timeout > 300:
+        raise RegressionRegistryError(f"item {item_id}: {field_name}.timeout_seconds must be 1..300")
+    cwd = value.get("cwd", ".")
+    if not isinstance(cwd, str) or not cwd:
+        raise RegressionRegistryError(f"item {item_id}: {field_name}.cwd must be a non-empty string")
+    stdout_contains = value.get("stdout_contains")
+    stderr_contains = value.get("stderr_contains")
+    if stdout_contains is not None and not isinstance(stdout_contains, str):
+        raise RegressionRegistryError(f"item {item_id}: {field_name}.stdout_contains must be a string")
+    if stderr_contains is not None and not isinstance(stderr_contains, str):
+        raise RegressionRegistryError(f"item {item_id}: {field_name}.stderr_contains must be a string")
+    return {
+        "argv": argv,
+        "expect_exit": expect_exit,
+        "timeout_seconds": timeout,
+        "cwd": cwd,
+        "stdout_contains": stdout_contains,
+        "stderr_contains": stderr_contains,
+    }
+
+
+def _validate_regression_registry(data: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    if not isinstance(data, dict):
+        raise RegressionRegistryError("registry root must be an object")
+    if data.get("kind") != "closed_defect_regression_registry":
+        raise RegressionRegistryError("kind must be closed_defect_regression_registry")
+    if data.get("version") != 1:
+        raise RegressionRegistryError("version must be 1")
+    expected_raw = data.get("expected_items")
+    if not isinstance(expected_raw, list) or not expected_raw or not all(isinstance(v, str) and v for v in expected_raw):
+        raise RegressionRegistryError("expected_items must be a non-empty string list")
+    if len(set(expected_raw)) != len(expected_raw):
+        raise RegressionRegistryError("expected_items must not contain duplicate ids")
+    raw_items = data.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        raise RegressionRegistryError("items must be a non-empty list")
+    seen: set[str] = set()
+    items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            raise RegressionRegistryError("each item must be an object")
+        item_id = _require_string(raw.get("id"), "id")
+        if item_id in seen:
+            raise RegressionRegistryError(f"duplicate item id {item_id!r}")
+        seen.add(item_id)
+        enforcement = raw.get("enforcement", "author_asserted")
+        if enforcement not in ("mechanized", "author_asserted"):
+            raise RegressionRegistryError(f"item {item_id}: enforcement must be mechanized or author_asserted")
+        predicate = _validate_command(raw.get("predicate"), item_id, "predicate")
+        non_vacuity = _validate_command(raw.get("non_vacuity"), item_id, "non_vacuity")
+        if enforcement == "mechanized" and non_vacuity is None:
+            raise RegressionRegistryError(f"item {item_id}: mechanized entries require non_vacuity")
+        items.append(
+            {
+                "id": item_id,
+                "source": _require_string(raw.get("source"), "source", item_id),
+                "severity": _require_string(raw.get("severity"), "severity", item_id),
+                "protects": _require_string(raw.get("protects"), "protects", item_id),
+                "closed_at": _require_string(raw.get("closed_at"), "closed_at", item_id),
+                "enforcement": enforcement,
+                "predicate": predicate,
+                "non_vacuity": non_vacuity,
+            }
+        )
+    return items, expected_raw
+
+
 def _implicit_label(value: bool | list[str]) -> str:
     if value is True:
         return " implicit=true"
@@ -302,10 +398,85 @@ def run_checksheet(path: Path) -> int:
     return 1 if rejected else 0
 
 
+def _run_registry_command(repo: Path, command: dict[str, Any]) -> Verdict:
+    cwd = (repo / command["cwd"]).resolve()
+    try:
+        result = subprocess.run(
+            command["argv"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=command["timeout_seconds"],
+        )
+    except subprocess.TimeoutExpired:
+        return Verdict(False, "timeout", {"argv": command["argv"], "timeout_seconds": command["timeout_seconds"]})
+    except OSError as exc:
+        return Verdict(False, "exec_failed", {"argv": command["argv"], "error": repr(exc)})
+    if result.returncode != command["expect_exit"]:
+        return Verdict(
+            False,
+            "exit_mismatch",
+            {"argv": command["argv"], "expected": command["expect_exit"], "got": result.returncode},
+        )
+    stdout_contains = command.get("stdout_contains")
+    if stdout_contains and stdout_contains not in result.stdout:
+        return Verdict(False, "stdout_missing", {"needle": stdout_contains})
+    stderr_contains = command.get("stderr_contains")
+    if stderr_contains and stderr_contains not in result.stderr:
+        return Verdict(False, "stderr_missing", {"needle": stderr_contains})
+    return Verdict(True, "command_matched", {"argv": command["argv"], "exit": result.returncode})
+
+
+def run_regression_registry(path: Path) -> int:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        items, expected_items = _validate_regression_registry(data)
+    except (OSError, json.JSONDecodeError, RegressionRegistryError) as exc:
+        print(f"[regression-registry] ERROR schema_invalid: {exc}", file=sys.stderr)
+        return 2
+
+    actual_ids = [item["id"] for item in items]
+    missing = sorted(set(expected_items) - set(actual_ids))
+    unexpected = sorted(set(actual_ids) - set(expected_items))
+    if missing or unexpected:
+        if missing:
+            print(f"[regression-registry] ERROR expected_item_missing: {','.join(missing)}", file=sys.stderr)
+        if unexpected:
+            print(f"[regression-registry] ERROR unexpected_item: {','.join(unexpected)}", file=sys.stderr)
+        return 1
+
+    repo = _repo_root_for(path.parent)
+    rejected = 0
+    for item in items:
+        item_id = item["id"]
+        predicate = item["predicate"]
+        if predicate is None:
+            print(f"[regression-registry] {item_id}: REJECT predicate_missing", file=sys.stderr)
+            rejected += 1
+            continue
+        verdict = _run_registry_command(repo, predicate)
+        if not verdict.accepted:
+            print(f"[regression-registry] {item_id}: REJECT predicate_{verdict.reason} {verdict.data}", file=sys.stderr)
+            rejected += 1
+            continue
+        non_vacuity = item["non_vacuity"]
+        if non_vacuity is not None:
+            nv = _run_registry_command(repo, non_vacuity)
+            if not nv.accepted:
+                print(f"[regression-registry] {item_id}: REJECT non_vacuity_{nv.reason} {nv.data}", file=sys.stderr)
+                rejected += 1
+                continue
+            print(f"[regression-registry] {item_id}: PASS mechanized {item['protects']}")
+        else:
+            print(f"[regression-registry] {item_id}: PASS author_asserted {item['protects']}")
+    return 1 if rejected else 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Deterministic checksheet oracle runner.")
     parser.add_argument("checksheet", nargs="?", help="path to a checksheet JSON file")
     parser.add_argument("--selftest", action="store_true", help="validate every oracle on its good/bad references and exit")
+    parser.add_argument("--regression-registry", action="store_true", help="run a closed-defect regression registry JSON file")
     args = parser.parse_args(argv)
 
     if args.selftest:
@@ -320,6 +491,9 @@ def main(argv: list[str]) -> int:
     if not args.checksheet:
         parser.print_usage(sys.stderr)
         return 2
+
+    if args.regression_registry:
+        return run_regression_registry(Path(args.checksheet))
 
     # Always self-validate before trusting real artifacts (pattern 4): a runner
     # that cannot catch its own bad references must not render a verdict.
