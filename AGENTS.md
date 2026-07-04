@@ -27,7 +27,7 @@ unchanged `HEAD` is a failure, not completion; retry with a simpler message
 source instead of treating a heredoc or compound-shell no-op as success.
 
 If `./scripts/verify.sh` fails, the task is not complete.
-If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
+If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly. Before pushing behavior changes, the installed `pre-push` hook must find a binding gate verdict for the current change; a missing, blocked, stale, or forged verdict is not completion evidence.
 
 ## Scope
 

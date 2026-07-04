@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AI_AUTO pre-push guard — GLOBAL framework body.
+# Blocks behavior-changing pushes unless the current change has a binding
+# review-gate proceed/proceed_degraded verdict.
+
+: "${AI_AUTO_HOME:=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
+case ":$PATH:" in *":$AI_AUTO_HOME/scripts:"*) ;; *) PATH="$AI_AUTO_HOME/scripts:$AI_AUTO_HOME/tools:$PATH";; esac
+
+# shellcheck source=hooks/git-scrub.sh
+if [ -f "$AI_AUTO_HOME/hooks/git-scrub.sh" ] && bash -n "$AI_AUTO_HOME/hooks/git-scrub.sh" 2>/dev/null; then
+  . "$AI_AUTO_HOME/hooks/git-scrub.sh"
+else
+  printf '\033[31m[pre-push] ERROR: AI_AUTO git-scrub.sh missing or unparseable (%s); refusing push because gate binding cannot be checked safely.\033[0m\n' "$AI_AUTO_HOME/hooks/git-scrub.sh" >&2
+  exit 1
+fi
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "${repo_root}" || exit 1
+
+# shellcheck source=scripts/git-harden.sh
+. "$AI_AUTO_HOME/scripts/git-harden.sh"
+# shellcheck source=scripts/review-gate-binding.sh
+. "$AI_AUTO_HOME/scripts/review-gate-binding.sh"
+
+if review_binding_check; then
+  exit 0
+fi
+
+printf '[pre-push] no binding gate verdict for this change. Run ./scripts/review-gate.sh and retry push.\n' >&2
+exit 1

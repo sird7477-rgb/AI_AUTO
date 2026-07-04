@@ -372,6 +372,31 @@ review_provenance_decision() {
 }
 # <<< review-provenance-shared <<<
 
+# SPEC-AUD-1: bind an allowed review-gate verdict to the reviewed change so the
+# pre-push hook can enforce that the current push has a real proceed/proceed_degraded
+# result, not a self-claim or stale verdict. Kept outside the shared provenance block
+# so review-gate.sh and summarize-ai-reviews.sh remain byte-identical there.
+# shellcheck source=scripts/review-gate-binding.sh
+. "${AH}/review-gate-binding.sh"
+
+verify_override_approval_evidence_ok() {
+  local approved_by="$1" workspace ev declared _pe_stored _pe_expected
+  [ -n "${approved_by}" ] || return 1
+  workspace="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+  ev="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
+  [ -f "${ev}" ] || return 1
+  [ ! -L "${ev}" ] || return 1
+  grep -Fqx "execution_mode=principal" "${ev}" || return 1
+  grep -Fqx "source=ai-auto-principal-launcher" "${ev}" || return 1
+  grep -Fqx "workspace=${workspace}" "${ev}" || return 1
+  declared="$(sed -n 's/^principal_runtime=//p' "${ev}" | head -1)"
+  case "${declared}" in codex|claude|gemini) ;; *) return 1 ;; esac
+  [ "${approved_by}" = "${declared}" ] || return 1
+  _pe_stored="$(sed -n 's/^evidence_hmac=//p' "${ev}" | head -1)"
+  _pe_expected="$(printf 'marker_type=principal_evidence\nprincipal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${declared}" "${workspace}" | review_provenance_hmac)"
+  [ -n "${_pe_stored}" ] && [ -n "${_pe_expected}" ] && [ "${_pe_stored}" = "${_pe_expected}" ]
+}
+
 # >>> blue-r17-provenance-failclosed >>>
 # HIGH fail-closed override of the shared review_provenance_hash. The shared implementation
 # reads the working tree through the REAL .git/index and SWALLOWS git errors (2>/dev/null). A
@@ -1040,6 +1065,13 @@ if [ "${verify_status}" -ne 0 ]; then
     echo "[gate] complete"
     exit 1
   fi
+  if ! verify_override_approval_evidence_ok "${verify_override_by}"; then
+    echo "[gate] verification FAILED (exit ${verify_status}); override approval rejected because no matching launcher-owned approval evidence exists for '${verify_override_by}'." >&2
+    write_verify_failed_blocked_verdict "${verify_status}"
+    review_gate_housekeeping 1
+    echo "[gate] complete"
+    exit 1
+  fi
   echo "[gate] ===================================================================" >&2
   echo "[gate] WARNING: verify.sh FAILED (exit ${verify_status}) and is being OVERRIDDEN." >&2
   echo "[gate]   approved_by: ${verify_override_by}" >&2
@@ -1085,7 +1117,8 @@ fi
 
 if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" != "1" ] && verify_only_diff_scope_ready; then
   echo "[gate] review skipped: docs-only"
-  write_verify_only_skip_verdict
+  verify_only_verdict="$(write_verify_only_skip_verdict)"
+  review_binding_record "proceed" "normal" "${verify_only_verdict}"
   review_gate_housekeeping 0
   echo "[gate] complete"
   exit 0
@@ -1102,7 +1135,8 @@ if [ "${REVIEW_INTEGRATION_ONLY:-0}" != "1" ] \
    && [ "${REVIEW_PROVENANCE_SKIP:-1}" = "1" ] \
    && [ "$(review_provenance_decision)" = "skip" ]; then
   echo "[gate] review skipped: provenance exact-match (carrying prior approval)"
-  write_provenance_skip_verdict
+  provenance_verdict="$(write_provenance_skip_verdict)"
+  review_binding_record "proceed" "normal" "${provenance_verdict}"
   review_gate_housekeeping 0
   echo "[gate] complete"
   exit 0
@@ -1154,6 +1188,16 @@ summary_status=0
 if ! "$AH/summarize-ai-reviews.sh"; then
   echo "[gate] review gate did not proceed"
   summary_status=1
+fi
+
+if [ "${summary_status}" -eq 0 ]; then
+  latest_verdict="$(review_binding_latest_verdict)"
+  latest_decision="$(review_binding_verdict_decision "${latest_verdict}")"
+  latest_trust=""
+  if [ -n "${latest_verdict}" ] && [ -f "${latest_verdict}" ]; then
+    latest_trust="$(sed -n 's/^- trust: //p' "${latest_verdict}" 2>/dev/null | head -1)"
+  fi
+  review_binding_record "${latest_decision}" "${latest_trust:-unknown}" "${latest_verdict}"
 fi
 
 review_gate_housekeeping "${summary_status}"

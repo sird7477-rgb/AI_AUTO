@@ -40,6 +40,7 @@ for script in \
   scripts/record-project-memory.sh \
   scripts/resolve-feedback.sh \
   scripts/review-gate.sh \
+  scripts/review-gate-binding.sh \
   scripts/run-ai-reviews.sh \
   scripts/session-lock.sh \
   scripts/summarize-ai-reviews.sh \
@@ -4792,7 +4793,7 @@ echo "[verify] testing BLUE-R20-VERDICT-SPOOF (gate PURGES + run-id-BINDS review
   git -c init.defaultBranch=main init -q "${target_dir}"
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
-  for s in review-gate.sh summarize-ai-reviews.sh collect-review-context.sh git-harden.sh capture-knowledge-drafts.py knowledge-notes.py self_demo_contracts.py; do
+  for s in review-gate.sh review-gate-binding.sh summarize-ai-reviews.sh collect-review-context.sh git-harden.sh capture-knowledge-drafts.py knowledge-notes.py self_demo_contracts.py; do
     cp "${repo_root}/scripts/${s}" "scripts/${s}"
   done
   chmod +x scripts/*.sh scripts/*.py
@@ -5176,6 +5177,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     resolve-feedback.sh \
     validate-odoo-docs-kb.py \
     review-gate.sh \
+    review-gate-binding.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -5263,6 +5265,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     resolve-feedback.sh \
     validate-odoo-docs-kb.py \
     review-gate.sh \
+    review-gate-binding.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -5336,6 +5339,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     resolve-feedback.sh \
     validate-odoo-docs-kb.py \
     review-gate.sh \
+    review-gate-binding.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -5483,10 +5487,12 @@ echo "[verify] testing review-gate captures failed verdict drafts before exiting
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
 	  cat > scripts/verify.sh <<-'SH'
 	#!/usr/bin/env bash
@@ -5533,7 +5539,7 @@ echo "[verify] testing review-gate captures failed verdict drafts before exiting
   grep -q "claude:request_changes" "${failed_draft}"
 )
 
-echo "[verify] testing review-gate blocks a failed verify.sh and allows a recorded override..."
+echo "[verify] testing review-gate blocks failed verify.sh, rejects env-only override, and allows launcher-evidence override..."
 (
   tmp_dir="$(mktemp -d)"
   cleanup_rg_verifyfail_tmp() { rm -rf "${tmp_dir}"; }
@@ -5543,10 +5549,12 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   printf '#!/usr/bin/env bash\necho "verify fixture FAILING"\nexit 1\n' > scripts/verify.sh
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
@@ -5566,10 +5574,27 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   grep -q "decision: blocked" "${blocked_verdict}"
   grep -q "verify_failed" "${blocked_verdict}"
 
-  # Recorded reason + approver: proceeds past verify (panel runs) with a loud warning.
+  # Env-only reason + approver is a forgery-prone self-claim: it must remain blocked
+  # without launcher-owned principal evidence.
   rm -f .omx/review-results/review-verdict-*.md
   set +e
   AI_AUTO_VERIFY_OVERRIDE_REASON="known unrelated harness quirk" AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="tester" \
+    ./scripts/review-gate.sh > "${tmp_dir}/ovr-forged.out" 2>&1
+  forged_status=$?
+  set -e
+  [ "${forged_status}" -ne 0 ]
+  grep -q "override approval rejected" "${tmp_dir}/ovr-forged.out"
+  ! grep -q "review fixture ran" "${tmp_dir}/ovr-forged.out"
+
+  # Launcher-owned evidence matching APPROVED_BY: proceeds past verify (panel runs)
+  # with a loud warning and persists the override marker.
+  cp "${repo_root}/scripts/ai-principal-runtime.sh" scripts/ai-principal-runtime.sh
+  chmod +x scripts/ai-principal-runtime.sh
+  AI_AUTO_PRINCIPAL_LAUNCHER=1 AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    ./scripts/ai-principal-runtime.sh record-launch claude >/dev/null
+  set +e
+  AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    AI_AUTO_VERIFY_OVERRIDE_REASON="known unrelated harness quirk" AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="claude" \
     ./scripts/review-gate.sh > "${tmp_dir}/ovr.out" 2>&1
   set -e
   grep -q "being OVERRIDDEN" "${tmp_dir}/ovr.out"
@@ -5577,7 +5602,7 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   # The override is persisted to a marker file so it survives the external-runner
   # path (where summarize runs in a separate process without the exported env).
   test -f .omx/state/verify-override.env
-  grep -q "approved_by=tester" .omx/state/verify-override.env
+  grep -q "approved_by=claude" .omx/state/verify-override.env
 )
 
 echo "[verify] testing review-gate verify-override stale-guard is bound to session+holder-STARTTIME+acquired_at TTL (recycled-PID/foreign-session/mismatched-starttime marker REMOVED; live same-session marker PRESERVED; session.json-PRESENT path is NOT vacuous)..."
@@ -5591,10 +5616,12 @@ echo "[verify] testing review-gate verify-override stale-guard is bound to sessi
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results .omx/state
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   # PASSING verify + stub panel: a CLEAN run, so an override marker present at gate start is only
   # ever acted on by the stale-guard (nothing else touches it on a clean verify). This isolates
@@ -5693,10 +5720,12 @@ echo "[verify] testing review-gate defers (exit 75, no blocked verdict) when its
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   # verify.sh stub: emit the getcwd fatal phrase, then remove the gate's OWN working tree
   # (simulating a concurrent session pruning this temp/shared worktree) and exit nonzero.
@@ -5737,10 +5766,12 @@ echo "[verify] testing review-gate stale-disabled-reviewer warning..."
   cd "${dr_target}"
   mkdir -p scripts .omx/review-results .omx/reviewer-state
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   printf '#!/usr/bin/env bash\necho "verify fixture FAILING"\nexit 1\n' > scripts/verify.sh
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
@@ -5795,8 +5826,10 @@ echo "[verify] testing review-gate verify-only diff skip..."
   mkdir -p scripts docs
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/verify.sh <<-'SH'
 #!/usr/bin/env bash
@@ -5844,6 +5877,78 @@ SH
   grep -q "verify_only_diff_scope" "${verdict}"
   grep -q "review skipped: docs-only" "${verdict}"
   grep -q "Verify changed paths: docs/note.md" .omx/review-results/review-run-*.md
+  test -f .omx/reviewer-state/binding-verdict.env \
+    || { echo "[verify] SPEC-AUD-1: docs-only gate did not write a binding verdict"; exit 1; }
+  grep -q "binding_decision=proceed" .omx/reviewer-state/binding-verdict.env
+)
+
+echo "[verify] testing SPEC-AUD-1 pre-push enforces binding review-gate verdicts..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts docs .omx/review-results
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate.sh scripts/review-gate-binding.sh scripts/collect-review-context.sh
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "reviewer must stay skipped for docs-only"
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 64
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  printf 'baseline\n' > docs/note.md
+  git add .gitignore scripts docs
+  git commit -q -m baseline
+  printf 'changed docs\n' > docs/note.md
+
+  set +e
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-nobind.out" 2>&1
+  nobind_status=$?
+  set -e
+  [ "${nobind_status}" -ne 0 ]
+  grep -q "no binding gate verdict for this change" "${tmp_dir}/prepush-nobind.out"
+
+  AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out"
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-bound.out" 2>&1
+
+  cat > .omx/review-results/review-verdict-29990101T000000.md <<'VERDICT'
+# AI Review Verdict
+
+## Short Summary
+
+- decision: blocked
+- reason: fixture_blocked
+VERDICT
+  set +e
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-blocked.out" 2>&1
+  blocked_status=$?
+  set -e
+  [ "${blocked_status}" -ne 0 ]
+  grep -q "latest verdict is blocked" "${tmp_dir}/prepush-blocked.out"
 )
 
 echo "[verify] testing review-gate code diff keeps external review..."
@@ -5864,8 +5969,10 @@ echo "[verify] testing review-gate code diff keeps external review..."
   mkdir -p scripts
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/verify.sh <<-'SH'
 #!/usr/bin/env bash
@@ -5925,8 +6032,10 @@ echo "[verify] testing review-gate does not run checksheet runner without checks
   mkdir -p scripts docs
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/checksheet-run.sh <<-'SH'
 #!/usr/bin/env bash
@@ -5984,8 +6093,10 @@ echo "[verify] testing review-gate blocks on changed failing checksheet artifact
   mkdir -p scripts checksheets
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/checksheet-run.sh <<-'SH'
 #!/usr/bin/env bash
@@ -8508,6 +8619,7 @@ globalize_mk_engine() {  # $1 = engine dir; populates a minimal AI_AUTO engine
   cp "${repo_root}/scripts/git-harden.sh" "${e}/scripts/git-harden.sh"
   printf '#!/usr/bin/env bash\necho PRE_COMMIT_ENGINE_REACHED\n'  > "${e}/hooks/pre-commit"
   printf '#!/usr/bin/env bash\necho POST_COMMIT_ENGINE_REACHED\n' > "${e}/hooks/post-commit"
+  printf '#!/usr/bin/env bash\necho PRE_PUSH_ENGINE_REACHED\n'    > "${e}/hooks/pre-push"
   for s in review-gate verify automation-doctor; do
     printf '#!/usr/bin/env bash\necho %s_DISPATCH "$@"\n' "${s}" > "${e}/scripts/${s}.sh"
   done
@@ -8739,7 +8851,7 @@ echo "[verify] testing ai-auto BAKED-PATH hook shim (reaches global engine hook)
   ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
     printf 'x\n' > f; git add -A; git commit -qm base )
   "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
-  for hook in pre-commit post-commit; do
+  for hook in pre-commit post-commit pre-push; do
     grep -q "AI_AUTO shim" "${proj}/.git/hooks/${hook}" \
       || { echo "[verify] hook shim: ${hook} is not an AI_AUTO shim"; exit 1; }
     grep -qF "${baked}" "${proj}/.git/hooks/${hook}" \
@@ -8767,7 +8879,7 @@ echo "[verify] testing ai-auto setup M2 (installed hook shims are mode 0755 rega
     ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
       printf 'x\n' > f; git add -A; git commit -qm base )
     ( umask "${u}"; "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null )
-    for hook in pre-commit post-commit; do
+    for hook in pre-commit post-commit pre-push; do
       mode="$(stat -c '%a' "${proj}/.git/hooks/${hook}")"
       test "${mode}" = "755" \
         || { echo "[verify] M2: ${hook} installed mode is ${mode}, expected 755 (umask ${u})"; exit 1; }
@@ -9111,10 +9223,14 @@ echo "[verify] testing ai-auto setup R15-1 (repo-local core.hooksPath in .git/co
     || { echo "[verify] R15-1: shim landed in the hostile core.hooksPath (arbitrary-write)"; exit 1; }
   test ! -e "${attacker}/post-commit" \
     || { echo "[verify] R15-1: post-commit shim landed in the hostile core.hooksPath"; exit 1; }
+  test ! -e "${attacker}/pre-push" \
+    || { echo "[verify] R15-1: pre-push shim landed in the hostile core.hooksPath"; exit 1; }
   grep -q "AI_AUTO shim" "${proj}/.git/hooks/pre-commit" \
     || { echo "[verify] R15-1: shim NOT installed in the REAL .git/hooks"; exit 1; }
   grep -q "AI_AUTO shim" "${proj}/.git/hooks/post-commit" \
     || { echo "[verify] R15-1: post-commit shim NOT installed in the REAL .git/hooks"; exit 1; }
+  grep -q "AI_AUTO shim" "${proj}/.git/hooks/pre-push" \
+    || { echo "[verify] R15-1: pre-push shim NOT installed in the REAL .git/hooks"; exit 1; }
 )
 
 echo "[verify] testing ai-auto setup R15-2/R15-3 (bounded flock -w: a live lock holder yields a WARNED bounded return, never an infinite hang)..."

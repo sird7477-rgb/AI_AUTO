@@ -16,7 +16,7 @@ Or against another directory:
 
 `ai-auto setup` is one idempotent command. It:
 
-- installs thin `pre-commit`/`post-commit` hook shims with the engine path baked
+- installs thin `pre-commit`/`post-commit`/`pre-push` hook shims with the engine path baked
   in, so commits run the gate from the global engine;
 - adds `.omx/` to the target repository's local `.git/info/exclude`;
 - detects the project domain (advisory, via `ai-project-profile`);

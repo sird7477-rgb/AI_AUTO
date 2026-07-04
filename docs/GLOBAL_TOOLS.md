@@ -16,7 +16,7 @@ This repository keeps source copies of helper commands that are linked into `~/b
 - `ai-auto`
   - The GLOBAL launcher; operates on the project in the current directory
   - `ai-auto setup [dir]` adopts global AI_AUTO mode: installs baked-path
-    `pre-commit`/`post-commit` hook shims, adds `.omx/` to the project's local
+    `pre-commit`/`post-commit`/`pre-push` hook shims, adds `.omx/` to the project's local
     git exclude, detects the project domain, and de-pollutes any byte-identical
     leftover vendored framework files (`git rm`, staged; modified/symlinked files
     are kept and reported). It never vendors files and never auto-commits

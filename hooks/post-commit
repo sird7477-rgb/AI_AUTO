@@ -40,6 +40,6 @@ fi
 if [ -z "${recent_proceed}" ]; then
   printf '\n\033[33m[post-commit] WARNING: no review-gate proceed verdict found in the last 30 minutes.\033[0m\n' >&2
   printf '[post-commit] This commit may have bypassed review-gate (e.g. git commit --no-verify).\n' >&2
-  printf '[post-commit] Run ai-auto gate and confirm a proceed/proceed_degraded verdict before pushing.\n' >&2
+  printf '[post-commit] Run ai-auto gate and confirm a binding proceed/proceed_degraded verdict before pushing.\n' >&2
 fi
 exit 0

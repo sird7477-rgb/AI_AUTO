@@ -460,7 +460,7 @@ check_project_globalization() {
   if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null || true)"
     case "$hooks_dir" in /*) : ;; *) hooks_dir="${ROOT}/${hooks_dir}" ;; esac
-    for hook in pre-commit post-commit; do
+    for hook in pre-commit post-commit pre-push; do
       shim="${hooks_dir}/${hook}"
       if [ ! -f "$shim" ] || ! grep -q 'AI_AUTO shim' "$shim" 2>/dev/null; then
         say_warn "AI_AUTO ${hook} hook shim not installed: ${shim}"

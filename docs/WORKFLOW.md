@@ -182,6 +182,14 @@ disabled 역할은 활성 주관자의 subagent substitute가 담당한다. 이 
 보고하고, 그것조차 없으면 blocked로 남긴다. `proceed_degraded`인 경우
 완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
 
+행위 변경을 push하기 전에는 현재 변경과 결합된 review-gate binding verdict가
+있어야 한다. `pre-push`는 `.omx/reviewer-state/binding-verdict.env`의
+HMAC 증거가 현재 변경 해시와 맞고 verdict가 `proceed` 또는
+`proceed_degraded`일 때만 통과한다. `blocked`·`revise`·`review_manually`,
+무판정, stale verdict, 단순 자기주장은 completion authority가 아니다.
+verify 실패 override의 `APPROVED_BY`도 launcher-owned principal evidence와
+일치할 때만 유효하며, 스크립트가 env만 임의 설정한 값은 거부된다.
+
 루프 내 역할 경계:
 
 - Codex/GPT 리더는 구현, 조율, 검증, 완료 보고를 책임진다.
