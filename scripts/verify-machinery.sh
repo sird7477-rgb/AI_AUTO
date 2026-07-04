@@ -11844,6 +11844,105 @@ echo "[verify] testing pre-commit D2/H1 (DERIVED hook: absent verify-project.sh 
     || { echo "[verify] R7-F2: failing present-non-exec verify-project.sh did NOT block (vacuous gate)"; exit 1; }
 )
 
+echo "[verify] testing SPEC-AUD-4 guarded git commit detects HEAD-unmoved silent failures..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  guard="${repo_root}/scripts/guarded-git-commit.sh"
+  test -x "${guard}" || { echo "[verify] SPEC-AUD-4: guarded-git-commit.sh missing or not executable"; exit 1; }
+  repo="${tmp_dir}/repo"
+  mkdir -p "${repo}"
+  (
+    cd "${repo}"
+    git init -q
+    git config user.email t@e.x
+    git config user.name T
+    printf 'base\n' > f.txt
+    git add f.txt
+    git commit -qm base
+
+    before="$(git rev-parse HEAD)"
+    printf 'normal\n' >> f.txt
+    git add f.txt
+    "${guard}" -m normal >/tmp/spec-aud4-normal.out 2>&1 \
+      || { echo "[verify] SPEC-AUD-4: normal guarded commit failed"; cat /tmp/spec-aud4-normal.out; exit 1; }
+    after="$(git rev-parse HEAD)"
+    test "${before}" != "${after}" \
+      || { echo "[verify] SPEC-AUD-4: normal guarded commit did not move HEAD"; exit 1; }
+
+    rc=0; "${guard}" -m noop >/tmp/spec-aud4-noop.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-4: no-op commit unexpectedly succeeded"; exit 1; }
+    ! grep -q "no new HEAD" /tmp/spec-aud4-noop.out \
+      || { echo "[verify] SPEC-AUD-4: no-op/no-staged commit was misreported as HEAD-unmoved staged failure"; exit 1; }
+
+    fakebin="${tmp_dir}/fakebin"
+    mkdir -p "${fakebin}"
+    real_git="$(command -v git)"
+    cat > "${fakebin}/git" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  if [ "\${arg}" = commit ]; then
+    exit 0
+  fi
+done
+exec "${real_git}" "\$@"
+EOF
+    chmod +x "${fakebin}/git"
+    printf 'silent\n' >> f.txt
+    git add f.txt
+    silent_before="$(git rev-parse HEAD)"
+    rc=0; PATH="${fakebin}:$PATH" "${guard}" -m silent >/tmp/spec-aud4-silent.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-4: silent no-op commit returned success"; exit 1; }
+    test "$(git rev-parse HEAD)" = "${silent_before}" \
+      || { echo "[verify] SPEC-AUD-4: silent fixture moved HEAD, fixture is vacuous"; exit 1; }
+    grep -q "no new HEAD" /tmp/spec-aud4-silent.out \
+      || { echo "[verify] SPEC-AUD-4: silent no-op commit did not report no new HEAD"; cat /tmp/spec-aud4-silent.out; exit 1; }
+    ! git -c core.fsmonitor= diff --cached --quiet --exit-code >/dev/null 2>&1 \
+      || { echo "[verify] SPEC-AUD-4: silent fixture left no staged changes, fixture is vacuous"; exit 1; }
+
+    outer="${tmp_dir}/outer"
+    inner="${tmp_dir}/inner"
+    leak="${tmp_dir}/hook-leak"
+    git init -q "${outer}"
+    git init -q "${inner}"
+    for nested_repo in "${outer}" "${inner}"; do
+      git -C "${nested_repo}" config user.email t@e.x
+      git -C "${nested_repo}" config user.name T
+      printf 'base\n' > "${nested_repo}/nested.txt"
+      git -C "${nested_repo}" add nested.txt
+      git -C "${nested_repo}" commit -qm base
+    done
+    cat > "${outer}/.git/hooks/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${AUD4_OUTER_HOOK_SEEN:-}" = "1" ]; then
+  printf 'leaked\n' > "${AUD4_LEAK_FILE}"
+  exit 1
+fi
+export AUD4_OUTER_HOOK_SEEN=1
+(
+  cd "${AUD4_INNER_REPO}"
+  printf 'nested\n' >> nested.txt
+  git add nested.txt
+  git commit -qm nested
+)
+HOOK
+    chmod +x "${outer}/.git/hooks/pre-commit"
+    (
+      cd "${outer}"
+      printf 'outer\n' >> nested.txt
+      git add nested.txt
+      AUD4_INNER_REPO="${inner}" AUD4_LEAK_FILE="${leak}" "${guard}" -m outer \
+        >/tmp/spec-aud4-hook-env.out 2>&1 \
+        || { echo "[verify] SPEC-AUD-4: guarded commit leaked hook config into nested git"; cat /tmp/spec-aud4-hook-env.out; exit 1; }
+    )
+    test ! -f "${leak}" \
+      || { echo "[verify] SPEC-AUD-4: nested git commit reused the outer hook path"; exit 1; }
+  )
+)
+
 echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed by aiinit' claim)..."
 (
   pp="${repo_root}/templates/domain-packs/odoo/hooks/pre-push"

@@ -21,6 +21,11 @@ Before claiming a task is complete, the agent must:
 6. report the verification, review, and spec/design alignment results
 7. mention any remaining warnings or limitations
 
+When automation creates a commit, use `scripts/guarded-git-commit.sh` or an
+equivalent HEAD-moved assertion. A commit attempt with staged changes and an
+unchanged `HEAD` is a failure, not completion; retry with a simpler message
+source instead of treating a heredoc or compound-shell no-op as success.
+
 If `./scripts/verify.sh` fails, the task is not complete.
 If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
 

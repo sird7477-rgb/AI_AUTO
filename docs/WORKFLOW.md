@@ -51,6 +51,10 @@
       꺼지고 context=full). 결정 지점에서는 어떤 축소도 적용하지 않는다.
 15. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
 16. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+    자동화가 커밋을 생성해야 하는 경우에는 `scripts/guarded-git-commit.sh`를
+    사용해 커밋 시도 전후의 `HEAD` 이동을 확인한다. staged 변경이 있는데
+    `HEAD`가 움직이지 않으면 완료로 취급하지 말고, heredoc/compound shell
+    메시지 대신 파일 기반 메시지나 단순 `-m` 인자를 다시 사용한다.
 17. 재사용 가능한 규칙을 발견하면 커밋 메시지에 `Finding:`(규칙) +
     `Finding-Evidence:`(근거) + `Finding-Scope:`(적용 범위) trailer를 한 줄씩
     단다(선택: `Finding-NotWhen:` / `Finding-Surface:` / `Finding-Share: shareable`).
