@@ -41,6 +41,10 @@ if ! git -c core.fsmonitor= diff --cached --quiet --exit-code >/dev/null 2>&1; t
   staged_before=1
 fi
 
+if [ "${staged_before}" -eq 1 ] && [ -x "${script_dir}/worktree-write-guard.sh" ]; then
+  "${script_dir}/worktree-write-guard.sh" check commit || exit $?
+fi
+
 set +e
 git_without_scrubbed_hookspath commit "$@"
 commit_rc=$?

@@ -36,7 +36,7 @@ primary_root_of() {
 }
 
 cmd_create() {
-  local wid="${1:-}" pane="${2:-}" start="${3:-}" top tok name path base
+  local wid="${1:-}" pane="${2:-}" start="${3:-}" tok name path base
   # On by default once the hooks are installed; AI_AUTO_TMUX_WORKTREE=0 opts out.
   [ "${AI_AUTO_TMUX_WORKTREE:-1}" != "0" ] || exit 0
   { [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1 && [ -n "$wid" ]; } || exit 0
@@ -44,11 +44,6 @@ cmd_create() {
   [ "$(tmux show-options -wqv -t "$wid" @ai_wt_done 2>/dev/null || true)" = "1" ] && exit 0
   [ -n "$start" ] && cd "$start" 2>/dev/null || exit 0
   is_ai_auto_project || exit 0
-  top="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-  # recursion guard: already inside a tmux-managed worktree -> mark done, do nothing
-  case "$top" in
-    *-tmux-w[0-9]*) tmux set-option -w -t "$wid" @ai_wt_done 1 2>/dev/null || true; exit 0 ;;
-  esac
   tok="$(wid_token "$wid")"; [ -n "$tok" ] || exit 0
   name="tmux-w${tok}"
   path="$(command ai-worktree "$name" 2>>"$LOG_FILE")" || { log "create $wid: ai-worktree $name failed"; exit 0; }

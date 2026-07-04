@@ -12059,6 +12059,146 @@ HOOK
   )
 )
 
+echo "[verify] testing SPEC-AUD-5 write guard blocks foreign-session writes but preserves self-owned writes..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  guard="${repo_root}/scripts/guarded-git-commit.sh"
+  split="${repo_root}/tools/ai-python-split"
+  wtguard="${repo_root}/scripts/worktree-write-guard.sh"
+  tmuxwt="${repo_root}/tools/ai-tmux-worktree"
+  test -x "${guard}" || { echo "[verify] SPEC-AUD-5: guarded-git-commit.sh missing or not executable"; exit 1; }
+  test -x "${split}" || { echo "[verify] SPEC-AUD-5: ai-python-split missing or not executable"; exit 1; }
+  test -x "${wtguard}" || { echo "[verify] SPEC-AUD-5: worktree-write-guard.sh missing or not executable"; exit 1; }
+  test -x "${tmuxwt}" || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree missing or not executable"; exit 1; }
+
+  repo="${tmp_dir}/repo"
+  mkdir -p "${repo}/.omx/state"
+  (
+    cd "${repo}"
+    git init -q
+    git config user.email t@e.x
+    git config user.name T
+    printf 'base\n' > f.txt
+    git add f.txt
+    git commit -qm base
+
+    before="$(git rev-parse HEAD)"
+    cat > .omx/state/session.lock <<EOF
+holder_session=foreign-session
+holder_pid=$$
+holder_op=review-gate
+acquired_at=$(date -Iseconds)
+EOF
+    printf 'foreign\n' >> f.txt
+    git add f.txt
+    rc=0; AI_AUTO_SESSION_ID=self-session "${guard}" -m foreign >/tmp/spec-aud5-commit-foreign.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-5: foreign-session guarded commit unexpectedly succeeded"; exit 1; }
+    test "$(git rev-parse HEAD)" = "${before}" \
+      || { echo "[verify] SPEC-AUD-5: foreign-session guarded commit moved HEAD"; exit 1; }
+    grep -q 'write-guard' /tmp/spec-aud5-commit-foreign.out \
+      || { echo "[verify] SPEC-AUD-5: foreign-session guarded commit did not report write-guard"; cat /tmp/spec-aud5-commit-foreign.out; exit 1; }
+
+    cat > .omx/state/session.lock <<EOF
+holder_session=self-session
+holder_pid=$$
+holder_op=verify
+acquired_at=$(date -Iseconds)
+EOF
+    AI_AUTO_SESSION_ID=self-session "${guard}" -m self >/tmp/spec-aud5-commit-self.out 2>&1 \
+      || { echo "[verify] SPEC-AUD-5: self-owned guarded commit failed"; cat /tmp/spec-aud5-commit-self.out; exit 1; }
+    test "$(git rev-parse HEAD)" != "${before}" \
+      || { echo "[verify] SPEC-AUD-5: self-owned guarded commit did not move HEAD"; exit 1; }
+  )
+
+  split_repo="${tmp_dir}/split-repo"
+  mkdir -p "${split_repo}/pkg" "${split_repo}/scripts" "${split_repo}/.omx/state"
+  cp "${wtguard}" "${split_repo}/scripts/worktree-write-guard.sh"
+  chmod +x "${split_repo}/scripts/worktree-write-guard.sh"
+  (
+    cd "${split_repo}"
+    git init -q
+    git config user.email t@e.x
+    git config user.name T
+    cat > pkg/source.py <<'PY'
+def keep():
+    return "keep"
+
+
+def moved():
+    return "moved"
+PY
+    git add pkg/source.py scripts/worktree-write-guard.sh
+    git commit -qm base
+    "${split}" plan --source pkg/source.py --dest pkg/extracted.py --output split-plan.json >/dev/null
+    python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path("split-plan.json")
+data = json.loads(p.read_text())
+data["symbols"] = ["moved"]
+data["approved_execution_gate"] = {
+    "approved_by": "verify-machinery",
+    "approved_scope": "SPEC-AUD-5 write-guard fixture",
+    "reviewed_dry_run": True,
+    "rollback_path": ".omx/rebuild/backups",
+    "post_apply_verification": ["verify-machinery fixture"],
+}
+p.write_text(json.dumps(data, indent=2) + "\n")
+PY
+    cat > .omx/state/session.lock <<EOF
+holder_session=foreign-session
+holder_pid=$$
+holder_op=verify
+acquired_at=$(date -Iseconds)
+EOF
+    rc=0; AI_AUTO_SESSION_ID=self-session "${split}" apply --plan split-plan.json --execute-approved-plan >/tmp/spec-aud5-split-foreign.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-5: foreign-session ai-split-apply unexpectedly succeeded"; exit 1; }
+    grep -q 'write-guard' /tmp/spec-aud5-split-foreign.out \
+      || { echo "[verify] SPEC-AUD-5: foreign-session ai-split-apply did not report write-guard"; cat /tmp/spec-aud5-split-foreign.out; exit 1; }
+    test ! -e pkg/extracted.py \
+      || { echo "[verify] SPEC-AUD-5: ai-split-apply wrote destination before refusing"; exit 1; }
+    grep -q 'def moved' pkg/source.py \
+      || { echo "[verify] SPEC-AUD-5: ai-split-apply mutated source before refusing"; exit 1; }
+  )
+
+  fakebin="${tmp_dir}/fakebin"
+  mkdir -p "${fakebin}"
+  cat > "${fakebin}/tmux" <<'TMUX'
+#!/usr/bin/env bash
+case "${1:-}" in
+  show-options) exit 0 ;;
+  set-option) printf '%s\n' "$*" >> "${SPEC_AUD5_TMUX_LOG}"; exit 0 ;;
+  respawn-pane) printf '%s\n' "$*" >> "${SPEC_AUD5_RESPAWN_LOG}"; exit 0 ;;
+  *) exit 0 ;;
+esac
+TMUX
+  chmod +x "${fakebin}/tmux"
+  cat > "${fakebin}/ai-worktree" <<'AIWT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SPEC_AUD5_AIWT_LOG}"
+path="${SPEC_AUD5_TMP}/repo-tmux-w2"
+mkdir -p "${path}/.omx"
+printf '%s\n' "${path}"
+AIWT
+  chmod +x "${fakebin}/ai-worktree"
+  managed="${tmp_dir}/repo-tmux-w1"
+  mkdir -p "${managed}/.omx"
+  ( cd "${managed}"; git init -q; git config user.email t@e.x; git config user.name T; printf 'base\n' > README.md; git add README.md; git commit -qm base )
+  SPEC_AUD5_TMP="${tmp_dir}" \
+  SPEC_AUD5_TMUX_LOG="${tmp_dir}/tmux.log" \
+  SPEC_AUD5_RESPAWN_LOG="${tmp_dir}/respawn.log" \
+  SPEC_AUD5_AIWT_LOG="${tmp_dir}/aiwt.log" \
+  TMUX=1 PATH="${fakebin}:$PATH" "${tmuxwt}" create @2 %2 "${managed}" >/tmp/spec-aud5-tmux.out 2>&1 \
+    || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree create failed"; cat /tmp/spec-aud5-tmux.out; exit 1; }
+  grep -qx 'tmux-w2' "${tmp_dir}/aiwt.log" \
+    || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree did not dispatch a fresh worktree from an existing tmux worktree"; cat "${tmp_dir}/aiwt.log" 2>/dev/null || true; exit 1; }
+  grep -q 'respawn-pane' "${tmp_dir}/respawn.log" \
+    || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree did not respawn the pane into the fresh worktree"; exit 1; }
+)
+
 echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed by aiinit' claim)..."
 (
   pp="${repo_root}/templates/domain-packs/odoo/hooks/pre-push"

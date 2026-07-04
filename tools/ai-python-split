@@ -648,6 +648,11 @@ def command_apply(args: argparse.Namespace) -> int:
         fail("approved_execution_gate.post_apply_verification must be a non-empty list before apply")
     source, old_source, new_source, dest_changes = build_split(plan_path)
     repo = repo_root_for(source.parent)
+    guard = repo / "scripts" / "worktree-write-guard.sh"
+    if guard.exists():
+        result = subprocess.run([str(guard), "check", "patch-apply"], cwd=repo)
+        if result.returncode != 0:
+            return result.returncode
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_root = repo / ".omx" / "rebuild" / "backups" / timestamp
 
