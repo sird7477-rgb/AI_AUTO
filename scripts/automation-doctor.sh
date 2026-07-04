@@ -99,7 +99,7 @@ if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
   HOME_READY=1
 fi
 
-if [ -f "${ROOT}/scripts/review-gate.sh" ] && [ -d "${ROOT}/templates/domain-packs" ] && [ -x "${ROOT}/tools/ai-auto" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-gstack-contract" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/feedback-resolve" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ] && [ -x "${ROOT}/tools/micro-work" ]; then
+if [ -f "${ROOT}/scripts/review-gate.sh" ] && [ -d "${ROOT}/templates/domain-packs" ] && [ -x "${ROOT}/tools/ai-auto" ] && [ -x "${ROOT}/tools/ai-home" ] && [ -x "${ROOT}/tools/ai-register" ] && [ -x "${ROOT}/tools/ai-gstack-contract" ] && [ -x "${ROOT}/tools/ai-refactor-scan" ] && [ -x "${ROOT}/tools/ai-rebuild-plan" ] && [ -x "${ROOT}/tools/ai-split-plan" ] && [ -x "${ROOT}/tools/ai-split-dry-run" ] && [ -x "${ROOT}/tools/ai-split-apply" ] && [ -x "${ROOT}/tools/ai-plan-status" ] && [ -x "${ROOT}/tools/ai-interview-record" ] && [ -x "${ROOT}/tools/ai-plan-review" ] && [ -x "${ROOT}/tools/ai-plan-export" ] && [ -x "${ROOT}/tools/feedback-collect" ] && [ -x "${ROOT}/tools/feedback-resolve" ] && [ -x "${ROOT}/tools/knowledge-collect" ] && [ -x "${ROOT}/tools/workspace-scan" ] && [ -x "${ROOT}/tools/ai-agent-watchdog" ] && [ -x "${ROOT}/tools/micro-work" ]; then
   IN_AI_LAB=1
 fi
 
@@ -850,6 +850,7 @@ if [ "${IN_AI_LAB:-0}" -eq 1 ] && [ -n "$HOME_DIR" ] && [ "$HOME_READY" -eq 1 ];
   check_helper_link "${HOME_DIR}/bin/feedback-resolve" "${ROOT}/tools/feedback-resolve"
   check_helper_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   check_helper_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
+  check_helper_link "${HOME_DIR}/bin/ai-agent-watchdog" "${ROOT}/tools/ai-agent-watchdog"
   check_helper_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
   check_helper_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
   check_helper_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"

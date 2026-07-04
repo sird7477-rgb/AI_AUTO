@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""External tmux-pane continuity watchdog for AI agent sessions."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+
+MANAGED_START = "# >>> AI_AUTO agent watchdog keepalive >>>"
+MANAGED_END = "# <<< AI_AUTO agent watchdog keepalive <<<"
+
+
+def now() -> float:
+    return time.time()
+
+
+def state_dir() -> Path:
+    override = os.environ.get("AI_AGENT_WATCHDOG_STATE_DIR")
+    if override:
+        return Path(override).expanduser()
+    home = Path(os.environ.get("HOME", "")).expanduser()
+    xdg = Path(os.environ.get("XDG_STATE_HOME", home / ".local" / "state")).expanduser()
+    return xdg / "ai-auto" / "agent-watchdog"
+
+
+def registry_path() -> Path:
+    return state_dir() / "registry.json"
+
+
+def log_path() -> Path:
+    return state_dir() / "events.log"
+
+
+def load_registry() -> dict[str, Any]:
+    path = registry_path()
+    if not path.exists():
+        return {"version": 1, "entries": {}}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("entries"), dict):
+        raise SystemExit(f"invalid watchdog registry: {path}")
+    return data
+
+
+def save_registry(data: dict[str, Any]) -> None:
+    path = registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def event(kind: str, pane: str, reason: str, extra: dict[str, Any] | None = None) -> None:
+    path = log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "kind": kind,
+        "pane": pane,
+        "reason": reason,
+    }
+    if extra:
+        payload.update(extra)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def read_pane(entry: dict[str, Any]) -> tuple[str | None, str | None]:
+    fixture = entry.get("pane_text_file")
+    if fixture:
+        try:
+            return Path(fixture).read_text(encoding="utf-8"), None
+        except OSError as exc:
+            return None, f"pane_text_unavailable:{exc.__class__.__name__}"
+    pane = entry["pane"]
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", pane],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"tmux_capture_failed:{exc.__class__.__name__}"
+    if result.returncode != 0:
+        return None, "tmux_capture_failed"
+    return result.stdout, None
+
+
+def digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def fresh_file(path_value: str | None, max_age: int, current: float) -> bool:
+    if not path_value:
+        return False
+    path = Path(path_value)
+    try:
+        return current - path.stat().st_mtime <= max_age
+    except OSError:
+        return False
+
+
+def explicit_liveness(entry: dict[str, Any]) -> bool:
+    value = entry.get("liveness_file")
+    if not value:
+        return False
+    try:
+        return Path(value).read_text(encoding="utf-8").strip() == "active"
+    except OSError:
+        return False
+
+
+def parse_reset_at(text: str, current: float) -> float | None:
+    rel = re.search(r"resets\s+in\s+([0-9]+)s\b", text, flags=re.IGNORECASE)
+    if rel:
+        return current + int(rel.group(1))
+    match = re.search(r"resets\s+([0-2]?[0-9]):([0-5][0-9])\b", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    local_now = dt.datetime.fromtimestamp(current)
+    target = local_now.replace(hour=int(match.group(1)), minute=int(match.group(2)), second=0, microsecond=0)
+    if target.timestamp() <= current:
+        target += dt.timedelta(days=1)
+    return target.timestamp()
+
+
+def can_act(entry: dict[str, Any], current: float) -> tuple[bool, str]:
+    if entry.get("action_count", 0) >= entry.get("max_actions", 3):
+        return False, "max_actions_exceeded"
+    last = entry.get("last_action_at", 0)
+    if current - last < entry.get("rate_limit_seconds", 900):
+        return False, "rate_limited"
+    return True, "ok"
+
+
+def send_resume(entry: dict[str, Any], dry_run: bool, reason: str, current: float) -> str:
+    ok, why = can_act(entry, current)
+    if not ok:
+        return f"suppressed:{why}"
+    resume_text = Path(entry["resume_file"]).read_text(encoding="utf-8")
+    if dry_run:
+        event("would_inject", entry["pane"], reason, {"bytes": len(resume_text)})
+        return "would_inject"
+    subprocess.run(["tmux", "send-keys", "-t", entry["pane"], resume_text, "Enter"], check=False, timeout=10)
+    entry["last_action_at"] = current
+    entry["action_count"] = entry.get("action_count", 0) + 1
+    event("inject", entry["pane"], reason, {"bytes": len(resume_text)})
+    return "inject"
+
+
+def maybe_relaunch(entry: dict[str, Any], dry_run: bool, current: float) -> str:
+    argv = entry.get("relaunch_argv")
+    if not argv:
+        return "pane_unavailable"
+    if entry.get("relaunch_count", 0) >= entry.get("max_relaunch", 1):
+        event("relaunch_stopped", entry["pane"], "max_relaunch_exceeded")
+        return "relaunch_stopped"
+    if dry_run:
+        event("would_relaunch", entry["pane"], "pane_unavailable", {"argv": argv})
+        return "would_relaunch"
+    subprocess.run(argv, check=False, timeout=entry.get("relaunch_timeout_seconds", 30))
+    entry["relaunch_count"] = entry.get("relaunch_count", 0) + 1
+    event("relaunch", entry["pane"], "pane_unavailable", {"argv": argv})
+    return "relaunch"
+
+
+def scan_entry(entry: dict[str, Any], dry_run: bool) -> str:
+    current = now()
+    text, error = read_pane(entry)
+    if text is None:
+        return maybe_relaunch(entry, dry_run, current)
+
+    fp = digest(text)
+    last_fp = entry.get("last_fingerprint")
+    if last_fp != fp:
+        entry["last_fingerprint"] = fp
+        entry["last_changed_at"] = current
+        entry["idle_stable_count"] = 0
+        event("observe", entry["pane"], "pane_changed")
+        return "changed"
+
+    last_changed = float(entry.get("last_changed_at", current))
+    silence = current - last_changed
+    heartbeat_live = fresh_file(entry.get("heartbeat_file"), entry.get("heartbeat_max_age_seconds", 300), current)
+    live = heartbeat_live or explicit_liveness(entry)
+    reset_at = parse_reset_at(text, current)
+    if reset_at is not None:
+        entry["next_resume_at"] = reset_at + entry.get("reset_epsilon_seconds", 60)
+        event("schedule", entry["pane"], "limit_reset", {"resume_at": entry["next_resume_at"]})
+        return "scheduled_reset"
+
+    next_resume = entry.get("next_resume_at")
+    if isinstance(next_resume, (int, float)) and next_resume <= current:
+        entry["next_resume_at"] = None
+        return send_resume(entry, dry_run, "reset_elapsed", current)
+
+    idle_pattern = entry.get("idle_pattern")
+    mission_complete = bool(entry.get("mission_complete_file")) and Path(entry["mission_complete_file"]).exists()
+    if idle_pattern and not mission_complete and re.search(idle_pattern, text, flags=re.MULTILINE):
+        entry["idle_stable_count"] = entry.get("idle_stable_count", 0) + 1
+        if entry["idle_stable_count"] >= 2:
+            return send_resume(entry, dry_run, "idle_stable", current)
+        event("observe", entry["pane"], "idle_seen_once")
+        return "idle_seen_once"
+
+    if silence >= entry.get("stall_seconds", 900) and silence >= entry.get("operation_silence_seconds", 900):
+        if live:
+            event("observe", entry["pane"], "quiet_but_live", {"silence_seconds": int(silence)})
+            return "quiet_but_live"
+        return send_resume(entry, dry_run, "stall", current)
+
+    event("observe", entry["pane"], "no_action", {"silence_seconds": int(silence), "live": live})
+    return "no_action"
+
+
+def cmd_register(args: argparse.Namespace) -> int:
+    data = load_registry()
+    resume = str(Path(args.resume_file).expanduser())
+    if not Path(resume).is_file():
+        print(f"resume file not found: {resume}", file=sys.stderr)
+        return 2
+    relaunch_argv = json.loads(args.relaunch_json) if args.relaunch_json else None
+    if relaunch_argv is not None and (
+        not isinstance(relaunch_argv, list) or not relaunch_argv or not all(isinstance(v, str) and v for v in relaunch_argv)
+    ):
+        print("--relaunch-json must be a non-empty JSON string array", file=sys.stderr)
+        return 2
+    current = now()
+    data["entries"][args.pane] = {
+        "pane": args.pane,
+        "runtime": args.runtime,
+        "resume_file": resume,
+        "pane_text_file": args.pane_text_file,
+        "heartbeat_file": args.heartbeat_file,
+        "heartbeat_max_age_seconds": args.heartbeat_max_age_seconds,
+        "liveness_file": args.liveness_file,
+        "stall_seconds": args.stall_seconds,
+        "operation_silence_seconds": args.operation_silence_seconds,
+        "idle_pattern": args.idle_pattern,
+        "mission_complete_file": args.mission_complete_file,
+        "rate_limit_seconds": args.rate_limit_seconds,
+        "max_actions": args.max_actions,
+        "reset_epsilon_seconds": args.reset_epsilon_seconds,
+        "relaunch_argv": relaunch_argv,
+        "max_relaunch": args.max_relaunch,
+        "relaunch_timeout_seconds": args.relaunch_timeout_seconds,
+        "last_changed_at": current - args.seed_silence_seconds,
+        "last_fingerprint": args.seed_fingerprint,
+        "idle_stable_count": 0,
+        "action_count": 0,
+        "last_action_at": 0,
+        "relaunch_count": 0,
+    }
+    save_registry(data)
+    event("register", args.pane, "registered", {"runtime": args.runtime})
+    print(f"registered {args.pane}")
+    return 0
+
+
+def cmd_list(_: argparse.Namespace) -> int:
+    data = load_registry()
+    for pane, entry in sorted(data["entries"].items()):
+        print(f"{pane}\t{entry.get('runtime', 'unknown')}\t{entry.get('resume_file', '')}")
+    return 0
+
+
+def run_scan(iterations: int, interval: float, dry_run: bool) -> int:
+    for index in range(iterations):
+        data = load_registry()
+        for pane, entry in sorted(data["entries"].items()):
+            result = scan_entry(entry, dry_run=dry_run)
+            print(f"{pane}: {result}")
+        save_registry(data)
+        if index + 1 < iterations:
+            time.sleep(interval)
+    return 0
+
+
+def cmd_keepalive_install(args: argparse.Namespace) -> int:
+    profile = Path(args.profile).expanduser()
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    old = profile.read_text(encoding="utf-8") if profile.exists() else ""
+    block = "\n".join(
+        [
+            MANAGED_START,
+            f"if command -v ai-agent-watchdog >/dev/null 2>&1; then",
+            f"  ai-agent-watchdog keepalive-once --daemon-command {shlex.quote(args.daemon_command)} >/dev/null 2>&1 || true",
+            "fi",
+            MANAGED_END,
+            "",
+        ]
+    )
+    stripped = re.sub(
+        re.escape(MANAGED_START) + r".*?" + re.escape(MANAGED_END) + r"\n?",
+        "",
+        old,
+        flags=re.DOTALL,
+    )
+    profile.write_text(stripped.rstrip() + "\n\n" + block, encoding="utf-8")
+    print(f"installed keepalive block: {profile}")
+    return 0
+
+
+def cmd_keepalive_once(args: argparse.Namespace) -> int:
+    probe = subprocess.run(["pgrep", "-f", args.match], check=False, capture_output=True, text=True)
+    ignored = {os.getpid(), os.getppid()}
+    live_pids = [pid for pid in probe.stdout.split() if pid.isdigit() and int(pid) not in ignored]
+    if probe.returncode == 0 and live_pids:
+        print("watchdog_running")
+        return 0
+    argv = shlex.split(args.daemon_command)
+    if args.dry_run:
+        print("would_start " + json.dumps(argv))
+        return 0
+    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    print("started")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="External continuity watchdog for tmux-based AI agent panes.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    reg = sub.add_parser("register")
+    reg.add_argument("pane")
+    reg.add_argument("--resume-file", required=True)
+    reg.add_argument("--runtime", default="agent")
+    reg.add_argument("--pane-text-file")
+    reg.add_argument("--heartbeat-file")
+    reg.add_argument("--heartbeat-max-age-seconds", type=int, default=300)
+    reg.add_argument("--liveness-file")
+    reg.add_argument("--stall-seconds", type=int, default=900)
+    reg.add_argument("--operation-silence-seconds", type=int, default=900)
+    reg.add_argument("--idle-pattern")
+    reg.add_argument("--mission-complete-file")
+    reg.add_argument("--rate-limit-seconds", type=int, default=900)
+    reg.add_argument("--max-actions", type=int, default=3)
+    reg.add_argument("--reset-epsilon-seconds", type=int, default=60)
+    reg.add_argument("--relaunch-json")
+    reg.add_argument("--max-relaunch", type=int, default=1)
+    reg.add_argument("--relaunch-timeout-seconds", type=int, default=30)
+    reg.add_argument("--seed-silence-seconds", type=int, default=0)
+    reg.add_argument("--seed-fingerprint")
+    reg.set_defaults(func=cmd_register)
+
+    ls = sub.add_parser("list")
+    ls.set_defaults(func=cmd_list)
+
+    obs = sub.add_parser("observe")
+    obs.add_argument("--iterations", type=int, default=1)
+    obs.add_argument("--interval", type=float, default=1.0)
+    obs.set_defaults(func=lambda args: run_scan(args.iterations, args.interval, dry_run=True))
+
+    daemon = sub.add_parser("daemon")
+    daemon.add_argument("--iterations", type=int, default=1)
+    daemon.add_argument("--interval", type=float, default=5.0)
+    daemon.set_defaults(func=lambda args: run_scan(args.iterations, args.interval, dry_run=False))
+
+    inst = sub.add_parser("keepalive-install")
+    inst.add_argument("--profile", required=True)
+    inst.add_argument("--daemon-command", default="ai-agent-watchdog daemon --interval 60")
+    inst.set_defaults(func=cmd_keepalive_install)
+
+    once = sub.add_parser("keepalive-once")
+    once.add_argument("--match", default="ai-agent-watchdog daemon")
+    once.add_argument("--daemon-command", default="ai-agent-watchdog daemon --interval 60")
+    once.add_argument("--dry-run", action="store_true")
+    once.set_defaults(func=cmd_keepalive_once)
+    return p
+
+
+def main(argv: list[str]) -> int:
+    args = parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -13686,3 +13686,63 @@ echo "[verify] testing BLUE-R26-DOMAIN-SEP F3 (each of the 4 markers signs under
   [ -n "${u1}" ] && [ "${u1}" = "${u2}" ] || { echo "[verify] BLUE-R26 F3 control: untagged payloads did not collide (fixture vacuous)"; exit 1; }
   echo "[verify] BLUE-R26-DOMAIN-SEP F3: pass"
 )
+
+echo "[verify] testing SPEC-AUD-6 ai-agent-watchdog external observe, safety, install, and keepalive contracts..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export AI_AGENT_WATCHDOG_STATE_DIR="${tmp_dir}/state"
+  resume="${tmp_dir}/resume.txt"
+  pane="${tmp_dir}/pane.txt"
+  heartbeat="${tmp_dir}/heartbeat"
+  profile="${tmp_dir}/profile"
+  printf 'continue mission\n' > "${resume}"
+
+  fingerprint() {
+    python3 - "$1" <<'PY'
+import hashlib, pathlib, sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").encode()).hexdigest())
+PY
+  }
+
+  grep -q 'tools/ai-agent-watchdog' scripts/install-global-files.sh || { echo "[verify] SPEC-AUD-6: installer link missing"; exit 1; }
+  grep -q 'tools/ai-agent-watchdog' scripts/automation-doctor.sh || { echo "[verify] SPEC-AUD-6: doctor link check missing"; exit 1; }
+  grep -q 'ai-agent-watchdog' docs/GLOBAL_TOOLS.md || { echo "[verify] SPEC-AUD-6: global tools docs missing"; exit 1; }
+
+  printf 'building quietly\n' > "${pane}"
+  printf 'tick\n' > "${heartbeat}"
+  fp="$(fingerprint "${pane}")"
+  tools/ai-agent-watchdog register '%codex' --runtime codex --resume-file "${resume}" --pane-text-file "${pane}" --heartbeat-file "${heartbeat}" --heartbeat-max-age-seconds 3600 --stall-seconds 1 --operation-silence-seconds 1 --seed-silence-seconds 30 --seed-fingerprint "${fp}" >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%codex: quiet_but_live' || { echo "[verify] SPEC-AUD-6: heartbeat-live quiet pane was misclassified: ${out}"; exit 1; }
+
+  rm -f "${heartbeat}"
+  tools/ai-agent-watchdog register '%codex' --runtime codex --resume-file "${resume}" --pane-text-file "${pane}" --stall-seconds 1 --operation-silence-seconds 1 --seed-silence-seconds 30 --seed-fingerprint "${fp}" >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%codex: would_inject' || { echo "[verify] SPEC-AUD-6: stalled quiet pane did not dry-run inject: ${out}"; exit 1; }
+  ! grep -q '"kind": "inject"' "${AI_AGENT_WATCHDOG_STATE_DIR}/events.log" || { echo "[verify] SPEC-AUD-6: observe mode performed a real injection"; exit 1; }
+
+  printf 'READY_FOR_INPUT\n' > "${pane}"
+  fp="$(fingerprint "${pane}")"
+  tools/ai-agent-watchdog register '%claude' --runtime claude --resume-file "${resume}" --pane-text-file "${pane}" --idle-pattern READY_FOR_INPUT --seed-fingerprint "${fp}" >/dev/null
+  out1="$(tools/ai-agent-watchdog observe)"
+  out2="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out1}" | grep -q '%claude: idle_seen_once' || { echo "[verify] SPEC-AUD-6: first idle observation was not held: ${out1}"; exit 1; }
+  printf '%s\n' "${out2}" | grep -q '%claude: would_inject' || { echo "[verify] SPEC-AUD-6: second stable idle did not dry-run inject: ${out2}"; exit 1; }
+
+  printf 'session limit resets in 120s\n' > "${pane}"
+  fp="$(fingerprint "${pane}")"
+  tools/ai-agent-watchdog register '%limit' --runtime codex --resume-file "${resume}" --pane-text-file "${pane}" --idle-pattern 'session limit' --seed-fingerprint "${fp}" >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%limit: scheduled_reset' || { echo "[verify] SPEC-AUD-6: limit reset was not scheduled: ${out}"; exit 1; }
+  ! printf '%s\n' "${out}" | grep -q 'would_inject' || { echo "[verify] SPEC-AUD-6: limit reset injected immediately"; exit 1; }
+
+  tools/ai-agent-watchdog register '%gone' --runtime agent --resume-file "${resume}" --pane-text-file "${tmp_dir}/missing-pane" --relaunch-json '["/bin/true"]' --max-relaunch 0 >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%gone: relaunch_stopped' || { echo "[verify] SPEC-AUD-6: bounded relaunch did not stop at max: ${out}"; exit 1; }
+
+  tools/ai-agent-watchdog keepalive-install --profile "${profile}" --daemon-command 'ai-agent-watchdog daemon --interval 60' >/dev/null
+  tools/ai-agent-watchdog keepalive-install --profile "${profile}" --daemon-command 'ai-agent-watchdog daemon --interval 60' >/dev/null
+  [ "$(grep -c 'AI_AUTO agent watchdog keepalive' "${profile}")" -eq 2 ] || { echo "[verify] SPEC-AUD-6: keepalive block is not idempotent"; exit 1; }
+  out="$(tools/ai-agent-watchdog keepalive-once --dry-run --match definitely-no-such-watchdog-XYZ --daemon-command 'ai-agent-watchdog daemon --interval 60')"
+  printf '%s\n' "${out}" | grep -q 'would_start' || { echo "[verify] SPEC-AUD-6: keepalive dry-run did not report external restart: ${out}"; exit 1; }
+)

@@ -40,6 +40,7 @@ This command may create or repair safe helper symlinks under ~/bin:
   ~/bin/feedback-resolve
   ~/bin/knowledge-collect
   ~/bin/workspace-scan
+  ~/bin/ai-agent-watchdog
   ~/bin/micro-work
   ~/bin/ai-worktree
   ~/bin/ai-tmux-worktree
@@ -980,6 +981,7 @@ check_source_helper "${ROOT}/tools/feedback-collect"
 check_source_helper "${ROOT}/tools/feedback-resolve"
 check_source_helper "${ROOT}/tools/knowledge-collect"
 check_source_helper "${ROOT}/tools/workspace-scan"
+check_source_helper "${ROOT}/tools/ai-agent-watchdog"
 check_source_helper "${ROOT}/tools/micro-work"
 check_source_helper "${ROOT}/tools/ai-worktree"
 check_source_helper "${ROOT}/tools/ai-tmux-worktree"
@@ -1085,6 +1087,7 @@ else
   install_link "${HOME_DIR}/bin/feedback-resolve" "${ROOT}/tools/feedback-resolve"
   install_link "${HOME_DIR}/bin/knowledge-collect" "${ROOT}/tools/knowledge-collect"
   install_link "${HOME_DIR}/bin/workspace-scan" "${ROOT}/tools/workspace-scan"
+  install_link "${HOME_DIR}/bin/ai-agent-watchdog" "${ROOT}/tools/ai-agent-watchdog"
   install_link "${HOME_DIR}/bin/micro-work" "${ROOT}/tools/micro-work"
   install_link "${HOME_DIR}/bin/ai-worktree" "${ROOT}/tools/ai-worktree"
   install_link "${HOME_DIR}/bin/ai-tmux-worktree" "${ROOT}/tools/ai-tmux-worktree"
