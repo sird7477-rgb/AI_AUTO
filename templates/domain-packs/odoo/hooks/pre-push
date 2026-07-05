@@ -11,17 +11,87 @@
 #
 # Setup (once per environment): point ODOO_HARNESS_DIR at your local validation harness
 #   export ODOO_HARNESS_DIR="/path/to/00. DATA/harness"
-# Until it is set, this hook skips loudly (NOT VALIDATED) so onboarding is never blocked.
+# Until it is set, this hook blocks changed custom-addons pushes as
+# NOT VALIDATED (validator unavailable). A human-acked unvalidated push must carry
+# launcher-backed principal evidence; an env-only bypass is refused.
 #
-# Override (emergency):   SKIP_ODOO_VALIDATE=1 git push
+# Override (emergency):   SKIP_ODOO_VALIDATE=1 AI_AUTO_ODOO_UNVALIDATED_ACK_BY=<principal> git push
 # Fail-closed: once the harness is configured, a missing warm base is auto-built (first
 # push, ~10min) instead of skipped, so validation is never silently bypassed.
 # ODOO_SKIP_AUTO_BASE=1 blocks-with-instructions instead of auto-building.
 set -u
-[ "${SKIP_ODOO_VALIDATE:-0}" = "1" ] && { echo "[pre-push] Odoo validation skipped (SKIP_ODOO_VALIDATE=1)"; exit 0; }
 
 PROJECT="$(git rev-parse --show-toplevel)"
 HARNESS="${ODOO_HARNESS_DIR:-}"
+
+odoo_ack_key_file() {
+  if [ -n "${AI_AUTO_PROVENANCE_KEY_FILE:-}" ]; then printf '%s\n' "${AI_AUTO_PROVENANCE_KEY_FILE}"
+  elif [ -n "${AI_AUTO_HOME:-}" ]; then printf '%s/.provenance-key\n' "${AI_AUTO_HOME}"
+  else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
+}
+
+odoo_ack_key_in_tree() {
+  local keyfile top rp
+  keyfile="$(odoo_ack_key_file)"
+  top="$(realpath -m -- "${PROJECT}" 2>/dev/null)" || return 1
+  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  case "${rp}/" in "${top}/"*) return 0 ;; esac
+  return 1
+}
+
+odoo_ack_hmac() {
+  local keyfile mode
+  keyfile="$(odoo_ack_key_file)"
+  odoo_ack_key_in_tree && return 0
+  [ -s "${keyfile}" ] || return 0
+  [ -O "${keyfile}" ] || return 0
+  mode="$(stat -c '%a' "${keyfile}" 2>/dev/null || echo 777)"
+  [ $(( 0${mode} & 077 )) -eq 0 ] || return 0
+  AI_AUTO_PEV_KEYFILE="${keyfile}" python3 -c 'import hmac,hashlib,os,sys; k=open(os.environ["AI_AUTO_PEV_KEYFILE"],"rb").read(); sys.stdout.write(hmac.new(k,sys.stdin.buffer.read(),hashlib.sha256).hexdigest())' 2>/dev/null
+}
+
+odoo_ack_principal_normalized() {
+  case "${1:-}" in
+    codex|claude) printf '%s\n' "$1" ;;
+    gemini|agy) printf '%s\n' gemini ;;
+    *) return 1 ;;
+  esac
+}
+
+odoo_ack_evidence_ok() {
+  local ack ev stored expected
+  ack="$(odoo_ack_principal_normalized "${AI_AUTO_ODOO_UNVALIDATED_ACK_BY:-}")" || return 1
+  ev="${AI_AUTO_PRINCIPAL_EVIDENCE:-${PROJECT}/.omx/state/principal-runtime/current.env}"
+  [ -f "${ev}" ] && [ ! -L "${ev}" ] || return 1
+  grep -Fqx "principal_runtime=${ack}" "${ev}" || return 1
+  grep -Fqx "execution_mode=principal" "${ev}" || return 1
+  grep -Fqx "source=ai-auto-principal-launcher" "${ev}" || return 1
+  grep -Fqx "workspace=${PROJECT}" "${ev}" || return 1
+  stored="$(sed -n 's/^evidence_hmac=//p' "${ev}" | head -n 1)"
+  [ -n "${stored}" ] || return 1
+  expected="$(printf 'marker_type=principal_evidence\nprincipal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${ack}" "${PROJECT}" | odoo_ack_hmac)"
+  [ -n "${expected}" ] && [ "${expected}" = "${stored}" ]
+}
+
+odoo_unvalidated_block() {
+  local reason
+  reason="${1:-validator unavailable}"
+  echo "[pre-push] ❌ BLOCKED: Odoo validation NOT VALIDATED (validator unavailable): ${reason}"
+  echo "[pre-push]     Configure ODOO_HARNESS_DIR/docker/validate-warm.sh, or use launcher-backed ack:"
+  echo "[pre-push]     SKIP_ODOO_VALIDATE=1 AI_AUTO_ODOO_UNVALIDATED_ACK_BY=<principal> git push"
+  exit 1
+}
+
+odoo_unvalidated_ack_or_block() {
+  local reason
+  reason="${1:-validator unavailable}"
+  if [ "${SKIP_ODOO_VALIDATE:-0}" = "1" ] && odoo_ack_evidence_ok; then
+    echo "[pre-push] ⚠️  Odoo validation NOT VALIDATED (validator unavailable): ${reason}"
+    echo "[pre-push]     unvalidated push, human-acked by ${AI_AUTO_ODOO_UNVALIDATED_ACK_BY}"
+    exit 0
+  fi
+  odoo_unvalidated_block "${reason}"
+}
 
 # Read the push refs from stdin ONCE (git feeds "<lref> <lsha> <rref> <rsha>" lines)
 # and derive the changed custom-addons modules across the COMMITS being pushed. Both the
@@ -70,12 +140,22 @@ if [ -n "$mods" ]; then
   fi
 fi
 
+[ -n "$mods" ] || { echo "[pre-push] no custom-addons changes; skip Odoo validation"; exit 0; }
+
+# An explicit environment-only bypass is never enough for changed Odoo modules.
+if [ "${SKIP_ODOO_VALIDATE:-0}" = "1" ]; then
+  odoo_unvalidated_ack_or_block "explicit validation skip requested"
+fi
+
 # The harness location is environment-specific (it sits next to your local Odoo source).
-# Require it explicitly; skip loudly until configured so a fresh clone can still push.
+# Require it explicitly; fail closed until configured unless launcher evidence acks the
+# unvalidated push.
 if [ -z "$HARNESS" ]; then
-  echo "[pre-push] ⚠️  ODOO_HARNESS_DIR not set — Odoo validation skipped (NOT VALIDATED)."
-  echo "[pre-push]     Enable: export ODOO_HARNESS_DIR=\"/path/to/00. DATA/harness\""
-  exit 0
+  odoo_unvalidated_ack_or_block "ODOO_HARNESS_DIR not set"
+fi
+
+if [ -n "$mods" ] && [ -x "$HARNESS/changed-module-scope.py" ]; then
+  mods="$(python3 "$HARNESS/changed-module-scope.py" --addons-root "$PROJECT/custom-addons" --changed $mods --reverse-deps --format space)"
 fi
 
 # Static action-shape screen (no docker needed): flag CHANGED act_window popups
@@ -95,15 +175,35 @@ if [ -x "$HARNESS/check-inherited-field-overlap.py" ]; then
   ( cd "$PROJECT" && python3 "$HARNESS/check-inherited-field-overlap.py" ) || true
 fi
 
-if ! docker info >/dev/null 2>&1; then
-  echo "[pre-push] ⚠️  docker unavailable — pushing WITHOUT Odoo validation (NOT VALIDATED)"; exit 0
-fi
-if [ ! -x "$HARNESS/validate-warm.sh" ]; then
-  echo "[pre-push] ⚠️  harness not found at: $HARNESS — pushing WITHOUT validation (NOT VALIDATED)"; exit 0
+if [ -n "$mods" ] && [ -x "$HARNESS/check-schema-catalog.py" ]; then
+  schema_catalog="$HARNESS/.odoo-schema-catalog.json"
+  if [ -x "$HARNESS/harness-slug.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$HARNESS/harness-slug.sh"
+    schema_catalog="$HARNESS/.warm-base.$(harness_proj_slug "$PROJECT").${ODOO_BASE_DB:-base}.schema-catalog.json"
+  fi
+  # shellcheck disable=SC2086  # $mods is an intentional space-separated module list.
+  if ! ( cd "$PROJECT" && ODOO_SCHEMA_CATALOG="$schema_catalog" python3 "$HARNESS/check-schema-catalog.py" --modules $mods --strict ); then
+    echo "[pre-push] ❌ BLOCKED: schema catalog screen found invalid model/field references (see above)."
+    echo "[pre-push]     Rebuild the warm base/catalog, fix the reference, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
+    exit 1
+  fi
 fi
 
-# Changed custom-addons modules were resolved from the push refs at the top of this hook.
-[ -n "$mods" ] || { echo "[pre-push] no custom-addons changes; skip Odoo validation"; exit 0; }
+if [ -n "$mods" ] && [ -x "$HARNESS/check-parity.sh" ]; then
+  if ! "$HARNESS/check-parity.sh" "$PROJECT"; then
+    echo "[pre-push] ❌ BLOCKED: warm base parity is unconfirmed/stale. Rebuild with ODOO_SH_POINT_RELEASE=<point-release> \"$HARNESS/prepare-base-db.sh\" \"$PROJECT\""
+    exit 1
+  fi
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  odoo_unvalidated_ack_or_block "docker unavailable"
+fi
+if [ ! -x "$HARNESS/validate-warm.sh" ]; then
+  odoo_unvalidated_ack_or_block "validate-warm.sh not executable at: $HARNESS"
+fi
+
 echo "[pre-push] Odoo validating changed modules: $mods"
 
 "$HARNESS/validate-warm.sh" "$PROJECT" $mods

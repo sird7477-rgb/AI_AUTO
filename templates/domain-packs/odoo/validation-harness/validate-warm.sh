@@ -134,16 +134,20 @@ if [ "${WARM_NO_CACHE:-0}" != "1" ]; then
 fi
 if [ -n "$WARM_CACHE_KEY" ] && [ -f "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" ]; then
   [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: cached"; exit 0; }
+  "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
   echo "[warm] PASS (cached, no-op): '$MODCOMMA' content already validated on this warm base (key ${WARM_CACHE_KEY:0:12}); -u not re-run. (override: WARM_NO_CACHE=1)"
   exit 0
 fi
 # Test/CI hook: prime the cache for the current key WITHOUT a docker run, so the cache path
 # is fixturable offline. Never set in normal use.
 if [ "${WARM_CACHE_PRIME:-0}" = "1" ] && [ -n "$WARM_CACHE_KEY" ]; then
+  "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
   mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && : > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
   echo "[warm] CACHE PRIMED ${WARM_CACHE_KEY:0:12}"; exit 0
 fi
 [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: validate"; exit 0; }
+
+"$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
 
 echo "[warm] modules: $MODCOMMA  (-u on a clone of '$BASE_DB')"
 echo "[warm] validating at --log-level=warn (~tens of seconds to ~2 min, quiet is normal — do not interrupt); a PASS/FAIL line follows."

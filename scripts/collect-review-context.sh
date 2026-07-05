@@ -41,6 +41,7 @@ REVIEW_UNTRACKED_ALLOWLIST="${REVIEW_UNTRACKED_ALLOWLIST:-}"
 REVIEW_CONTEXT_DETAIL="${REVIEW_CONTEXT_DETAIL:-auto}"
 REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES="${REVIEW_LIGHTWEIGHT_DIFF_MAX_BYTES:-50000}"
 REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES="${REVIEW_LIGHTWEIGHT_VERIFY_TAIL_LINES:-80}"
+REVIEW_TARGETED_RECHECK_FILES="${REVIEW_TARGETED_RECHECK_FILES:-}"
 REPO_STATUS_BEFORE_CONTEXT="${REPO_STATUS_BEFORE_CONTEXT-$(review_git status --porcelain 2>/dev/null || true)}"
 # OPCOST-MED-3: one gate operates on ONE unchanging tree, yet the changed-file (name-only)
 # set was recomputed via a fresh review_git+git spawn pair at ~5 downstream call sites.
@@ -50,19 +51,41 @@ REPO_STATUS_BEFORE_CONTEXT="${REPO_STATUS_BEFORE_CONTEXT-$(review_git status --p
 # `status --porcelain` recomputes at write_tree_churn_audit and the micro-work audit are
 # DELIBERATELY left: the former compares before-vs-after to detect churn DURING collection,
 # the latter needs core.quotepath=false — both are distinct from this name-only set.)
-CHANGED_FILES_TRACKED_STAGED="${CHANGED_FILES_TRACKED_STAGED-$(
+filter_targeted_recheck_files() {
+  local files="${1-}"
+  if [ "$#" -eq 0 ]; then
+    files="$(cat)"
+  fi
+  if [ -z "$(printf '%s' "${REVIEW_TARGETED_RECHECK_FILES}" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "${files}"
+    return 0
+  fi
+  awk 'NR == FNR { if ($0 != "") keep[$0] = 1; next } $0 in keep' \
+    <(printf '%s\n' "${REVIEW_TARGETED_RECHECK_FILES}") \
+    <(printf '%s\n' "${files}")
+}
+
+targeted_recheck_file_selected() {
+  local file="$1"
+  [ -n "$(printf '%s' "${REVIEW_TARGETED_RECHECK_FILES}" | tr -d '[:space:]')" ] || return 0
+  printf '%s\n' "${REVIEW_TARGETED_RECHECK_FILES}" | grep -Fx -- "${file}" >/dev/null
+}
+
+CHANGED_FILES_TRACKED_STAGED_RAW="${CHANGED_FILES_TRACKED_STAGED-$(
   {
     review_git diff --name-only 2>/dev/null || true
     git diff --cached --name-only 2>/dev/null || true
   } | sort -u
 )}"
-CHANGED_FILES_WITH_UNTRACKED="${CHANGED_FILES_WITH_UNTRACKED-$(
+CHANGED_FILES_WITH_UNTRACKED_RAW="${CHANGED_FILES_WITH_UNTRACKED-$(
   {
     review_git diff --name-only 2>/dev/null || true
     git diff --cached --name-only 2>/dev/null || true
     git ls-files --others --exclude-standard 2>/dev/null || true
   } | sort -u
 )}"
+CHANGED_FILES_TRACKED_STAGED="$(filter_targeted_recheck_files "${CHANGED_FILES_TRACKED_STAGED_RAW}")"
+CHANGED_FILES_WITH_UNTRACKED="$(filter_targeted_recheck_files "${CHANGED_FILES_WITH_UNTRACKED_RAW}")"
 OUT_FILE="${OUT_DIR}/latest-review-context.md"
 
 mkdir -p "${OUT_DIR}"
@@ -125,11 +148,46 @@ is_status_clean() {
   [ -z "${REPO_STATUS_BEFORE_CONTEXT}" ]
 }
 
+post_commit_scope_files() {
+  has_head_commit && is_status_clean || return 0
+  post_commit_name_status | name_status_paths | sed '/^[[:space:]]*$/d' | sort -u
+}
+
+post_commit_parent_count() {
+  git rev-list --parents -n 1 HEAD 2>/dev/null | awk '{ print NF - 1 }'
+}
+
+post_commit_name_status() {
+  has_head_commit && is_status_clean || return 0
+  if [ "$(post_commit_parent_count)" -gt 1 ]; then
+    review_git diff --name-status -M HEAD^1 HEAD 2>/dev/null
+  else
+    review_git show --format= --name-status -M HEAD 2>/dev/null
+  fi
+}
+
+name_status_paths() {
+  awk -F '\t' '
+    /^[[:space:]]*$/ { next }
+    $1 ~ /^[RC]/ && NF >= 3 { print $2; print $3; next }
+    NF >= 2 { print $2 }
+  '
+}
+
 is_positive_integer() {
   printf '%s\n' "$1" | grep -Eq '^[0-9]+$'
 }
 
 tracked_diff_bytes() {
+  local -a paths=()
+  if [ -n "$(printf '%s' "${REVIEW_TARGETED_RECHECK_FILES}" | tr -d '[:space:]')" ]; then
+    mapfile -t paths < <(printf '%s\n' "${REVIEW_TARGETED_RECHECK_FILES}" | sed '/^[[:space:]]*$/d')
+    {
+      review_git diff --no-ext-diff --no-textconv -- "${paths[@]}" 2>/dev/null || true
+      review_git diff --cached --no-ext-diff --no-textconv -- "${paths[@]}" 2>/dev/null || true
+    } | wc -c | tr -d ' '
+    return 0
+  fi
   {
     review_git diff --no-ext-diff --no-textconv 2>/dev/null || true
     review_git diff --cached --no-ext-diff --no-textconv 2>/dev/null || true
@@ -163,12 +221,20 @@ use_lightweight_context() {
 }
 
 write_diff_stat() {
+  local -a paths=()
   if has_worktree_diff; then
+    if [ -n "$(printf '%s' "${REVIEW_TARGETED_RECHECK_FILES}" | tr -d '[:space:]')" ]; then
+      mapfile -t paths < <(printf '%s\n' "${REVIEW_TARGETED_RECHECK_FILES}" | sed '/^[[:space:]]*$/d')
+    fi
     if has_unstaged_diff; then
       echo "### Unstaged Diff Stat"
       echo
       echo '```text'
-      review_git diff --stat
+      if [ "${#paths[@]}" -gt 0 ]; then
+        review_git diff --stat -- "${paths[@]}"
+      else
+        review_git diff --stat
+      fi
       echo '```'
       echo
     fi
@@ -176,7 +242,11 @@ write_diff_stat() {
       echo "### Staged Diff Stat"
       echo
       echo '```text'
-      git diff --cached --stat
+      if [ "${#paths[@]}" -gt 0 ]; then
+        git diff --cached --stat -- "${paths[@]}"
+      else
+        git diff --cached --stat
+      fi
       echo '```'
       echo
     fi
@@ -197,12 +267,20 @@ write_diff_stat() {
 }
 
 write_diff() {
+  local -a paths=()
   if has_worktree_diff; then
+    if [ -n "$(printf '%s' "${REVIEW_TARGETED_RECHECK_FILES}" | tr -d '[:space:]')" ]; then
+      mapfile -t paths < <(printf '%s\n' "${REVIEW_TARGETED_RECHECK_FILES}" | sed '/^[[:space:]]*$/d')
+    fi
     if has_unstaged_diff; then
       echo "### Unstaged Diff"
       echo
       echo '```diff'
-      review_git diff --no-ext-diff --no-textconv
+      if [ "${#paths[@]}" -gt 0 ]; then
+        review_git diff --no-ext-diff --no-textconv -- "${paths[@]}"
+      else
+        review_git diff --no-ext-diff --no-textconv
+      fi
       echo '```'
       echo
     fi
@@ -210,7 +288,11 @@ write_diff() {
       echo "### Staged Diff"
       echo
       echo '```diff'
-      review_git diff --cached --no-ext-diff --no-textconv
+      if [ "${#paths[@]}" -gt 0 ]; then
+        review_git diff --cached --no-ext-diff --no-textconv -- "${paths[@]}"
+      else
+        review_git diff --cached --no-ext-diff --no-textconv
+      fi
       echo '```'
       echo
     fi
@@ -424,6 +506,9 @@ persona_gate_policy_for_lenses() {
 write_diff_scope_summary() {
   local files scopes active_lenses lens_count gate_policy integrator_required
   files="${CHANGED_FILES_WITH_UNTRACKED}"  # OPCOST-MED-3: computed once at module load
+  if [ -z "${files}" ]; then
+    files="$(post_commit_scope_files)"
+  fi
 
   if [ -z "${files}" ]; then
     echo "No changed files detected."
@@ -462,6 +547,11 @@ write_diff_scope_summary() {
   echo "- review gate policy: ${gate_policy}"
   echo "- review gate reasons: scopes=${scopes}; lenses=${active_lenses:-none}"
   echo "- required checks: $(required_checks_for_scopes "${scopes}")"
+  if command -v base64 >/dev/null 2>&1; then
+    printf '%s' "- changed paths b64: "
+    printf '%s\n' "${files}" | base64 | tr -d '\n'
+    echo
+  fi
   echo
   echo "| File | Scope |"
   echo "| --- | --- |"
@@ -555,8 +645,18 @@ EOF
   return 1
 }
 
+default_untracked_doc_plan_allowed() {
+  local path="$1"
+  case "${path}" in
+    docs/*.md|docs/*.mdx|docs/*.txt|plans/*.md|plans/*.mdx|plans/*.txt)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 write_untracked_review_guard() {
-  local material allowlist allowlist_source in_scope filtered file
+  local material allowlist allowlist_source in_scope filtered file default_relaxed remaining
   material="$(
     git ls-files --others --exclude-standard 2>/dev/null |
       grep -E '^(plans|docs|scripts|tools|tests|templates)/|^AGENTS\.md$' || true
@@ -568,9 +668,25 @@ write_untracked_review_guard() {
     return 0
   fi
 
+  default_relaxed=""
+  remaining=""
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    if default_untracked_doc_plan_allowed "${file}"; then
+      default_relaxed="${default_relaxed}${default_relaxed:+
+}${file}"
+    else
+      remaining="${remaining}${remaining:+
+}${file}"
+    fi
+  done <<EOF
+${material}
+EOF
+  material="${remaining}"
+
   # Scope blocking material to an explicit allowlist, or derive one from tracked
   # changed paths. Out-of-scope files are still reported for transparency.
-  filtered=""
+  filtered="${default_relaxed}"
   allowlist="$(split_csv_lines "${REVIEW_UNTRACKED_ALLOWLIST}")"
   allowlist_source="explicit"
   if [ -z "${allowlist}" ]; then
@@ -597,6 +713,9 @@ EOF
   if [ -z "${material}" ]; then
     echo "guard_status: clear"
     if [ -n "${filtered}" ]; then
+      if [ -n "${default_relaxed}" ]; then
+        echo "default_docs_plans_allowlist: document_files_only"
+      fi
       echo "scope_allowlist_source: ${allowlist_source}"
       echo "scope_allowlist: $(printf '%s\n' "${allowlist}" | paste -sd ',' -)"
       echo "No in-scope untracked review artifacts. The following untracked files are outside the declared review scope and were not treated as blocking material:"
@@ -613,6 +732,9 @@ EOF
   echo "guard_status: material_untracked_artifacts_present"
   echo "manual_review_required: true"
   echo "manual_review_override: ${REVIEW_UNTRACKED_MANUAL_REVIEWED:-0}"
+  if [ -n "${default_relaxed}" ]; then
+    echo "default_docs_plans_allowlist: document_files_only"
+  fi
   if [ -n "${allowlist}" ]; then
     echo "scope_allowlist_source: ${allowlist_source}"
     echo "scope_allowlist: $(printf '%s\n' "${allowlist}" | paste -sd ',' -)"
@@ -1157,7 +1279,7 @@ write_browser_qa_evidence_audit() {
     return 0
   fi
 
-  if [ "${detailed}" = "1" ]; then
+  if [ "${detailed}" = "1" ] || [ "${cdp_access}" = "1" ]; then
     echo "micro_plan_required: true"
     local required_rows="layout click_targets input_handling alerts_errors sync_update business_mapping"
     local missing_rows=""
@@ -1389,7 +1511,7 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
   # unquoted, so an untracked file named ```zzz would emit a fence-opening line
   # inside this listing and desync the guard parsers. Indent every listing line so
   # no line can open/close a code fence (^``` no longer matches).
-  git ls-files --others --exclude-standard | sed 's/^/    /'
+  git ls-files --others --exclude-standard | filter_targeted_recheck_files | sed 's/^/    /'
   echo '```'
   echo
   echo "Untracked text file content is omitted by default. Set INCLUDE_UNTRACKED_CONTENT=1 to include text files up to ${MAX_UNTRACKED_BYTES} bytes after confirming .gitignore excludes secrets."
@@ -1451,6 +1573,7 @@ trap 'rm -f "${_OUT_TMP}"' EXIT
     echo '```diff'
     untracked_n=0
     while IFS= read -r -d '' file; do
+      targeted_recheck_file_selected "${file}" || continue
       untracked_n=$((untracked_n + 1))
       if [ "$untracked_n" -gt "$MAX_UNTRACKED_FILES" ]; then
         echo "# untracked file listing truncated at ${MAX_UNTRACKED_FILES} files (more untracked files present but not expanded)"

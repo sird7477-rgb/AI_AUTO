@@ -21,8 +21,13 @@ Before claiming a task is complete, the agent must:
 6. report the verification, review, and spec/design alignment results
 7. mention any remaining warnings or limitations
 
+When automation creates a commit, use `scripts/guarded-git-commit.sh` or an
+equivalent HEAD-moved assertion. A commit attempt with staged changes and an
+unchanged `HEAD` is a failure, not completion; retry with a simpler message
+source instead of treating a heredoc or compound-shell no-op as success.
+
 If `./scripts/verify.sh` fails, the task is not complete.
-If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly.
+If `./scripts/review-gate.sh` fails or returns a decision other than `proceed` or `proceed_degraded`, do not present the change as ready to commit. A `proceed_degraded` result may continue only when its degraded trust level and missing reviewer state are reported clearly. Before pushing behavior changes, the installed `pre-push` hook must find a binding gate verdict for the current change; a missing, blocked, stale, or forged verdict is not completion evidence.
 
 ## Scope
 
@@ -104,6 +109,11 @@ the delegation guardrails or the leader's diff review, per the
 - If something is unclear, say what is known, what is inferred, and what evidence would confirm it.
 - Prefer local runtime evidence for CLI/model availability; provider documentation is reference material unless the current task explicitly asks for external research.
 - When forced to proceed with an assumption, label it as an assumption and keep the change reversible.
+- AUD-7-REPRO-FIDELITY-DOCTRINE: high-confidence root-cause language such as
+  "confirmed", "definitive", "원인 확정", or "확인 완료" is allowed only when the
+  reproduction matches the user's observed symptom. Proxy reproduction
+  (server-side instead of client-side, stale build, synthetic render, or
+  browser-less viewport) must stay labeled as a hypothesis.
 
 ## Command Keywords
 

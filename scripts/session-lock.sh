@@ -16,15 +16,11 @@
 SESSION_LOCK_FILE="${SESSION_LOCK_FILE:-.omx/state/session.lock}"
 SESSION_LOCK_HELD=0
 
-# A stable id for THIS logical session, shared with child processes (review-gate -> the
-# verify.sh it spawns) via the exported AI_AUTO_SESSION_ID, so nesting is re-entrant and
-# never self-blocks, while a genuinely separate concurrent run gets a different id.
+# A process-unique id for THIS logical session, shared with child processes
+# (review-gate -> the verify.sh it spawns) via the exported AI_AUTO_SESSION_ID,
+# so nesting is re-entrant and never self-blocks, while a genuinely separate
+# concurrent run gets a different id.
 _session_lock_compute_id() {
-  if [ -f .omx/state/session.json ]; then
-    local sid
-    sid="$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' .omx/state/session.json | head -1)"
-    if [ -n "$sid" ]; then printf '%s' "$sid"; return; fi
-  fi
   printf '%s@%s' "$$" "$(hostname 2>/dev/null || echo host)"
 }
 

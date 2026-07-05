@@ -231,7 +231,7 @@ Alternative usage from anywhere:
 
     ai-auto setup /path/to/target-repo
 
-`ai-auto setup` installs baked-path `pre-commit`/`post-commit` hook shims that
+`ai-auto setup` installs baked-path `pre-commit`/`post-commit`/`pre-push` hook shims that
 run the gate from the global engine, adds `.omx/` to the project's local git
 exclude, detects the project domain, and `git rm`'s any byte-identical leftover
 vendored framework copies (modified/symlinked files are kept and reported). It

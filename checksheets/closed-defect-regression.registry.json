@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "kind": "closed_defect_regression_registry",
+  "expected_items": [
+    "AUD-GATE-CHECKSHEET-OMISSION",
+    "AUD-GATE-CHECKSHEET-UNKNOWN-ORACLE",
+    "AUD-GATE-CHECKSHEET-ADVERSARIAL-SQL"
+  ],
+  "items": [
+    {
+      "id": "AUD-GATE-CHECKSHEET-OMISSION",
+      "source": "audit gate-bypass #2/#9/#11/#15",
+      "severity": "high",
+      "protects": "checksheet expected-item omission fails closed",
+      "closed_at": "2026-07-05",
+      "enforcement": "mechanized",
+      "predicate": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/good.checksheet-fixture"
+        ],
+        "expect_exit": 0,
+        "stdout_contains": "PASS"
+      },
+      "non_vacuity": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/omission.checksheet-fixture"
+        ],
+        "expect_exit": 1,
+        "stderr_contains": "expected_item_missing"
+      }
+    },
+    {
+      "id": "AUD-GATE-CHECKSHEET-UNKNOWN-ORACLE",
+      "source": "audit gate-bypass #2/#9/#11/#15",
+      "severity": "high",
+      "protects": "unknown deterministic oracles cannot silently green",
+      "closed_at": "2026-07-05",
+      "enforcement": "mechanized",
+      "predicate": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/good.checksheet-fixture"
+        ],
+        "expect_exit": 0,
+        "stdout_contains": "PASS"
+      },
+      "non_vacuity": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/unknown-oracle.checksheet-fixture"
+        ],
+        "expect_exit": 2,
+        "stderr_contains": "unknown oracle"
+      }
+    },
+    {
+      "id": "AUD-GATE-CHECKSHEET-ADVERSARIAL-SQL",
+      "source": "audit gate-bypass #2/#9/#11/#15",
+      "severity": "high",
+      "protects": "adversarial checksheet predicates reject unsafe artifacts",
+      "closed_at": "2026-07-05",
+      "enforcement": "mechanized",
+      "predicate": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "--selftest"
+        ],
+        "expect_exit": 0,
+        "stdout_contains": "selftest OK"
+      },
+      "non_vacuity": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/bad-sql.checksheet-fixture"
+        ],
+        "expect_exit": 1,
+        "stderr_contains": "sql_injection_leaks_rows"
+      }
+    }
+  ]
+}

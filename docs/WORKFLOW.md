@@ -51,6 +51,15 @@
       꺼지고 context=full). 결정 지점에서는 어떤 축소도 적용하지 않는다.
 15. 리뷰어가 사용 불가하면 상태와 보강 경로를 기록한다.
 16. 검증과 review gate 증거가 있을 때만 커밋 후보를 만든다.
+    자동화가 커밋을 생성해야 하는 경우에는 `scripts/guarded-git-commit.sh`를
+    사용해 커밋 시도 전후의 `HEAD` 이동을 확인한다. staged 변경이 있는데
+    `HEAD`가 움직이지 않으면 완료로 취급하지 말고, heredoc/compound shell
+    메시지 대신 파일 기반 메시지나 단순 `-m` 인자를 다시 사용한다.
+    AUD-7-REPRO-FIDELITY-DOCTRINE: "confirmed", "definitive", "원인 확정",
+    "확인 완료" 같은 고신뢰 root-cause 언어는 재현이 사용자가 관측한
+    증상과 일치할 때만 허용한다. 서버측 대신 클라이언트측, stale build,
+    synthetic render, browser-less viewport 같은 proxy 재현 위에서는
+    hypothesis/미확정으로 표기한다.
 17. 재사용 가능한 규칙을 발견하면 커밋 메시지에 `Finding:`(규칙) +
     `Finding-Evidence:`(근거) + `Finding-Scope:`(적용 범위) trailer를 한 줄씩
     단다(선택: `Finding-NotWhen:` / `Finding-Surface:` / `Finding-Share: shareable`).
@@ -177,6 +186,14 @@ disabled 역할은 활성 주관자의 subagent substitute가 담당한다. 이 
 `Direct File Inspection` 증거가 있어도 `proceed_degraded`(degraded trust)로
 보고하고, 그것조차 없으면 blocked로 남긴다. `proceed_degraded`인 경우
 완료 보고에 degraded trust level과 누락 리뷰어 상태를 반드시 포함한다.
+
+행위 변경을 push하기 전에는 현재 변경과 결합된 review-gate binding verdict가
+있어야 한다. `pre-push`는 `.omx/reviewer-state/binding-verdict.env`의
+HMAC 증거가 현재 변경 해시와 맞고 verdict가 `proceed` 또는
+`proceed_degraded`일 때만 통과한다. `blocked`·`revise`·`review_manually`,
+무판정, stale verdict, 단순 자기주장은 completion authority가 아니다.
+verify 실패 override의 `APPROVED_BY`도 launcher-owned principal evidence와
+일치할 때만 유효하며, 스크립트가 env만 임의 설정한 값은 거부된다.
 
 루프 내 역할 경계:
 

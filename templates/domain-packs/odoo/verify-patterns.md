@@ -102,12 +102,57 @@ advisory**: the pre-push hook blocks the push. It needs no docker and is co-inst
 next to the pre-push hook (`.githooks/`, wired by the pack's validation-harness
 setup), so -- unlike the docker
 warm-base validation -- it runs even when `ODOO_HARNESS_DIR` is unset, before the
-harness/docker skips. That closes the gap where a stale-path or never-committed data
-file reached odoo.sh because the warm-base validation was skipped.
+harness/docker availability gate. If the warm validator is unavailable, changed
+custom-addons pushes are blocked as `NOT VALIDATED (validator unavailable)` unless
+launcher-backed human acknowledgement evidence is present. That closes the gap
+where a stale-path or never-committed data file reached odoo.sh because the
+warm-base validation was skipped.
 Only `data`/`demo` (exact module-relative paths) are checked; `assets` entries are
 addons-root-relative and may be globs, so the warm-base/web build stays their
 oracle. Run standalone with `python3 validation-harness/check-manifest-files.py
 --all` (or `--modules <mod> ...`).
+
+### Schema Catalog Screen
+
+`validation-harness/check-schema-catalog.py` compares changed addon Python/XML
+references to a warm-base registry catalog dumped by
+`validation-harness/dump-schema-catalog.sh` from `ir.model.fields`. This catches
+cheap renamed/removed schema mistakes before a Docker registry-load run:
+unknown view fields, unknown inherited models, and broken `related=` chains. It
+also reports an advisory when a changed addon writes a `(model, field)` pair
+that the catalog says is already owned by another installed addon.
+
+This is a registry snapshot screen, not an OCA/static lint replacement and not
+an installability proof. Missing or stale catalog prints `catalog unavailable,
+NOT screened`; treat that as absent evidence, never as a clean pass. In projects
+that adopt the harness pre-push hook, it runs in `--strict` mode before
+`validate-warm.sh`, then the registry load remains the oracle.
+
+### Manifest Version Bump Policy
+
+For shared Odoo branches, prefer push-time manifest version bumps over a
+per-commit pre-commit hook. The git-tier reference command is:
+
+```bash
+templates/domain-packs/odoo/git-tier/safe-push.sh --bump-manifest-version origin main
+```
+
+This creates one local bump commit before pushing: every changed module under
+`custom-addons/` gets one monotonic `__manifest__.py` `version` increment, even
+when that module changed across many commits. It must not run from a raw
+`pre-push` hook that creates commits, because Git has already selected the
+pushed SHA by then.
+
+Keep the `odoo-manifest-version-merge.sh` merge driver installed while migrating
+off per-commit hooks. It remains the safety net for concurrent sessions and
+older clones: version-only conflicts converge by taking the higher standalone
+version line, while mixed-content conflicts stay manual.
+
+`validation-harness/validate-warm.sh` treats a standalone version-line-only
+manifest diff as install-irrelevant for the warm registry-load tier. That remains
+safe with push-time bumping: the bump commit changes only the version line, and
+any real module code/data/view change is still validated by the push that carries
+the code.
 
 ## Module Install Or Update
 
@@ -201,6 +246,14 @@ source from an odoo.sh build) installs/updates the changed addons and fails on
 See `validation-harness/README.md`. Wire it as a `pre-push` gate. Enterprise
 source is mounted, never baked; reliability requires odoo.sh module-set +
 point-release parity.
+
+The warm base must carry a parity stamp. Build or rebuild it with
+`ODOO_SH_POINT_RELEASE=<odoo.sh-build-point-release> prepare-base-db.sh ...`;
+`check-parity.sh` blocks when the stamp is missing, the point release is
+unconfirmed, or the current full custom module set differs from the base stamp.
+For CI, run `check-parity.sh "$PROJECT_DIR"` before any cached warm validation.
+When `changed-module-scope.py --reverse-deps` is available, expand changed
+modules before `validate-warm.sh` so dependents' inherited views are updated too.
 
 ## Validation Tiers (commit → push → merge)
 

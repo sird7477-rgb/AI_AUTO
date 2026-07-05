@@ -1,0 +1,6 @@
+{
+  "expected_items": ["user-lookup"],
+  "items": [
+    {"id": "user-lookup", "oracle": "sql_param", "target": "bad_db.py", "implicit": ["no_sql_injection"]}
+  ]
+}

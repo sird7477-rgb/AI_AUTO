@@ -103,6 +103,9 @@ run_product() {
   fi
   if [ -x "${vp}" ]; then
     echo "[verify] delegating to project verification: ${vp}"
+    if [ "${AI_AUTO_VERIFY_DIFF_SCOPE:-0}" = "1" ]; then
+      echo "[verify] diff-scope metadata: scopes=${AI_AUTO_VERIFY_SCOPES:-unknown} policy=${AI_AUTO_VERIFY_SCOPE_POLICY:-unknown}"
+    fi
     "${vp}"
   elif [ -e "${vp}" ]; then
     # R24: the exec bit was lost. Dispatch by shebang so a NON-shell verifier

@@ -1504,6 +1504,54 @@ case_review_revision_task_stops_at_cycle_limit() {
   echo "[summary-test] review_revision_task_stops_at_cycle_limit: pass"
 }
 
+case_targeted_recheck_context_uses_accepted_file_scope() {
+  local repo="${TMP_ROOT}/targeted_recheck_context"
+  local context_file
+  mkdir -p "${repo}/scripts" "${repo}/hooks" "${repo}/.omx/review-context"
+  cp "${REPO_ROOT}/scripts/collect-review-context.sh" "${repo}/scripts/collect-review-context.sh"
+  cp "${REPO_ROOT}/scripts/git-harden.sh" "${repo}/scripts/git-harden.sh"
+  cp "${REPO_ROOT}/hooks/git-scrub.sh" "${repo}/hooks/git-scrub.sh"
+  git -C "${repo}" init >/dev/null
+  git -C "${repo}" config user.email test@example.com
+  git -C "${repo}" config user.name Test
+  printf 'old-a\n' > "${repo}/a.txt"
+  printf 'old-b\n' > "${repo}/b.txt"
+  git -C "${repo}" add a.txt b.txt
+  git -C "${repo}" commit -m init >/dev/null
+  printf 'new-a\n' > "${repo}/a.txt"
+  printf 'new-b\n' > "${repo}/b.txt"
+
+  (
+    cd "${repo}"
+    REVIEW_TARGETED_RECHECK_FILES="a.txt" OUT_DIR="${repo}/.omx/review-context" \
+      bash scripts/collect-review-context.sh >/dev/null
+  )
+  context_file="${repo}/.omx/review-context/latest-review-context.md"
+
+  grep -q 'diff --git a/a.txt b/a.txt' "${context_file}"
+  if grep -q 'diff --git a/b.txt b/b.txt' "${context_file}"; then
+    echo "[summary-test] targeted_recheck_context_uses_accepted_file_scope: b.txt leaked into targeted diff"
+    exit 1
+  fi
+  grep -q -- '- scopes: unknown' "${context_file}"
+
+  echo "[summary-test] targeted_recheck_context_uses_accepted_file_scope: pass"
+}
+
+case_targeted_recheck_gate_wires_scope_and_fallback() {
+  local gate="${REPO_ROOT}/scripts/review-gate.sh"
+  grep -q 'accepted_finding_files()' "${gate}" \
+    || { echo "[summary-test] targeted_recheck_gate: missing accepted finding extractor"; exit 1; }
+  grep -q 'REVIEW_TARGETED_RECHECK_FILES="${accepted}"' "${gate}" \
+    || { echo "[summary-test] targeted_recheck_gate: missing narrowed scope export"; exit 1; }
+  grep -q 'REVIEW_TARGETED_RECHECK_SCOPE_OK=0' "${gate}" \
+    || { echo "[summary-test] targeted_recheck_gate: missing expanded-scope fallback"; exit 1; }
+  grep -q 'prepare_targeted_recheck_scope' "${gate}" \
+    || { echo "[summary-test] targeted_recheck_gate: scope preparation not called"; exit 1; }
+
+  echo "[summary-test] targeted_recheck_gate_wires_scope_and_fallback: pass"
+}
+
 case_verify_override() {
   local dir="${TMP_ROOT}/verify_override"
   mkdir -p "${dir}"
@@ -1571,5 +1619,7 @@ case_provenance_principal_evidence_gate
 case_decision_gate_forces_full_panel
 case_targeted_review_recheck_rejects_expanded_scope
 case_review_revision_task_stops_at_cycle_limit
+case_targeted_recheck_context_uses_accepted_file_scope
+case_targeted_recheck_gate_wires_scope_and_fallback
 
 echo "[summary-test] success"

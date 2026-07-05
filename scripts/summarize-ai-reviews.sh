@@ -964,6 +964,17 @@ review_provenance_key_file() {
   else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
 }
 
+review_provenance_abs_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${path}" 2>/dev/null && return 0
+  fi
+  AI_AUTO_ABS_PATH="${path}" python3 - <<'PY' 2>/dev/null
+import os
+print(os.path.realpath(os.environ["AI_AUTO_ABS_PATH"]))
+PY
+}
+
 # Refuse an in-tree key path via realpath+toplevel (NOT a fragile substring). Returns 0
 # (=in-tree, REFUSE) when the candidate key path — after resolving relative paths, `..`, and
 # symlinks — lands INSIDE the project's git toplevel, where the attacker-controlled tree could
@@ -978,8 +989,8 @@ review_provenance_key_in_tree() {
   keyfile="$(review_provenance_key_file)"
   top="$(review_git rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ -n "${top}" ] || return 1
-  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
-  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  top="$(review_provenance_abs_path "${top}")" || return 0
+  rp="$(review_provenance_abs_path "${keyfile}")" || return 0
   case "${rp}/" in "${top}/"*) return 0 ;; esac
   return 1
 }

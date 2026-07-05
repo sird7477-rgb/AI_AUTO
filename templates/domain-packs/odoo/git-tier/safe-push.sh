@@ -12,9 +12,23 @@
 # cannot resolve, or a push failure that is NOT a race (a validation block, an auth error),
 # stops the loop immediately and hands back to you — retrying those would be wrong.
 #
-# Usage:  safe-push.sh [remote] [branch]      (defaults: origin, current branch)
+# Usage:  safe-push.sh [--bump-manifest-version] [remote] [branch]
+#         (defaults: origin, current branch)
 # Env:    SAFE_PUSH_MAX_TRIES (default 5), SAFE_PUSH_BACKOFF seconds (default 2)
+#         SAFE_PUSH_BUMP_MANIFEST=1 enables the same push-time bump step as the flag.
 set -uo pipefail
+
+BUMP_MANIFEST="${SAFE_PUSH_BUMP_MANIFEST:-0}"
+case "${1:-}" in
+  --bump-manifest-version)
+    BUMP_MANIFEST=1
+    shift
+    ;;
+  --help|-h)
+    sed -n '1,24p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+esac
 
 REMOTE="${1:-origin}"
 BRANCH="${2:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)}"
@@ -43,6 +57,18 @@ printf '%s' "$BRANCH" | grep -qE '^[A-Za-z0-9._/-]+$' \
 #     resolution itself is not hijackable; falls back to `.git/hooks` if resolution fails.
 _gcd="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 REAL_HOOKS="${_gcd:-.git}/hooks"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "${BUMP_MANIFEST}" = "1" ]; then
+  bump_script="${SCRIPT_DIR}/odoo-manifest-version-bump.py"
+  [ -x "${bump_script}" ] || { echo "[safe-push] manifest bump helper is missing or not executable: ${bump_script}" >&2; exit 2; }
+  base_ref="refs/remotes/${REMOTE}/${BRANCH}"
+  echo "[safe-push] push-time manifest bump enabled; base=${base_ref}"
+  if ! python3 "${bump_script}" --base "${base_ref}" --commit; then
+    echo "[safe-push] manifest bump failed; push not attempted." >&2
+    exit 1
+  fi
+fi
 
 i=0
 while : ; do

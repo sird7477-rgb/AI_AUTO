@@ -40,6 +40,7 @@ for script in \
   scripts/record-project-memory.sh \
   scripts/resolve-feedback.sh \
   scripts/review-gate.sh \
+  scripts/review-gate-binding.sh \
   scripts/run-ai-reviews.sh \
   scripts/session-lock.sh \
   scripts/summarize-ai-reviews.sh \
@@ -490,8 +491,37 @@ echo "[verify] testing guidance document budget cumulative-vs-base accounting...
   ./scripts/doc-budget.sh > "${tmp_dir}/budget-cumulative-main.out"
   grep -q "current guidance diff net added lines: 0" "${tmp_dir}/budget-cumulative-main.out"
 
+  # AA-1 / ST-P1-75: shared-branch guidance debt must remain visible but must
+  # not hard-block a current change whose own guidance delta is zero.
+  git checkout -q -b shared-debt-diff-scope
+  : > docs/SHARED_DEBT.md
+  for i in $(seq 1 310); do
+    printf 'shared branch guidance debt %s\n' "$i" >> docs/SHARED_DEBT.md
+  done
+  git add docs/SHARED_DEBT.md
+  git -c user.email=verify@example.invalid -c user.name=Verify commit -q -m "seed shared guidance debt"
+  mkdir -p custom-addons
+  printf '.o_form_view { color: #123456; }\n' > custom-addons/current.css
+  ./scripts/doc-budget.sh > "${tmp_dir}/budget-own-zero-pass.out"
+  grep -q "current guidance diff net added lines: 310" "${tmp_dir}/budget-own-zero-pass.out"
+  grep -q "own-change guidance diff net added lines: 0" "${tmp_dir}/budget-own-zero-pass.out"
+  grep -q "diff-scope reason: branch/completion guidance debt is outside this change's own guidance delta" "${tmp_dir}/budget-own-zero-pass.out"
+
+  : > docs/OWN_BLOAT.md
+  for i in $(seq 1 310); do
+    printf 'own guidance bloat %s\n' "$i" >> docs/OWN_BLOAT.md
+  done
+  if ./scripts/doc-budget.sh > "${tmp_dir}/budget-own-bloat-fail.out" 2>&1; then
+    echo "[verify] doc-budget accepted own-change guidance bloat"
+    exit 1
+  fi
+  grep -q "own-change guidance diff net added lines: 310" "${tmp_dir}/budget-own-bloat-fail.out"
+  grep -q "own-change guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-own-bloat-fail.out"
+  rm -rf custom-addons docs/OWN_BLOAT.md
+
   # A task/run baseline can narrow the hard-fail decision to the current work
   # while still reporting the branch-cumulative bloat as a warning.
+  git checkout -q main
   git checkout -q -b bloated-feature
   : > docs/BLOAT.md
   for i in $(seq 1 310); do
@@ -514,7 +544,7 @@ echo "[verify] testing guidance document budget cumulative-vs-base accounting...
     echo "[verify] doc-budget accepted completion-scoped guidance bloat"
     exit 1
   fi
-  grep -q "completion-scoped guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-completion-scope-fail.out"
+  grep -q "own-change guidance diff net added lines exceeds hard limit" "${tmp_dir}/budget-completion-scope-fail.out"
 )
 
 echo "[verify] testing doc-budget completion base auto-derivation from launcher evidence (ST-P1-64)..."
@@ -567,13 +597,13 @@ echo "[verify] testing doc-budget completion base auto-derivation from launcher 
   grep -q "completion-scoped guidance diff net added lines: 1" "${tmp_dir}/evidence-pass.out"
 
   # Anti-evasion: if THIS run itself adds >300 guidance lines AFTER launch, the
-  # completion-scoped check still hard-fails (split-to-evade stays closed).
+  # own-change check still hard-fails.
   : > docs/TASK_BLOAT.md
   for i in $(seq 1 310); do printf 'this-run guidance line %s\n' "$i" >> docs/TASK_BLOAT.md; done
   if DOC_BUDGET_COMPLETION_BASE_REF="${got}" ./scripts/doc-budget.sh > "${tmp_dir}/evidence-fail.out" 2>&1; then
     echo "[verify] completion base let this-run guidance bloat through"; exit 1
   fi
-  grep -q "completion-scoped guidance diff net added lines exceeds hard limit" "${tmp_dir}/evidence-fail.out"
+  grep -q "own-change guidance diff net added lines exceeds hard limit" "${tmp_dir}/evidence-fail.out"
   rm -f docs/TASK_BLOAT.md
 
   # Tampered / wrong-state evidence must fail closed (no base -> branch-cumulative).
@@ -733,7 +763,7 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   trap cleanup_warm_cache_tmp EXIT
   hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
   mkdir -p "${tmp_dir}/harness"
-  cp "${hp}/validate-warm.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
+  cp "${hp}/validate-warm.sh" "${hp}/check-parity.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
   git -c init.defaultBranch=main init -q --bare "${tmp_dir}/origin.git"
   proj="${tmp_dir}/proj"
   git -c init.defaultBranch=main clone -q "${tmp_dir}/origin.git" "${proj}" 2>/dev/null
@@ -748,6 +778,12 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "${proj}")"
   epoch="${tmp_dir}/harness/.warm-base.${slug}.base.epoch"
   echo EP1 > "${epoch}"   # a base epoch must EXIST for caching to engage (absent epoch disables it)
+  mod_sha="$(printf '%s' mod_a | sha256sum | cut -d' ' -f1)"
+  {
+    printf 'point_release=19.0-verify\n'
+    printf 'module_set=mod_a\n'
+    printf 'module_set_sha=%s\n' "${mod_sha}"
+  } > "${tmp_dir}/harness/.warm-base.${slug}.base.parity.env"
   cl() { WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p'; }
   want() { [ "$3" = "$1" ] || { echo "[verify] validate-warm cache: ${2} -> got '${3}', expected '${1}'"; exit 1; }; }
 
@@ -767,6 +803,121 @@ echo "[verify] testing validate-warm warm-PASS cache hit/miss/invalidation (ST-P
   want validate "absent base epoch disables caching (no false hit)" "$(cl)"
   echo EP1 > "${epoch}"
   want validate "WARM_NO_CACHE=1 bypasses a hit" "$(WARM_NO_CACHE=1 WARM_CLASSIFY_ONLY=1 bash "$H" "${proj}" 2>&1 | sed -n 's/^\[warm\] CLASSIFY: //p')"
+)
+
+echo "[verify] testing odoo warm-base parity blocks unconfirmed or stale bases (ORACLE-1)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_odoo_parity_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_odoo_parity_tmp EXIT
+  hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
+  mkdir -p "${tmp_dir}/harness"
+  cp "${hp}/check-parity.sh" "${hp}/harness-slug.sh" "${tmp_dir}/harness/"
+  git -c init.defaultBranch=main init -q "${tmp_dir}/proj"
+  proj="${tmp_dir}/proj"
+  mkdir -p "${proj}/custom-addons/mod_a"
+  printf "{'name': 'A', 'depends': ['base']}\n" > "${proj}/custom-addons/mod_a/__manifest__.py"
+  check="${tmp_dir}/harness/check-parity.sh"
+  if bash "$check" "$proj" > "${tmp_dir}/missing.out" 2>&1; then
+    echo "[verify] odoo parity: missing stamp passed"; exit 1
+  fi
+  grep -q "BLOCKED (parity unconfirmed)" "${tmp_dir}/missing.out"
+  ! grep -q "PASS" "${tmp_dir}/missing.out" \
+    || { echo "[verify] odoo parity: missing stamp printed PASS"; exit 1; }
+
+  slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "${proj}")"
+  stamp="${tmp_dir}/harness/.warm-base.${slug}.base.parity.env"
+  mod_sha="$(printf '%s' mod_a | sha256sum | cut -d' ' -f1)"
+  {
+    printf 'point_release=19.0-verify\n'
+    printf 'module_set=mod_a\n'
+    printf 'module_set_sha=%s\n' "${mod_sha}"
+  } > "$stamp"
+  bash "$check" "$proj" > "${tmp_dir}/pass.out"
+  grep -q "PASS" "${tmp_dir}/pass.out"
+
+  mkdir -p "${proj}/custom-addons/mod_b"
+  printf "{'name': 'B', 'depends': ['base']}\n" > "${proj}/custom-addons/mod_b/__manifest__.py"
+  if bash "$check" "$proj" > "${tmp_dir}/stale.out" 2>&1; then
+    echo "[verify] odoo parity: stale module-set passed"; exit 1
+  fi
+  grep -q "module-set drift" "${tmp_dir}/stale.out"
+)
+
+echo "[verify] testing odoo changed-module reverse-dependency closure (ORACLE-1)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_odoo_scope_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_odoo_scope_tmp EXIT
+  scope="${repo_root}/templates/domain-packs/odoo/validation-harness/changed-module-scope.py"
+  mkdir -p "${tmp_dir}/custom-addons/mod_a" "${tmp_dir}/custom-addons/mod_b" "${tmp_dir}/custom-addons/mod_c" "${tmp_dir}/custom-addons/mod_x"
+  printf "{'name': 'A', 'depends': ['base']}\n" > "${tmp_dir}/custom-addons/mod_a/__manifest__.py"
+  printf "{'name': 'B', 'depends': ['mod_a']}\n" > "${tmp_dir}/custom-addons/mod_b/__manifest__.py"
+  printf "{'name': 'C', 'depends': ['mod_b']}\n" > "${tmp_dir}/custom-addons/mod_c/__manifest__.py"
+  printf "{'name': 'X', 'depends': ['base']}\n" > "${tmp_dir}/custom-addons/mod_x/__manifest__.py"
+  got="$(python3 "$scope" --addons-root "${tmp_dir}/custom-addons" --changed mod_a --reverse-deps --format comma)"
+  [ "$got" = "mod_a,mod_b,mod_c" ] \
+    || { echo "[verify] odoo scope: got '${got}', expected mod_a,mod_b,mod_c"; exit 1; }
+  got2="$(python3 "$scope" --addons-root "${tmp_dir}/custom-addons" --changed mod_x --reverse-deps --format space)"
+  [ "$got2" = "mod_x" ] \
+    || { echo "[verify] odoo scope: independent module closure got '${got2}'"; exit 1; }
+)
+
+echo "[verify] testing validate-warm rejects bad view-inheritance registry load output (ORACLE-1)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_odoo_bad_view_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_odoo_bad_view_tmp EXIT
+  hp="${repo_root}/templates/domain-packs/odoo/validation-harness"
+  mkdir -p "${tmp_dir}/harness" "${tmp_dir}/bin"
+  cp "${hp}/validate-warm.sh" "${hp}/check-parity.sh" "${hp}/harness-slug.sh" "${hp}/harness-lock.sh" "${tmp_dir}/harness/"
+  git -c init.defaultBranch=main init -q --bare "${tmp_dir}/origin.git"
+  git -c init.defaultBranch=main clone -q "${tmp_dir}/origin.git" "${tmp_dir}/proj" 2>/dev/null
+  proj="${tmp_dir}/proj"
+  cd "$proj"
+  git config user.email verify@example.invalid; git config user.name Verify
+  mkdir -p custom-addons/mod_a/views
+  printf "{'name': 'A', 'depends': ['base']}\n" > custom-addons/mod_a/__manifest__.py
+  printf '<odoo/>\n' > custom-addons/mod_a/views/a.xml
+  git add -A; git commit -q -m base; git push -q -u origin main 2>/dev/null
+  printf '<odoo><record id="bad" model="ir.ui.view"><field name="arch" type="xml"><xpath expr="//field[@name=&quot;missing_anchor&quot;]"/></field></record></odoo>\n' > custom-addons/mod_a/views/a.xml
+  slug="$(. "${tmp_dir}/harness/harness-slug.sh"; harness_proj_slug "$proj")"
+  echo EP1 > "${tmp_dir}/harness/.warm-base.${slug}.base.epoch"
+  mod_sha="$(printf '%s' mod_a | sha256sum | cut -d' ' -f1)"
+  {
+    printf 'point_release=19.0-verify\n'
+    printf 'module_set=mod_a\n'
+    printf 'module_set_sha=%s\n' "${mod_sha}"
+  } > "${tmp_dir}/harness/.warm-base.${slug}.base.parity.env"
+  cat > "${tmp_dir}/bin/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "rm" ]; then exit 0; fi
+if [ "${1:-}" = "compose" ]; then
+  shift
+  while [ "${1:-}" = "-f" ]; do shift 2; done
+  case "${1:-}" in
+    up) exit 0 ;;
+    exec)
+      if printf '%s\n' "$*" | grep -q "psql"; then printf 'base\n'; fi
+      exit 0
+      ;;
+    run)
+      echo "Element '<field name=\"missing_anchor\">' cannot be located in parent view"
+      exit 1
+      ;;
+  esac
+fi
+exit 0
+SH
+  chmod +x "${tmp_dir}/bin/docker"
+  if PATH="${tmp_dir}/bin:$PATH" bash "${tmp_dir}/harness/validate-warm.sh" "$proj" mod_a > "${tmp_dir}/warm.out" 2>&1; then
+    echo "[verify] validate-warm bad view inheritance fixture passed"; cat "${tmp_dir}/warm.out"; exit 1
+  fi
+  grep -q "cannot be located" "${tmp_dir}/warm.out"
+  grep -q "FAIL" "${tmp_dir}/warm.out"
+  ! grep -q "\[warm\] PASS" "${tmp_dir}/warm.out" \
+    || { echo "[verify] validate-warm bad view fixture printed PASS"; exit 1; }
 )
 
 echo "[verify] testing odoo __manifest__.py version merge driver (ST-P1-74)..."
@@ -874,6 +1025,144 @@ echo "[verify] testing safe-push race auto-rebase-retry + non-race stop (ST-P1-7
   [ "$(git rev-parse HEAD)" = "${head_before}" ] || { echo "[verify] safe-push: rewrote local history on a non-race"; exit 1; }
 )
 
+echo "[verify] testing AA-3 push-time Odoo manifest version bump..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_aa3_bump_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_aa3_bump_tmp EXIT
+  sp="${repo_root}/templates/domain-packs/odoo/git-tier/safe-push.sh"
+  bump="${repo_root}/templates/domain-packs/odoo/git-tier/odoo-manifest-version-bump.py"
+  drv="${repo_root}/templates/domain-packs/odoo/git-tier/odoo-manifest-version-merge.sh"
+  cd "${tmp_dir}"
+  git -c init.defaultBranch=main init -q --bare origin.git
+  setup() {
+    git config user.email verify@example.invalid
+    git config user.name Verify
+    git config merge.odoo-manifest-version.driver "${drv} %O %A %B"
+    git config merge.odoo-manifest-version.name vmax
+  }
+  mkman() {
+    mkdir -p custom-addons/mod_a
+    printf "{\n 'name':'A',\n 'version':'%s',\n}\n" "$1" > custom-addons/mod_a/__manifest__.py
+  }
+
+  git clone -q origin.git seed 2>/dev/null
+  (
+    cd seed
+    setup
+    echo '**/__manifest__.py merge=odoo-manifest-version' > .gitattributes
+    mkman 1.0.100
+    printf 'base\n' > custom-addons/mod_a/models.py
+    git add -A
+    git commit -q -m base
+    git push -q -u origin main
+  )
+
+  # One module changed across three commits is bumped once, in one generated commit.
+  git clone -q origin.git A 2>/dev/null
+  (
+    cd A
+    setup
+    for n in 1 2 3; do
+      printf 'a%s\n' "$n" >> custom-addons/mod_a/models.py
+      git add custom-addons/mod_a/models.py
+      git commit -q -m "A code ${n}"
+    done
+    SAFE_PUSH_BACKOFF=0 bash "${sp}" --bump-manifest-version origin main >out 2>&1 \
+      || { echo "[verify] AA-3: safe-push bump failed"; cat out; exit 1; }
+    grep -q "\[manifest-bump\] mod_a: 1.0.100 -> 1.0.101" out \
+      || { echo "[verify] AA-3: bump output missing monotonic increment"; cat out; exit 1; }
+    [ "$(git log --format=%s --grep='chore: bump Odoo manifest versions for push' | wc -l)" -eq 1 ] \
+      || { echo "[verify] AA-3: expected exactly one local bump commit for three code commits"; exit 1; }
+    grep -q "'version':'1.0.101'" custom-addons/mod_a/__manifest__.py \
+      || { echo "[verify] AA-3: manifest was not bumped once"; exit 1; }
+  )
+
+  # A normal rebase must not create another bump commit; the helper is not a commit hook.
+  git clone -q origin.git R 2>/dev/null
+  git clone -q origin.git Advancer 2>/dev/null
+  (
+    cd R
+    setup
+    printf 'r\n' >> custom-addons/mod_a/models.py
+    git add custom-addons/mod_a/models.py
+    git commit -q -m "R code"
+    python3 "${bump}" --base refs/remotes/origin/main --commit >/dev/null
+    before="$(git log --format=%s --grep='chore: bump Odoo manifest versions for push' | wc -l)"
+    (
+      cd "${tmp_dir}/Advancer"
+      setup
+      printf 'advance\n' > README.md
+      git add README.md
+      git commit -q -m advance
+      git push -q origin main
+    )
+    git fetch -q origin
+    git -c core.hooksPath=/dev/null rebase origin/main >/dev/null
+    after="$(git log --format=%s --grep='chore: bump Odoo manifest versions for push' | wc -l)"
+    [ "${before}" = "${after}" ] \
+      || { echo "[verify] AA-3: rebase replay created an extra bump commit"; exit 1; }
+  )
+
+  # Two stale clones both compute a push-time bump; safe-push rebases and the merge
+  # driver/same-line convergence keeps both code changes without a silent drop.
+  git clone -q origin.git Race1 2>/dev/null
+  git clone -q origin.git Race2 2>/dev/null
+  (
+    cd Race1
+    setup
+    printf 'race1\n' > custom-addons/mod_a/race1.py
+    git add custom-addons/mod_a/race1.py
+    git commit -q -m race1
+    SAFE_PUSH_BACKOFF=0 bash "${sp}" --bump-manifest-version origin main >/dev/null 2>&1 \
+      || { echo "[verify] AA-3: first race push failed"; exit 1; }
+  )
+  (
+    cd Race2
+    setup
+    printf 'race2\n' > custom-addons/mod_a/race2.py
+    git add custom-addons/mod_a/race2.py
+    git commit -q -m race2
+    SAFE_PUSH_BACKOFF=0 bash "${sp}" --bump-manifest-version origin main >out 2>&1 \
+      || { echo "[verify] AA-3: second race push did not converge"; cat out; exit 1; }
+    git fetch -q origin
+    git show origin/main:custom-addons/mod_a/race1.py >/dev/null \
+      || { echo "[verify] AA-3: race1 code dropped"; exit 1; }
+    git show origin/main:custom-addons/mod_a/race2.py >/dev/null \
+      || { echo "[verify] AA-3: race2 code dropped"; exit 1; }
+    git show origin/main:custom-addons/mod_a/__manifest__.py | grep -q "'version':'1.0.10" \
+      || { echo "[verify] AA-3: race result lost the manifest version line"; exit 1; }
+  )
+
+  # Refuse to create generated commits over unrelated dirty work or ambiguous manifests.
+  git clone -q origin.git Dirty 2>/dev/null
+  (
+    cd Dirty
+    setup
+    printf 'dirty\n' >> custom-addons/mod_a/models.py
+    head_before="$(git rev-parse HEAD)"
+    if python3 "${bump}" --base refs/remotes/origin/main --commit >/dev/null 2>&1; then
+      echo "[verify] AA-3: dirty worktree was not refused"; exit 1
+    fi
+    [ "$(git rev-parse HEAD)" = "${head_before}" ] \
+      || { echo "[verify] AA-3: dirty refusal still created a commit"; exit 1; }
+  )
+  git clone -q origin.git MissingVersion 2>/dev/null
+  (
+    cd MissingVersion
+    setup
+    printf "{\n 'name':'A',\n}\n" > custom-addons/mod_a/__manifest__.py
+    git add custom-addons/mod_a/__manifest__.py
+    git commit -q -m "remove version"
+    head_before="$(git rev-parse HEAD)"
+    if python3 "${bump}" --base refs/remotes/origin/main --commit >/dev/null 2>&1; then
+      echo "[verify] AA-3: missing version line was not refused"; exit 1
+    fi
+    [ "$(git rev-parse HEAD)" = "${head_before}" ] \
+      || { echo "[verify] AA-3: missing-version refusal still created a commit"; exit 1; }
+  )
+)
+
 echo "[verify] testing check-manifest-files fail-closed on unparseable + rejects symlink/abs/.. paths (blue-r24)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -904,6 +1193,101 @@ echo "[verify] testing check-manifest-files fail-closed on unparseable + rejects
   printf "{\n 'name':'OK',\n 'data':['data/records.xml'],\n}\n" > custom-addons/mod_ok/__manifest__.py
   python3 "${check}" --root custom-addons --modules mod_ok >/dev/null 2>&1 \
     || { echo "[verify] manifest-files: a valid module-relative data file wrongly failed (regression)"; exit 1; }
+)
+
+echo "[verify] testing odoo schema catalog screen (ORACLE-3)..."
+(
+  tmp_dir="$(mktemp -d)"
+  cleanup_schema_catalog_tmp() { rm -rf "${tmp_dir}"; }
+  trap cleanup_schema_catalog_tmp EXIT
+  check="${repo_root}/templates/domain-packs/odoo/validation-harness/check-schema-catalog.py"
+  cd "${tmp_dir}"
+  mkdir -p custom-addons/mod_ok/models custom-addons/mod_ok/views custom-addons/mod_bad/models custom-addons/mod_bad/views custom-addons/mod_collision/models
+  for mod in mod_ok mod_bad mod_collision; do
+    printf "{'name':'%s','depends':['base']}\n" "${mod}" > "custom-addons/${mod}/__manifest__.py"
+  done
+  cat > catalog.json <<'JSON'
+{
+  "schema": 1,
+  "models": {
+    "res.partner": {
+      "fields": {
+        "name": {"ttype": "char", "relation": "", "modules": ["base"]},
+        "parent_id": {"ttype": "many2one", "relation": "res.partner", "modules": ["base"]},
+        "existing_code": {"ttype": "char", "relation": "", "modules": ["base_custom"]}
+      }
+    }
+  }
+}
+JSON
+  cat > custom-addons/mod_ok/models/m.py <<'PY'
+from odoo import models, fields
+class PartnerOk(models.Model):
+    _inherit = "res.partner"
+    x_parent_name = fields.Char(related="parent_id.name")
+PY
+  cat > custom-addons/mod_ok/views/v.xml <<'XML'
+<odoo>
+  <record id="view_partner_ok" model="ir.ui.view">
+    <field name="model">res.partner</field>
+    <field name="arch" type="xml">
+      <form><field name="name"/></form>
+    </field>
+  </record>
+</odoo>
+XML
+  python3 "${check}" --catalog catalog.json --root custom-addons --modules mod_ok --strict > "${tmp_dir}/ok.out" \
+    || { echo "[verify] schema-catalog: known fields/related chain wrongly failed"; exit 1; }
+  grep -q "OK: screened 1 module" "${tmp_dir}/ok.out" \
+    || { echo "[verify] schema-catalog: valid fixture did not report a screened module"; exit 1; }
+
+  cat > custom-addons/mod_bad/models/m.py <<'PY'
+from odoo import models, fields
+class PartnerBad(models.Model):
+    _inherit = "res.partner"
+    x_bad = fields.Char(related="parent_id.missing_child")
+class MissingModel(models.Model):
+    _inherit = "missing.model"
+    x_name = fields.Char()
+PY
+  cat > custom-addons/mod_bad/views/v.xml <<'XML'
+<odoo>
+  <record id="view_partner_bad" model="ir.ui.view">
+    <field name="model">res.partner</field>
+    <field name="arch" type="xml">
+      <form><field name="missing_field"/></form>
+    </field>
+  </record>
+</odoo>
+XML
+  if python3 "${check}" --catalog catalog.json --root custom-addons --modules mod_bad --strict > "${tmp_dir}/bad.out" 2>&1; then
+    echo "[verify] schema-catalog: invalid model/field references wrongly passed"; exit 1
+  fi
+  grep -q "Invalid field res.partner.missing_field" "${tmp_dir}/bad.out" \
+    || { echo "[verify] schema-catalog: XML missing field not reported"; exit 1; }
+  grep -q "Invalid field res.partner.missing_child" "${tmp_dir}/bad.out" \
+    || { echo "[verify] schema-catalog: Python related missing field not reported"; exit 1; }
+  grep -q "Invalid model missing.model" "${tmp_dir}/bad.out" \
+    || { echo "[verify] schema-catalog: missing _inherit model not reported"; exit 1; }
+
+  cat > custom-addons/mod_collision/models/m.py <<'PY'
+from odoo import models, fields
+class PartnerCollision(models.Model):
+    _inherit = "res.partner"
+    existing_code = fields.Char()
+PY
+  python3 "${check}" --catalog catalog.json --root custom-addons --modules mod_collision --strict > "${tmp_dir}/collision.out" \
+    || { echo "[verify] schema-catalog: advisory catalog collision must not be a strict invalid-field failure"; exit 1; }
+  grep -q "catalog collision advisory res.partner.existing_code already owned by base_custom" "${tmp_dir}/collision.out" \
+    || { echo "[verify] schema-catalog: existing-addon collision advisory missing"; exit 1; }
+
+  python3 "${check}" --catalog missing.json --root custom-addons --modules mod_ok > "${tmp_dir}/missing.out" \
+    || { echo "[verify] schema-catalog: default missing catalog should be report-only"; exit 1; }
+  grep -q "catalog unavailable, NOT screened" "${tmp_dir}/missing.out" \
+    || { echo "[verify] schema-catalog: missing catalog did not report NOT screened"; exit 1; }
+  if python3 "${check}" --catalog missing.json --root custom-addons --modules mod_ok --strict >/dev/null 2>&1; then
+    echo "[verify] schema-catalog: strict missing catalog did not fail closed"; exit 1
+  fi
 )
 
 echo "[verify] testing safe-push refuses option-injection BRANCH names (blue-r24)..."
@@ -984,6 +1368,17 @@ echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
   printf 'holder_pid=%s\nholder_session=self@host\nholder_op=x\n' "${held_pid}" > "${SESSION_LOCK_FILE}"
   _rc=0; AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
   [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: own session did not return 0 (got ${_rc})"; exit 1; }
+
+  # A tree-scoped session.json must NOT make an independent process look
+  # re-entrant. Only an explicitly inherited AI_AUTO_SESSION_ID may do that.
+  printf '{"session_id":"tree-fixed-id"}\n' > .omx/state/session.json
+  printf 'holder_pid=%s\nholder_session=tree-fixed-id\nholder_op=x\n' "${held_pid}" > "${SESSION_LOCK_FILE}"
+  unset AI_AUTO_SESSION_ID
+  _rc=0; session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 75 ] || { echo "[verify] session-lock: session.json fixed id made independent process re-entrant (got ${_rc})"; exit 1; }
+  _rc=0; AI_AUTO_SESSION_ID="tree-fixed-id" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: inherited AI_AUTO_SESSION_ID did not remain re-entrant (got ${_rc})"; exit 1; }
+  rm -f .omx/state/session.json
 
   # Stale holder (dead pid) -> reclaim, 0.
   printf 'holder_pid=999999\nholder_session=ghost@host\nholder_op=x\n' > "${SESSION_LOCK_FILE}"
@@ -2946,6 +3341,7 @@ EOF
 echo "[verify] testing review context edge cases..."
 (
   context_script="$(pwd)/scripts/collect-review-context.sh"
+  review_gate="$(pwd)/scripts/review-gate.sh"
   tmp_dir="$(mktemp -d)"
 
   cleanup_context_tmp() {
@@ -2972,6 +3368,65 @@ echo "[verify] testing review context edge cases..."
   rm -rf .omx
   "${context_script}" >/dev/null
   grep -q "latest commit diff" .omx/review-context/latest-review-context.md
+  grep -q "| staged.txt |" .omx/review-context/latest-review-context.md
+
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\ntrue\n' > scripts/post-commit-scope.sh
+  git add scripts/post-commit-scope.sh
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "script smoke commit" >/dev/null
+  rm -rf .omx
+  "${context_script}" >/dev/null
+  grep -q "latest commit diff" .omx/review-context/latest-review-context.md
+  grep -q -- "- scopes: scripts" .omx/review-context/latest-review-context.md
+  grep -q "| scripts/post-commit-scope.sh | scripts |" .omx/review-context/latest-review-context.md
+
+  mkdir -p docs
+  git mv scripts/post-commit-scope.sh docs/post-commit-scope.md
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "rename script into docs" >/dev/null
+  rm -rf .omx
+  "${context_script}" >/dev/null
+  grep -q "| scripts/post-commit-scope.sh | scripts |" .omx/review-context/latest-review-context.md
+  grep -q "| docs/post-commit-scope.md | docs |" .omx/review-context/latest-review-context.md
+
+  git switch -q -c feature-review-context-merge
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\ntrue\n' > scripts/merge-scope.sh
+  git add scripts/merge-scope.sh
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "feature script scope" >/dev/null
+  git switch -q main
+  printf 'main note\n' > docs/main-note.md
+  git add docs/main-note.md
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "main docs note" >/dev/null
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" merge --no-ff feature-review-context-merge -m "merge feature review context" >/dev/null
+  rm -rf .omx
+  "${context_script}" >/dev/null
+  grep -q "latest commit diff" .omx/review-context/latest-review-context.md
+  grep -q "| scripts/merge-scope.sh | scripts |" .omx/review-context/latest-review-context.md
+
+  if [ "$("${review_gate}" AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 2>/dev/null || true)" = "machinery_scope" ]; then
+    echo "[verify] review-gate machinery-scope test mode accepted argv injection"
+    exit 1
+  fi
+  if [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 "${review_gate}" 2>/dev/null || true)" = "machinery_scope" ]; then
+    echo "[verify] review-gate machinery-scope test mode accepted env-only activation"
+    exit 1
+  fi
+  if "${review_gate}" --test-machinery-scope >/dev/null 2>&1; then
+    echo "[verify] review-gate machinery-scope test mode accepted argv-only activation"
+    exit 1
+  fi
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_CONTEXT_PATHS="scripts/post-commit-scope.sh" \
+    "${review_gate}" --test-machinery-scope)" = "machinery_scope" ]
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_CONTEXT_PATHS="docs/post-commit-scope.md" \
+    "${review_gate}" --test-machinery-scope)" = "product_scope" ]
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_STAGED="hooks/pre-commit" \
+    "${review_gate}" --test-machinery-scope)" = "machinery_scope" ]
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_UNSTAGED_RC=128 \
+    "${review_gate}" --test-machinery-scope)" = "machinery_scope" ]
 
   printf 'untracked\n' > untracked.txt
   "${context_script}" >/dev/null
@@ -3007,6 +3462,17 @@ echo "[verify] testing review context edge cases..."
   grep -q "test-spec-fixture.md" .omx/review-context/latest-review-context.md
   mkdir -p plans
   printf '# Candidate Plan\n' > plans/candidate.md
+  "${context_script}" >/dev/null
+  grep -q "guard_status: clear" .omx/review-context/latest-review-context.md
+  grep -q "default_docs_plans_allowlist: document_files_only" .omx/review-context/latest-review-context.md
+  grep -q "plans/candidate.md" .omx/review-context/latest-review-context.md
+
+  printf 'print("not a plan")\n' > plans/candidate.py
+  "${context_script}" >/dev/null
+  grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md
+  grep -q "plans/candidate.py" .omx/review-context/latest-review-context.md
+  rm plans/candidate.py
+
   mkdir -p tests
   printf 'def test_candidate():\n    assert True\n' > tests/test_candidate.py
   "${context_script}" >/dev/null
@@ -3016,11 +3482,12 @@ echo "[verify] testing review context edge cases..."
 
   # Untracked scope allowlist: a docs/spec-draft targeted review can scope the
   # untracked guard to declared paths so unrelated untracked files are reported
-  # but do not block, while in-scope material still requires review.
+  # but do not block. The plan markdown itself is covered by the default
+  # docs/plans document allowlist, so no in-scope material remains.
   REVIEW_UNTRACKED_ALLOWLIST="plans/candidate.md" "${context_script}" >/dev/null
-  grep -q "Material untracked review artifacts are present" .omx/review-context/latest-review-context.md
+  grep -q "guard_status: clear" .omx/review-context/latest-review-context.md
   grep -q "scope_allowlist: plans/candidate.md" .omx/review-context/latest-review-context.md
-  grep -q "Untracked files outside the declared review scope" .omx/review-context/latest-review-context.md
+  grep -q "outside the declared review scope" .omx/review-context/latest-review-context.md
   grep -q "tests/test_candidate.py" .omx/review-context/latest-review-context.md
 
   # An allowlist that matches no material untracked file clears the guard while
@@ -4397,7 +4864,7 @@ echo "[verify] testing BLUE-R20-VERDICT-SPOOF (gate PURGES + run-id-BINDS review
   git -c init.defaultBranch=main init -q "${target_dir}"
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
-  for s in review-gate.sh summarize-ai-reviews.sh collect-review-context.sh git-harden.sh capture-knowledge-drafts.py knowledge-notes.py self_demo_contracts.py; do
+  for s in review-gate.sh review-gate-binding.sh summarize-ai-reviews.sh collect-review-context.sh git-harden.sh capture-knowledge-drafts.py knowledge-notes.py self_demo_contracts.py; do
     cp "${repo_root}/scripts/${s}" "scripts/${s}"
   done
   chmod +x scripts/*.sh scripts/*.py
@@ -4637,6 +5104,7 @@ CTX
     git init -q .; git config user.email a@b.c; git config user.name t
     echo base > tracked.txt; git add tracked.txt; git commit -qm init
     printf 'x' > '```zzz'
+    filter_targeted_recheck_files() { cat; }
     render() { eval "$(sed -n '/echo "## Untracked Files"$/,/echo "## Untracked Review Guard"$/p' "${collect}" \
                        | sed -n "/echo '\`\`\`text'/,/echo '\`\`\`'/p" | sed '/^[[:space:]]*#/d')"; }
     # Print any fence-opening line INSIDE the listing (excluding the intended text-fence open/close).
@@ -4780,6 +5248,7 @@ echo "[verify] testing automation-doctor --fix archives old review artifacts..."
     resolve-feedback.sh \
     validate-odoo-docs-kb.py \
     review-gate.sh \
+    review-gate-binding.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -4867,6 +5336,7 @@ echo "[verify] testing automation-doctor --fix archive threshold without explici
     resolve-feedback.sh \
     validate-odoo-docs-kb.py \
     review-gate.sh \
+    review-gate-binding.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -4899,7 +5369,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
   tmp_dir="$(mktemp -d)"
 
   cleanup_doctor_optional_tmp() {
-    rm -rf "${tmp_dir}"
+    rm -rf "${tmp_dir:-}"
   }
 
   trap cleanup_doctor_optional_tmp EXIT
@@ -4940,6 +5410,7 @@ echo "[verify] testing automation-doctor allows missing optional completion pack
     resolve-feedback.sh \
     validate-odoo-docs-kb.py \
     review-gate.sh \
+    review-gate-binding.sh \
     run-ai-reviews.sh \
     summarize-ai-reviews.sh \
     test-review-summary.sh \
@@ -5087,10 +5558,12 @@ echo "[verify] testing review-gate captures failed verdict drafts before exiting
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
 	  cat > scripts/verify.sh <<-'SH'
 	#!/usr/bin/env bash
@@ -5137,7 +5610,7 @@ echo "[verify] testing review-gate captures failed verdict drafts before exiting
   grep -q "claude:request_changes" "${failed_draft}"
 )
 
-echo "[verify] testing review-gate blocks a failed verify.sh and allows a recorded override..."
+echo "[verify] testing review-gate blocks failed verify.sh, rejects env-only override, and allows launcher-evidence override..."
 (
   tmp_dir="$(mktemp -d)"
   cleanup_rg_verifyfail_tmp() { rm -rf "${tmp_dir}"; }
@@ -5147,10 +5620,12 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   printf '#!/usr/bin/env bash\necho "verify fixture FAILING"\nexit 1\n' > scripts/verify.sh
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
@@ -5170,10 +5645,27 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   grep -q "decision: blocked" "${blocked_verdict}"
   grep -q "verify_failed" "${blocked_verdict}"
 
-  # Recorded reason + approver: proceeds past verify (panel runs) with a loud warning.
+  # Env-only reason + approver is a forgery-prone self-claim: it must remain blocked
+  # without launcher-owned principal evidence.
   rm -f .omx/review-results/review-verdict-*.md
   set +e
   AI_AUTO_VERIFY_OVERRIDE_REASON="known unrelated harness quirk" AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="tester" \
+    ./scripts/review-gate.sh > "${tmp_dir}/ovr-forged.out" 2>&1
+  forged_status=$?
+  set -e
+  [ "${forged_status}" -ne 0 ]
+  grep -q "override approval rejected" "${tmp_dir}/ovr-forged.out"
+  ! grep -q "review fixture ran" "${tmp_dir}/ovr-forged.out"
+
+  # Launcher-owned evidence matching APPROVED_BY: proceeds past verify (panel runs)
+  # with a loud warning and persists the override marker.
+  cp "${repo_root}/scripts/ai-principal-runtime.sh" scripts/ai-principal-runtime.sh
+  chmod +x scripts/ai-principal-runtime.sh
+  AI_AUTO_PRINCIPAL_LAUNCHER=1 AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    ./scripts/ai-principal-runtime.sh record-launch claude >/dev/null
+  set +e
+  AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    AI_AUTO_VERIFY_OVERRIDE_REASON="known unrelated harness quirk" AI_AUTO_VERIFY_OVERRIDE_APPROVED_BY="claude" \
     ./scripts/review-gate.sh > "${tmp_dir}/ovr.out" 2>&1
   set -e
   grep -q "being OVERRIDDEN" "${tmp_dir}/ovr.out"
@@ -5181,7 +5673,7 @@ echo "[verify] testing review-gate blocks a failed verify.sh and allows a record
   # The override is persisted to a marker file so it survives the external-runner
   # path (where summarize runs in a separate process without the exported env).
   test -f .omx/state/verify-override.env
-  grep -q "approved_by=tester" .omx/state/verify-override.env
+  grep -q "approved_by=claude" .omx/state/verify-override.env
 )
 
 echo "[verify] testing review-gate verify-override stale-guard is bound to session+holder-STARTTIME+acquired_at TTL (recycled-PID/foreign-session/mismatched-starttime marker REMOVED; live same-session marker PRESERVED; session.json-PRESENT path is NOT vacuous)..."
@@ -5195,10 +5687,12 @@ echo "[verify] testing review-gate verify-override stale-guard is bound to sessi
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results .omx/state
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   # PASSING verify + stub panel: a CLEAN run, so an override marker present at gate start is only
   # ever acted on by the stale-guard (nothing else touches it on a clean verify). This isolates
@@ -5297,10 +5791,12 @@ echo "[verify] testing review-gate defers (exit 75, no blocked verdict) when its
   cd "${target_dir}"
   mkdir -p scripts .omx/review-results
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   # verify.sh stub: emit the getcwd fatal phrase, then remove the gate's OWN working tree
   # (simulating a concurrent session pruning this temp/shared worktree) and exit nonzero.
@@ -5341,10 +5837,12 @@ echo "[verify] testing review-gate stale-disabled-reviewer warning..."
   cd "${dr_target}"
   mkdir -p scripts .omx/review-results .omx/reviewer-state
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
   cp "${repo_root}/scripts/capture-knowledge-drafts.py" scripts/capture-knowledge-drafts.py
   cp "${repo_root}/scripts/knowledge-notes.py" scripts/knowledge-notes.py
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh scripts/capture-knowledge-drafts.py scripts/knowledge-notes.py
   printf '#!/usr/bin/env bash\necho "verify fixture FAILING"\nexit 1\n' > scripts/verify.sh
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho "review fixture ran"\n' > scripts/run-ai-reviews.sh
@@ -5399,12 +5897,17 @@ echo "[verify] testing review-gate verify-only diff skip..."
   mkdir -p scripts docs
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/verify.sh <<-'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+test "${AI_AUTO_VERIFY_DIFF_SCOPE:-}" = "1"
+test "${AI_AUTO_VERIFY_SCOPES:-}" = "docs"
+printf '%s\n' "${AI_AUTO_VERIFY_CHANGED_PATHS:-}" | grep -q '^docs/note.md$'
 echo "verify fixture ok"
 SH
   cat > scripts/run-ai-reviews.sh <<-'SH'
@@ -5444,6 +5947,142 @@ SH
   test -f "${verdict}"
   grep -q "verify_only_diff_scope" "${verdict}"
   grep -q "review skipped: docs-only" "${verdict}"
+  grep -q "Verify changed paths: docs/note.md" .omx/review-results/review-run-*.md
+  test -f .omx/reviewer-state/binding-verdict.env \
+    || { echo "[verify] SPEC-AUD-1: docs-only gate did not write a binding verdict"; exit 1; }
+  grep -q "binding_decision=proceed" .omx/reviewer-state/binding-verdict.env
+)
+
+echo "[verify] testing SPEC-AUD-1 pre-push enforces binding review-gate verdicts..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts docs .omx/review-results
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate.sh scripts/review-gate-binding.sh scripts/collect-review-context.sh
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "reviewer must stay skipped for docs-only"
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 64
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  printf 'baseline\n' > docs/note.md
+  git add .gitignore scripts docs
+  git commit -q -m baseline
+  printf 'changed docs\n' > docs/note.md
+
+  set +e
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-nobind.out" 2>&1
+  nobind_status=$?
+  set -e
+  [ "${nobind_status}" -ne 0 ]
+  grep -q "no binding gate verdict for this change" "${tmp_dir}/prepush-nobind.out"
+
+  AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out"
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-bound.out" 2>&1
+
+  git add docs/note.md
+  git commit -q -m reviewed-doc-change
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-after-commit.out" 2>&1 \
+    || { echo "[verify] SPEC-AUD-1: binding did not survive normal gate->commit->push flow"; cat "${tmp_dir}/prepush-after-commit.out"; exit 1; }
+
+  printf 'changed after reviewed commit\n' > docs/note.md
+  set +e
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-after-extra-edit.out" 2>&1
+  extra_status=$?
+  set -e
+  [ "${extra_status}" -ne 0 ]
+  grep -q "no binding gate verdict for this change" "${tmp_dir}/prepush-after-extra-edit.out"
+
+  self_host_dir="${tmp_dir}/self-host"
+  git -c init.defaultBranch=main init -q "${self_host_dir}"
+  cd "${self_host_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts hooks docs .omx/review-results
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  cp "${repo_root}/hooks/pre-push" hooks/pre-push
+  cp "${repo_root}/hooks/git-scrub.sh" hooks/git-scrub.sh
+  chmod +x scripts/review-gate.sh scripts/review-gate-binding.sh scripts/collect-review-context.sh hooks/pre-push
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 64
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  printf 'baseline\n' > docs/self-host.md
+  git add .gitignore scripts hooks docs
+  git commit -q -m self-host-baseline
+  printf 'reviewed\n' > docs/self-host.md
+  HOME="${tmp_dir}/home" \
+    OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/selfhost-review-gate.out" 2>&1 \
+    || { echo "[verify] SPEC-AUD-1: self-host review-gate did not record a binding verdict"; cat "${tmp_dir}/selfhost-review-gate.out"; exit 1; }
+  git add docs/self-host.md
+  git commit -q -m self-host-reviewed-doc-change
+  HOME="${tmp_dir}/home" AI_AUTO_HOME="${self_host_dir}" \
+    hooks/pre-push origin dummy-url > "${tmp_dir}/selfhost-prepush.out" 2>&1 \
+    || { echo "[verify] SPEC-AUD-1: self-host pre-push could not authenticate home-keyed binding"; cat "${tmp_dir}/selfhost-prepush.out"; exit 1; }
+  test ! -e .provenance-key \
+    || { echo "[verify] SPEC-AUD-1: self-host binding wrote an in-tree provenance key"; exit 1; }
+  echo "[verify] SPEC-AUD-1: pass"
+
+  cd "${target_dir}"
+  cat > .omx/review-results/review-verdict-29990101T000000.md <<'VERDICT'
+# AI Review Verdict
+
+## Short Summary
+
+- decision: blocked
+- reason: fixture_blocked
+VERDICT
+  set +e
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-blocked.out" 2>&1
+  blocked_status=$?
+  set -e
+  [ "${blocked_status}" -ne 0 ]
+  grep -q "latest verdict is blocked" "${tmp_dir}/prepush-blocked.out"
 )
 
 echo "[verify] testing review-gate code diff keeps external review..."
@@ -5464,8 +6103,10 @@ echo "[verify] testing review-gate code diff keeps external review..."
   mkdir -p scripts
   printf '.omx/\n' > .gitignore
   cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
   cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
   cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
   chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
   cat > scripts/verify.sh <<-'SH'
 #!/usr/bin/env bash
@@ -5505,6 +6146,248 @@ SH
   # (the harness stub writes the sentinel only when the gate actually invokes it).
   test -f "${tmp_dir}/called-machinery"
   ! grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
+
+  git add scripts/changed.sh
+  git commit -q -m "clean script commit"
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-clean-script.out"
+  test -f "${tmp_dir}/called-reviewer"
+  test -f "${tmp_dir}/called-summary"
+  test -f "${tmp_dir}/called-machinery"
+  grep -q "automation scripts changed; running machinery-scope verify" "${tmp_dir}/review-gate-clean-script.out"
+
+  mkdir -p docs
+  git mv scripts/changed.sh docs/changed.md
+  git commit -q -m "rename script into docs"
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-rename.out"
+  test -f "${tmp_dir}/called-reviewer"
+  test -f "${tmp_dir}/called-summary"
+  test -f "${tmp_dir}/called-machinery"
+  grep -q "automation scripts changed; running machinery-scope verify" "${tmp_dir}/review-gate-rename.out"
+
+  git switch -q -c feature-clean-merge
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\necho merged\n' > scripts/merge-clean.sh
+  chmod +x scripts/merge-clean.sh
+  git add scripts/merge-clean.sh
+  git commit -q -m "feature script for merge"
+  git switch -q main
+  printf 'main clean note\n' > docs/main-clean.md
+  git add docs/main-clean.md
+  git commit -q -m "main docs for merge"
+  git merge --no-ff feature-clean-merge -m "merge clean script feature" >/dev/null
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-merge.out"
+  test -f "${tmp_dir}/called-reviewer"
+  test -f "${tmp_dir}/called-summary"
+  test -f "${tmp_dir}/called-machinery"
+  grep -q "automation scripts changed; running machinery-scope verify" "${tmp_dir}/review-gate-merge.out"
+
+  printf 'docs only\n' > docs/docs-only.md
+  git add docs/docs-only.md
+  git commit -q -m "docs only clean commit"
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-clean-docs.out"
+  test ! -f "${tmp_dir}/called-machinery"
+)
+
+echo "[verify] testing review-gate does not run checksheet runner without checksheet diff..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_no_checksheet_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_no_checksheet_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts docs
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/checksheet-run.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "checksheet runner should not run" > ../called-checksheet
+exit 64
+SH
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run for verify-only docs diffs" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run for verify-only docs diffs" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/*.sh
+  printf 'baseline\n' > docs/note.md
+  git add .gitignore scripts docs
+  git commit -q -m baseline
+  printf 'changed docs\n' > docs/note.md
+
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out"
+
+  grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
+  test ! -f "${tmp_dir}/called-checksheet"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
+)
+
+echo "[verify] testing review-gate blocks on changed failing checksheet artifact..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_checksheet_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_checksheet_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts checksheets
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/checksheet-run.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$1" > ../called-checksheet
+exit 23
+SH
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run after checksheet failure" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run after checksheet failure" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/*.sh
+  printf '{"expected_items":["x"],"items":[{"id":"x","oracle":"safe_path","target":"x.py"}]}\n' > checksheets/demo.checksheet.json
+  git add .gitignore scripts checksheets
+  git commit -q -m baseline
+  printf '{"expected_items":["x"],"items":[{"id":"x","oracle":"safe_path","target":"x.py","implicit":true}]}\n' > checksheets/demo.checksheet.json
+
+  set +e
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out" 2>"${tmp_dir}/review-gate.err"
+  rc=$?
+  set -e
+
+  test "${rc}" -ne 0
+  grep -q "checksheet gate failed" "${tmp_dir}/review-gate.err"
+  grep -q "checksheets/demo.checksheet.json" "${tmp_dir}/called-checksheet"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
+)
+
+echo "[verify] testing review-gate runs changed closed-defect regression registries before external review..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_registry_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_registry_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts checksheets
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  cat > scripts/checksheet-run.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > ../called-registry
+case "$*" in
+  *--regression-registry*closed-defect.regression.registry.json*) exit 37 ;;
+  *) exit 64 ;;
+esac
+SH
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run after regression registry failure" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run after regression registry failure" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/*.sh
+  printf '{"version":1,"kind":"closed_defect_regression_registry","expected_items":["x"],"items":[]}\n' > checksheets/closed-defect.regression.registry.json
+  git add .gitignore scripts checksheets
+  git commit -q -m baseline
+  printf '{"version":1,"kind":"closed_defect_regression_registry","expected_items":["x"],"items":[{"id":"x"}]}\n' > checksheets/closed-defect.regression.registry.json
+
+  set +e
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out" 2>"${tmp_dir}/review-gate.err"
+  rc=$?
+  set -e
+
+  test "${rc}" -ne 0
+  grep -q "checksheet gate failed" "${tmp_dir}/review-gate.err"
+  grep -q -- "--regression-registry checksheets/closed-defect.regression.registry.json" "${tmp_dir}/called-registry"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
 )
 
 echo "[verify] testing knowledge note helper..."
@@ -7065,6 +7948,32 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
     exit 1
   fi
   grep -q "must be a positive integer" "${tmp_dir}/invalid-depth.out"
+  if AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS=bad AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${tmp_dir}/invalid-git-timeout.out" 2>&1; then
+    echo "workspace-scan accepted invalid git timeout"
+    exit 1
+  fi
+  grep -q "AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS must be a positive integer" "${tmp_dir}/invalid-git-timeout.out"
+
+  fake_bin="${tmp_dir}/fake-bin"
+  mkdir -p "${fake_bin}"
+  real_git="$(command -v git)"
+  cat > "${fake_bin}/git" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  if [ "\${arg}" = status ]; then
+    sleep 30
+  fi
+done
+exec "${real_git}" "\$@"
+EOF
+  chmod +x "${fake_bin}/git"
+  if ! PATH="${fake_bin}:${PATH}" AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS=1 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" timeout 15 ./tools/workspace-scan "${workspace_dir}" > "${tmp_dir}/slow-git-scan.out" 2>&1; then
+    echo "workspace-scan did not self-bound a slow per-repo git status"
+    cat "${tmp_dir}/slow-git-scan.out"
+    exit 1
+  fi
+  grep -q "registered-project" "${tmp_dir}/slow-git-scan.out"
+  grep -q "unknown" "${tmp_dir}/slow-git-scan.out"
   mkdir -p "${target_dir}/.omx/feedback" "${outside_dir}/.omx/feedback"
   mkdir -p "${nested_dir}/.omx/feedback"
   printf '%s\n' '{"created_at":"2026-05-11T00:00:00Z","repeat_key":"registered:item","severity":"high","status":"open","summary":"registered queue item","type":"improvement"}' > "${target_dir}/.omx/feedback/queue.jsonl"
@@ -7786,6 +8695,80 @@ echo "[verify] testing verify.sh project-verify seam (C4: present->runs, absent-
     || { echo "[verify] H1: default-scope verify missing fail-closed message"; exit 1; }
 )
 
+echo "[verify] testing AA-2 verify diff-scope contract (docs-only skip, known mapping, unknown fallback, fail-closed failure)..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  mkdir -p "${tmp_dir}/scripts" "${tmp_dir}/.venv/bin" "${tmp_dir}/bin"
+  cp scripts/verify.sh "${tmp_dir}/scripts/verify.sh"
+  cp scripts/verify-project.sh "${tmp_dir}/scripts/verify-project.sh"
+  chmod +x "${tmp_dir}/scripts/verify.sh" "${tmp_dir}/scripts/verify-project.sh"
+  printf '#!/usr/bin/env bash\nsession_lock_acquire(){ return 0; }\nsession_lock_release(){ return 0; }\n' \
+    > "${tmp_dir}/scripts/session-lock.sh"
+
+  cat > "${tmp_dir}/.venv/bin/python" <<-'PYSH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> PYTEST_ARGS
+exit 0
+PYSH
+  chmod +x "${tmp_dir}/.venv/bin/python"
+
+  cat > "${tmp_dir}/bin/docker" <<-'DKSH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> DOCKER_ARGS
+exit 0
+DKSH
+  chmod +x "${tmp_dir}/bin/docker"
+
+  cat > "${tmp_dir}/bin/curl" <<-'CURSH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"/todos"*) printf '[]' ;;
+  *) printf '{"status":"ok"}' ;;
+esac
+CURSH
+  chmod +x "${tmp_dir}/bin/curl"
+
+  run_scoped() {
+    ( cd "${tmp_dir}" && PATH="${tmp_dir}/bin:${PATH}" \
+        AI_AUTO_VERIFY_SCOPE=product \
+        AI_AUTO_VERIFY_DIFF_SCOPE=1 \
+        AI_AUTO_VERIFY_CHANGED_PATHS="${AI_AUTO_VERIFY_CHANGED_PATHS:-}" \
+        AI_AUTO_VERIFY_INJECT_SCOPED_FAILURE="${AI_AUTO_VERIFY_INJECT_SCOPED_FAILURE:-0}" \
+        bash scripts/verify.sh ) > "${tmp_dir}/out" 2>&1
+  }
+
+  # Docs/plans-only changes are independently safe: skip product pytest/smoke loudly.
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'docs/note.md\nplans/aa.md' run_scoped
+  grep -q "docs/plans-only change; skipping product pytest and docker smoke" "${tmp_dir}/out"
+  test ! -f "${tmp_dir}/PYTEST_ARGS"
+  ! grep -q "compose up --build -d" "${tmp_dir}/DOCKER_ARGS" 2>/dev/null
+
+  # Known sample-app changes use the mapped product checks.
+  rm -f "${tmp_dir}/PYTEST_ARGS" "${tmp_dir}/DOCKER_ARGS"
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'app.py\ntests/test_app.py' run_scoped
+  grep -q "known sample-app mapping" "${tmp_dir}/out"
+  grep -q -- "-m pytest -q tests/test_app.py" "${tmp_dir}/PYTEST_ARGS"
+  grep -q "compose up --build -d" "${tmp_dir}/DOCKER_ARGS"
+
+  # Unknown mappings fail open to the full product verifier.
+  rm -f "${tmp_dir}/PYTEST_ARGS" "${tmp_dir}/DOCKER_ARGS"
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'scripts/unknown-helper.sh' run_scoped
+  grep -q "mapping unknown; falling back to full product verification" "${tmp_dir}/out"
+  grep -q -- "-m pytest -q tests/test_app.py" "${tmp_dir}/PYTEST_ARGS"
+  grep -q "compose up --build -d" "${tmp_dir}/DOCKER_ARGS"
+
+  # Scoped failures still block.
+  scoped_rc=0
+  AI_AUTO_VERIFY_CHANGED_PATHS=$'docs/note.md' AI_AUTO_VERIFY_INJECT_SCOPED_FAILURE=1 run_scoped || scoped_rc=$?
+  test "${scoped_rc}" -ne 0
+  grep -q "scoped verification failure injected" "${tmp_dir}/out"
+)
+
 echo "[verify] testing verify.sh F2 (non-exec verifier that lost its exec bit is dispatched by SHEBANG, not bash)..."
 (
   tmp_dir="$(mktemp -d)"
@@ -7912,6 +8895,7 @@ globalize_mk_engine() {  # $1 = engine dir; populates a minimal AI_AUTO engine
   cp "${repo_root}/scripts/git-harden.sh" "${e}/scripts/git-harden.sh"
   printf '#!/usr/bin/env bash\necho PRE_COMMIT_ENGINE_REACHED\n'  > "${e}/hooks/pre-commit"
   printf '#!/usr/bin/env bash\necho POST_COMMIT_ENGINE_REACHED\n' > "${e}/hooks/post-commit"
+  printf '#!/usr/bin/env bash\necho PRE_PUSH_ENGINE_REACHED\n'    > "${e}/hooks/pre-push"
   for s in review-gate verify automation-doctor; do
     printf '#!/usr/bin/env bash\necho %s_DISPATCH "$@"\n' "${s}" > "${e}/scripts/${s}.sh"
   done
@@ -8143,7 +9127,7 @@ echo "[verify] testing ai-auto BAKED-PATH hook shim (reaches global engine hook)
   ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
     printf 'x\n' > f; git add -A; git commit -qm base )
   "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null
-  for hook in pre-commit post-commit; do
+  for hook in pre-commit post-commit pre-push; do
     grep -q "AI_AUTO shim" "${proj}/.git/hooks/${hook}" \
       || { echo "[verify] hook shim: ${hook} is not an AI_AUTO shim"; exit 1; }
     grep -qF "${baked}" "${proj}/.git/hooks/${hook}" \
@@ -8171,7 +9155,7 @@ echo "[verify] testing ai-auto setup M2 (installed hook shims are mode 0755 rega
     ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T
       printf 'x\n' > f; git add -A; git commit -qm base )
     ( umask "${u}"; "${tmp_dir}/eng/tools/ai-auto" setup "${proj}" >/dev/null )
-    for hook in pre-commit post-commit; do
+    for hook in pre-commit post-commit pre-push; do
       mode="$(stat -c '%a' "${proj}/.git/hooks/${hook}")"
       test "${mode}" = "755" \
         || { echo "[verify] M2: ${hook} installed mode is ${mode}, expected 755 (umask ${u})"; exit 1; }
@@ -8515,10 +9499,14 @@ echo "[verify] testing ai-auto setup R15-1 (repo-local core.hooksPath in .git/co
     || { echo "[verify] R15-1: shim landed in the hostile core.hooksPath (arbitrary-write)"; exit 1; }
   test ! -e "${attacker}/post-commit" \
     || { echo "[verify] R15-1: post-commit shim landed in the hostile core.hooksPath"; exit 1; }
+  test ! -e "${attacker}/pre-push" \
+    || { echo "[verify] R15-1: pre-push shim landed in the hostile core.hooksPath"; exit 1; }
   grep -q "AI_AUTO shim" "${proj}/.git/hooks/pre-commit" \
     || { echo "[verify] R15-1: shim NOT installed in the REAL .git/hooks"; exit 1; }
   grep -q "AI_AUTO shim" "${proj}/.git/hooks/post-commit" \
     || { echo "[verify] R15-1: post-commit shim NOT installed in the REAL .git/hooks"; exit 1; }
+  grep -q "AI_AUTO shim" "${proj}/.git/hooks/pre-push" \
+    || { echo "[verify] R15-1: pre-push shim NOT installed in the REAL .git/hooks"; exit 1; }
 )
 
 echo "[verify] testing ai-auto setup R15-2/R15-3 (bounded flock -w: a live lock holder yields a WARNED bounded return, never an infinite hang)..."
@@ -9081,6 +10069,36 @@ echo "[verify] testing BLUE-R19B-INTREE-KEY (an in-tree provenance-key path — 
   KF="keys/x.key"
   test "$(decide review_provenance_decision)" = "full" \
     || { echo "[verify] BLUE-R19B-INTREE-KEY: in-tree key OUTSIDE .omx/.git was trusted/SKIPPED (substring-bypass reopened)"; exit 1; }
+  fakebin="${tmp_dir}/fakebin"; mkdir -p "${fakebin}"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakebin}/realpath"; chmod +x "${fakebin}/realpath"
+  KF="${key}"
+  test "$(PATH="${fakebin}:$PATH" decide review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: out-of-tree key did not skip when realpath -m was unavailable (fallback broken)"; exit 1; }
+  KF="keys/x.key"
+  test "$(PATH="${fakebin}:$PATH" decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: in-tree key was trusted/SKIPPED when realpath -m was unavailable"; exit 1; }
+  bind_probe() {  # ${KF} selects the binding key file under test; prints in-tree/out-tree
+    ( cd "${proj}"
+      export REVIEW_STATE_DIR="${proj}/.omx/binding-rs"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${KF}"
+      # shellcheck source=/dev/null
+      . "${repo_root}/scripts/review-gate-binding.sh"
+      if review_binding_key_in_tree; then printf 'in-tree\n'; else printf 'out-tree\n'; fi )
+  }
+  KF="${key}"
+  test "$(PATH="${fakebin}:$PATH" bind_probe)" = "out-tree" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: binding fallback marked an out-of-tree key as in-tree when realpath -m was unavailable"; exit 1; }
+  KF="keys/x.key"
+  test "$(PATH="${fakebin}:$PATH" bind_probe)" = "in-tree" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: binding fallback did not refuse an in-tree key when realpath -m was unavailable"; exit 1; }
+  fakeboth="${tmp_dir}/fakeboth"; mkdir -p "${fakeboth}"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakeboth}/realpath"; chmod +x "${fakeboth}/realpath"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakeboth}/python3"; chmod +x "${fakeboth}/python3"
+  KF="${key}"
+  test "$(PATH="${fakeboth}:$PATH" decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: provenance trusted/SKIPPED when both path resolvers were unavailable"; exit 1; }
+  test "$(PATH="${fakeboth}:$PATH" bind_probe)" = "in-tree" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: binding did not fail closed when both path resolvers were unavailable"; exit 1; }
 )
 
 echo "[verify] testing BLUE-R19-PROVENANCE-NESTEDREPO (a nested untracked git repo/worktree lists as one gitlink boundary dir that hash-object cannot hash; the gate must force a FULL review, never carry forward a skip on its unreviewed content; a clean tree with no such entry still skips)..."
@@ -11248,6 +12266,245 @@ echo "[verify] testing pre-commit D2/H1 (DERIVED hook: absent verify-project.sh 
     || { echo "[verify] R7-F2: failing present-non-exec verify-project.sh did NOT block (vacuous gate)"; exit 1; }
 )
 
+echo "[verify] testing SPEC-AUD-4 guarded git commit detects HEAD-unmoved silent failures..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  guard="${repo_root}/scripts/guarded-git-commit.sh"
+  test -x "${guard}" || { echo "[verify] SPEC-AUD-4: guarded-git-commit.sh missing or not executable"; exit 1; }
+  repo="${tmp_dir}/repo"
+  mkdir -p "${repo}"
+  (
+    cd "${repo}"
+    git init -q
+    git config user.email t@e.x
+    git config user.name T
+    printf 'base\n' > f.txt
+    git add f.txt
+    git commit -qm base
+
+    before="$(git rev-parse HEAD)"
+    printf 'normal\n' >> f.txt
+    git add f.txt
+    "${guard}" -m normal >/tmp/spec-aud4-normal.out 2>&1 \
+      || { echo "[verify] SPEC-AUD-4: normal guarded commit failed"; cat /tmp/spec-aud4-normal.out; exit 1; }
+    after="$(git rev-parse HEAD)"
+    test "${before}" != "${after}" \
+      || { echo "[verify] SPEC-AUD-4: normal guarded commit did not move HEAD"; exit 1; }
+
+    rc=0; "${guard}" -m noop >/tmp/spec-aud4-noop.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-4: no-op commit unexpectedly succeeded"; exit 1; }
+    ! grep -q "no new HEAD" /tmp/spec-aud4-noop.out \
+      || { echo "[verify] SPEC-AUD-4: no-op/no-staged commit was misreported as HEAD-unmoved staged failure"; exit 1; }
+
+    fakebin="${tmp_dir}/fakebin"
+    mkdir -p "${fakebin}"
+    real_git="$(command -v git)"
+    cat > "${fakebin}/git" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  if [ "\${arg}" = commit ]; then
+    exit 0
+  fi
+done
+exec "${real_git}" "\$@"
+EOF
+    chmod +x "${fakebin}/git"
+    printf 'silent\n' >> f.txt
+    git add f.txt
+    silent_before="$(git rev-parse HEAD)"
+    rc=0; PATH="${fakebin}:$PATH" "${guard}" -m silent >/tmp/spec-aud4-silent.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-4: silent no-op commit returned success"; exit 1; }
+    test "$(git rev-parse HEAD)" = "${silent_before}" \
+      || { echo "[verify] SPEC-AUD-4: silent fixture moved HEAD, fixture is vacuous"; exit 1; }
+    grep -q "no new HEAD" /tmp/spec-aud4-silent.out \
+      || { echo "[verify] SPEC-AUD-4: silent no-op commit did not report no new HEAD"; cat /tmp/spec-aud4-silent.out; exit 1; }
+    ! git -c core.fsmonitor= diff --cached --quiet --exit-code >/dev/null 2>&1 \
+      || { echo "[verify] SPEC-AUD-4: silent fixture left no staged changes, fixture is vacuous"; exit 1; }
+
+    outer="${tmp_dir}/outer"
+    inner="${tmp_dir}/inner"
+    leak="${tmp_dir}/hook-leak"
+    git init -q "${outer}"
+    git init -q "${inner}"
+    for nested_repo in "${outer}" "${inner}"; do
+      git -C "${nested_repo}" config user.email t@e.x
+      git -C "${nested_repo}" config user.name T
+      printf 'base\n' > "${nested_repo}/nested.txt"
+      git -C "${nested_repo}" add nested.txt
+      git -C "${nested_repo}" commit -qm base
+    done
+    cat > "${outer}/.git/hooks/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${AUD4_OUTER_HOOK_SEEN:-}" = "1" ]; then
+  printf 'leaked\n' > "${AUD4_LEAK_FILE}"
+  exit 1
+fi
+export AUD4_OUTER_HOOK_SEEN=1
+(
+  cd "${AUD4_INNER_REPO}"
+  printf 'nested\n' >> nested.txt
+  git add nested.txt
+  git commit -qm nested
+)
+HOOK
+    chmod +x "${outer}/.git/hooks/pre-commit"
+    (
+      cd "${outer}"
+      printf 'outer\n' >> nested.txt
+      git add nested.txt
+      AUD4_INNER_REPO="${inner}" AUD4_LEAK_FILE="${leak}" "${guard}" -m outer \
+        >/tmp/spec-aud4-hook-env.out 2>&1 \
+        || { echo "[verify] SPEC-AUD-4: guarded commit leaked hook config into nested git"; cat /tmp/spec-aud4-hook-env.out; exit 1; }
+    )
+    test ! -f "${leak}" \
+      || { echo "[verify] SPEC-AUD-4: nested git commit reused the outer hook path"; exit 1; }
+  )
+)
+
+echo "[verify] testing SPEC-AUD-5 write guard blocks foreign-session writes but preserves self-owned writes..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  guard="${repo_root}/scripts/guarded-git-commit.sh"
+  split="${repo_root}/tools/ai-python-split"
+  wtguard="${repo_root}/scripts/worktree-write-guard.sh"
+  tmuxwt="${repo_root}/tools/ai-tmux-worktree"
+  test -x "${guard}" || { echo "[verify] SPEC-AUD-5: guarded-git-commit.sh missing or not executable"; exit 1; }
+  test -x "${split}" || { echo "[verify] SPEC-AUD-5: ai-python-split missing or not executable"; exit 1; }
+  test -x "${wtguard}" || { echo "[verify] SPEC-AUD-5: worktree-write-guard.sh missing or not executable"; exit 1; }
+  test -x "${tmuxwt}" || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree missing or not executable"; exit 1; }
+
+  repo="${tmp_dir}/repo"
+  mkdir -p "${repo}/.omx/state"
+  (
+    cd "${repo}"
+    git init -q
+    git config user.email t@e.x
+    git config user.name T
+    printf 'base\n' > f.txt
+    git add f.txt
+    git commit -qm base
+
+    before="$(git rev-parse HEAD)"
+    cat > .omx/state/session.lock <<EOF
+holder_session=foreign-session
+holder_pid=$$
+holder_op=review-gate
+acquired_at=$(date -Iseconds)
+EOF
+    printf 'foreign\n' >> f.txt
+    git add f.txt
+    rc=0; AI_AUTO_SESSION_ID=self-session "${guard}" -m foreign >/tmp/spec-aud5-commit-foreign.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-5: foreign-session guarded commit unexpectedly succeeded"; exit 1; }
+    test "$(git rev-parse HEAD)" = "${before}" \
+      || { echo "[verify] SPEC-AUD-5: foreign-session guarded commit moved HEAD"; exit 1; }
+    grep -q 'write-guard' /tmp/spec-aud5-commit-foreign.out \
+      || { echo "[verify] SPEC-AUD-5: foreign-session guarded commit did not report write-guard"; cat /tmp/spec-aud5-commit-foreign.out; exit 1; }
+
+    cat > .omx/state/session.lock <<EOF
+holder_session=self-session
+holder_pid=$$
+holder_op=verify
+acquired_at=$(date -Iseconds)
+EOF
+    AI_AUTO_SESSION_ID=self-session "${guard}" -m self >/tmp/spec-aud5-commit-self.out 2>&1 \
+      || { echo "[verify] SPEC-AUD-5: self-owned guarded commit failed"; cat /tmp/spec-aud5-commit-self.out; exit 1; }
+    test "$(git rev-parse HEAD)" != "${before}" \
+      || { echo "[verify] SPEC-AUD-5: self-owned guarded commit did not move HEAD"; exit 1; }
+  )
+
+  split_repo="${tmp_dir}/split-repo"
+  mkdir -p "${split_repo}/pkg" "${split_repo}/scripts" "${split_repo}/.omx/state"
+  cp "${wtguard}" "${split_repo}/scripts/worktree-write-guard.sh"
+  chmod +x "${split_repo}/scripts/worktree-write-guard.sh"
+  (
+    cd "${split_repo}"
+    git init -q
+    git config user.email t@e.x
+    git config user.name T
+    cat > pkg/source.py <<'PY'
+def keep():
+    return "keep"
+
+
+def moved():
+    return "moved"
+PY
+    git add pkg/source.py scripts/worktree-write-guard.sh
+    git commit -qm base
+    "${split}" plan --source pkg/source.py --dest pkg/extracted.py --output split-plan.json >/dev/null
+    python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path("split-plan.json")
+data = json.loads(p.read_text())
+data["symbols"] = ["moved"]
+data["approved_execution_gate"] = {
+    "approved_by": "verify-machinery",
+    "approved_scope": "SPEC-AUD-5 write-guard fixture",
+    "reviewed_dry_run": True,
+    "rollback_path": ".omx/rebuild/backups",
+    "post_apply_verification": ["verify-machinery fixture"],
+}
+p.write_text(json.dumps(data, indent=2) + "\n")
+PY
+    cat > .omx/state/session.lock <<EOF
+holder_session=foreign-session
+holder_pid=$$
+holder_op=verify
+acquired_at=$(date -Iseconds)
+EOF
+    rc=0; AI_AUTO_SESSION_ID=self-session "${split}" apply --plan split-plan.json --execute-approved-plan >/tmp/spec-aud5-split-foreign.out 2>&1 || rc=$?
+    test "${rc}" -ne 0 \
+      || { echo "[verify] SPEC-AUD-5: foreign-session ai-split-apply unexpectedly succeeded"; exit 1; }
+    grep -q 'write-guard' /tmp/spec-aud5-split-foreign.out \
+      || { echo "[verify] SPEC-AUD-5: foreign-session ai-split-apply did not report write-guard"; cat /tmp/spec-aud5-split-foreign.out; exit 1; }
+    test ! -e pkg/extracted.py \
+      || { echo "[verify] SPEC-AUD-5: ai-split-apply wrote destination before refusing"; exit 1; }
+    grep -q 'def moved' pkg/source.py \
+      || { echo "[verify] SPEC-AUD-5: ai-split-apply mutated source before refusing"; exit 1; }
+  )
+
+  fakebin="${tmp_dir}/fakebin"
+  mkdir -p "${fakebin}"
+  cat > "${fakebin}/tmux" <<'TMUX'
+#!/usr/bin/env bash
+case "${1:-}" in
+  show-options) exit 0 ;;
+  set-option) printf '%s\n' "$*" >> "${SPEC_AUD5_TMUX_LOG}"; exit 0 ;;
+  respawn-pane) printf '%s\n' "$*" >> "${SPEC_AUD5_RESPAWN_LOG}"; exit 0 ;;
+  *) exit 0 ;;
+esac
+TMUX
+  chmod +x "${fakebin}/tmux"
+  cat > "${fakebin}/ai-worktree" <<'AIWT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SPEC_AUD5_AIWT_LOG}"
+path="${SPEC_AUD5_TMP}/repo-tmux-w2"
+mkdir -p "${path}/.omx"
+printf '%s\n' "${path}"
+AIWT
+  chmod +x "${fakebin}/ai-worktree"
+  managed="${tmp_dir}/repo-tmux-w1"
+  mkdir -p "${managed}/.omx"
+  ( cd "${managed}"; git init -q; git config user.email t@e.x; git config user.name T; printf 'base\n' > README.md; git add README.md; git commit -qm base )
+  SPEC_AUD5_TMP="${tmp_dir}" \
+  SPEC_AUD5_TMUX_LOG="${tmp_dir}/tmux.log" \
+  SPEC_AUD5_RESPAWN_LOG="${tmp_dir}/respawn.log" \
+  SPEC_AUD5_AIWT_LOG="${tmp_dir}/aiwt.log" \
+  TMUX=1 PATH="${fakebin}:$PATH" "${tmuxwt}" create @2 %2 "${managed}" >/tmp/spec-aud5-tmux.out 2>&1 \
+    || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree create failed"; cat /tmp/spec-aud5-tmux.out; exit 1; }
+  grep -qx 'tmux-w2' "${tmp_dir}/aiwt.log" \
+    || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree did not dispatch a fresh worktree from an existing tmux worktree"; cat "${tmp_dir}/aiwt.log" 2>/dev/null || true; exit 1; }
+  grep -q 'respawn-pane' "${tmp_dir}/respawn.log" \
+    || { echo "[verify] SPEC-AUD-5: ai-tmux-worktree did not respawn the pane into the fresh worktree"; exit 1; }
+)
+
 echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed by aiinit' claim)..."
 (
   pp="${repo_root}/templates/domain-packs/odoo/hooks/pre-push"
@@ -11255,6 +12512,84 @@ echo "[verify] testing odoo pre-push D1 (header drops the false 'auto-installed 
     || { echo "[verify] D1: stale 'auto-installed by aiinit' claim still present"; exit 1; }
   grep -q 'ai-domain-pack refresh --apply' "${pp}" \
     || { echo "[verify] D1: header does not describe the real ai-domain-pack install path"; exit 1; }
+)
+
+echo "[verify] testing SPEC-AUD-3 Odoo pre-push fails closed when validator is unavailable..."
+(
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  pp="${repo_root}/templates/domain-packs/odoo/hooks/pre-push"
+  proj="${tmp_dir}/proj"
+  harness="${tmp_dir}/harness"
+  bin="${tmp_dir}/bin"
+  mkdir -p "${proj}" "${harness}" "${bin}"
+  git init -q "${proj}"
+  git -C "${proj}" config user.email t@e.x
+  git -C "${proj}" config user.name T
+  printf 'base\n' > "${proj}/README.md"
+  git -C "${proj}" add README.md
+  git -C "${proj}" commit -qm base
+  base_sha="$(git -C "${proj}" rev-parse HEAD)"
+  mkdir -p "${proj}/custom-addons/mod_a"
+  printf 'x\n' > "${proj}/custom-addons/mod_a/__manifest__.py"
+  git -C "${proj}" add custom-addons/mod_a/__manifest__.py
+  git -C "${proj}" commit -qm addon
+  head_sha="$(git -C "${proj}" rev-parse HEAD)"
+  refs="refs/heads/main ${head_sha} refs/heads/main ${base_sha}\n"
+
+  cat > "${bin}/docker" <<'DOCKER'
+#!/usr/bin/env bash
+exit 1
+DOCKER
+  chmod +x "${bin}/docker"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${harness}/validate-warm.sh"
+  chmod +x "${harness}/validate-warm.sh"
+
+  if ( cd "${proj}" && printf '%b' "${refs}" | ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/docker-down.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: docker unavailable pre-push passed open"
+    cat "${tmp_dir}/docker-down.out"
+    exit 1
+  fi
+  grep -q 'NOT VALIDATED (validator unavailable)' "${tmp_dir}/docker-down.out" \
+    || { echo "[verify] SPEC-AUD-3: missing NOT VALIDATED unavailable line"; cat "${tmp_dir}/docker-down.out"; exit 1; }
+
+  if ( cd "${proj}" && printf '%b' "${refs}" | SKIP_ODOO_VALIDATE=1 ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/env-only.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: env-only SKIP_ODOO_VALIDATE passed without launcher evidence"
+    cat "${tmp_dir}/env-only.out"
+    exit 1
+  fi
+  grep -q 'explicit validation skip requested' "${tmp_dir}/env-only.out" \
+    || { echo "[verify] SPEC-AUD-3: env-only skip did not hit the explicit skip guard"; cat "${tmp_dir}/env-only.out"; exit 1; }
+
+  key="${tmp_dir}/prov.key"
+  ( cd "${proj}" && AI_AUTO_PRINCIPAL_LAUNCHER=1 AI_AUTO_PROVENANCE_KEY_FILE="${key}" "${repo_root}/scripts/ai-principal-runtime.sh" record-launch codex >/dev/null )
+  if ! ( cd "${proj}" && printf '%b' "${refs}" | SKIP_ODOO_VALIDATE=1 AI_AUTO_ODOO_UNVALIDATED_ACK_BY=codex AI_AUTO_PROVENANCE_KEY_FILE="${key}" ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/acked.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: launcher-backed unvalidated ack was rejected"
+    cat "${tmp_dir}/acked.out"
+    exit 1
+  fi
+  grep -q 'unvalidated push, human-acked' "${tmp_dir}/acked.out" \
+    || { echo "[verify] SPEC-AUD-3: ack path did not report human-acked unvalidated push"; cat "${tmp_dir}/acked.out"; exit 1; }
+
+  cat > "${bin}/docker" <<'DOCKER'
+#!/usr/bin/env bash
+[ "${1:-}" = "info" ] && exit 0
+exit 1
+DOCKER
+  chmod +x "${bin}/docker"
+  cat > "${harness}/validate-warm.sh" <<'WARM'
+#!/usr/bin/env bash
+printf 'VALIDATE_WARM_REACHED %s\n' "$*"
+exit 0
+WARM
+  chmod +x "${harness}/validate-warm.sh"
+  if ! ( cd "${proj}" && printf '%b' "${refs}" | ODOO_HARNESS_DIR="${harness}" PATH="${bin}:$PATH" bash "${pp}" ) > "${tmp_dir}/warm-ok.out" 2>&1; then
+    echo "[verify] SPEC-AUD-3: warm validator happy path failed"
+    cat "${tmp_dir}/warm-ok.out"
+    exit 1
+  fi
+  grep -q 'VALIDATE_WARM_REACHED' "${tmp_dir}/warm-ok.out" \
+    || { echo "[verify] SPEC-AUD-3: warm validator was not invoked"; cat "${tmp_dir}/warm-ok.out"; exit 1; }
 )
 
 echo "[verify] testing R14-#1-FSMONITOR-RCE (standalone tools ai-worktree/ai-tmux-worktree pin core.fsmonitor= so a HOSTILE repo's IN-REPO core.fsmonitor HOOK PROGRAM does NOT execute during their 'git worktree add'/'git status' calls — the CONFIG-level RCE that --attr-source does NOT neutralize, and that these tools previously left open because they inlined ONLY --attr-source; auto-invoked via the tmux after-new-window hook)..."
@@ -11360,6 +12695,7 @@ echo "[verify] testing R22-PIC-HOOK-RCE (the post-index-change HOOK class R21 mi
   tmuxwt="${repo_root}/tools/ai-tmux-worktree"
   test -s "${ws}"     || { echo "[verify] R22-PIC-HOOK-RCE: workspace-scan not found"; exit 1; }
   test -s "${tmuxwt}" || { echo "[verify] R22-PIC-HOOK-RCE: ai-tmux-worktree not found"; exit 1; }
+  : > "${tmp_dir}/empty-registry.tsv"
   mk_pic() {  # hostile repo: a post-index-change hook (variant A=.git/hooks, B=core.hooksPath) that
               # fires when a `git status` index refresh REWRITES the STALE on-disk index. Committed
               # with `-c core.hooksPath=` so setup itself never trips it; the tracked file is then
@@ -11384,7 +12720,7 @@ echo "[verify] testing R22-PIC-HOOK-RCE (the post-index-change HOOK class R21 mi
     mk_pic "${wsdir}/repo" "${tmp_dir}/PWNED_WS_${_v}" "${_v}"
     rm -f "${tmp_dir}/PWNED_WS_${_v}"
     ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-      bash "${ws}" "${wsdir}" >/dev/null 2>&1 || true )
+      AI_AUTO_PROJECT_REGISTRY_FILE="${tmp_dir}/empty-registry.tsv" bash "${ws}" "${wsdir}" >/dev/null 2>&1 || true )
     test ! -e "${tmp_dir}/PWNED_WS_${_v}" \
       || { echo "[verify] R22-PIC-HOOK-RCE: post-index-change HOOK (${_v}) EXECUTED during workspace-scan 'git status' (RCE)"; exit 1; }
   done
@@ -11395,7 +12731,7 @@ echo "[verify] testing R22-PIC-HOOK-RCE (the post-index-change HOOK class R21 mi
   wsdir="${tmp_dir}/ws_ctl"; mkdir -p "${wsdir}"; mk_pic "${wsdir}/repo" "${tmp_dir}/PWNED_WS_CTL" dirhook
   rm -f "${tmp_dir}/PWNED_WS_CTL"
   ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-    bash "${wsctl}" "${wsdir}" >/dev/null 2>&1 || true )
+    AI_AUTO_PROJECT_REGISTRY_FILE="${tmp_dir}/empty-registry.tsv" bash "${wsctl}" "${wsdir}" >/dev/null 2>&1 || true )
   test -e "${tmp_dir}/PWNED_WS_CTL" \
     || { echo "[verify] R22-PIC-HOOK-RCE: control (workspace-scan with core.hooksPath pin stripped) did NOT fire post-index-change — fixture is vacuous"; exit 1; }
   # (2) ai-tmux-worktree removability() `git status` over the hostile repo — the tmux-lifecycle case.
@@ -12588,4 +13924,75 @@ echo "[verify] testing BLUE-R26-DOMAIN-SEP F3 (each of the 4 markers signs under
   u2="$(printf '%s' "${pay}" | principal_evidence_hmac)"
   [ -n "${u1}" ] && [ "${u1}" = "${u2}" ] || { echo "[verify] BLUE-R26 F3 control: untagged payloads did not collide (fixture vacuous)"; exit 1; }
   echo "[verify] BLUE-R26-DOMAIN-SEP F3: pass"
+)
+
+echo "[verify] testing SPEC-AUD-6 ai-agent-watchdog external observe, safety, install, and keepalive contracts..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export AI_AGENT_WATCHDOG_STATE_DIR="${tmp_dir}/state"
+  resume="${tmp_dir}/resume.txt"
+  pane="${tmp_dir}/pane.txt"
+  heartbeat="${tmp_dir}/heartbeat"
+  profile="${tmp_dir}/profile"
+  printf 'continue mission\n' > "${resume}"
+
+  fingerprint() {
+    python3 - "$1" <<'PY'
+import hashlib, pathlib, sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").encode()).hexdigest())
+PY
+  }
+
+  grep -q 'tools/ai-agent-watchdog' scripts/install-global-files.sh || { echo "[verify] SPEC-AUD-6: installer link missing"; exit 1; }
+  grep -q 'tools/ai-agent-watchdog' scripts/automation-doctor.sh || { echo "[verify] SPEC-AUD-6: doctor link check missing"; exit 1; }
+  grep -q 'ai-agent-watchdog' docs/GLOBAL_TOOLS.md || { echo "[verify] SPEC-AUD-6: global tools docs missing"; exit 1; }
+
+  printf 'building quietly\n' > "${pane}"
+  printf 'tick\n' > "${heartbeat}"
+  fp="$(fingerprint "${pane}")"
+  tools/ai-agent-watchdog register '%codex' --runtime codex --resume-file "${resume}" --pane-text-file "${pane}" --heartbeat-file "${heartbeat}" --heartbeat-max-age-seconds 3600 --stall-seconds 1 --operation-silence-seconds 1 --seed-silence-seconds 30 --seed-fingerprint "${fp}" >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%codex: quiet_but_live' || { echo "[verify] SPEC-AUD-6: heartbeat-live quiet pane was misclassified: ${out}"; exit 1; }
+
+  rm -f "${heartbeat}"
+  tools/ai-agent-watchdog register '%codex' --runtime codex --resume-file "${resume}" --pane-text-file "${pane}" --stall-seconds 1 --operation-silence-seconds 1 --seed-silence-seconds 30 --seed-fingerprint "${fp}" >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%codex: would_inject' || { echo "[verify] SPEC-AUD-6: stalled quiet pane did not dry-run inject: ${out}"; exit 1; }
+  ! grep -q '"kind": "inject"' "${AI_AGENT_WATCHDOG_STATE_DIR}/events.log" || { echo "[verify] SPEC-AUD-6: observe mode performed a real injection"; exit 1; }
+
+  printf 'READY_FOR_INPUT\n' > "${pane}"
+  fp="$(fingerprint "${pane}")"
+  tools/ai-agent-watchdog register '%claude' --runtime claude --resume-file "${resume}" --pane-text-file "${pane}" --idle-pattern READY_FOR_INPUT --seed-fingerprint "${fp}" >/dev/null
+  out1="$(tools/ai-agent-watchdog observe)"
+  out2="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out1}" | grep -q '%claude: idle_seen_once' || { echo "[verify] SPEC-AUD-6: first idle observation was not held: ${out1}"; exit 1; }
+  printf '%s\n' "${out2}" | grep -q '%claude: would_inject' || { echo "[verify] SPEC-AUD-6: second stable idle did not dry-run inject: ${out2}"; exit 1; }
+
+  printf 'session limit resets in 120s\n' > "${pane}"
+  fp="$(fingerprint "${pane}")"
+  tools/ai-agent-watchdog register '%limit' --runtime codex --resume-file "${resume}" --pane-text-file "${pane}" --idle-pattern 'session limit' --seed-fingerprint "${fp}" >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%limit: scheduled_reset' || { echo "[verify] SPEC-AUD-6: limit reset was not scheduled: ${out}"; exit 1; }
+  ! printf '%s\n' "${out}" | grep -q 'would_inject' || { echo "[verify] SPEC-AUD-6: limit reset injected immediately"; exit 1; }
+
+  tools/ai-agent-watchdog register '%gone' --runtime agent --resume-file "${resume}" --pane-text-file "${tmp_dir}/missing-pane" --relaunch-json '["/bin/true"]' --max-relaunch 0 >/dev/null
+  out="$(tools/ai-agent-watchdog observe)"
+  printf '%s\n' "${out}" | grep -q '%gone: relaunch_stopped' || { echo "[verify] SPEC-AUD-6: bounded relaunch did not stop at max: ${out}"; exit 1; }
+
+  tools/ai-agent-watchdog keepalive-install --profile "${profile}" --daemon-command 'ai-agent-watchdog daemon --interval 60' >/dev/null
+  tools/ai-agent-watchdog keepalive-install --profile "${profile}" --daemon-command 'ai-agent-watchdog daemon --interval 60' >/dev/null
+  [ "$(grep -c 'AI_AUTO agent watchdog keepalive' "${profile}")" -eq 2 ] || { echo "[verify] SPEC-AUD-6: keepalive block is not idempotent"; exit 1; }
+  out="$(tools/ai-agent-watchdog keepalive-once --dry-run --match definitely-no-such-watchdog-XYZ --daemon-command 'ai-agent-watchdog daemon --interval 60')"
+  printf '%s\n' "${out}" | grep -q 'would_start' || { echo "[verify] SPEC-AUD-6: keepalive dry-run did not report external restart: ${out}"; exit 1; }
+)
+
+echo "[verify] testing AUD-7 repro-fidelity doctrine and oracle parity..."
+(
+  grep -q 'AUD-7-REPRO-FIDELITY-DOCTRINE' AGENTS.md || { echo "[verify] AUD-7: AGENTS marker missing"; exit 1; }
+  grep -q 'AUD-7-REPRO-FIDELITY-DOCTRINE' docs/WORKFLOW.md || { echo "[verify] AUD-7: WORKFLOW marker missing"; exit 1; }
+  grep -q 'observed_symptom' scripts/checksheet-run.py || { echo "[verify] AUD-7: observed_symptom field not enforced"; exit 1; }
+  grep -q 'reproduction' scripts/checksheet-run.py || { echo "[verify] AUD-7: reproduction field not enforced"; exit 1; }
+  grep -q 'root_cause_fidelity' scripts/checksheet-run.py || { echo "[verify] AUD-7: root_cause_fidelity oracle missing"; exit 1; }
+  grep -q 'root_cause_confirmed_without_fidelity' tests/test_checksheet_run.py || { echo "[verify] AUD-7: no regression for confirmed language without fidelity"; exit 1; }
+  grep -q 'test_root_cause_fidelity_yes_allows_confirmed_language' tests/test_checksheet_run.py || { echo "[verify] AUD-7: no positive fidelity regression"; exit 1; }
 )

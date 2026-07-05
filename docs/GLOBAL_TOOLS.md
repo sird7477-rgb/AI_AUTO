@@ -16,7 +16,7 @@ This repository keeps source copies of helper commands that are linked into `~/b
 - `ai-auto`
   - The GLOBAL launcher; operates on the project in the current directory
   - `ai-auto setup [dir]` adopts global AI_AUTO mode: installs baked-path
-    `pre-commit`/`post-commit` hook shims, adds `.omx/` to the project's local
+    `pre-commit`/`post-commit`/`pre-push` hook shims, adds `.omx/` to the project's local
     git exclude, detects the project domain, and de-pollutes any byte-identical
     leftover vendored framework files (`git rm`, staged; modified/symlinked files
     are kept and reported). It never vendors files and never auto-commits
@@ -90,6 +90,19 @@ reviews that need planning artifacts or full workflow reference file excerpts.
   - Scans git repositories under `~/workspace`
   - Set `AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH=N` to discover repositories nested deeper than the default depth of 2
   - Shows branch, dirty status, automation script availability, latest commit, remote presence, and path
+
+- `ai-agent-watchdog`
+  - External continuity supervisor for tmux-based AI agent panes
+  - Register panes with a resume prompt file, then run `observe` for dry-run
+    detection or `daemon` from an external session/keepalive to resume idle or
+    stalled agents
+  - Uses pane polling as the agent-agnostic seam; Claude, Codex, and other TUI
+    agents share the same decision path
+  - Output silence alone never triggers a resume. A stall also requires no fresh
+    heartbeat or explicit liveness signal and an exceeded silence budget
+  - Does not kill processes, reap orphans, delete files, or claim that an agent
+    can supervise its own teardown. `keepalive-install` only installs an
+    external shell-profile restart hook for the watchdog daemon
 
 - `feedback-collect`
   - Lists local `.omx/feedback/queue.jsonl` items from `OMX_FEEDBACK_QUEUE_FILE`, the current git root, registered projects, and workspace-discovered repositories
@@ -231,6 +244,7 @@ Expected links:
     ~/bin/feedback-resolve -> ~/workspace/ai-lab/tools/feedback-resolve
     ~/bin/knowledge-collect -> ~/workspace/ai-lab/tools/knowledge-collect
     ~/bin/workspace-scan -> ~/workspace/ai-lab/tools/workspace-scan
+    ~/bin/ai-agent-watchdog -> ~/workspace/ai-lab/tools/ai-agent-watchdog
     ~/bin/micro-work -> ~/workspace/ai-lab/tools/micro-work
     ~/bin/ai-worktree -> ~/workspace/ai-lab/tools/ai-worktree
     ~/bin/ai-tmux-worktree -> ~/workspace/ai-lab/tools/ai-tmux-worktree
@@ -268,6 +282,7 @@ replace existing paths if used carelessly.
     ln -sf ~/workspace/ai-lab/tools/feedback-resolve ~/bin/feedback-resolve
     ln -sf ~/workspace/ai-lab/tools/knowledge-collect ~/bin/knowledge-collect
     ln -sf ~/workspace/ai-lab/tools/workspace-scan ~/bin/workspace-scan
+    ln -sf ~/workspace/ai-lab/tools/ai-agent-watchdog ~/bin/ai-agent-watchdog
     ln -sf ~/workspace/ai-lab/tools/micro-work ~/bin/micro-work
     ln -sf ~/workspace/ai-lab/tools/ai-worktree ~/bin/ai-worktree
     ln -sf ~/workspace/ai-lab/tools/ai-tmux-worktree ~/bin/ai-tmux-worktree

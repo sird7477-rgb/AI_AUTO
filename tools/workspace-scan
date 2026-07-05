@@ -29,6 +29,7 @@ WORKSPACE="${1:-$HOME/workspace}"
 STATE_ROOT="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
 PROJECT_REGISTRY="${AI_AUTO_PROJECT_REGISTRY_FILE:-${STATE_ROOT}/ai-auto/projects.tsv}"
 WORKSPACE_SCAN_MAX_DEPTH="${AI_AUTO_WORKSPACE_SCAN_MAX_DEPTH:-2}"
+WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS="${AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS:-20}"
 
 case "$WORKSPACE_SCAN_MAX_DEPTH" in
   ''|*[!0-9]*|0)
@@ -37,10 +38,27 @@ case "$WORKSPACE_SCAN_MAX_DEPTH" in
     ;;
 esac
 
+case "$WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS" in
+  ''|*[!0-9]*|0)
+    echo "AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS must be a positive integer"
+    exit 2
+    ;;
+esac
+
 if [ ! -d "$WORKSPACE" ]; then
   echo "Workspace not found: $WORKSPACE"
   exit 1
 fi
+
+workspace_git() {
+  local repo="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=2 "${WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS}" git -C "$repo" "$@"
+  else
+    git -C "$repo" "$@"
+  fi
+}
 
 declare -A REGISTERED_PATHS
 declare -A PRINTED_PATHS
@@ -67,13 +85,13 @@ print_repo() {
   local repo="$1"
   local name branch status verify gate last_commit remote initialized short_name short_branch
 
-  if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if ! workspace_git "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     return
   fi
 
   name="$(basename "$repo")"
 
-  branch="$(git -C "$repo" branch --show-current 2>/dev/null || true)"
+  branch="$(workspace_git "$repo" branch --show-current 2>/dev/null || true)"
   if [ -z "$branch" ]; then
     branch="detached"
   fi
@@ -89,11 +107,16 @@ print_repo() {
   # HOOK (default `.git/hooks/*`, or a hostile repo-local core.hooksPath), an auto-invoked RCE as
   # workspace-scan walks EVERY .git under $WORKSPACE. Neither --attr-source nor core.fsmonitor= stops
   # it (it is the hook path, not an attribute/config-program). Canary-proven.
-  _et="$(git -C "$repo" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
-  if [ -n "$(git -C "$repo" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null -c core.hooksPath=/dev/null status --short 2>/dev/null)" ]; then
-    status="dirty"
+  _et="$(workspace_git "$repo" hash-object -t tree /dev/null 2>/dev/null || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+  status_output=""
+  if status_output="$(workspace_git "$repo" --attr-source="$_et" -c diff.external= -c core.fsmonitor= -c core.attributesFile=/dev/null -c core.hooksPath=/dev/null status --short 2>/dev/null)"; then
+    if [ -n "$status_output" ]; then
+      status="dirty"
+    else
+      status="clean"
+    fi
   else
-    status="clean"
+    status="unknown"
   fi
 
   if [ -x "$repo/scripts/verify.sh" ]; then
@@ -108,9 +131,9 @@ print_repo() {
     gate="no"
   fi
 
-  last_commit="$(git -C "$repo" log -1 --format='%h' 2>/dev/null || echo none)"
+  last_commit="$(workspace_git "$repo" log -1 --format='%h' 2>/dev/null || echo none)"
 
-  if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+  if workspace_git "$repo" remote get-url origin >/dev/null 2>&1; then
     remote="yes"
   else
     remote="no"

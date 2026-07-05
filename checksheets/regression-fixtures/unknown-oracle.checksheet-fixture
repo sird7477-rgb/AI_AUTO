@@ -1,0 +1,6 @@
+{
+  "expected_items": ["unknown"],
+  "items": [
+    {"id": "unknown", "oracle": "missing_oracle", "target": "uploads.py", "implicit": true}
+  ]
+}

@@ -199,6 +199,17 @@ review_provenance_key_file() {
   else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
 }
 
+review_provenance_abs_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${path}" 2>/dev/null && return 0
+  fi
+  AI_AUTO_ABS_PATH="${path}" python3 - <<'PY' 2>/dev/null
+import os
+print(os.path.realpath(os.environ["AI_AUTO_ABS_PATH"]))
+PY
+}
+
 # Refuse an in-tree key path via realpath+toplevel (NOT a fragile substring). Returns 0
 # (=in-tree, REFUSE) when the candidate key path — after resolving relative paths, `..`, and
 # symlinks — lands INSIDE the project's git toplevel, where the attacker-controlled tree could
@@ -213,8 +224,8 @@ review_provenance_key_in_tree() {
   keyfile="$(review_provenance_key_file)"
   top="$(review_git rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ -n "${top}" ] || return 1
-  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
-  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  top="$(review_provenance_abs_path "${top}")" || return 0
+  rp="$(review_provenance_abs_path "${keyfile}")" || return 0
   case "${rp}/" in "${top}/"*) return 0 ;; esac
   return 1
 }
@@ -372,6 +383,31 @@ review_provenance_decision() {
 }
 # <<< review-provenance-shared <<<
 
+# SPEC-AUD-1: bind an allowed review-gate verdict to the reviewed change so the
+# pre-push hook can enforce that the current push has a real proceed/proceed_degraded
+# result, not a self-claim or stale verdict. Kept outside the shared provenance block
+# so review-gate.sh and summarize-ai-reviews.sh remain byte-identical there.
+# shellcheck source=scripts/review-gate-binding.sh
+. "${AH}/review-gate-binding.sh"
+
+verify_override_approval_evidence_ok() {
+  local approved_by="$1" workspace ev declared _pe_stored _pe_expected
+  [ -n "${approved_by}" ] || return 1
+  workspace="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+  ev="${AI_AUTO_PRINCIPAL_EVIDENCE:-${workspace}/.omx/state/principal-runtime/current.env}"
+  [ -f "${ev}" ] || return 1
+  [ ! -L "${ev}" ] || return 1
+  grep -Fqx "execution_mode=principal" "${ev}" || return 1
+  grep -Fqx "source=ai-auto-principal-launcher" "${ev}" || return 1
+  grep -Fqx "workspace=${workspace}" "${ev}" || return 1
+  declared="$(sed -n 's/^principal_runtime=//p' "${ev}" | head -1)"
+  case "${declared}" in codex|claude|gemini) ;; *) return 1 ;; esac
+  [ "${approved_by}" = "${declared}" ] || return 1
+  _pe_stored="$(sed -n 's/^evidence_hmac=//p' "${ev}" | head -1)"
+  _pe_expected="$(printf 'marker_type=principal_evidence\nprincipal_runtime=%s\nexecution_mode=principal\nsource=ai-auto-principal-launcher\nworkspace=%s\n' "${declared}" "${workspace}" | review_provenance_hmac)"
+  [ -n "${_pe_stored}" ] && [ -n "${_pe_expected}" ] && [ "${_pe_stored}" = "${_pe_expected}" ]
+}
+
 # >>> blue-r17-provenance-failclosed >>>
 # HIGH fail-closed override of the shared review_provenance_hash. The shared implementation
 # reads the working tree through the REAL .git/index and SWALLOWS git errors (2>/dev/null). A
@@ -467,6 +503,41 @@ diff_scope_field() {
     }
   ' "${context_file}"
 }
+
+diff_scope_changed_paths() {
+  local encoded
+  encoded="$(diff_scope_field "changed paths b64")"
+  [ -n "${encoded}" ] || return 0
+  printf '%s' "${encoded}" | base64 -d 2>/dev/null || return 1
+}
+
+machinery_scope_requires_verify() {
+  local unstaged_rc="$1" unstaged="$2" staged_rc="$3" staged="$4" context_paths="$5"
+  [ "${unstaged_rc}" -ne 0 ] && return 0
+  [ "${staged_rc}" -ne 0 ] && return 0
+  printf '%s\n%s\n' "${unstaged}" "${staged}" | grep -Eq '^(scripts/|hooks/)' && return 0
+  printf '%s\n' "${context_paths}" | grep -Eq '^(scripts/|hooks/)' && return 0
+  return 1
+}
+
+if [ "${1:-}" = "--test-machinery-scope" ]; then
+  shift
+  [ "${AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE:-0}" = "1" ] || {
+    echo "test seam disabled" >&2
+    exit 64
+  }
+  if machinery_scope_requires_verify \
+    "${AI_AUTO_TEST_MACHINERY_UNSTAGED_RC:-0}" \
+    "${AI_AUTO_TEST_MACHINERY_UNSTAGED:-}" \
+    "${AI_AUTO_TEST_MACHINERY_STAGED_RC:-0}" \
+    "${AI_AUTO_TEST_MACHINERY_STAGED:-}" \
+    "${AI_AUTO_TEST_MACHINERY_CONTEXT_PATHS:-}"; then
+    echo "machinery_scope"
+  else
+    echo "product_scope"
+  fi
+  exit 0
+fi
 
 review_gate_housekeeping() {
   local summary_status="$1"
@@ -605,13 +676,14 @@ warn_stale_disabled_reviewers() {
 }
 
 write_verify_only_skip_verdict() {
-  local timestamp verdict_file summary_file run_file scopes
+  local timestamp verdict_file summary_file run_file scopes changed_paths
   timestamp="$(date +%Y%m%dT%H%M%S)"
   mkdir -p .omx/review-results
   verdict_file=".omx/review-results/review-verdict-${timestamp}.md"
   summary_file=".omx/review-results/review-summary-${timestamp}.md"
   run_file=".omx/review-results/review-run-${timestamp}.md"
   scopes="$(diff_scope_field "scopes")"
+  changed_paths="$(diff_scope_changed_paths || true)"
 
   cat > "${verdict_file}" <<EOF
 # AI Review Verdict
@@ -644,6 +716,13 @@ external_review_skipped
 
 ${scopes}
 
+## Verify Scope
+
+policy: $(diff_scope_field "review gate policy")
+scopes: ${scopes}
+changed paths:
+$(printf '%s\n' "${changed_paths:-none}" | sed 's/^/- /')
+
 ## Reviewer Verdicts
 
 review skipped: docs-only
@@ -657,6 +736,7 @@ review skipped: docs-only
 - decision: proceed
 - reason: verify_only_diff_scope
 - scopes: ${scopes}
+- verify_scope_changed_paths: $(printf '%s\n' "${changed_paths:-none}" | paste -sd ';' -)
 EOF
 
   cat > "${run_file}" <<EOF
@@ -665,6 +745,8 @@ EOF
 Review run id: ${timestamp}
 Mode: verify_only_diff_scope
 Review context: $(latest_review_context)
+Verify scopes: ${scopes}
+Verify changed paths: $(printf '%s\n' "${changed_paths:-none}" | paste -sd ';' -)
 EOF
 
   echo "${verdict_file}"
@@ -761,6 +843,47 @@ print_diff_scope_gate() {
   printf '%s\n' "${scope_summary}" | sed 's/^/[gate] /'
 }
 
+changed_checksheet_files() {
+  {
+    review_git diff --name-only 2>/dev/null || true
+    git diff --cached --name-only 2>/dev/null || true
+    git ls-files --others --exclude-standard 2>/dev/null || true
+  } | sort -u | while IFS= read -r file; do
+    case "${file}" in
+      *.checksheet.json|*.registry.json|checksheets/*.json)
+        printf '%s\n' "${file}"
+        ;;
+    esac
+  done
+}
+
+run_changed_checksheet_gate() {
+  local file rc found=0 failed=0
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    found=1
+    if [ ! -f "${file}" ]; then
+      echo "[gate] checksheet artifact changed but missing: ${file}" >&2
+      failed=1
+      continue
+    fi
+    echo "[gate] running checksheet artifact: ${file}"
+    rc=0
+    case "${file}" in
+      *.registry.json) "$AH/checksheet-run.sh" --regression-registry "${file}" || rc=$? ;;
+      *) "$AH/checksheet-run.sh" "${file}" || rc=$? ;;
+    esac
+    if [ "${rc}" -ne 0 ]; then
+      echo "[gate] checksheet artifact FAILED (${file}, exit ${rc})" >&2
+      failed=1
+    fi
+  done < <(changed_checksheet_files)
+
+  [ "${found}" -eq 1 ] || return 0
+  [ "${failed}" -eq 0 ] || return 1
+  echo "[gate] checksheet artifacts passed"
+}
+
 if command -v session_lock_acquire >/dev/null 2>&1; then
   # The gate's own acquire happens BEFORE verify. A live sibling holding this tree returns
   # 75 (retryable contention) — surface it as a clear "deferred, use aiwt" and exit 75
@@ -788,10 +911,72 @@ if [ "${REVIEW_DECISION_GATE:-0}" = "1" ]; then
   echo "[gate] decision gate: full unanimous panel (provenance skip / targeted recheck / integration-only OFF, context=full)"
 fi
 
+accepted_finding_files() {
+  local findings_file="${REVIEW_ACCEPTED_FINDINGS_FILE:-}"
+  [ -n "${findings_file}" ] || return 0
+  [ -f "${findings_file}" ] || return 0
+  awk -F'|' '$1 == "accepted" && $4 != "" { print $4 }' "${findings_file}" | sort -u
+}
+
+current_changed_files_for_targeted_recheck() {
+  {
+    review_git diff --name-only 2>/dev/null || true
+    git diff --cached --name-only 2>/dev/null || true
+    git ls-files --others --exclude-standard 2>/dev/null || true
+  } | sort -u
+}
+
+prepare_targeted_recheck_scope() {
+  local targeted="${REVIEW_TARGETED_RECHECK:-1}"
+  local cycle_count="${REVIEW_REVISION_CYCLE_COUNT:-1}"
+  local accepted changed out_of_scope
+
+  unset REVIEW_TARGETED_RECHECK_FILES
+
+  [ "${REVIEW_DECISION_GATE:-0}" != "1" ] || return 0
+  [ "${targeted}" = "1" ] || return 0
+  [ -f "${REVIEW_ACCEPTED_FINDINGS_FILE:-}" ] || return 0
+  case "${cycle_count}" in
+    1|2) ;;
+    *) return 0 ;;
+  esac
+
+  accepted="$(accepted_finding_files)"
+  [ -n "${accepted}" ] || return 0
+  changed="$(current_changed_files_for_targeted_recheck)"
+  [ -n "${changed}" ] || return 0
+
+  out_of_scope="$(
+    awk 'NR == FNR { if ($0 != "") accepted[$0] = 1; next } $0 != "" && !($0 in accepted)' \
+      <(printf '%s\n' "${accepted}") \
+      <(printf '%s\n' "${changed}")
+  )"
+  if [ -n "${out_of_scope}" ]; then
+    export REVIEW_TARGETED_RECHECK_SCOPE_OK=0
+    echo "[gate] targeted recheck scope expanded; falling back to full review target"
+    return 0
+  fi
+
+  export REVIEW_TARGETED_RECHECK_SCOPE_OK=1
+  export REVIEW_TARGETED_RECHECK_FILES="${accepted}"
+  echo "[gate] targeted recheck scope: accepted finding file set"
+}
+
 warn_broken_git_sandbox
 warn_stale_disabled_reviewers
+prepare_targeted_recheck_scope
+
+echo "[gate] collecting review context for diff-scope policy..."
+"$AH/collect-review-context.sh"
+print_diff_scope_gate
 
 echo "[gate] running verification..."
+verify_scope_scopes="$(diff_scope_field "scopes")"
+verify_scope_policy="$(diff_scope_field "review gate policy")"
+verify_scope_changed_paths="$(diff_scope_changed_paths || true)"
+if [ -n "${verify_scope_scopes}" ] || [ -n "${verify_scope_changed_paths}" ]; then
+  echo "[gate] passing diff scope to verify: scopes=${verify_scope_scopes:-unknown}"
+fi
 set +e
 env \
   -u RUN_CLAUDE_REVIEW \
@@ -801,6 +986,10 @@ env \
   -u REVIEW_UNTRACKED_MANUAL_REVIEWED \
   AI_AUTO_IN_REVIEW_GATE=1 \
   AI_AUTO_VERIFY_SCOPE=product \
+  AI_AUTO_VERIFY_DIFF_SCOPE=1 \
+  AI_AUTO_VERIFY_SCOPES="${verify_scope_scopes}" \
+  AI_AUTO_VERIFY_SCOPE_POLICY="${verify_scope_policy}" \
+  AI_AUTO_VERIFY_CHANGED_PATHS="${verify_scope_changed_paths}" \
   "$AH/verify.sh" 2>&1 | tee "$VERIFY_OUTPUT_FILE"
 verify_status="${PIPESTATUS[0]}"
 set -e
@@ -823,9 +1012,15 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
   machinery_scope_unstaged="$(review_git diff --name-only 2>/dev/null)" || machinery_scope_unstaged_rc=$?
   machinery_scope_staged_rc=0
   machinery_scope_staged="$(review_git diff --cached --name-only 2>/dev/null)" || machinery_scope_staged_rc=$?
-  if [ "${machinery_scope_unstaged_rc}" -ne 0 ] || [ "${machinery_scope_staged_rc}" -ne 0 ] \
-     || printf '%s\n%s\n' "${machinery_scope_unstaged}" "${machinery_scope_staged}" \
-          | grep -Eq '^(scripts/|hooks/)'; then
+  # Comes from collect-review-context's Diff Scope Summary; in a clean post-commit
+  # review it names the latest commit's paths, not this gate script's own files.
+  machinery_scope_context_paths="${verify_scope_changed_paths}"
+  if machinery_scope_requires_verify \
+    "${machinery_scope_unstaged_rc}" \
+    "${machinery_scope_unstaged}" \
+    "${machinery_scope_staged_rc}" \
+    "${machinery_scope_staged}" \
+    "${machinery_scope_context_paths}"; then
     echo "[gate] automation scripts changed; running machinery-scope verify..."
     # OPCOST-HIGH-1: this ~6min self-test also runs in the VERY NEXT commit's pre-commit
     # hook over an IDENTICAL surface, so it ran TWICE per change->commit cycle. Memoize:
@@ -918,6 +1113,13 @@ if [ "${verify_status}" -ne 0 ]; then
     echo "[gate] complete"
     exit 1
   fi
+  if ! verify_override_approval_evidence_ok "${verify_override_by}"; then
+    echo "[gate] verification FAILED (exit ${verify_status}); override approval rejected because no matching launcher-owned approval evidence exists for '${verify_override_by}'." >&2
+    write_verify_failed_blocked_verdict "${verify_status}"
+    review_gate_housekeeping 1
+    echo "[gate] complete"
+    exit 1
+  fi
   echo "[gate] ===================================================================" >&2
   echo "[gate] WARNING: verify.sh FAILED (exit ${verify_status}) and is being OVERRIDDEN." >&2
   echo "[gate]   approved_by: ${verify_override_by}" >&2
@@ -954,13 +1156,17 @@ if [ "${verify_status}" -ne 0 ]; then
   unset _ovr_dst _ovr_tmp
 fi
 
-echo "[gate] collecting review context for diff-scope policy..."
-"$AH/collect-review-context.sh"
-print_diff_scope_gate
+if ! run_changed_checksheet_gate; then
+  echo "[gate] checksheet gate failed; stopping before external review." >&2
+  review_gate_housekeeping 1
+  echo "[gate] complete"
+  exit 1
+fi
 
 if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" != "1" ] && verify_only_diff_scope_ready; then
   echo "[gate] review skipped: docs-only"
-  write_verify_only_skip_verdict
+  verify_only_verdict="$(write_verify_only_skip_verdict)"
+  review_binding_record "proceed" "normal" "${verify_only_verdict}"
   review_gate_housekeeping 0
   echo "[gate] complete"
   exit 0
@@ -977,7 +1183,8 @@ if [ "${REVIEW_INTEGRATION_ONLY:-0}" != "1" ] \
    && [ "${REVIEW_PROVENANCE_SKIP:-1}" = "1" ] \
    && [ "$(review_provenance_decision)" = "skip" ]; then
   echo "[gate] review skipped: provenance exact-match (carrying prior approval)"
-  write_provenance_skip_verdict
+  provenance_verdict="$(write_provenance_skip_verdict)"
+  review_binding_record "proceed" "normal" "${provenance_verdict}"
   review_gate_housekeeping 0
   echo "[gate] complete"
   exit 0
@@ -1029,6 +1236,16 @@ summary_status=0
 if ! "$AH/summarize-ai-reviews.sh"; then
   echo "[gate] review gate did not proceed"
   summary_status=1
+fi
+
+if [ "${summary_status}" -eq 0 ]; then
+  latest_verdict="$(review_binding_latest_verdict)"
+  latest_decision="$(review_binding_verdict_decision "${latest_verdict}")"
+  latest_trust=""
+  if [ -n "${latest_verdict}" ] && [ -f "${latest_verdict}" ]; then
+    latest_trust="$(sed -n 's/^- trust: //p' "${latest_verdict}" 2>/dev/null | head -1)"
+  fi
+  review_binding_record "${latest_decision}" "${latest_trust:-unknown}" "${latest_verdict}"
 fi
 
 review_gate_housekeeping "${summary_status}"
