@@ -172,7 +172,13 @@ def oracle_root_cause_fidelity(path: Path) -> Verdict:
     fidelity = data["fidelity"].strip().lower()
     if fidelity not in ("yes", "no"):
         return Verdict(False, "root_cause_fidelity_invalid", {"expected": "yes|no", "got": data["fidelity"]})
-    claim_text = "\n".join(str(data.get(field_name, "")) for field_name in ("claim", "conclusion", "summary", "root_cause"))
+    # Scan EVERY string value of the artifact (except the fidelity declaration itself), not just a
+    # fixed 4-field allowlist: high-confidence "확정/confirmed/definitive" language in ANY other field
+    # (notes, analysis, an ad-hoc key, ...) with fidelity=no is the same contradiction and must not
+    # evade the check by living outside claim/conclusion/summary/root_cause.
+    claim_text = "\n".join(
+        str(value) for key, value in data.items() if key != "fidelity" and isinstance(value, str)
+    )
     if fidelity == "no" and ROOT_CAUSE_HIGH_CONFIDENCE_RE.search(claim_text):
         return Verdict(False, "root_cause_confirmed_without_fidelity", {"fidelity": fidelity})
     return Verdict(True, "root_cause_fidelity_declared", {"fidelity": fidelity})

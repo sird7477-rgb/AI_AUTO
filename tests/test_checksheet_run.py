@@ -238,6 +238,25 @@ def test_root_cause_fidelity_no_allows_hypothesis_language(tmp_path):
     assert "PASS root_cause_fidelity_declared" in result.stdout
 
 
+def test_root_cause_fidelity_no_blocks_confirmed_language_in_nonstandard_fields(tmp_path):
+    # AUD-7 (FIX-L3): high-confidence language in fields OUTSIDE the old
+    # claim/conclusion/summary/root_cause allowlist (here: notes + analysis) with fidelity=no must
+    # STILL be caught. Pre-fix these fields were never scanned, so the artifact PASSED.
+    sheet = _write_root_cause_sheet(
+        tmp_path,
+        {
+            "observed_symptom": "user saw the client button stay disabled",
+            "reproduction": "server-side proxy test only",
+            "fidelity": "no",
+            "notes": "원인 확정",
+            "analysis": "definitive",
+        },
+    )
+    result = _run(str(sheet))
+    assert result.returncode == 1, result.stderr + result.stdout
+    assert "root_cause_confirmed_without_fidelity" in result.stderr
+
+
 def test_real_run_aborts_when_an_oracle_fails_selftest(tmp_path, monkeypatch):
     # If selftest fails, a real checksheet run must abort (exit 2) before
     # rendering any verdict -- never a silent pass.
