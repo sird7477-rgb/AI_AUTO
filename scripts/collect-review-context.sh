@@ -148,6 +148,32 @@ is_status_clean() {
   [ -z "${REPO_STATUS_BEFORE_CONTEXT}" ]
 }
 
+post_commit_scope_files() {
+  has_head_commit && is_status_clean || return 0
+  post_commit_name_status | name_status_paths | sed '/^[[:space:]]*$/d' | sort -u
+}
+
+post_commit_parent_count() {
+  git rev-list --parents -n 1 HEAD 2>/dev/null | awk '{ print NF - 1 }'
+}
+
+post_commit_name_status() {
+  has_head_commit && is_status_clean || return 0
+  if [ "$(post_commit_parent_count)" -gt 1 ]; then
+    review_git diff --name-status -M HEAD^1 HEAD 2>/dev/null
+  else
+    review_git show --format= --name-status -M HEAD 2>/dev/null
+  fi
+}
+
+name_status_paths() {
+  awk -F '\t' '
+    /^[[:space:]]*$/ { next }
+    $1 ~ /^[RC]/ && NF >= 3 { print $2; print $3; next }
+    NF >= 2 { print $2 }
+  '
+}
+
 is_positive_integer() {
   printf '%s\n' "$1" | grep -Eq '^[0-9]+$'
 }
@@ -480,6 +506,9 @@ persona_gate_policy_for_lenses() {
 write_diff_scope_summary() {
   local files scopes active_lenses lens_count gate_policy integrator_required
   files="${CHANGED_FILES_WITH_UNTRACKED}"  # OPCOST-MED-3: computed once at module load
+  if [ -z "${files}" ]; then
+    files="$(post_commit_scope_files)"
+  fi
 
   if [ -z "${files}" ]; then
     echo "No changed files detected."

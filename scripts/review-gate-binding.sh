@@ -98,12 +98,24 @@ review_binding_change_payload() {
   if [ "${dirty_status}" -eq 0 ]; then
     review_binding_prospective_commit_payload
   elif [ "${dirty_status}" -eq 1 ] && git rev-parse --verify HEAD >/dev/null 2>&1; then
-    printf '\037commit-diff\037\n'
-    git show --format= --no-ext-diff --no-textconv HEAD 2>/dev/null || return 1
+    review_binding_committed_payload
   elif [ "${dirty_status}" -eq 1 ]; then
     printf '\037empty\037\n'
   else
     return 1
+  fi
+}
+
+review_binding_head_parent_count() {
+  git rev-list --parents -n 1 HEAD 2>/dev/null | awk '{ print NF - 1 }'
+}
+
+review_binding_committed_payload() {
+  printf '\037commit-diff\037\n'
+  if [ "$(review_binding_head_parent_count)" -gt 1 ]; then
+    review_binding_git diff --no-ext-diff --no-textconv HEAD^1 HEAD 2>/dev/null
+  else
+    review_binding_git show --format= --no-ext-diff --no-textconv HEAD 2>/dev/null
   fi
 }
 

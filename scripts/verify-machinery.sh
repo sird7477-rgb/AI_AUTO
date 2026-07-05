@@ -1369,6 +1369,17 @@ echo "[verify] testing session-lock contention sentinel (ST-P1-69)..."
   _rc=0; AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
   [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: own session did not return 0 (got ${_rc})"; exit 1; }
 
+  # A tree-scoped session.json must NOT make an independent process look
+  # re-entrant. Only an explicitly inherited AI_AUTO_SESSION_ID may do that.
+  printf '{"session_id":"tree-fixed-id"}\n' > .omx/state/session.json
+  printf 'holder_pid=%s\nholder_session=tree-fixed-id\nholder_op=x\n' "${held_pid}" > "${SESSION_LOCK_FILE}"
+  unset AI_AUTO_SESSION_ID
+  _rc=0; session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 75 ] || { echo "[verify] session-lock: session.json fixed id made independent process re-entrant (got ${_rc})"; exit 1; }
+  _rc=0; AI_AUTO_SESSION_ID="tree-fixed-id" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
+  [ "${_rc}" -eq 0 ] || { echo "[verify] session-lock: inherited AI_AUTO_SESSION_ID did not remain re-entrant (got ${_rc})"; exit 1; }
+  rm -f .omx/state/session.json
+
   # Stale holder (dead pid) -> reclaim, 0.
   printf 'holder_pid=999999\nholder_session=ghost@host\nholder_op=x\n' > "${SESSION_LOCK_FILE}"
   _rc=0; AI_AUTO_SESSION_ID="self@host" session_lock_acquire validate >/dev/null 2>&1 || _rc=$?
@@ -3330,6 +3341,7 @@ EOF
 echo "[verify] testing review context edge cases..."
 (
   context_script="$(pwd)/scripts/collect-review-context.sh"
+  review_gate="$(pwd)/scripts/review-gate.sh"
   tmp_dir="$(mktemp -d)"
 
   cleanup_context_tmp() {
@@ -3356,6 +3368,65 @@ echo "[verify] testing review context edge cases..."
   rm -rf .omx
   "${context_script}" >/dev/null
   grep -q "latest commit diff" .omx/review-context/latest-review-context.md
+  grep -q "| staged.txt |" .omx/review-context/latest-review-context.md
+
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\ntrue\n' > scripts/post-commit-scope.sh
+  git add scripts/post-commit-scope.sh
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "script smoke commit" >/dev/null
+  rm -rf .omx
+  "${context_script}" >/dev/null
+  grep -q "latest commit diff" .omx/review-context/latest-review-context.md
+  grep -q -- "- scopes: scripts" .omx/review-context/latest-review-context.md
+  grep -q "| scripts/post-commit-scope.sh | scripts |" .omx/review-context/latest-review-context.md
+
+  mkdir -p docs
+  git mv scripts/post-commit-scope.sh docs/post-commit-scope.md
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "rename script into docs" >/dev/null
+  rm -rf .omx
+  "${context_script}" >/dev/null
+  grep -q "| scripts/post-commit-scope.sh | scripts |" .omx/review-context/latest-review-context.md
+  grep -q "| docs/post-commit-scope.md | docs |" .omx/review-context/latest-review-context.md
+
+  git switch -q -c feature-review-context-merge
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\ntrue\n' > scripts/merge-scope.sh
+  git add scripts/merge-scope.sh
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "feature script scope" >/dev/null
+  git switch -q main
+  printf 'main note\n' > docs/main-note.md
+  git add docs/main-note.md
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" commit -m "main docs note" >/dev/null
+  git -c user.email=smoke@example.com -c user.name="Smoke Test" merge --no-ff feature-review-context-merge -m "merge feature review context" >/dev/null
+  rm -rf .omx
+  "${context_script}" >/dev/null
+  grep -q "latest commit diff" .omx/review-context/latest-review-context.md
+  grep -q "| scripts/merge-scope.sh | scripts |" .omx/review-context/latest-review-context.md
+
+  if [ "$("${review_gate}" AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 2>/dev/null || true)" = "machinery_scope" ]; then
+    echo "[verify] review-gate machinery-scope test mode accepted argv injection"
+    exit 1
+  fi
+  if [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 "${review_gate}" 2>/dev/null || true)" = "machinery_scope" ]; then
+    echo "[verify] review-gate machinery-scope test mode accepted env-only activation"
+    exit 1
+  fi
+  if "${review_gate}" --test-machinery-scope >/dev/null 2>&1; then
+    echo "[verify] review-gate machinery-scope test mode accepted argv-only activation"
+    exit 1
+  fi
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_CONTEXT_PATHS="scripts/post-commit-scope.sh" \
+    "${review_gate}" --test-machinery-scope)" = "machinery_scope" ]
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_CONTEXT_PATHS="docs/post-commit-scope.md" \
+    "${review_gate}" --test-machinery-scope)" = "product_scope" ]
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_STAGED="hooks/pre-commit" \
+    "${review_gate}" --test-machinery-scope)" = "machinery_scope" ]
+  [ "$(AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE=1 \
+    AI_AUTO_TEST_MACHINERY_UNSTAGED_RC=128 \
+    "${review_gate}" --test-machinery-scope)" = "machinery_scope" ]
 
   printf 'untracked\n' > untracked.txt
   "${context_script}" >/dev/null
@@ -6027,6 +6098,54 @@ SH
   # (the harness stub writes the sentinel only when the gate actually invokes it).
   test -f "${tmp_dir}/called-machinery"
   ! grep -q "review skipped: docs-only" "${tmp_dir}/review-gate.out"
+
+  git add scripts/changed.sh
+  git commit -q -m "clean script commit"
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-clean-script.out"
+  test -f "${tmp_dir}/called-reviewer"
+  test -f "${tmp_dir}/called-summary"
+  test -f "${tmp_dir}/called-machinery"
+  grep -q "automation scripts changed; running machinery-scope verify" "${tmp_dir}/review-gate-clean-script.out"
+
+  mkdir -p docs
+  git mv scripts/changed.sh docs/changed.md
+  git commit -q -m "rename script into docs"
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-rename.out"
+  test -f "${tmp_dir}/called-reviewer"
+  test -f "${tmp_dir}/called-summary"
+  test -f "${tmp_dir}/called-machinery"
+  grep -q "automation scripts changed; running machinery-scope verify" "${tmp_dir}/review-gate-rename.out"
+
+  git switch -q -c feature-clean-merge
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\necho merged\n' > scripts/merge-clean.sh
+  chmod +x scripts/merge-clean.sh
+  git add scripts/merge-clean.sh
+  git commit -q -m "feature script for merge"
+  git switch -q main
+  printf 'main clean note\n' > docs/main-clean.md
+  git add docs/main-clean.md
+  git commit -q -m "main docs for merge"
+  git merge --no-ff feature-clean-merge -m "merge clean script feature" >/dev/null
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-merge.out"
+  test -f "${tmp_dir}/called-reviewer"
+  test -f "${tmp_dir}/called-summary"
+  test -f "${tmp_dir}/called-machinery"
+  grep -q "automation scripts changed; running machinery-scope verify" "${tmp_dir}/review-gate-merge.out"
+
+  printf 'docs only\n' > docs/docs-only.md
+  git add docs/docs-only.md
+  git commit -q -m "docs only clean commit"
+  rm -f "${tmp_dir}/called-machinery" "${tmp_dir}/called-reviewer" "${tmp_dir}/called-summary"
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate-clean-docs.out"
+  test ! -f "${tmp_dir}/called-machinery"
 )
 
 echo "[verify] testing review-gate does not run checksheet runner without checksheet diff..."

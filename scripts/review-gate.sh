@@ -500,6 +500,34 @@ diff_scope_changed_paths() {
   printf '%s' "${encoded}" | base64 -d 2>/dev/null || return 1
 }
 
+machinery_scope_requires_verify() {
+  local unstaged_rc="$1" unstaged="$2" staged_rc="$3" staged="$4" context_paths="$5"
+  [ "${unstaged_rc}" -ne 0 ] && return 0
+  [ "${staged_rc}" -ne 0 ] && return 0
+  printf '%s\n%s\n' "${unstaged}" "${staged}" | grep -Eq '^(scripts/|hooks/)' && return 0
+  printf '%s\n' "${context_paths}" | grep -Eq '^(scripts/|hooks/)' && return 0
+  return 1
+}
+
+if [ "${1:-}" = "--test-machinery-scope" ]; then
+  shift
+  [ "${AI_AUTO_REVIEW_GATE_TEST_MACHINERY_SCOPE:-0}" = "1" ] || {
+    echo "test seam disabled" >&2
+    exit 64
+  }
+  if machinery_scope_requires_verify \
+    "${AI_AUTO_TEST_MACHINERY_UNSTAGED_RC:-0}" \
+    "${AI_AUTO_TEST_MACHINERY_UNSTAGED:-}" \
+    "${AI_AUTO_TEST_MACHINERY_STAGED_RC:-0}" \
+    "${AI_AUTO_TEST_MACHINERY_STAGED:-}" \
+    "${AI_AUTO_TEST_MACHINERY_CONTEXT_PATHS:-}"; then
+    echo "machinery_scope"
+  else
+    echo "product_scope"
+  fi
+  exit 0
+fi
+
 review_gate_housekeeping() {
   local summary_status="$1"
 
@@ -973,9 +1001,15 @@ if [ "${verify_status}" -eq 0 ] && [ -f scripts/verify-machinery.sh ] \
   machinery_scope_unstaged="$(review_git diff --name-only 2>/dev/null)" || machinery_scope_unstaged_rc=$?
   machinery_scope_staged_rc=0
   machinery_scope_staged="$(review_git diff --cached --name-only 2>/dev/null)" || machinery_scope_staged_rc=$?
-  if [ "${machinery_scope_unstaged_rc}" -ne 0 ] || [ "${machinery_scope_staged_rc}" -ne 0 ] \
-     || printf '%s\n%s\n' "${machinery_scope_unstaged}" "${machinery_scope_staged}" \
-          | grep -Eq '^(scripts/|hooks/)'; then
+  # Comes from collect-review-context's Diff Scope Summary; in a clean post-commit
+  # review it names the latest commit's paths, not this gate script's own files.
+  machinery_scope_context_paths="${verify_scope_changed_paths}"
+  if machinery_scope_requires_verify \
+    "${machinery_scope_unstaged_rc}" \
+    "${machinery_scope_unstaged}" \
+    "${machinery_scope_staged_rc}" \
+    "${machinery_scope_staged}" \
+    "${machinery_scope_context_paths}"; then
     echo "[gate] automation scripts changed; running machinery-scope verify..."
     # OPCOST-HIGH-1: this ~6min self-test also runs in the VERY NEXT commit's pre-commit
     # hook over an IDENTICAL surface, so it ran TWICE per change->commit cycle. Memoize:
