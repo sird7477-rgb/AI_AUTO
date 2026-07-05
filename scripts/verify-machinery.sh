@@ -115,11 +115,39 @@ if [ -n "${tracked_secrets}" ]; then
   echo "[verify] remove them from the index and confirm .gitignore covers them" >&2
   exit 1
 fi
+# FIX-M1 (SPEC-AUD-3 / P3 "fail-open is NOT green"): a security scanner that is
+# ABSENT must never be silently counted as a passing scan. When a scanner is
+# missing we surface a LOUD, RECORDED `NOT-VALIDATED (scanner <name> unavailable)`
+# marker so a consumer reading "verify green" cannot mistake it for "security-
+# scanned". Absence is ADVISORY by default (these tools are legitimately absent in
+# this sandbox — a hard-close would brick every verify here). A scanner named in
+# VERIFY_REQUIRED_SCANNERS (space/comma list) instead fails CLOSED if absent.
+verify_scanner_required() {
+  # $1 = scanner name. Returns 0 iff it is listed in VERIFY_REQUIRED_SCANNERS.
+  local name="$1" req list="${VERIFY_REQUIRED_SCANNERS:-}"
+  for req in ${list//,/ }; do
+    [ "${req}" = "${name}" ] && return 0
+  done
+  return 1
+}
+verify_scanner_absent() {
+  # $1 = scanner name; $2 = human phrase of what was NOT validated.
+  # Required-but-absent -> non-zero (caller's set -e fails closed); else emit the
+  # advisory NOT-VALIDATED marker and return 0.
+  local name="$1" what="$2"
+  if verify_scanner_required "${name}"; then
+    echo "[verify] ERROR: required scanner ${name} is unavailable — ${what} NOT validated (VERIFY_REQUIRED_SCANNERS=${VERIFY_REQUIRED_SCANNERS:-})" >&2
+    return 1
+  fi
+  echo "[verify] NOT-VALIDATED (scanner ${name} unavailable): ${what} was NOT security-scanned — 'verify green' does NOT imply '${name}-scanned'. Install ${name} or set VERIFY_REQUIRED_SCANNERS=${name} to fail closed."
+  return 0
+}
+
 if command -v gitleaks >/dev/null 2>&1; then
   echo "[verify] running gitleaks deep secret scan..."
   gitleaks detect --no-banner --redact --exit-code 1
 else
-  echo "[verify] gitleaks not installed; tracked-file guard only (install gitleaks for deep scan)"
+  verify_scanner_absent gitleaks "deep secret scan (tracked-file guard still ran)"
 fi
 
 echo "[verify] checking python security tooling..."
@@ -133,14 +161,28 @@ if command -v bandit >/dev/null 2>&1; then
     bandit -q -ll "${python_security_targets[@]}"
   fi
 else
-  echo "[verify] bandit not installed; skipping python static security scan (optional)"
+  verify_scanner_absent bandit "python static security scan"
 fi
 if command -v pip-audit >/dev/null 2>&1; then
   echo "[verify] running pip-audit dependency audit..."
   pip-audit -r requirements.txt || echo "[verify] WARNING: pip-audit reported advisories (review above)"
 else
-  echo "[verify] pip-audit not installed; skipping dependency vulnerability audit (optional)"
+  verify_scanner_absent pip-audit "dependency vulnerability audit"
 fi
+
+echo "[verify] testing FIX-M1 absent-scanner NOT-VALIDATED surfacing..."
+(
+  # An absent OPTIONAL scanner must surface the LOUD NOT-VALIDATED marker (not a
+  # silent "optional/skipping" pass) and must NOT fail closed.
+  m1_out="$(verify_scanner_absent gitleaks "deep secret scan" 2>&1)" \
+    || { echo "[verify] FIX-M1: an optional absent scanner must not fail closed"; exit 1; }
+  printf '%s\n' "${m1_out}" | grep -q 'NOT-VALIDATED (scanner gitleaks unavailable)' \
+    || { echo "[verify] FIX-M1: absent optional scanner did not surface the NOT-VALIDATED marker: ${m1_out}"; exit 1; }
+  # A scanner named in VERIFY_REQUIRED_SCANNERS must fail CLOSED when absent.
+  if VERIFY_REQUIRED_SCANNERS="bandit,gitleaks" verify_scanner_absent gitleaks "deep secret scan" >/dev/null 2>&1; then
+    echo "[verify] FIX-M1: a REQUIRED absent scanner must fail closed"; exit 1
+  fi
+)
 
 echo "[verify] checking canonical TODO report..."
 # QUARANTINED (globalize P2.5): the live backlog legitimately carries active
