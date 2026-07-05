@@ -13746,3 +13746,14 @@ PY
   out="$(tools/ai-agent-watchdog keepalive-once --dry-run --match definitely-no-such-watchdog-XYZ --daemon-command 'ai-agent-watchdog daemon --interval 60')"
   printf '%s\n' "${out}" | grep -q 'would_start' || { echo "[verify] SPEC-AUD-6: keepalive dry-run did not report external restart: ${out}"; exit 1; }
 )
+
+echo "[verify] testing AUD-7 repro-fidelity doctrine and oracle parity..."
+(
+  grep -q 'AUD-7-REPRO-FIDELITY-DOCTRINE' AGENTS.md || { echo "[verify] AUD-7: AGENTS marker missing"; exit 1; }
+  grep -q 'AUD-7-REPRO-FIDELITY-DOCTRINE' docs/WORKFLOW.md || { echo "[verify] AUD-7: WORKFLOW marker missing"; exit 1; }
+  grep -q 'observed_symptom' scripts/checksheet-run.py || { echo "[verify] AUD-7: observed_symptom field not enforced"; exit 1; }
+  grep -q 'reproduction' scripts/checksheet-run.py || { echo "[verify] AUD-7: reproduction field not enforced"; exit 1; }
+  grep -q 'root_cause_fidelity' scripts/checksheet-run.py || { echo "[verify] AUD-7: root_cause_fidelity oracle missing"; exit 1; }
+  grep -q 'root_cause_confirmed_without_fidelity' tests/test_checksheet_run.py || { echo "[verify] AUD-7: no regression for confirmed language without fidelity"; exit 1; }
+  grep -q 'test_root_cause_fidelity_yes_allows_confirmed_language' tests/test_checksheet_run.py || { echo "[verify] AUD-7: no positive fidelity regression"; exit 1; }
+)

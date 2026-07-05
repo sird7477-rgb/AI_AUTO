@@ -34,6 +34,18 @@ SHEET = {
     ]
 }
 
+ROOT_CAUSE_SHEET = {
+    "expected_items": ["root-cause"],
+    "items": [
+        {
+            "id": "root-cause",
+            "oracle": "root_cause_fidelity",
+            "target": "root-cause.json",
+            "implicit": ["observed_symptom_reproduced_before_confirming_cause"],
+        }
+    ],
+}
+
 
 def _run(*args):
     return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, cwd=str(ROOT))
@@ -44,6 +56,13 @@ def _write_sheet(d: Path, uploads: str, db: str) -> Path:
     (d / "db.py").write_text(db)
     sheet = d / "sheet.json"
     sheet.write_text(json.dumps(SHEET))
+    return sheet
+
+
+def _write_root_cause_sheet(d: Path, artifact: dict) -> Path:
+    (d / "root-cause.json").write_text(json.dumps(artifact))
+    sheet = d / "root-cause.checksheet.json"
+    sheet.write_text(json.dumps(ROOT_CAUSE_SHEET))
     return sheet
 
 
@@ -162,6 +181,61 @@ def test_selftest_catches_a_non_self_validating_oracle():
     finally:
         mod.ORACLES.clear()
         mod.ORACLES.update(original)
+
+
+def test_root_cause_claim_requires_observed_reproduction_fidelity(tmp_path):
+    sheet = _write_root_cause_sheet(tmp_path, {"conclusion": "root cause confirmed"})
+    result = _run(str(sheet))
+    assert result.returncode == 1
+    assert "root_cause_fields_missing" in result.stderr
+    assert "observed_symptom" in result.stderr
+    assert "reproduction" in result.stderr
+    assert "fidelity" in result.stderr
+
+
+def test_root_cause_fidelity_no_blocks_confirmed_language(tmp_path):
+    sheet = _write_root_cause_sheet(
+        tmp_path,
+        {
+            "observed_symptom": "user saw the client button stay disabled",
+            "reproduction": "server-side proxy test only",
+            "fidelity": "no",
+            "conclusion": "root cause confirmed from proxy evidence",
+        },
+    )
+    result = _run(str(sheet))
+    assert result.returncode == 1
+    assert "root_cause_confirmed_without_fidelity" in result.stderr
+
+
+def test_root_cause_fidelity_yes_allows_confirmed_language(tmp_path):
+    sheet = _write_root_cause_sheet(
+        tmp_path,
+        {
+            "observed_symptom": "user saw the client button stay disabled",
+            "reproduction": "same browser workflow reproduced the disabled button",
+            "fidelity": "yes",
+            "conclusion": "root cause confirmed from matching reproduction",
+        },
+    )
+    result = _run(str(sheet))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "PASS root_cause_fidelity_declared" in result.stdout
+
+
+def test_root_cause_fidelity_no_allows_hypothesis_language(tmp_path):
+    sheet = _write_root_cause_sheet(
+        tmp_path,
+        {
+            "observed_symptom": "user saw the client button stay disabled",
+            "reproduction": "server-side proxy test only",
+            "fidelity": "no",
+            "conclusion": "hypothesis only; 미확정 가설",
+        },
+    )
+    result = _run(str(sheet))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "PASS root_cause_fidelity_declared" in result.stdout
 
 
 def test_real_run_aborts_when_an_oracle_fails_selftest(tmp_path, monkeypatch):

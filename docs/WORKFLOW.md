@@ -55,6 +55,11 @@
     사용해 커밋 시도 전후의 `HEAD` 이동을 확인한다. staged 변경이 있는데
     `HEAD`가 움직이지 않으면 완료로 취급하지 말고, heredoc/compound shell
     메시지 대신 파일 기반 메시지나 단순 `-m` 인자를 다시 사용한다.
+    AUD-7-REPRO-FIDELITY-DOCTRINE: "confirmed", "definitive", "원인 확정",
+    "확인 완료" 같은 고신뢰 root-cause 언어는 재현이 사용자가 관측한
+    증상과 일치할 때만 허용한다. 서버측 대신 클라이언트측, stale build,
+    synthetic render, browser-less viewport 같은 proxy 재현 위에서는
+    hypothesis/미확정으로 표기한다.
 17. 재사용 가능한 규칙을 발견하면 커밋 메시지에 `Finding:`(규칙) +
     `Finding-Evidence:`(근거) + `Finding-Scope:`(적용 범위) trailer를 한 줄씩
     단다(선택: `Finding-NotWhen:` / `Finding-Surface:` / `Finding-Share: shareable`).

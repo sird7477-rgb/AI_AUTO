@@ -109,6 +109,11 @@ the delegation guardrails or the leader's diff review, per the
 - If something is unclear, say what is known, what is inferred, and what evidence would confirm it.
 - Prefer local runtime evidence for CLI/model availability; provider documentation is reference material unless the current task explicitly asks for external research.
 - When forced to proceed with an assumption, label it as an assumption and keep the change reversible.
+- AUD-7-REPRO-FIDELITY-DOCTRINE: high-confidence root-cause language such as
+  "confirmed", "definitive", "원인 확정", or "확인 완료" is allowed only when the
+  reproduction matches the user's observed symptom. Proxy reproduction
+  (server-side instead of client-side, stale build, synthetic render, or
+  browser-less viewport) must stay labeled as a hypothesis.
 
 ## Command Keywords
 

@@ -34,6 +34,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -56,6 +57,13 @@ class ChecksheetSchemaError(ValueError):
 
 class RegressionRegistryError(ValueError):
     """Raised when a closed-defect regression registry is malformed."""
+
+
+ROOT_CAUSE_REQUIRED_FIELDS = ("observed_symptom", "reproduction", "fidelity")
+ROOT_CAUSE_HIGH_CONFIDENCE_RE = re.compile(
+    r"(원인\s*확정|확인\s*완료|결정적|\broot\s+cause\s+confirmed\b|\bconfirmed\b|\bdefinitive\b)",
+    re.IGNORECASE,
+)
 
 
 # --- isolated artifact loading (pattern 3) ---------------------------------
@@ -147,6 +155,29 @@ def oracle_sql_param(mod) -> Verdict:
         conn.close()
 
 
+def oracle_root_cause_fidelity(path: Path) -> Verdict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return Verdict(False, "root_cause_artifact_invalid", {"error": repr(exc)})
+    if not isinstance(data, dict):
+        return Verdict(False, "root_cause_artifact_invalid", {"error": "root must be an object"})
+    missing = [
+        field_name
+        for field_name in ROOT_CAUSE_REQUIRED_FIELDS
+        if not isinstance(data.get(field_name), str) or not data[field_name].strip()
+    ]
+    if missing:
+        return Verdict(False, f"root_cause_fields_missing:{','.join(missing)}", {"missing": missing})
+    fidelity = data["fidelity"].strip().lower()
+    if fidelity not in ("yes", "no"):
+        return Verdict(False, "root_cause_fidelity_invalid", {"expected": "yes|no", "got": data["fidelity"]})
+    claim_text = "\n".join(str(data.get(field_name, "")) for field_name in ("claim", "conclusion", "summary", "root_cause"))
+    if fidelity == "no" and ROOT_CAUSE_HIGH_CONFIDENCE_RE.search(claim_text):
+        return Verdict(False, "root_cause_confirmed_without_fidelity", {"fidelity": fidelity})
+    return Verdict(True, "root_cause_fidelity_declared", {"fidelity": fidelity})
+
+
 # Each oracle ships a known-good (must accept) and known-bad (must be caught)
 # reference -- the lazy-but-plausible version correct on the happy path, unsafe on
 # the adversarial input. --selftest proves the oracle distinguishes them.
@@ -178,24 +209,48 @@ ORACLES: dict[str, dict[str, Any]] = {
             "    return conn.execute(\"SELECT * FROM users WHERE name = '%s'\" % name).fetchall()\n"
         ),
     },
+    "root_cause_fidelity": {
+        "mode": "file",
+        "fn": oracle_root_cause_fidelity,
+        "good": json.dumps(
+            {
+                "observed_symptom": "user saw the browser button stay disabled",
+                "reproduction": "same browser workflow reproduced the disabled button",
+                "fidelity": "yes",
+                "conclusion": "root cause confirmed in the matching browser repro",
+            }
+        ),
+        "bad": json.dumps(
+            {
+                "observed_symptom": "user saw the browser button stay disabled",
+                "reproduction": "server-only proxy check did not run the browser workflow",
+                "fidelity": "no",
+                "conclusion": "root cause confirmed from proxy evidence",
+            }
+        ),
+    },
 }
 
 
-def _run_oracle_on_source(oracle_fn: Callable, source: str) -> Verdict:
+def _run_oracle_on_source(spec: dict[str, Any], source: str) -> Verdict:
     with tempfile.TemporaryDirectory() as d:
+        if spec.get("mode") == "file":
+            ref = Path(d) / "ref.json"
+            ref.write_text(source, encoding="utf-8")
+            return spec["fn"](ref)
         ref = Path(d) / "ref.py"
         ref.write_text(source, encoding="utf-8")
-        return oracle_fn(_load_module(ref))
+        return spec["fn"](_load_module(ref))
 
 
 def selftest() -> tuple[bool, list[str]]:
     """Every oracle must accept its good ref and reject its bad ref (pattern 4)."""
     failures: list[str] = []
     for name, spec in ORACLES.items():
-        good = _run_oracle_on_source(spec["fn"], spec["good"])
+        good = _run_oracle_on_source(spec, spec["good"])
         if not good.accepted:
             failures.append(f"{name}: good reference rejected ({good.reason})")
-        bad = _run_oracle_on_source(spec["fn"], spec["bad"])
+        bad = _run_oracle_on_source(spec, spec["bad"])
         if bad.accepted:
             failures.append(f"{name}: bad reference NOT caught (accepted as {bad.reason})")
     return (not failures, failures)
@@ -382,13 +437,16 @@ def run_checksheet(path: Path) -> int:
             print(f"[checksheet] {item_id}: ERROR unknown oracle {oracle_name!r}", file=sys.stderr)
             return 2
         target = (base / item["target"]).resolve()
-        try:
-            mod = _load_module(target)
-        except Exception as exc:  # noqa: BLE001 -- a missing/broken artifact is a rejection
-            print(f"[checksheet] {item_id} ({oracle_name}): REJECT target_load_failed: {exc}", file=sys.stderr)
-            rejected += 1
-            continue
-        v = spec["fn"](mod)
+        if spec.get("mode") == "file":
+            v = spec["fn"](target)
+        else:
+            try:
+                mod = _load_module(target)
+            except Exception as exc:  # noqa: BLE001 -- a missing/broken artifact is a rejection
+                print(f"[checksheet] {item_id} ({oracle_name}): REJECT target_load_failed: {exc}", file=sys.stderr)
+                rejected += 1
+                continue
+            v = spec["fn"](mod)
         tag = "PASS" if v.accepted else "REJECT"
         impl = _implicit_label(item["implicit"])
         line = f"[checksheet] {item_id} ({oracle_name}): {tag} {v.reason}{impl}"
