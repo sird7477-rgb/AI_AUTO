@@ -41,13 +41,24 @@ review_binding_key_file() {
   fi
 }
 
+review_binding_abs_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${path}" 2>/dev/null && return 0
+  fi
+  AI_AUTO_ABS_PATH="${path}" python3 - <<'PY' 2>/dev/null
+import os
+print(os.path.realpath(os.environ["AI_AUTO_ABS_PATH"]))
+PY
+}
+
 review_binding_key_in_tree() {
   local keyfile top rp
   keyfile="$(review_binding_key_file)"
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ -n "${top}" ] || return 1
-  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
-  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  top="$(review_binding_abs_path "${top}")" || return 0
+  rp="$(review_binding_abs_path "${keyfile}")" || return 0
   case "${rp}/" in "${top}/"*) return 0 ;; esac
   return 1
 }

@@ -10069,6 +10069,36 @@ echo "[verify] testing BLUE-R19B-INTREE-KEY (an in-tree provenance-key path — 
   KF="keys/x.key"
   test "$(decide review_provenance_decision)" = "full" \
     || { echo "[verify] BLUE-R19B-INTREE-KEY: in-tree key OUTSIDE .omx/.git was trusted/SKIPPED (substring-bypass reopened)"; exit 1; }
+  fakebin="${tmp_dir}/fakebin"; mkdir -p "${fakebin}"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakebin}/realpath"; chmod +x "${fakebin}/realpath"
+  KF="${key}"
+  test "$(PATH="${fakebin}:$PATH" decide review_provenance_decision)" = "skip" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: out-of-tree key did not skip when realpath -m was unavailable (fallback broken)"; exit 1; }
+  KF="keys/x.key"
+  test "$(PATH="${fakebin}:$PATH" decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: in-tree key was trusted/SKIPPED when realpath -m was unavailable"; exit 1; }
+  bind_probe() {  # ${KF} selects the binding key file under test; prints in-tree/out-tree
+    ( cd "${proj}"
+      export REVIEW_STATE_DIR="${proj}/.omx/binding-rs"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${KF}"
+      # shellcheck source=/dev/null
+      . "${repo_root}/scripts/review-gate-binding.sh"
+      if review_binding_key_in_tree; then printf 'in-tree\n'; else printf 'out-tree\n'; fi )
+  }
+  KF="${key}"
+  test "$(PATH="${fakebin}:$PATH" bind_probe)" = "out-tree" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: binding fallback marked an out-of-tree key as in-tree when realpath -m was unavailable"; exit 1; }
+  KF="keys/x.key"
+  test "$(PATH="${fakebin}:$PATH" bind_probe)" = "in-tree" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: binding fallback did not refuse an in-tree key when realpath -m was unavailable"; exit 1; }
+  fakeboth="${tmp_dir}/fakeboth"; mkdir -p "${fakeboth}"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakeboth}/realpath"; chmod +x "${fakeboth}/realpath"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakeboth}/python3"; chmod +x "${fakeboth}/python3"
+  KF="${key}"
+  test "$(PATH="${fakeboth}:$PATH" decide review_provenance_decision)" = "full" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: provenance trusted/SKIPPED when both path resolvers were unavailable"; exit 1; }
+  test "$(PATH="${fakeboth}:$PATH" bind_probe)" = "in-tree" \
+    || { echo "[verify] BLUE-R19B-INTREE-KEY: binding did not fail closed when both path resolvers were unavailable"; exit 1; }
 )
 
 echo "[verify] testing BLUE-R19-PROVENANCE-NESTEDREPO (a nested untracked git repo/worktree lists as one gitlink boundary dir that hash-object cannot hash; the gate must force a FULL review, never carry forward a skip on its unreviewed content; a clean tree with no such entry still skips)..."
