@@ -120,17 +120,34 @@ machinery_memo_ensure_key() {
   return 1
 }
 
+# Resolve a path to its absolute realpath, mirroring review_provenance_abs_path: prefer `realpath -m`
+# but fall back to python3 os.path.realpath when realpath is ABSENT (minimal container / PATH gap).
+# Empty output + non-zero exit ONLY when BOTH resolvers are unavailable -> caller fails CLOSED.
+machinery_memo_abs_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${path}" 2>/dev/null && return 0
+  fi
+  AI_AUTO_ABS_PATH="${path}" python3 - <<'PY' 2>/dev/null
+import os
+print(os.path.realpath(os.environ["AI_AUTO_ABS_PATH"]))
+PY
+}
+
 # Refuse an in-tree key path (attacker-readable) exactly like the other 3 marker readers. Delegates
 # to review_provenance_key_in_tree when the shared block is sourced (the gate); else a standalone
-# realpath-vs-toplevel check (the pre-commit hook). 0 == in-tree == REFUSE.
+# realpath-vs-toplevel check (the pre-commit hook). 0 == in-tree == REFUSE. FAIL-CLOSED: an
+# UNRESOLVABLE path (realpath AND python3 both absent) is treated as in-tree/REFUSE (|| return 0),
+# mirroring review_provenance_key_in_tree; a bare `realpath -m ... || return 1` was FAIL-OPEN (a
+# missing realpath => out-of-tree => a tree-readable key trusted => forgeable skip HMAC).
 machinery_memo_key_in_tree() {
   if command -v review_provenance_key_in_tree >/dev/null 2>&1; then review_provenance_key_in_tree; return; fi
   local keyfile top rp
   keyfile="$(machinery_memo_key_file)"
   top="$(review_git rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ -n "${top}" ] || return 1
-  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
-  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  top="$(machinery_memo_abs_path "${top}")" || return 0
+  rp="$(machinery_memo_abs_path "${keyfile}")" || return 0
   case "${rp}/" in "${top}/"*) return 0 ;; esac
   return 1
 }

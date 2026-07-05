@@ -13896,6 +13896,66 @@ echo "[verify] testing BLUE-R26-MEMO-INTREE F2 (machinery_memo_hmac REFUSES an i
   echo "[verify] BLUE-R26-MEMO-INTREE F2: pass"
 )
 
+echo "[verify] testing BLUE-H1-MEMO-INTREE-NOREALPATH (machinery_memo_key_in_tree FAILS CLOSED when realpath is ABSENT: the standalone check resolves via a python3 realpath fallback and treats an UNRESOLVABLE path as in-tree/REFUSE, so a missing realpath can NOT launder an in-tree [attacker-readable] key into 'out-of-tree=trusted'. Pre-fix bare 'realpath -m ... || return 1' CONTROL returns out-of-tree under a broken realpath => non-vacuous)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  export HOME="${tmp_dir}/home"; mkdir -p "${HOME}"
+  proj="${tmp_dir}/proj"; mkdir -p "${proj}"
+  ( cd "${proj}"; git init -q; git config user.email t@e.x; git config user.name T; printf '.omx/\n' > .gitignore; printf 'x\n' > a; git add .; git -c user.email=t@e.x -c user.name=T commit -qm init )
+  mkdir -p "${proj}/.omx/state"; intree_key="${proj}/.omx/state/intree.key"
+  ( umask 077; openssl rand -hex 32 > "${intree_key}" ); chmod 600 "${intree_key}"
+  outtree_key="${tmp_dir}/out.key"; ( umask 077; openssl rand -hex 32 > "${outtree_key}" ); chmod 600 "${outtree_key}"
+  # fakebin: realpath present-but-broken (exit 127) => the fallback (python3) must carry the resolution.
+  fakebin="${tmp_dir}/fakebin"; mkdir -p "${fakebin}"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakebin}/realpath"; chmod +x "${fakebin}/realpath"
+  # fakeboth: realpath AND python3 both broken => NO resolver => must fail CLOSED (in-tree/REFUSE).
+  fakeboth="${tmp_dir}/fakeboth"; mkdir -p "${fakeboth}"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakeboth}/realpath"; chmod +x "${fakeboth}/realpath"
+  printf '#!/usr/bin/env sh\nexit 127\n' > "${fakeboth}/python3"; chmod +x "${fakeboth}/python3"
+  memo_probe() {  # ${KF} selects the key file under test; prints in-tree/out-tree
+    ( cd "${proj}"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${KF}"
+      # shellcheck source=/dev/null
+      . "${repo_root}/scripts/machinery-memo.sh"
+      if machinery_memo_key_in_tree; then printf 'in-tree\n'; else printf 'out-tree\n'; fi )
+  }
+  ctl_probe() {  # pre-fix CONTROL: bare `realpath -m ... || return 1` (FAIL-OPEN) key-in-tree check
+    ( cd "${proj}"
+      export AI_AUTO_GIT_HARDEN_SH="${repo_root}/scripts/git-harden.sh"
+      export AI_AUTO_PROVENANCE_KEY_FILE="${KF}"
+      # shellcheck source=/dev/null
+      . "${repo_root}/scripts/machinery-memo.sh"
+      ctl_key_in_tree() {
+        local keyfile top rp
+        keyfile="$(machinery_memo_key_file)"
+        top="$(review_git rev-parse --show-toplevel 2>/dev/null)" || return 1
+        [ -n "${top}" ] || return 1
+        top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
+        rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+        case "${rp}/" in "${top}/"*) return 0 ;; esac
+        return 1
+      }
+      if ctl_key_in_tree; then printf 'in-tree\n'; else printf 'out-tree\n'; fi )
+  }
+  # (1) FIXED path, realpath broken, python3 available: in-tree key must be detected in-tree.
+  KF="${intree_key}"
+  test "$(PATH="${fakebin}:$PATH" memo_probe)" = "in-tree" \
+    || { echo "[verify] BLUE-H1-MEMO-INTREE-NOREALPATH: in-tree key was trusted/OUT-OF-TREE when realpath was unavailable (fail-open reopened)"; exit 1; }
+  # (2) pre-fix CONTROL under the SAME broken realpath returns out-of-tree => the fixture is non-vacuous.
+  test "$(PATH="${fakebin}:$PATH" ctl_probe)" = "out-tree" \
+    || { echo "[verify] BLUE-H1-MEMO-INTREE-NOREALPATH: pre-fix control did NOT return out-of-tree under broken realpath (fixture vacuous)"; exit 1; }
+  # (3) out-of-tree key still resolves out-of-tree via the fallback (refusal is not a blanket deny).
+  KF="${outtree_key}"
+  test "$(PATH="${fakebin}:$PATH" memo_probe)" = "out-tree" \
+    || { echo "[verify] BLUE-H1-MEMO-INTREE-NOREALPATH: out-of-tree key wrongly marked in-tree under broken realpath (fallback over-refuses)"; exit 1; }
+  # (4) BOTH resolvers broken: an in-tree key must fail CLOSED (in-tree/REFUSE).
+  KF="${intree_key}"
+  test "$(PATH="${fakeboth}:$PATH" memo_probe)" = "in-tree" \
+    || { echo "[verify] BLUE-H1-MEMO-INTREE-NOREALPATH: did NOT fail closed when both path resolvers were unavailable"; exit 1; }
+  echo "[verify] BLUE-H1-MEMO-INTREE-NOREALPATH: pass"
+)
+
 echo "[verify] testing BLUE-R26-DOMAIN-SEP F3 (each of the 4 markers signs under a UNIQUE marker_type domain tag, so a valid HMAC minted for one marker type is NOT accepted as another — cross-type isolation is enforced by the tag, not accidental field disjointness. Pre-fix [no tag] control shows an identical payload collides across types => non-vacuous)..."
 (
   tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
