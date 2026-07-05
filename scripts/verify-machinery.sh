@@ -7781,6 +7781,32 @@ echo "[verify] testing ai-register and workspace-scan registry integration..."
     exit 1
   fi
   grep -q "must be a positive integer" "${tmp_dir}/invalid-depth.out"
+  if AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS=bad AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" ./tools/workspace-scan "${workspace_dir}" > "${tmp_dir}/invalid-git-timeout.out" 2>&1; then
+    echo "workspace-scan accepted invalid git timeout"
+    exit 1
+  fi
+  grep -q "AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS must be a positive integer" "${tmp_dir}/invalid-git-timeout.out"
+
+  fake_bin="${tmp_dir}/fake-bin"
+  mkdir -p "${fake_bin}"
+  real_git="$(command -v git)"
+  cat > "${fake_bin}/git" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  if [ "\${arg}" = status ]; then
+    sleep 30
+  fi
+done
+exec "${real_git}" "\$@"
+EOF
+  chmod +x "${fake_bin}/git"
+  if ! PATH="${fake_bin}:${PATH}" AI_AUTO_WORKSPACE_SCAN_GIT_TIMEOUT_SECONDS=1 AI_AUTO_PROJECT_REGISTRY_FILE="${registry_file}" timeout 15 ./tools/workspace-scan "${workspace_dir}" > "${tmp_dir}/slow-git-scan.out" 2>&1; then
+    echo "workspace-scan did not self-bound a slow per-repo git status"
+    cat "${tmp_dir}/slow-git-scan.out"
+    exit 1
+  fi
+  grep -q "registered-project" "${tmp_dir}/slow-git-scan.out"
+  grep -q "unknown" "${tmp_dir}/slow-git-scan.out"
   mkdir -p "${target_dir}/.omx/feedback" "${outside_dir}/.omx/feedback"
   mkdir -p "${nested_dir}/.omx/feedback"
   printf '%s\n' '{"created_at":"2026-05-11T00:00:00Z","repeat_key":"registered:item","severity":"high","status":"open","summary":"registered queue item","type":"improvement"}' > "${target_dir}/.omx/feedback/queue.jsonl"
