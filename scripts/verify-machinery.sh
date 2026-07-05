@@ -12498,6 +12498,7 @@ echo "[verify] testing R22-PIC-HOOK-RCE (the post-index-change HOOK class R21 mi
   tmuxwt="${repo_root}/tools/ai-tmux-worktree"
   test -s "${ws}"     || { echo "[verify] R22-PIC-HOOK-RCE: workspace-scan not found"; exit 1; }
   test -s "${tmuxwt}" || { echo "[verify] R22-PIC-HOOK-RCE: ai-tmux-worktree not found"; exit 1; }
+  : > "${tmp_dir}/empty-registry.tsv"
   mk_pic() {  # hostile repo: a post-index-change hook (variant A=.git/hooks, B=core.hooksPath) that
               # fires when a `git status` index refresh REWRITES the STALE on-disk index. Committed
               # with `-c core.hooksPath=` so setup itself never trips it; the tracked file is then
@@ -12522,7 +12523,7 @@ echo "[verify] testing R22-PIC-HOOK-RCE (the post-index-change HOOK class R21 mi
     mk_pic "${wsdir}/repo" "${tmp_dir}/PWNED_WS_${_v}" "${_v}"
     rm -f "${tmp_dir}/PWNED_WS_${_v}"
     ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-      bash "${ws}" "${wsdir}" >/dev/null 2>&1 || true )
+      AI_AUTO_PROJECT_REGISTRY_FILE="${tmp_dir}/empty-registry.tsv" bash "${ws}" "${wsdir}" >/dev/null 2>&1 || true )
     test ! -e "${tmp_dir}/PWNED_WS_${_v}" \
       || { echo "[verify] R22-PIC-HOOK-RCE: post-index-change HOOK (${_v}) EXECUTED during workspace-scan 'git status' (RCE)"; exit 1; }
   done
@@ -12533,7 +12534,7 @@ echo "[verify] testing R22-PIC-HOOK-RCE (the post-index-change HOOK class R21 mi
   wsdir="${tmp_dir}/ws_ctl"; mkdir -p "${wsdir}"; mk_pic "${wsdir}/repo" "${tmp_dir}/PWNED_WS_CTL" dirhook
   rm -f "${tmp_dir}/PWNED_WS_CTL"
   ( unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-    bash "${wsctl}" "${wsdir}" >/dev/null 2>&1 || true )
+    AI_AUTO_PROJECT_REGISTRY_FILE="${tmp_dir}/empty-registry.tsv" bash "${wsctl}" "${wsdir}" >/dev/null 2>&1 || true )
   test -e "${tmp_dir}/PWNED_WS_CTL" \
     || { echo "[verify] R22-PIC-HOOK-RCE: control (workspace-scan with core.hooksPath pin stripped) did NOT fire post-index-change — fixture is vacuous"; exit 1; }
   # (2) ai-tmux-worktree removability() `git status` over the hostile repo — the tmux-lifecycle case.
