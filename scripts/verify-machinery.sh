@@ -5969,6 +5969,35 @@ SH
   grep -q "binding_decision=proceed" .omx/reviewer-state/binding-verdict.env
 )
 
+echo "[verify] testing BLUE-L1-PREPUSH-BROKENGIT (pre-push FAILS CLOSED when git is broken: a failing 'git rev-parse --show-toplevel' — corrupt .git / sandbox panic — must EXIT NON-ZERO to BLOCK the push, because the binding check cannot run. The pre-fix '|| exit 0' let a behavior-changing push through with NO binding check. Pre-fix control exits 0 in the SAME scenario => non-vacuous)..."
+(
+  tmp_dir="$(mktemp -d)"; trap 'rm -rf "${tmp_dir}"' EXIT
+  nonrepo="${tmp_dir}/nonrepo"; mkdir -p "${nonrepo}"
+  # A NON-repo dir makes `git rev-parse --show-toplevel` fail EXACTLY like a corrupt/sandbox-panicked
+  # .git (the toplevel cannot be resolved) -> the || branch fires. The hook only ever runs inside a
+  # repo, so a rev-parse failure here is always the broken-git case, never a legitimate non-repo push.
+  set +e
+  ( cd "${nonrepo}"; AI_AUTO_HOME="${repo_root}" bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/broken.out" 2>&1 )
+  broken_status=$?
+  set -e
+  [ "${broken_status}" -ne 0 ] \
+    || { echo "[verify] BLUE-L1-PREPUSH-BROKENGIT: pre-push exited 0 on broken git (fail-open: push allowed with NO binding check)"; cat "${tmp_dir}/broken.out"; exit 1; }
+  # Non-vacuous CONTROL: the pre-fix fail-OPEN variant exits 0 in the SAME broken-git scenario.
+  # Flip ONLY the broken-git branch's `exit 1` back to `exit 0` (the '; exit 1; }' fragment is unique
+  # to the toplevel guard; every other exit in the hook is a bare `exit 1`).
+  ctl="${tmp_dir}/pre-push-prefix"; cp "${repo_root}/hooks/pre-push" "${ctl}"
+  sed -i 's@; exit 1; }@; exit 0; }@' "${ctl}"
+  grep -q '; exit 0; }' "${ctl}" \
+    || { echo "[verify] BLUE-L1-PREPUSH-BROKENGIT: could not synthesize the pre-fix control (guard line changed?)"; exit 1; }
+  set +e
+  ( cd "${nonrepo}"; AI_AUTO_HOME="${repo_root}" bash "${ctl}" > "${tmp_dir}/ctl.out" 2>&1 )
+  ctl_status=$?
+  set -e
+  [ "${ctl_status}" -eq 0 ] \
+    || { echo "[verify] BLUE-L1-PREPUSH-BROKENGIT: pre-fix control did NOT exit 0 on broken git (fixture vacuous)"; cat "${tmp_dir}/ctl.out"; exit 1; }
+  echo "[verify] BLUE-L1-PREPUSH-BROKENGIT: pass"
+)
+
 echo "[verify] testing SPEC-AUD-1 pre-push enforces binding review-gate verdicts..."
 (
   tmp_dir="$(mktemp -d)"

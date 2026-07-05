@@ -16,7 +16,12 @@ else
   exit 1
 fi
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# FAIL CLOSED on a broken/corrupt git (sandbox panic, damaged .git): if the toplevel cannot be
+# resolved we CANNOT run the binding check, and every other sourcing failure in this hook fails
+# closed. A prior `|| exit 0` allowed a behavior-changing push with NO binding check whenever git
+# was broken. This hook only ever runs inside a git repo, so a rev-parse failure here is always the
+# broken-git case, never a legitimate non-repo push.
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { printf '\033[31m[pre-push] ERROR: cannot resolve repo toplevel — git appears broken/corrupt; refusing push because the binding gate cannot be checked. Repair git (or, only if you understand the risk, git push --no-verify).\033[0m\n' >&2; exit 1; }
 cd "${repo_root}" || exit 1
 
 # shellcheck source=scripts/git-harden.sh
