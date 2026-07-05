@@ -351,12 +351,29 @@ def test_regression_registry_high_author_asserted_is_rejected(tmp_path):
 
 
 def test_regression_registry_vacuous_mechanized_item_is_rejected(tmp_path):
-    good = {"argv": [sys.executable, "-c", "print('ok')"], "expect_exit": 0}
+    # Runtime non-vacuity check: the predicate is a well-formed mechanized guard (opposite expect_exit
+    # + a signature, so it clears FIX-R2 validation), but the non_vacuity CONTROL green-stubs instead
+    # of reproducing the defect (exits 0, not the declared 7) -> rejected at RUN time.
+    good = {"argv": [sys.executable, "-c", "print('ok')"], "expect_exit": 0, "stdout_contains": "ok"}
     stub = {"argv": [sys.executable, "-c", "print('stub green')"], "expect_exit": 7}
     registry = _write_registry(tmp_path, [_command_item("vacuous", good, stub)])
     result = _run("--regression-registry", str(registry))
     assert result.returncode == 1
     assert "non_vacuity_exit_mismatch" in result.stderr
+
+
+def test_regression_registry_mechanized_without_signature_or_opposite_exit_rejected_at_validation(tmp_path):
+    # FIX-R2: a "mechanized" entry that proves nothing -- predicate ["true"] exit0 with NO output
+    # signature and non_vacuity ["true"] exit0 (the SAME expect_exit) -- must be REJECTED by the
+    # VALIDATOR (exit 2, schema-invalid) before any command runs, so it can never claim mechanized
+    # trust. Non-vacuous: reverting the FIX-R2 validator change makes this same entry pass validation
+    # and green as "PASS mechanized" (exit 0).
+    predicate = {"argv": ["true"], "expect_exit": 0}
+    non_vacuity = {"argv": ["true"], "expect_exit": 0}
+    registry = _write_registry(tmp_path, [_command_item("vacuous-validation", predicate, non_vacuity)])
+    result = _run("--regression-registry", str(registry))
+    assert result.returncode == 2, result.stderr + result.stdout
+    assert "guard-specific signature" in result.stderr
 
 
 def test_regression_registry_expected_item_omission_blocks(tmp_path):

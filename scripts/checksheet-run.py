@@ -393,8 +393,34 @@ def _validate_regression_registry(data: Any) -> tuple[list[dict[str, Any]], list
             raise RegressionRegistryError(f"item {item_id}: enforcement must be mechanized or author_asserted")
         predicate = _validate_command(raw.get("predicate"), item_id, "predicate")
         non_vacuity = _validate_command(raw.get("non_vacuity"), item_id, "non_vacuity")
-        if enforcement == "mechanized" and non_vacuity is None:
-            raise RegressionRegistryError(f"item {item_id}: mechanized entries require non_vacuity")
+        if enforcement == "mechanized":
+            # FIX-R2: "mechanized" is a TRUST claim -- an entry the runner attests is a real
+            # mechanical guard, not an author's marker. Enforce that the claim is HONEST, else a
+            # vacuous pair (predicate ["true"] exit0 / non_vacuity ["true"] exit0) "passes"
+            # mechanized while proving nothing. Three requirements:
+            #   1. non_vacuity present (a control that fails on the un-fixed tree);
+            #   2. the predicate asserts a guard-SPECIFIC output signature (stdout_contains or
+            #      stderr_contains), not merely a coarse exit code any unrelated command shares; and
+            #   3. non_vacuity exercises the OPPOSITE outcome (a different expect_exit than the
+            #      predicate) so it demonstrates the guard DISTINGUISHES the fixed tree from the
+            #      reintroduced defect.
+            # A mechanized entry that fails any of these is REJECTED (schema-invalid) so it can
+            # never claim mechanized trust; an honestly weaker guard must instead declare
+            # enforcement=author_asserted (which carries no mechanical-proof claim).
+            if non_vacuity is None:
+                raise RegressionRegistryError(f"item {item_id}: mechanized entries require non_vacuity")
+            if predicate is None:
+                raise RegressionRegistryError(f"item {item_id}: mechanized entries require a predicate")
+            if not (predicate.get("stdout_contains") or predicate.get("stderr_contains")):
+                raise RegressionRegistryError(
+                    f"item {item_id}: mechanized predicate requires a guard-specific signature "
+                    f"(non-empty stdout_contains or stderr_contains), not just an exit code"
+                )
+            if non_vacuity["expect_exit"] == predicate["expect_exit"]:
+                raise RegressionRegistryError(
+                    f"item {item_id}: mechanized non_vacuity must expect a different exit than the "
+                    f"predicate (else it does not prove the guard distinguishes fixed from broken)"
+                )
         items.append(
             {
                 "id": item_id,
@@ -539,9 +565,13 @@ def run_regression_registry(path: Path) -> int:
                 print(f"[regression-registry] {item_id}: REJECT non_vacuity_{nv.reason} {nv.data}", file=sys.stderr)
                 rejected += 1
                 continue
-            print(f"[regression-registry] {item_id}: PASS mechanized {item['protects']}")
-        else:
-            print(f"[regression-registry] {item_id}: PASS author_asserted {item['protects']}")
+        # FIX-R2: the reported trust label is the entry's DECLARED enforcement, not a proxy
+        # (`non_vacuity is not None`). An author_asserted entry that happens to carry a
+        # non_vacuity control must still report as author_asserted -- only an entry the
+        # validator accepted as `mechanized` (with a guard-specific signature + opposite-exit
+        # control) earns the "mechanized" label.
+        label = "mechanized" if item["enforcement"] == "mechanized" else "author_asserted"
+        print(f"[regression-registry] {item_id}: PASS {label} {item['protects']}")
     return 1 if rejected else 0
 
 
