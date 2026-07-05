@@ -80,12 +80,17 @@ if [ -f "$VERIFY_OVERRIDE_ENV" ]; then
   # Preserve ONLY a genuinely-live holder: matching session AND live pid AND its RECORDED start-time
   # still equals the pid's CURRENT start-time (recycled pid -> mismatch -> STALE) AND fresh acquired_at.
   # holder_starttime is required: a marker lacking it (legacy / forged / recycled) can never be honored.
+  # RESERVED-PID guard: holder_pid MUST be a real user process (> 1). A planted holder_pid=1 (init) is
+  # ALWAYS kill-0-alive and pid 1's start-time is stable/queryable, so with a fresh acquired_at + matching
+  # session it would sail through every check and PRESERVE a forged override -> its attacker approved_by/
+  # reason downgrades + corrupts a clean run. `-gt 1` also rejects 0 and negatives, whose kill -0 has
+  # process-GROUP / broadcast semantics that spuriously succeed. Non-numeric -> arithmetic fails closed.
   # Age gate carries the SAME backward-clock-step grace as the session lock: a live SAME-session peer
   # whose acquired_at goes slightly negative under an NTP/WSL/VM backstep (-GRACE..0) is still FRESH,
   # so its live override is NOT rm'd (which would launder a failed-verify run to clean proceed); only
   # age > TTL (stale) or age < -GRACE (implausibly future/forged) drops it.
   if [ -n "$_ovr_sess" ] && [ "$_ovr_sess" = "$(_gate_session_id)" ] \
-     && [ -n "$_ovr_pid" ] && kill -0 "$_ovr_pid" 2>/dev/null \
+     && [ -n "$_ovr_pid" ] && { [ "$_ovr_pid" -gt 1 ] 2>/dev/null; } && kill -0 "$_ovr_pid" 2>/dev/null \
      && [ -n "$_ovr_start" ] && [ "$_ovr_start" = "$(_pid_starttime "$_ovr_pid")" ] \
      && [ "$_ovr_age" -ge $(( -_ovr_grace )) ] && [ "$_ovr_age" -le "$_ovr_ttl" ]; then
     : # a genuinely-live SAME-session peer (unrecycled pid) owns this override within TTL -> preserve it

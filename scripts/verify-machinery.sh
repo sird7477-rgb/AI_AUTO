@@ -5765,6 +5765,22 @@ echo "[verify] testing review-gate verify-override stale-guard is bound to sessi
   set -e
   test -f .omx/state/verify-override.env \
     || { echo "[verify] override stale-guard (session.json PRESENT) REMOVED a genuinely-live correct-starttime override (over-eager)"; exit 1; }
+
+  # (M2 reserved-PID) session.json PRESENT (so holder_session=tree-fixed-id matches) + holder_pid=1
+  # (init: ALWAYS kill-0-alive) + pid 1's REAL/queryable start-time + fresh acquired_at. Every OTHER
+  # preserve-check passes, so ONLY the reserved-PID guard (`[ "$_ovr_pid" -gt 1 ]`) can drop it: the
+  # planted marker must be REMOVED, never PRESERVED to stamp its attacker approved_by/reason onto this
+  # clean run. (Revert the `-gt 1` guard -> pid=1 is honored as a live holder -> the marker is preserved
+  # and this test FAILs.) pid 1 start-time is computed EXACTLY like review-gate's _pid_starttime.
+  _p1_stat="$(cat /proc/1/stat 2>/dev/null)"; _p1_stat="${_p1_stat##*) }"
+  set -- ${_p1_stat}; _p1_start="${20}"
+  printf 'reason=reserved pid forge\napproved_by=reserved-ghost\nholder_pid=1\nholder_session=tree-fixed-id\nholder_starttime=%s\nacquired_at=%s\n' \
+    "${_p1_start}" "$(date -Iseconds)" > .omx/state/verify-override.env
+  set +e
+  ./scripts/review-gate.sh > "${tmp_dir}/reserved.out" 2>&1
+  set -e
+  test ! -f .omx/state/verify-override.env \
+    || { echo "[verify] override stale-guard PRESERVED a planted holder_pid=1 (reserved/init) override (M2 reserved-PID downgrade+misattribution class)"; cat .omx/state/verify-override.env; exit 1; }
 )
 
 echo "[verify] testing review-gate verify-override marker is written ATOMICALLY (same-dir mktemp+mv, never an in-place truncating redirect a concurrent reader could observe partial)..."
