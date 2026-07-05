@@ -257,6 +257,25 @@ def test_root_cause_fidelity_no_blocks_confirmed_language_in_nonstandard_fields(
     assert "root_cause_confirmed_without_fidelity" in result.stderr
 
 
+def test_root_cause_fidelity_no_allows_confirmed_language_in_observation_fields(tmp_path):
+    # FIX-R1 (AUD-7 regression): observed_symptom + reproduction are REQUIRED contract fields that
+    # legitimately DESCRIBE the user's observation. Benign "confirmed" language there must NOT
+    # false-reject an honest fidelity=no hypothesis artifact. Reverting to the all-field scan (only
+    # excluding `fidelity`) makes this FAIL because observed_symptom contains "confirmed".
+    sheet = _write_root_cause_sheet(
+        tmp_path,
+        {
+            "observed_symptom": "user confirmed the button stays disabled",
+            "reproduction": "user confirmed the same disabled button in the reported workflow",
+            "fidelity": "no",
+            "conclusion": "hypothesis only; 미확정 가설",
+        },
+    )
+    result = _run(str(sheet))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "PASS root_cause_fidelity_declared" in result.stdout
+
+
 def test_real_run_aborts_when_an_oracle_fails_selftest(tmp_path, monkeypatch):
     # If selftest fails, a real checksheet run must abort (exit 2) before
     # rendering any verdict -- never a silent pass.

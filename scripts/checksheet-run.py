@@ -172,12 +172,17 @@ def oracle_root_cause_fidelity(path: Path) -> Verdict:
     fidelity = data["fidelity"].strip().lower()
     if fidelity not in ("yes", "no"):
         return Verdict(False, "root_cause_fidelity_invalid", {"expected": "yes|no", "got": data["fidelity"]})
-    # Scan EVERY string value of the artifact (except the fidelity declaration itself), not just a
-    # fixed 4-field allowlist: high-confidence "확정/confirmed/definitive" language in ANY other field
-    # (notes, analysis, an ad-hoc key, ...) with fidelity=no is the same contradiction and must not
-    # evade the check by living outside claim/conclusion/summary/root_cause.
+    # Scan every string value of the artifact EXCEPT the three required contract fields
+    # (observed_symptom, reproduction, fidelity): high-confidence "확정/confirmed/definitive" language
+    # in ANY other field (notes, analysis, conclusion, an ad-hoc key, ...) with fidelity=no is the same
+    # contradiction and must not evade the check by living outside a fixed allowlist. But
+    # observed_symptom and reproduction legitimately DESCRIBE the user's observation, so benign
+    # "confirmed" language there (e.g. "user confirmed the button stays disabled") must NOT
+    # false-reject an honest fidelity=no hypothesis artifact.
     claim_text = "\n".join(
-        str(value) for key, value in data.items() if key != "fidelity" and isinstance(value, str)
+        str(value)
+        for key, value in data.items()
+        if key not in ROOT_CAUSE_REQUIRED_FIELDS and isinstance(value, str)
     )
     if fidelity == "no" and ROOT_CAUSE_HIGH_CONFIDENCE_RE.search(claim_text):
         return Verdict(False, "root_cause_confirmed_without_fidelity", {"fidelity": fidelity})
