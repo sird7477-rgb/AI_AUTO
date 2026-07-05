@@ -507,6 +507,10 @@ def run_regression_registry(path: Path) -> int:
     rejected = 0
     for item in items:
         item_id = item["id"]
+        if item["enforcement"] == "author_asserted" and item["severity"] in ("high", "critical"):
+            print(f"[regression-registry] {item_id}: REJECT author_asserted_high_severity", file=sys.stderr)
+            rejected += 1
+            continue
         predicate = item["predicate"]
         if predicate is None:
             print(f"[regression-registry] {item_id}: REJECT predicate_missing", file=sys.stderr)

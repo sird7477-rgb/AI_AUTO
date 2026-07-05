@@ -267,7 +267,7 @@ def _command_item(item_id: str, predicate: dict | None, non_vacuity: dict | None
     item = {
         "id": item_id,
         "source": "test",
-        "severity": "high",
+        "severity": "medium" if enforcement == "author_asserted" else "high",
         "protects": "test guard",
         "closed_at": "2026-07-05",
         "enforcement": enforcement,
@@ -302,6 +302,16 @@ def test_regression_registry_missing_predicate_fails_completeness(tmp_path):
     assert "predicate_missing" in result.stderr
 
 
+def test_regression_registry_high_author_asserted_is_rejected(tmp_path):
+    good = {"argv": [sys.executable, "-c", "print('marker only')"], "expect_exit": 0, "stdout_contains": "marker"}
+    item = _command_item("marker-only", good, None, enforcement="author_asserted")
+    item["severity"] = "critical"
+    registry = _write_registry(tmp_path, [item])
+    result = _run("--regression-registry", str(registry))
+    assert result.returncode == 1
+    assert "author_asserted_high_severity" in result.stderr
+
+
 def test_regression_registry_vacuous_mechanized_item_is_rejected(tmp_path):
     good = {"argv": [sys.executable, "-c", "print('ok')"], "expect_exit": 0}
     stub = {"argv": [sys.executable, "-c", "print('stub green')"], "expect_exit": 7}
@@ -324,4 +334,5 @@ def test_shipped_closed_defect_regression_registry_passes():
     result = _run("--regression-registry", str(registry))
     assert result.returncode == 0, result.stderr + result.stdout
     assert "AUD-GATE-CHECKSHEET-OMISSION" in result.stdout
-    assert "BLUE-R24-EMPTYKEY" in result.stdout
+    assert "AUD-GATE-CHECKSHEET-ADVERSARIAL-SQL" in result.stdout
+    assert "author_asserted" not in result.stdout

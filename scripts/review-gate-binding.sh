@@ -96,27 +96,38 @@ review_binding_change_payload() {
   dirty_status=0
   review_binding_dirty || dirty_status=$?
   if [ "${dirty_status}" -eq 0 ]; then
-    printf '\037dirty\037\n'
-    printf '\037diff\037\n'; review_binding_git diff --no-ext-diff --no-textconv 2>/dev/null || return 1
-    printf '\037cached\037\n'; review_binding_git diff --cached --no-ext-diff --no-textconv 2>/dev/null || return 1
-    printf '\037untracked\037\n'
-    review_binding_git ls-files --others --exclude-standard -z 2>/dev/null \
-      | while IFS= read -r -d '' file; do
-          printf '%s\t' "${file}"
-          if [ -d "${file}" ] || ! blob="$(git hash-object --no-filters "${file}" 2>/dev/null)" || [ -z "${blob}" ]; then
-            printf '\037UNHASHABLE\037%s.%s\n' "${RANDOM}${RANDOM}" "$(date +%s%N 2>/dev/null || printf '%s' "${RANDOM}")"
-          else
-            printf '%s\n' "${blob}"
-          fi
-        done
+    review_binding_prospective_commit_payload
   elif [ "${dirty_status}" -eq 1 ] && git rev-parse --verify HEAD >/dev/null 2>&1; then
-    printf '\037latest-commit\037\n'
+    printf '\037commit-diff\037\n'
     git show --format= --no-ext-diff --no-textconv HEAD 2>/dev/null || return 1
   elif [ "${dirty_status}" -eq 1 ]; then
     printf '\037empty\037\n'
   else
     return 1
   fi
+}
+
+review_binding_prospective_commit_payload() {
+  local tmp_dir tmp_index real_index
+  tmp_dir="$(mktemp -d)" || return 1
+  tmp_index="${tmp_dir}/index"
+  real_index="$(git rev-parse --git-path index 2>/dev/null)" || { rm -rf "${tmp_dir}"; return 1; }
+  if [ -f "${real_index}" ]; then
+    cp "${real_index}" "${tmp_index}" || { rm -rf "${tmp_dir}"; return 1; }
+  fi
+  if ! GIT_INDEX_FILE="${tmp_index}" review_binding_git add -A -- . >/dev/null 2>&1; then
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
+  printf '\037commit-diff\037\n'
+  if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    GIT_INDEX_FILE="${tmp_index}" review_binding_git diff --cached --no-ext-diff --no-textconv HEAD 2>/dev/null
+  else
+    GIT_INDEX_FILE="${tmp_index}" review_binding_git diff --cached --no-ext-diff --no-textconv --root 2>/dev/null
+  fi
+  local rc=$?
+  rm -rf "${tmp_dir}"
+  return "${rc}"
 }
 
 review_binding_hash() {

@@ -5934,6 +5934,21 @@ SH
   AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
     bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-bound.out" 2>&1
 
+  git add docs/note.md
+  git commit -q -m reviewed-doc-change
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-after-commit.out" 2>&1 \
+    || { echo "[verify] SPEC-AUD-1: binding did not survive normal gate->commit->push flow"; cat "${tmp_dir}/prepush-after-commit.out"; exit 1; }
+
+  printf 'changed after reviewed commit\n' > docs/note.md
+  set +e
+  AI_AUTO_HOME="${repo_root}" AI_AUTO_PROVENANCE_KEY_FILE="${tmp_dir}/prov.key" \
+    bash "${repo_root}/hooks/pre-push" > "${tmp_dir}/prepush-after-extra-edit.out" 2>&1
+  extra_status=$?
+  set -e
+  [ "${extra_status}" -ne 0 ]
+  grep -q "no binding gate verdict for this change" "${tmp_dir}/prepush-after-extra-edit.out"
+
   cat > .omx/review-results/review-verdict-29990101T000000.md <<'VERDICT'
 # AI Review Verdict
 

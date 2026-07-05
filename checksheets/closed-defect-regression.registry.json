@@ -4,17 +4,7 @@
   "expected_items": [
     "AUD-GATE-CHECKSHEET-OMISSION",
     "AUD-GATE-CHECKSHEET-UNKNOWN-ORACLE",
-    "AUD-GATE-CHECKSHEET-ADVERSARIAL-SQL",
-    "BLUE-R24-EMPTYKEY",
-    "BLUE-R24-MEMOFORGE",
-    "BLUE-R24-CTXMISSING",
-    "BLUE-R24-CONTRACT-RC2",
-    "BLUE-R25-PRINCIPAL-AUTH-F1",
-    "BLUE-R25-PRINCIPAL-AUTH-F2",
-    "BLUE-R26-REVIEWER-BIND-F1",
-    "BLUE-R26-MEMO-INTREE-F2",
-    "BLUE-R26-DOMAIN-SEP-F3",
-    "R9-DRIFT-R27-WRAPPER-ALPHABET"
+    "AUD-GATE-CHECKSHEET-ADVERSARIAL-SQL"
   ],
   "items": [
     {
@@ -24,8 +14,24 @@
       "protects": "checksheet expected-item omission fails closed",
       "closed_at": "2026-07-05",
       "enforcement": "mechanized",
-      "predicate": {"argv": ["python3", "scripts/checksheet-run.py", "checksheets/regression-fixtures/good.checksheet-fixture"], "expect_exit": 0, "stdout_contains": "PASS"},
-      "non_vacuity": {"argv": ["python3", "scripts/checksheet-run.py", "checksheets/regression-fixtures/omission.checksheet-fixture"], "expect_exit": 1, "stderr_contains": "expected_item_missing"}
+      "predicate": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/good.checksheet-fixture"
+        ],
+        "expect_exit": 0,
+        "stdout_contains": "PASS"
+      },
+      "non_vacuity": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/omission.checksheet-fixture"
+        ],
+        "expect_exit": 1,
+        "stderr_contains": "expected_item_missing"
+      }
     },
     {
       "id": "AUD-GATE-CHECKSHEET-UNKNOWN-ORACLE",
@@ -34,8 +40,24 @@
       "protects": "unknown deterministic oracles cannot silently green",
       "closed_at": "2026-07-05",
       "enforcement": "mechanized",
-      "predicate": {"argv": ["python3", "scripts/checksheet-run.py", "checksheets/regression-fixtures/good.checksheet-fixture"], "expect_exit": 0, "stdout_contains": "PASS"},
-      "non_vacuity": {"argv": ["python3", "scripts/checksheet-run.py", "checksheets/regression-fixtures/unknown-oracle.checksheet-fixture"], "expect_exit": 2, "stderr_contains": "unknown oracle"}
+      "predicate": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/good.checksheet-fixture"
+        ],
+        "expect_exit": 0,
+        "stdout_contains": "PASS"
+      },
+      "non_vacuity": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/unknown-oracle.checksheet-fixture"
+        ],
+        "expect_exit": 2,
+        "stderr_contains": "unknown oracle"
+      }
     },
     {
       "id": "AUD-GATE-CHECKSHEET-ADVERSARIAL-SQL",
@@ -44,98 +66,24 @@
       "protects": "adversarial checksheet predicates reject unsafe artifacts",
       "closed_at": "2026-07-05",
       "enforcement": "mechanized",
-      "predicate": {"argv": ["python3", "scripts/checksheet-run.py", "--selftest"], "expect_exit": 0, "stdout_contains": "selftest OK"},
-      "non_vacuity": {"argv": ["python3", "scripts/checksheet-run.py", "checksheets/regression-fixtures/bad-sql.checksheet-fixture"], "expect_exit": 1, "stderr_contains": "sql_injection_leaks_rows"}
-    },
-    {
-      "id": "BLUE-R24-EMPTYKEY",
-      "source": "closed critical R24",
-      "severity": "critical",
-      "protects": "0-byte provenance keys cannot authenticate forged approvals",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R24-EMPTYKEY", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R24-MEMOFORGE",
-      "source": "closed critical R24",
-      "severity": "critical",
-      "protects": "machinery memo skips require valid HMAC evidence",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R24-MEMOFORGE", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R24-CTXMISSING",
-      "source": "closed high R24",
-      "severity": "high",
-      "protects": "review summaries with blank context cannot proceed",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R24-CTXMISSING", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R24-CONTRACT-RC2",
-      "source": "closed high R24",
-      "severity": "high",
-      "protects": "summary self-check crashes block instead of proceeding",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R24-CONTRACT-RC2", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R25-PRINCIPAL-AUTH-F1",
-      "source": "closed critical R25",
-      "severity": "critical",
-      "protects": "principal runtime evidence must be HMAC-authenticated",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R25-PRINCIPAL-AUTH F1", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R25-PRINCIPAL-AUTH-F2",
-      "source": "closed critical R25",
-      "severity": "critical",
-      "protects": "reviewer disabled markers must be HMAC-authenticated",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R25-PRINCIPAL-AUTH F2", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R26-REVIEWER-BIND-F1",
-      "source": "closed critical R26",
-      "severity": "critical",
-      "protects": "reviewer disable HMACs bind reviewer identity and workspace",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R26-REVIEWER-BIND F1", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R26-MEMO-INTREE-F2",
-      "source": "closed critical R26",
-      "severity": "critical",
-      "protects": "machinery memo HMAC keys cannot live in-tree",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R26-MEMO-INTREE F2", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "BLUE-R26-DOMAIN-SEP-F3",
-      "source": "closed critical R26",
-      "severity": "critical",
-      "protects": "HMAC marker domains cannot replay across marker types",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "BLUE-R26-DOMAIN-SEP F3", "scripts/verify-machinery.sh"], "expect_exit": 0}
-    },
-    {
-      "id": "R9-DRIFT-R27-WRAPPER-ALPHABET",
-      "source": "closed R27 drift guard",
-      "severity": "high",
-      "protects": "git drift scanner covers wrapper-expanded git subcommands",
-      "closed_at": "2026-07-05",
-      "enforcement": "author_asserted",
-      "predicate": {"argv": ["grep", "-q", "R27 WRAPPER-alphabet", "scripts/verify-machinery.sh"], "expect_exit": 0}
+      "predicate": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "--selftest"
+        ],
+        "expect_exit": 0,
+        "stdout_contains": "selftest OK"
+      },
+      "non_vacuity": {
+        "argv": [
+          "python3",
+          "scripts/checksheet-run.py",
+          "checksheets/regression-fixtures/bad-sql.checksheet-fixture"
+        ],
+        "expect_exit": 1,
+        "stderr_contains": "sql_injection_leaks_rows"
+      }
     }
   ]
 }
