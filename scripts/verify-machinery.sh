@@ -6020,6 +6020,54 @@ SH
   [ "${extra_status}" -ne 0 ]
   grep -q "no binding gate verdict for this change" "${tmp_dir}/prepush-after-extra-edit.out"
 
+  self_host_dir="${tmp_dir}/self-host"
+  git -c init.defaultBranch=main init -q "${self_host_dir}"
+  cd "${self_host_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts hooks docs .omx/review-results
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  cp "${repo_root}/hooks/pre-push" hooks/pre-push
+  cp "${repo_root}/hooks/git-scrub.sh" hooks/git-scrub.sh
+  chmod +x scripts/review-gate.sh scripts/review-gate-binding.sh scripts/collect-review-context.sh hooks/pre-push
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 64
+SH
+  chmod +x scripts/verify.sh scripts/run-ai-reviews.sh scripts/summarize-ai-reviews.sh
+  printf 'baseline\n' > docs/self-host.md
+  git add .gitignore scripts hooks docs
+  git commit -q -m self-host-baseline
+  printf 'reviewed\n' > docs/self-host.md
+  HOME="${tmp_dir}/home" \
+    OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/selfhost-review-gate.out" 2>&1 \
+    || { echo "[verify] SPEC-AUD-1: self-host review-gate did not record a binding verdict"; cat "${tmp_dir}/selfhost-review-gate.out"; exit 1; }
+  git add docs/self-host.md
+  git commit -q -m self-host-reviewed-doc-change
+  HOME="${tmp_dir}/home" AI_AUTO_HOME="${self_host_dir}" \
+    hooks/pre-push origin dummy-url > "${tmp_dir}/selfhost-prepush.out" 2>&1 \
+    || { echo "[verify] SPEC-AUD-1: self-host pre-push could not authenticate home-keyed binding"; cat "${tmp_dir}/selfhost-prepush.out"; exit 1; }
+  test ! -e .provenance-key \
+    || { echo "[verify] SPEC-AUD-1: self-host binding wrote an in-tree provenance key"; exit 1; }
+  echo "[verify] SPEC-AUD-1: pass"
+
+  cd "${target_dir}"
   cat > .omx/review-results/review-verdict-29990101T000000.md <<'VERDICT'
 # AI Review Verdict
 

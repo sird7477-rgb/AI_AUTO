@@ -20,7 +20,22 @@ review_binding_key_file() {
   elif [ -n "${AI_AUTO_PROVENANCE_KEY_FILE:-}" ]; then
     printf '%s\n' "${AI_AUTO_PROVENANCE_KEY_FILE}"
   elif [ -n "${AI_AUTO_HOME:-}" ]; then
-    printf '%s/.provenance-key\n' "${AI_AUTO_HOME}"
+    local candidate home_key top rp
+    candidate="${AI_AUTO_HOME}/.provenance-key"
+    home_key="${HOME:-/root}/.config/ai-auto/provenance.key"
+    if top="$(git rev-parse --show-toplevel 2>/dev/null)" \
+      && rp="$(realpath -m -- "${candidate}" 2>/dev/null)" \
+      && top="$(realpath -m -- "${top}" 2>/dev/null)"; then
+      # Refuse attacker-readable keys that resolve inside the reviewed worktree.
+      case "${rp}/" in
+        "${top}/"*) ;;
+        *) printf '%s\n' "${candidate}"; return ;;
+      esac
+    else
+      printf '%s\n' "${home_key}"
+      return
+    fi
+    printf '%s\n' "${home_key}"
   else
     printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"
   fi
