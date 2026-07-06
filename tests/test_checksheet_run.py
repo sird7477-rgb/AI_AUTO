@@ -373,7 +373,12 @@ def test_regression_registry_mechanized_without_signature_or_opposite_exit_rejec
     registry = _write_registry(tmp_path, [_command_item("vacuous-validation", predicate, non_vacuity)])
     result = _run("--regression-registry", str(registry))
     assert result.returncode == 2, result.stderr + result.stdout
-    assert "guard-specific signature" in result.stderr
+    # FIX-B honesty correction: the message no longer over-claims "guard-specific" (the check only
+    # requires a NON-EMPTY signature, not one bound/unique to the guard). It now says the honest
+    # "output-content signature". Locks the wording: reverting FIX-B reintroduces "guard-specific"
+    # and fails this assertion.
+    assert "output-content signature" in result.stderr
+    assert "guard-specific signature" not in result.stderr
 
 
 def test_regression_registry_expected_item_omission_blocks(tmp_path):

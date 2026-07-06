@@ -394,16 +394,23 @@ def _validate_regression_registry(data: Any) -> tuple[list[dict[str, Any]], list
         predicate = _validate_command(raw.get("predicate"), item_id, "predicate")
         non_vacuity = _validate_command(raw.get("non_vacuity"), item_id, "non_vacuity")
         if enforcement == "mechanized":
-            # FIX-R2: "mechanized" is a TRUST claim -- an entry the runner attests is a real
-            # mechanical guard, not an author's marker. Enforce that the claim is HONEST, else a
-            # vacuous pair (predicate ["true"] exit0 / non_vacuity ["true"] exit0) "passes"
-            # mechanized while proving nothing. Three requirements:
+            # FIX-R2 / FIX-B: "mechanized" is a TRUST claim -- an entry the runner attests is a
+            # real mechanical guard, not an author's marker. Enforce that the claim is HONEST,
+            # else a vacuous pair (predicate ["true"] exit0 / non_vacuity ["true"] exit0)
+            # "passes" mechanized while proving nothing. Three requirements:
             #   1. non_vacuity present (a control that fails on the un-fixed tree);
-            #   2. the predicate asserts a guard-SPECIFIC output signature (stdout_contains or
-            #      stderr_contains), not merely a coarse exit code any unrelated command shares; and
+            #   2. the predicate pins an OUTPUT-CONTENT signature (non-empty stdout_contains or
+            #      stderr_contains) -- stronger than a bare exit code because the command must
+            #      emit specific text the predicate matches. HONESTY NOTE (FIX-B): this check only
+            #      requires the signature to be NON-EMPTY; it is NOT verified to be UNIQUE to the
+            #      protected guard (a generic token like "PASS" satisfies it), because the registry
+            #      schema cannot know what output is unique to an arbitrary guard. So this rule is
+            #      NOT the guarantee of specificity it was once described as. The real fixed-vs-
+            #      broken discrimination is requirement 3, the opposite-exit control.
             #   3. non_vacuity exercises the OPPOSITE outcome (a different expect_exit than the
             #      predicate) so it demonstrates the guard DISTINGUISHES the fixed tree from the
-            #      reintroduced defect.
+            #      reintroduced defect -- this opposite-exit control is the mechanical TEETH of
+            #      the "mechanized" claim.
             # A mechanized entry that fails any of these is REJECTED (schema-invalid) so it can
             # never claim mechanized trust; an honestly weaker guard must instead declare
             # enforcement=author_asserted (which carries no mechanical-proof claim).
@@ -413,7 +420,7 @@ def _validate_regression_registry(data: Any) -> tuple[list[dict[str, Any]], list
                 raise RegressionRegistryError(f"item {item_id}: mechanized entries require a predicate")
             if not (predicate.get("stdout_contains") or predicate.get("stderr_contains")):
                 raise RegressionRegistryError(
-                    f"item {item_id}: mechanized predicate requires a guard-specific signature "
+                    f"item {item_id}: mechanized predicate requires an output-content signature "
                     f"(non-empty stdout_contains or stderr_contains), not just an exit code"
                 )
             if non_vacuity["expect_exit"] == predicate["expect_exit"]:
@@ -568,8 +575,8 @@ def run_regression_registry(path: Path) -> int:
         # FIX-R2: the reported trust label is the entry's DECLARED enforcement, not a proxy
         # (`non_vacuity is not None`). An author_asserted entry that happens to carry a
         # non_vacuity control must still report as author_asserted -- only an entry the
-        # validator accepted as `mechanized` (with a guard-specific signature + opposite-exit
-        # control) earns the "mechanized" label.
+        # validator accepted as `mechanized` (with an output-content signature + the opposite-exit
+        # control that is the real mechanical teeth) earns the "mechanized" label.
         label = "mechanized" if item["enforcement"] == "mechanized" else "author_asserted"
         print(f"[regression-registry] {item_id}: PASS {label} {item['protects']}")
     return 1 if rejected else 0
