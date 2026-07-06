@@ -6477,6 +6477,80 @@ SH
   test ! -f "${tmp_dir}/called-summary"
 )
 
+echo "[verify] testing review-gate re-asserts closed-defect registry on a NON-registry diff (FIX-M3)..."
+(
+  tmp_dir="$(mktemp -d)"
+
+  cleanup_review_gate_reassert_tmp() {
+    rm -rf "${tmp_dir}"
+  }
+
+  trap cleanup_review_gate_reassert_tmp EXIT
+
+  target_dir="${tmp_dir}/target"
+  git -c init.defaultBranch=main init -q "${target_dir}"
+  cd "${target_dir}"
+  git config user.email "verify@example.invalid"
+  git config user.name "Verify"
+  mkdir -p scripts checksheets docs
+  printf '.omx/\n' > .gitignore
+  cp "${repo_root}/scripts/review-gate.sh" scripts/review-gate.sh
+  cp "${repo_root}/scripts/review-gate-binding.sh" scripts/review-gate-binding.sh
+  cp "${repo_root}/scripts/collect-review-context.sh" scripts/collect-review-context.sh
+  cp "${repo_root}/scripts/git-harden.sh" scripts/git-harden.sh
+  chmod +x scripts/review-gate-binding.sh
+  chmod +x scripts/review-gate.sh scripts/collect-review-context.sh
+  # Record every invocation and FAIL the registry re-assertion so the gate blocks the
+  # moment the unconditional re-assertion runs (mirrors the changed-registry fixture).
+  cat > scripts/checksheet-run.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ../called-registry
+case "$*" in
+  *--regression-registry*closed-defect.regression.registry.json*) exit 41 ;;
+  *) exit 64 ;;
+esac
+SH
+  cat > scripts/verify.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "verify fixture ok"
+SH
+  cat > scripts/run-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "run-ai-reviews should not run after registry re-assertion failure" > ../called-reviewer
+exit 64
+SH
+  cat > scripts/summarize-ai-reviews.sh <<-'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "summarize should not run after registry re-assertion failure" > ../called-summary
+exit 64
+SH
+  chmod +x scripts/*.sh
+  # Registry committed at baseline and left UNTOUCHED; the diff changes only a
+  # NON-registry file. Pre-FIX-M3 the changed-file gate skips the registry entirely.
+  printf '{"version":1,"kind":"closed_defect_regression_registry","expected_items":["x"],"items":[{"id":"x"}]}\n' > checksheets/closed-defect.regression.registry.json
+  printf 'baseline\n' > docs/note.md
+  git add .gitignore scripts checksheets docs
+  git commit -q -m baseline
+  printf 'reopened defect in a non-registry file\n' > docs/note.md
+
+  set +e
+  OMX_AUTO_ARCHIVE=0 OMX_AUTO_CHECKPOINT=0 OMX_AUTO_KNOWLEDGE_DRAFTS=0 \
+    ./scripts/review-gate.sh > "${tmp_dir}/review-gate.out" 2>"${tmp_dir}/review-gate.err"
+  rc=$?
+  set -e
+
+  test "${rc}" -ne 0
+  grep -q "closed-defect registry re-assertion failed" "${tmp_dir}/review-gate.err"
+  # The registry runner WAS invoked even though NO registry file was in the diff.
+  grep -q -- "--regression-registry checksheets/closed-defect.regression.registry.json" "${tmp_dir}/called-registry"
+  test ! -f "${tmp_dir}/called-reviewer"
+  test ! -f "${tmp_dir}/called-summary"
+)
+
 echo "[verify] testing knowledge note helper..."
 (
 	  tmp_dir="$(mktemp -d)"

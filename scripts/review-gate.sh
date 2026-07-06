@@ -889,6 +889,33 @@ run_changed_checksheet_gate() {
   echo "[gate] checksheet artifacts passed"
 }
 
+# FIX-M3: run_changed_checksheet_gate only runs the closed-defect registry when a
+# registry FILE appears in the diff. A merge that reopens a closed defect in a
+# NON-registry file would then skip the registry entirely, defeating the
+# "any regression = BLOCK" contract. Re-assert every in-repo closed-defect
+# registry on EVERY gate run, unconditionally, regardless of what the diff touched.
+# Fast/scoped: the registry runner is deterministic and only replays the recorded
+# guards. (When a registry file ALSO changed, run_changed_checksheet_gate has
+# already blocked above, so this path runs only when the diff left registries
+# untouched — the exact case the changed-file gate misses.)
+run_registry_reassertion() {
+  local reg rc found=0 failed=0
+  for reg in checksheets/*.registry.json; do
+    [ -f "${reg}" ] || continue
+    found=1
+    echo "[gate] re-asserting closed-defect registry (unconditional): ${reg}"
+    rc=0
+    "$AH/checksheet-run.sh" --regression-registry "${reg}" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+      echo "[gate] closed-defect registry re-assertion FAILED (${reg}, exit ${rc})" >&2
+      failed=1
+    fi
+  done
+  [ "${found}" -eq 1 ] || return 0
+  [ "${failed}" -eq 0 ] || return 1
+  echo "[gate] closed-defect registry re-assertion passed"
+}
+
 if command -v session_lock_acquire >/dev/null 2>&1; then
   # The gate's own acquire happens BEFORE verify. A live sibling holding this tree returns
   # 75 (retryable contention) — surface it as a clear "deferred, use aiwt" and exit 75
@@ -1163,6 +1190,15 @@ fi
 
 if ! run_changed_checksheet_gate; then
   echo "[gate] checksheet gate failed; stopping before external review." >&2
+  review_gate_housekeeping 1
+  echo "[gate] complete"
+  exit 1
+fi
+
+# FIX-M3: unconditional closed-defect registry re-assertion (runs even when the diff
+# touched no registry file), so a reopened defect in a non-registry file is caught.
+if ! run_registry_reassertion; then
+  echo "[gate] closed-defect registry re-assertion failed; stopping before external review." >&2
   review_gate_housekeeping 1
   echo "[gate] complete"
   exit 1
