@@ -114,6 +114,12 @@ odoo_unvalidated_ack_or_block() {
 push_refs="$(cat)"
 zero=0000000000000000000000000000000000000000
 mods=""
+# RED17b-2: the exact local sha(s) actually being pushed, threaded through to the
+# docker validation harness (validate-warm.sh's HARNESS_VALIDATE_REF) so it
+# materializes an immutable snapshot of THIS content -- not whatever the live
+# working directory happens to hold tens of seconds to ~2 minutes later, when the
+# container gets around to reading it. See .ops-game/R8-red17b-final-convergence.md.
+pushed_lshas=""
 # Runtime-relevant files OUTSIDE custom-addons/ that can break the odoo.sh build/runtime
 # even though they touch zero modules (RED2-3): a bumped/broken python dep or a changed
 # build image/compose file. Tracked separately from $mods so an empty module scope caused
@@ -147,6 +153,8 @@ runtime_re='^(.*/)?(requirements[^/]*\.txt|Dockerfile[^/]*|[^/]*\.dockerfile|Con
 while read -r _lref lsha _rref rsha; do
   # skip branch deletions (local sha all-zeros) and empty lines
   case "${lsha:-}" in ""|"$zero") continue ;; esac
+  pushed_lshas="$pushed_lshas$lsha
+"
   # RED15-2: `$rsha` (all-zeros for a brand-new remote ref, otherwise the remote's actual
   # current tip) is the AUTHENTIC value git itself negotiated with the remote and fed us on
   # stdin -- the whole reason `hooks/pre-push` receives ref lines at all. The pre-fix
@@ -201,6 +209,7 @@ ${push_refs}
 EOF
 mods=$(printf '%s' "$mods" | sed '/^$/d' | sort -u | tr '\n' ' ')
 runtime_files=$(printf '%s' "$runtime_files" | sed '/^$/d' | sort -u | tr '\n' ' ')
+pushed_lshas=$(printf '%s' "$pushed_lshas" | sed '/^$/d' | sort -u | tr '\n' ' ')
 
 # Static manifest-integrity screen (no docker, no harness): a __manifest__.py listing a
 # data/demo file that does not exist fails `odoo -u <module>` and odoo.sh at load.
@@ -308,26 +317,54 @@ fi
 
 echo "[pre-push] Odoo validating changed modules: $mods"
 
-"$HARNESS/validate-warm.sh" "$PROJECT" $mods
-rc=$?
-if [ "$rc" = "3" ]; then
-  # Warm base missing. Fail-closed: never silently skip. Auto-build it once (default), or
-  # block-with-instructions if ODOO_SKIP_AUTO_BASE=1.
-  if [ "${ODOO_SKIP_AUTO_BASE:-0}" = "1" ]; then
-    echo "[pre-push] ❌ BLOCKED: warm base not built. Build it: \"$HARNESS/prepare-base-db.sh\" \"$PROJECT\"  (or SKIP_ODOO_VALIDATE=1 git push to bypass)"
-    exit 1
-  fi
-  echo "[pre-push] ⏳ first-time setup: warm base missing — building it now (~10min, one-time for this project)..."
-  if ! "$HARNESS/prepare-base-db.sh" "$PROJECT"; then
-    echo "[pre-push] ❌ BLOCKED: base build failed (a custom module is not installable on a clean base). Fix the error above, or SKIP_ODOO_VALIDATE=1 git push to bypass."
-    exit 1
-  fi
-  echo "[pre-push] base built — re-running validation..."
-  "$HARNESS/validate-warm.sh" "$PROJECT" $mods
+# RED17b-2: validate-warm.sh's docker bind-mount otherwise reads the LIVE working
+# directory (mutable, tens of seconds to ~2 minutes after this hook starts), never
+# actually pinned to the commit `git push` transmits. HARNESS_VALIDATE_REF makes
+# validate-warm.sh materialize an immutable snapshot of the given commit-ish instead
+# -- so each pushed local sha is validated against exactly its own tree, not
+# whatever custom-addons/ happens to hold when the container gets around to reading
+# it. One call per DISTINCT pushed local sha (usually exactly one; a single
+# multi-branch `git push` can feed more than one ref line above, each retaining its
+# own rc/base-build handling). $mods stays the union across all pushed refs
+# (matching this hook's existing enumeration one screen up) -- an acceptable
+# widening (validate a superset of modules per ref), never a narrowing that could
+# silently drop coverage.
+odoo_validate_one_ref() {  # $1 = pushed local sha to materialize+validate against
+  local ref="$1" rc
+  HARNESS_VALIDATE_REF="$ref" "$HARNESS/validate-warm.sh" "$PROJECT" $mods
   rc=$?
-fi
-if [ "$rc" != "0" ]; then
-  echo "[pre-push] ❌ BLOCKED: Odoo validation failed. Fix the error above, or override: SKIP_ODOO_VALIDATE=1 git push"
-  exit 1
-fi
+  if [ "$rc" = "3" ]; then
+    # Warm base missing. Fail-closed: never silently skip. Auto-build it once
+    # (default), or block-with-instructions if ODOO_SKIP_AUTO_BASE=1.
+    if [ "${ODOO_SKIP_AUTO_BASE:-0}" = "1" ]; then
+      echo "[pre-push] ❌ BLOCKED: warm base not built. Build it: \"$HARNESS/prepare-base-db.sh\" \"$PROJECT\"  (or SKIP_ODOO_VALIDATE=1 git push to bypass)"
+      return 1
+    fi
+    echo "[pre-push] ⏳ first-time setup: warm base missing — building it now (~10min, one-time for this project)..."
+    if ! "$HARNESS/prepare-base-db.sh" "$PROJECT"; then
+      echo "[pre-push] ❌ BLOCKED: base build failed (a custom module is not installable on a clean base). Fix the error above, or SKIP_ODOO_VALIDATE=1 git push to bypass."
+      return 1
+    fi
+    echo "[pre-push] base built — re-running validation..."
+    HARNESS_VALIDATE_REF="$ref" "$HARNESS/validate-warm.sh" "$PROJECT" $mods
+    rc=$?
+  fi
+  if [ "$rc" != "0" ]; then
+    echo "[pre-push] ❌ BLOCKED: Odoo validation failed for pushed commit ${ref}. Fix the error above, or override: SKIP_ODOO_VALIDATE=1 git push"
+    return 1
+  fi
+  return 0
+}
+
+# Defensive fail-closed guard: $mods is non-empty here (checked above), so
+# $pushed_lshas -- populated in lockstep with $mods in the stdin loop above --
+# must be too. An empty list at this point would mean the `for` below iterates
+# zero times and silently prints a PASS without ever calling the harness; refuse
+# instead of risking that (should be unreachable, never observed in the fix's
+# own tests, but the cost of checking is one string comparison).
+[ -n "$pushed_lshas" ] || odoo_unvalidated_ack_or_block "no pushed local sha resolved despite a non-empty module scope (internal enumeration mismatch)"
+
+for _pushed_ref in $pushed_lshas; do
+  odoo_validate_one_ref "$_pushed_ref" || exit 1
+done
 echo "[pre-push] ✅ Odoo validation passed"; exit 0
