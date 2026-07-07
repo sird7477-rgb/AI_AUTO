@@ -126,7 +126,14 @@ runtime_files=""
 # `(.*/)?` makes the directory prefix optional so both `requirements.txt` (root) and
 # `docker/requirements.txt` (subdir) match, while the filename part still forbids an
 # embedded slash so it only ever matches the basename, not an arbitrary substring.
-runtime_re='^(.*/)?(requirements[^/]*\.txt|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|Pipfile(\.lock)?|pyproject\.toml|setup\.(py|cfg))$'
+# RED11-3: the match against this regex below MUST use `grep -Ei` (case-insensitive) --
+# `dockerfile`, `DOCKERFILE`, `docker-compose.YML` are all real, buildable filenames that
+# evaded the case-sensitive match. The `(docker-)?compose` alternative (in place of the
+# old `docker-compose`-only form) also covers Compose Specification v2's own default
+# discovery names `compose.yaml`/`compose.yml` (no "docker-" prefix at all), not only the
+# legacy `docker-compose.yml` form. Still basename-anchored via `(.*/)?...$`, so an
+# unrelated file merely containing "compose" (e.g. `recompose.yaml`) does not match.
+runtime_re='^(.*/)?(requirements[^/]*\.txt|Dockerfile[^/]*|(docker-)?compose[^/]*\.ya?ml|Pipfile(\.lock)?|pyproject\.toml|setup\.(py|cfg))$'
 while read -r _lref lsha _rref rsha; do
   # skip branch deletions (local sha all-zeros) and empty lines
   case "${lsha:-}" in ""|"$zero") continue ;; esac
@@ -134,11 +141,25 @@ while read -r _lref lsha _rref rsha; do
     ""|"$zero") commits="$(git -C "$PROJECT" rev-list "$lsha" --not --remotes 2>/dev/null)" ;;  # new branch
     *)          commits="$(git -C "$PROJECT" rev-list "$rsha..$lsha" 2>/dev/null)" ;;
   esac
+  # RED11-2: `diff-tree` WITHOUT `-m`/`-c`/`--cc` prints NOTHING for a merge commit, by
+  # git's own design (a merge is only diffed against a parent when explicitly asked) --
+  # so an "evil merge" that injects a Dockerfile/requirements.txt/custom-addons change
+  # ONLY during conflict resolution (content present in neither parent's own tree) was
+  # completely invisible to both $mods and $runtime_files, even though `rev-list` walks
+  # every commit in the pushed range including merges. `-m` shows a diff of the commit
+  # against EACH of its parents, one after another; a genuinely merge-only file (differs
+  # from every parent) then appears in at least one of those per-parent diffs and is
+  # caught (duplicates across parents are harmless -- deduped by `sort -u` below). For an
+  # ordinary single-parent (non-merge) commit, `-m` diffs against that one parent, i.e.
+  # identical output to the pre-fix invocation -- no over- or under-detection is
+  # introduced for the common case. `-m` is applied to one already-resolved commit sha at
+  # a time here (never to a whole `rev-range` argument), so it stays scoped to exactly the
+  # pushed commits, not verbose across history.
   changed_files="$(printf '%s\n' "$commits" | while read -r c; do
-        [ -n "$c" ] && git -C "$PROJECT" diff-tree -r --no-commit-id --name-only "$c" 2>/dev/null
+        [ -n "$c" ] && git -C "$PROJECT" diff-tree -r -m --no-commit-id --name-only "$c" 2>/dev/null
       done)"
   m="$(printf '%s\n' "$changed_files" | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p')"
-  r="$(printf '%s\n' "$changed_files" | grep -E "$runtime_re")"
+  r="$(printf '%s\n' "$changed_files" | grep -Ei "$runtime_re")"
   mods="$mods$m
 "
   runtime_files="$runtime_files$r

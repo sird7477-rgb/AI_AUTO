@@ -56,9 +56,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       # GRANT_ADMIN=true) rode through unseen. Resolve an explicit, safe, over-approximated
       # base HERE instead of leaving it blank, so this hook is correct on its own even if
       # review_binding_committed_payload's own internal fallback ever changed. See
-      # review_binding_safe_base_fallback (scripts/review-gate-binding.sh): the octopus
-      # merge-base with every known refs/remotes/* branch, or -- nothing known at all -- the
-      # empty tree, so the range NEVER silently narrows to "just the tip".
+      # review_binding_safe_base_fallback (scripts/review-gate-binding.sh): the current
+      # branch's own `@{u}` upstream if one resolves, or -- nothing known at all -- the empty
+      # tree, so the range NEVER silently narrows to "just the tip". (RED11-1 fix: this used
+      # to be the octopus merge-base with every ref under refs/remotes/*, but that glob is a
+      # set of ordinary same-UID-forgeable local refs -- PoC'd collapsing the range back to
+      # tip-only via a `git update-ref`-fabricated descendant ref, see
+      # .ops-game/R5-red11-reattack.md and the fallback function's own comment for the fix.)
       remote_sha="$(review_binding_safe_base_fallback "${local_sha}")"
       ;;
   esac

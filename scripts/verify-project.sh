@@ -14,7 +14,32 @@ run_product_pytest() {
   .venv/bin/python -m pytest -q tests/test_app.py
 }
 
+# RED7-4 / RED12 dogfood (2026-07-07 R6 ops-defense, MEDIUM): scripts/verify.sh's
+# run_product reads a `[verify-project] RUNTIME_ORACLE=<state>[:<detail>]` marker on this
+# verifier's own captured stdout/stderr to tell "a real runtime oracle actually ran and
+# passed" apart from "verify-project.sh only did static checks" (the contract is documented
+# at scripts/verify.sh's run_product, above the oracle-check block). Before this fix, this
+# repo's OWN verifier -- despite genuinely bringing up a docker-compose flask+postgres app
+# and hitting its endpoints below -- never emitted that marker, so the contract was inert
+# even on the engine repo dogfooding itself. Fixed by emitting the marker on every terminal
+# path of the smoke test: `passed:ai-lab-app-smoke` only once the smoke test above has
+# actually run to completion and succeeded; `docker-down` when docker itself is unavailable
+# (binary missing or daemon unreachable) so the smoke test is skipped rather than crashing
+# on a confusing raw docker error; `skipped` on the docs/plans-only scoped fast-path where
+# skipping is a deliberate, correct scope decision, not a docker problem. No existing
+# assertion (pytest, curl endpoint checks, docker compose ps/logs) is loosened -- this only
+# ADDS the marker line alongside the pre-existing behavior.
+docker_available() {
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
 run_product_smoke() {
+  if ! docker_available; then
+    echo "[verify-project] docker unavailable (not installed or daemon unreachable) -- skipping runtime smoke test"
+    echo "[verify-project] RUNTIME_ORACLE=docker-down"
+    return 0
+  fi
+
   echo "[verify-project] starting docker compose on API_PORT=${API_PORT}..."
   API_PORT="${API_PORT}" docker compose up --build -d
 
@@ -46,6 +71,7 @@ run_product_smoke() {
   docker compose ps
 
   echo "[verify-project] success"
+  echo "[verify-project] RUNTIME_ORACLE=passed:ai-lab-app-smoke"
 }
 
 changed_paths() {
@@ -92,6 +118,7 @@ run_scoped_product_verification() {
   if changed_paths_are_docs_plans_only; then
     echo "[verify-project] scoped verification: docs/plans-only change; skipping product pytest and docker smoke"
     printf '%s\n' "${AI_AUTO_VERIFY_CHANGED_PATHS}" | sed 's/^/[verify-project] scoped path: /'
+    echo "[verify-project] RUNTIME_ORACLE=skipped"
     return 0
   fi
 

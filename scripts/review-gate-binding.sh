@@ -140,10 +140,6 @@ review_binding_empty_tree() {
   review_binding_git hash-object -t tree /dev/null 2>/dev/null
 }
 
-review_binding_remote_tracking_refs() {
-  review_binding_git for-each-ref --format='%(objectname)' refs/remotes 2>/dev/null | awk 'NF'
-}
-
 # RED7-1 fix: neither of the two prior "base" sources ever fires on the ordinary case of a
 # brand-new local branch before its first push -- hooks/pre-push has no <remote sha> to diff
 # against (a genuinely new remote ref reports the all-zero sha on stdin) and `@{u}` is unset
@@ -151,22 +147,43 @@ review_binding_remote_tracking_refs() {
 # "just the tip commit", making any earlier unreviewed commit (e.g. one adding
 # GRANT_ADMIN=true) invisible to both the reviewer and the push-time hash even though it
 # rides out on the very next `git push`. Never let the range silently collapse to tip-only;
-# always resolve an explicit, safe, OVER-approximated base instead:
-#   1. the octopus merge-base of $1 and every ref this repo already knows about under
-#      refs/remotes/* (every remote-tracking branch of every remote) -- this sits at or
-#      before the point $1 and EVERY known remote branch diverged, so a diff from this point
-#      to $1 is guaranteed to include every commit unique to $1 (possibly plus some already-
-#      known content too -- reviewing more, never less, is the safe direction here).
-#   2. if no remote-tracking ref exists at all (nothing has ever been fetched/pushed from
-#      this clone) or the octopus merge-base can't be computed (unrelated histories), fall
-#      back to the empty tree, so the payload becomes a full diff of $1's entire reachable
-#      content -- the ultimate over-approximation, never narrower than "just the tip".
+# always resolve an explicit, safe, OVER-approximated base instead.
+#
+# RED11-1 fix (CRITICAL, .ops-game/R5-red11-reattack.md): this function used to resolve the
+# octopus merge-base of $1 against EVERY ref under refs/remotes/* (a glob, via the now-removed
+# review_binding_remote_tracking_refs). refs/remotes/* is populated by `git fetch`, but each
+# ref under it is still just an ordinary LOCAL ref -- any same-UID actor (the exact actor this
+# binding mechanism exists to defend against) can create one directly with `git update-ref
+# refs/remotes/origin/decoy <sha>`, no network or push required. Planting a decoy ref that is
+# a DESCENDANT of the commit being pushed collapses merge-base(target, decoy) back to target
+# itself, so base==target, the range-diff section becomes an empty no-op, and the payload
+# silently collapses to tip-only again -- reproducing the exact RED7-1 defect this function
+# exists to close, via ref fabrication instead of "no upstream". PoC'd end-to-end in
+# R5-red11-reattack.md (RED11-1). Never trust a glob over refs/remotes/* again.
+#
+# The only AUTHENTIC base for a push is the pre-push stdin remote_sha (what the remote
+# actually reports its current tip to be, from the real push negotiation) -- hooks/pre-push
+# already uses that directly and never reaches this function when it is non-zero. This
+# function is only reached when there is NO authentic base to work from (a genuinely new
+# remote ref, or an ambient/standalone caller with no stdin at all). Fallback order:
+#   1. the CURRENT branch's own specific `@{u}` upstream, IF it resolves -- a single,
+#      specifically-configured ref (not a glob over every ref this repo has ever heard of),
+#      best-effort. NOTE (documented residual, not a closed hole): the ref `@{u}` points at is
+#      itself an ordinary local ref and exactly as same-UID-forgeable as refs/remotes/* was
+#      (`git branch --set-upstream-to`/a raw `update-ref` can point it at a decoy just as
+#      easily) -- narrowing the glob to one specifically-configured ref shrinks the attack
+#      surface (a decoy must now match the ref the developer actually configured, rather than
+#      merely being new) but does not eliminate same-UID ref forgery. The out-of-band durable
+#      verdict log + external auditor (RED8/R5) is the accepted backstop against a same-UID
+#      attacker forging ANY local ref, including this one -- this function's job is only to
+#      never UNDER-approximate the range, not to authenticate refs it does not control.
+#   2. else the empty tree -- the ultimate over-approximation: a full diff of $1's entire
+#      reachable content, never narrower than "just the tip".
 review_binding_safe_base_fallback() {
-  local target="${1:-HEAD}" refs base
-  refs="$(review_binding_remote_tracking_refs)"
-  if [ -n "${refs}" ]; then
-    # shellcheck disable=SC2086
-    base="$(review_binding_git merge-base --octopus "${target}" ${refs} 2>/dev/null || true)"
+  local target="${1:-HEAD}" upstream base
+  upstream="$(review_binding_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [ -n "${upstream}" ]; then
+    base="$(review_binding_git merge-base "${target}" "${upstream}" 2>/dev/null || true)"
     if [ -n "${base}" ]; then
       printf '%s\n' "${base}"
       return 0

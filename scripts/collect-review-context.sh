@@ -9,8 +9,8 @@ CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=scripts/git-harden.sh
 . "${AI_AUTO_GIT_HARDEN_SH:-${CRC_DIR}/git-harden.sh}"
 # RED10-1 fix: prefer SOURCING review-gate-binding.sh for its safe-base-fallback helpers
-# (review_binding_safe_base_fallback / review_binding_empty_tree / review_binding_remote_tracking_refs)
-# -- see post_commit_upstream_ref below -- over a second hand-written copy of that logic.
+# (review_binding_safe_base_fallback / review_binding_empty_tree) -- see
+# post_commit_upstream_ref below -- over a second hand-written copy of that logic.
 # In a real install review-gate-binding.sh ships in this same scripts/ directory (and is
 # copied alongside collect-review-context.sh everywhere the latter is, see
 # scripts/verify-machinery.sh's fixture cp-lists), so this is the common case. It only
@@ -44,30 +44,28 @@ if [ -f "${CRC_DIR}/../hooks/git-scrub.sh" ] && bash -n "${CRC_DIR}/../hooks/git
 fi
 
 # RED10-1 fallback mirror: only defined when review-gate-binding.sh above was NOT reachable
-# (e.g. an isolated test fixture that copied just this script). These three bodies are a
+# (e.g. an isolated test fixture that copied just this script). These bodies are a
 # byte-for-byte copy of scripts/review-gate-binding.sh's review_binding_empty_tree /
-# review_binding_remote_tracking_refs / review_binding_safe_base_fallback (the ONLY
-# difference: review_git directly, since that hardened wrapper is already unconditionally
-# available in this file, in place of the review_binding_git indirection, which itself just
-# resolves to review_git when defined). KEEP THESE IN SYNC WITH THE ORIGINALS -- drift
-# between this copy and scripts/review-gate-binding.sh's is the exact bug class RED10-1 was.
+# review_binding_safe_base_fallback (the ONLY difference: review_git directly, since that
+# hardened wrapper is already unconditionally available in this file, in place of the
+# review_binding_git indirection, which itself just resolves to review_git when defined).
+# KEEP THESE IN SYNC WITH THE ORIGINALS -- drift between this copy and
+# scripts/review-gate-binding.sh's is the exact bug class RED10-1 was (and, separately,
+# RED11-1 -- see the long comment above review_binding_safe_base_fallback in
+# scripts/review-gate-binding.sh for the full rationale of why the old octopus-merge-base-
+# over-refs/remotes/* fallback was removed: refs/remotes/* are attacker-writable local refs,
+# and a fabricated descendant ref collapsed the range back to tip-only).
 if ! command -v review_binding_empty_tree >/dev/null 2>&1; then
   review_binding_empty_tree() {
     review_git hash-object -t tree /dev/null 2>/dev/null
   }
 fi
-if ! command -v review_binding_remote_tracking_refs >/dev/null 2>&1; then
-  review_binding_remote_tracking_refs() {
-    review_git for-each-ref --format='%(objectname)' refs/remotes 2>/dev/null | awk 'NF'
-  }
-fi
 if ! command -v review_binding_safe_base_fallback >/dev/null 2>&1; then
   review_binding_safe_base_fallback() {
-    local target="${1:-HEAD}" refs base
-    refs="$(review_binding_remote_tracking_refs)"
-    if [ -n "${refs}" ]; then
-      # shellcheck disable=SC2086
-      base="$(review_git merge-base --octopus "${target}" ${refs} 2>/dev/null || true)"
+    local target="${1:-HEAD}" upstream base
+    upstream="$(review_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+    if [ -n "${upstream}" ]; then
+      base="$(review_git merge-base "${target}" "${upstream}" 2>/dev/null || true)"
       if [ -n "${base}" ]; then
         printf '%s\n' "${base}"
         return 0
