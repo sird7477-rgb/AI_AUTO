@@ -21,6 +21,9 @@ ODOO_BASE_MODULES="${ODOO_BASE_MODULES:-}"
 # country_id resolves. Stateless: applied fresh per run, nothing persisted.
 ODOO_COMPANY_COUNTRY="${ODOO_COMPANY_COUNTRY:-base.kr}"
 export HARNESS_DIR="$HERE"
+# Fail fast with a clear message if the Docker daemon is down (see harness-preflight.sh).
+. "$HERE/harness-preflight.sh"
+harness_require_docker || exit 4
 
 PROJECT="${1:?usage: validate-odoo.sh <project_repo> [module ...]}"; shift || true
 export PROJECT_ADDONS="$PROJECT/custom-addons"

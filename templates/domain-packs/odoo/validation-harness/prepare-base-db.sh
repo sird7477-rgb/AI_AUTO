@@ -9,6 +9,9 @@ DATA="$(cd "$HERE/.." && pwd)"
 export ODOO_COMMUNITY="${ODOO_COMMUNITY:-$DATA/01. Odoo.19(커뮤니티)}"
 export ODOO_ENTERPRISE="${ODOO_ENTERPRISE:-$DATA/02. Odoo.19(enterprise)}"
 export HARNESS_DIR="$HERE"
+# Fail fast with a clear message if the Docker daemon is down (see harness-preflight.sh).
+. "$HERE/harness-preflight.sh"
+harness_require_docker || exit 4
 PROJECT="${1:?usage: prepare-base-db.sh <project_repo>}"
 export PROJECT_ADDONS="$PROJECT/custom-addons"
 [ -d "$PROJECT_ADDONS" ] || { echo "[base] no custom-addons at $PROJECT_ADDONS" >&2; exit 2; }
