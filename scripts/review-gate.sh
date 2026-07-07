@@ -544,6 +544,35 @@ if [ "${1:-}" = "--test-machinery-scope" ]; then
   exit 0
 fi
 
+# RED8-1 (R3 audit): the R20 purge below (search "bind this gate run's verdict to a
+# fresh, purged results dir") unconditionally deletes every prior review-verdict-*.md
+# at the START of each run, BEFORE the archive-on-threshold safety net
+# (archive-omx-artifacts.sh, called from review_gate_housekeeping) ever gets a chance
+# to act on them -- the purge resets the file count back near zero every run, so the
+# threshold (default 120) is essentially never crossed in ordinary operation. Net
+# effect: no durable, append-only record of past verdicts existed anywhere on disk.
+# Fix: append one JSON-line record of THIS run's verdict to a log that lives OUTSIDE
+# REVIEW_RESULTS_DIR (so the purge's `find "${REVIEW_RESULTS_DIR}" ...` never touches
+# it), independent of whether archive-omx-artifacts.sh ever fires. This does not
+# change any verdict decision logic -- it only durably records the decision already
+# made, at each of the gate's existing verdict-producing exit points.
+# HONEST LIMIT: this log is same-UID-writable, exactly like every other artifact the
+# gate produces -- an attacker with this UID can append forged rows, or truncate/
+# rewrite the whole file, just as easily as they could forge a verdict file itself.
+# This closes a non-adversarial observability gap (durable trail for a human or an
+# out-of-band auditor to read after the fact), not a forgery-proof ledger. See the
+# same same-UID-vs-forgery-proof distinction drawn in verify.sh's RUNTIME_ORACLE
+# comment and review-gate-binding.sh's HMAC comments.
+review_gate_record_history() {
+  local decision="$1" reason="${2:-}"
+  local history_file=".omx/review-history.log"
+  local head_sha
+  head_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  mkdir -p "$(dirname "${history_file}")" 2>/dev/null || true
+  printf '{"ts":"%s","head_sha":"%s","verdict":"%s","reason":"%s","source":"review-gate"}\n' \
+    "$(date -Iseconds)" "${head_sha}" "${decision}" "${reason}" >> "${history_file}" 2>/dev/null || true
+}
+
 review_gate_housekeeping() {
   local summary_status="$1"
 
@@ -1253,6 +1282,7 @@ if [ "${verify_status}" -ne 0 ]; then
   if [ -z "${verify_override_reason}" ] || [ -z "${verify_override_by}" ]; then
     echo "[gate] verification FAILED (exit ${verify_status}); recording blocked verdict and stopping." >&2
     write_verify_failed_blocked_verdict "${verify_status}"
+    review_gate_record_history "blocked" "verify_failed"
     review_gate_housekeeping 1
     echo "[gate] complete"
     exit 1
@@ -1260,6 +1290,7 @@ if [ "${verify_status}" -ne 0 ]; then
   if ! verify_override_approval_evidence_ok "${verify_override_by}"; then
     echo "[gate] verification FAILED (exit ${verify_status}); override approval rejected because no matching launcher-owned approval evidence exists for '${verify_override_by}'." >&2
     write_verify_failed_blocked_verdict "${verify_status}"
+    review_gate_record_history "blocked" "verify_override_rejected"
     review_gate_housekeeping 1
     echo "[gate] complete"
     exit 1
@@ -1302,6 +1333,7 @@ fi
 
 if ! run_changed_checksheet_gate; then
   echo "[gate] checksheet gate failed; stopping before external review." >&2
+  review_gate_record_history "blocked" "checksheet_gate_failed"
   review_gate_housekeeping 1
   echo "[gate] complete"
   exit 1
@@ -1311,6 +1343,7 @@ fi
 # touched no registry file), so a reopened defect in a non-registry file is caught.
 if ! run_registry_reassertion; then
   echo "[gate] closed-defect registry re-assertion failed; stopping before external review." >&2
+  review_gate_record_history "blocked" "registry_reassertion_failed"
   review_gate_housekeeping 1
   echo "[gate] complete"
   exit 1
@@ -1320,6 +1353,7 @@ if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && [ "${AI_AUTO_VERIFY_FAILED_OVERRID
   echo "[gate] review skipped: docs-only"
   verify_only_verdict="$(write_verify_only_skip_verdict)"
   review_binding_record "proceed" "normal" "${verify_only_verdict}"
+  review_gate_record_history "proceed" "docs_only"
   review_gate_housekeeping 0
   echo "[gate] complete"
   exit 0
@@ -1338,6 +1372,7 @@ if [ "${REVIEW_INTEGRATION_ONLY:-0}" != "1" ] \
   echo "[gate] review skipped: provenance exact-match (carrying prior approval)"
   provenance_verdict="$(write_provenance_skip_verdict)"
   review_binding_record "proceed" "normal" "${provenance_verdict}"
+  review_gate_record_history "proceed" "provenance_exact_match"
   review_gate_housekeeping 0
   echo "[gate] complete"
   exit 0
@@ -1399,6 +1434,9 @@ if [ "${summary_status}" -eq 0 ]; then
     latest_trust="$(sed -n 's/^- trust: //p' "${latest_verdict}" 2>/dev/null | head -1)"
   fi
   review_binding_record "${latest_decision}" "${latest_trust:-unknown}" "${latest_verdict}"
+  review_gate_record_history "${latest_decision:-unknown}" "full_review"
+else
+  review_gate_record_history "blocked" "summarize_failed"
 fi
 
 review_gate_housekeeping "${summary_status}"

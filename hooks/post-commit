@@ -41,5 +41,24 @@ if [ -z "${recent_proceed}" ]; then
   printf '\n\033[33m[post-commit] WARNING: no review-gate proceed verdict found in the last 30 minutes.\033[0m\n' >&2
   printf '[post-commit] This commit may have bypassed review-gate (e.g. git commit --no-verify).\n' >&2
   printf '[post-commit] Run ai-auto gate and confirm a binding proceed/proceed_degraded verdict before pushing.\n' >&2
+
+  # RED8-3 (R3 audit): this stderr warning was the ONE signal for a --no-verify (or
+  # otherwise gate-skipping) commit, and stderr vanishes -- gone with terminal
+  # scrollback, or never seen at all for an automated/background commit. Append the
+  # same event durably to the shared history log (same file review-gate.sh's
+  # review_gate_record_history writes to; that log lives outside
+  # .omx/review-results/, so the gate's per-run purge of that directory never
+  # touches it) so an after-the-fact auditor has a trail even when nobody watched
+  # this commit happen.
+  # HONEST LIMIT: same-UID-writable, exactly like every other artifact here -- a
+  # same-UID actor who wants to hide a bypass can also skip/edit/truncate this log
+  # entry (or the hook itself, or never install the hook at all -- see D1). This
+  # durably records an accidental/unwatched bypass for a non-adversarial operator or
+  # a later auditor; it is not a forgery-proof receipt.
+  commit_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  history_file=".omx/review-history.log"
+  mkdir -p "$(dirname "${history_file}")" 2>/dev/null || true
+  printf '{"ts":"%s","head_sha":"%s","verdict":"unreviewed","reason":"bypass: no binding verdict","source":"post-commit"}\n' \
+    "$(date -Iseconds)" "${commit_sha}" >> "${history_file}" 2>/dev/null || true
 fi
 exit 0

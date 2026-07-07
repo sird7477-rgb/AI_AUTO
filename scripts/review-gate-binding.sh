@@ -136,6 +136,45 @@ review_binding_head_parent_count() {
   git rev-list --parents -n 1 "${1:-HEAD}" 2>/dev/null | awk '{ print NF - 1 }'
 }
 
+review_binding_empty_tree() {
+  review_binding_git hash-object -t tree /dev/null 2>/dev/null
+}
+
+review_binding_remote_tracking_refs() {
+  review_binding_git for-each-ref --format='%(objectname)' refs/remotes 2>/dev/null | awk 'NF'
+}
+
+# RED7-1 fix: neither of the two prior "base" sources ever fires on the ordinary case of a
+# brand-new local branch before its first push -- hooks/pre-push has no <remote sha> to diff
+# against (a genuinely new remote ref reports the all-zero sha on stdin) and `@{u}` is unset
+# (no upstream configured yet), so review_binding_committed_payload fell all the way back to
+# "just the tip commit", making any earlier unreviewed commit (e.g. one adding
+# GRANT_ADMIN=true) invisible to both the reviewer and the push-time hash even though it
+# rides out on the very next `git push`. Never let the range silently collapse to tip-only;
+# always resolve an explicit, safe, OVER-approximated base instead:
+#   1. the octopus merge-base of $1 and every ref this repo already knows about under
+#      refs/remotes/* (every remote-tracking branch of every remote) -- this sits at or
+#      before the point $1 and EVERY known remote branch diverged, so a diff from this point
+#      to $1 is guaranteed to include every commit unique to $1 (possibly plus some already-
+#      known content too -- reviewing more, never less, is the safe direction here).
+#   2. if no remote-tracking ref exists at all (nothing has ever been fetched/pushed from
+#      this clone) or the octopus merge-base can't be computed (unrelated histories), fall
+#      back to the empty tree, so the payload becomes a full diff of $1's entire reachable
+#      content -- the ultimate over-approximation, never narrower than "just the tip".
+review_binding_safe_base_fallback() {
+  local target="${1:-HEAD}" refs base
+  refs="$(review_binding_remote_tracking_refs)"
+  if [ -n "${refs}" ]; then
+    # shellcheck disable=SC2086
+    base="$(review_binding_git merge-base --octopus "${target}" ${refs} 2>/dev/null || true)"
+    if [ -n "${base}" ]; then
+      printf '%s\n' "${base}"
+      return 0
+    fi
+  fi
+  review_binding_empty_tree
+}
+
 # RED3-1 fix: the tip-commit diff alone is invisible to earlier commits that are already
 # made but not yet pushed -- e.g. an unreviewed commit A ("add GRANT_ADMIN=true") followed by
 # a reviewed trivial commit B rides through unseen, because `git show HEAD` / `HEAD^1..HEAD`
@@ -148,6 +187,13 @@ review_binding_head_parent_count() {
 # target's own @{u} tracking ref, only meaningful when target=HEAD -- an explicit base is
 # required for any other target, e.g. a pushed sha that is not the ambient checked-out
 # branch; see review_binding_check_ref / hooks/pre-push).
+#
+# RED7-1 fix: when NEITHER an explicit $2 NOR (for target=HEAD) `@{u}` resolves, do not fall
+# through to tip-only -- resolve review_binding_safe_base_fallback instead, for ANY target
+# (not just HEAD), since hooks/pre-push calls this with an explicit pushed sha as $1 that is
+# never literally the string "HEAD". A fallback-resolved base may be the empty tree (a tree
+# object, not a commit), which `...` (triple-dot, merge-base-based) diff syntax cannot
+# resolve against -- use a direct two-dot diff whenever the base is the empty tree.
 review_binding_committed_payload() {
   local target="${1:-HEAD}" base="${2:-}"
   printf '\037commit-diff\037\n'
@@ -159,9 +205,16 @@ review_binding_committed_payload() {
   if [ -z "${base}" ] && [ "${target}" = "HEAD" ]; then
     base="$(review_binding_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
   fi
+  if [ -z "${base}" ]; then
+    base="$(review_binding_safe_base_fallback "${target}")"
+  fi
   if [ -n "${base}" ]; then
     printf '\037range-diff\037\n'
-    review_binding_git diff --no-ext-diff --no-textconv "${base}...${target}" 2>/dev/null
+    if [ "${base}" = "$(review_binding_empty_tree)" ]; then
+      review_binding_git diff --no-ext-diff --no-textconv "${base}" "${target}" 2>/dev/null
+    else
+      review_binding_git diff --no-ext-diff --no-textconv "${base}...${target}" 2>/dev/null
+    fi
   fi
 }
 

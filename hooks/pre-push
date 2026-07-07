@@ -46,7 +46,22 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   total_lines=$((total_lines + 1))
   # A delete push (local sha1 is all-zero) removes content; nothing new to review.
   case "${local_sha}" in "${zero_sha40}"|"${zero_sha64}") continue ;; esac
-  case "${remote_sha}" in "${zero_sha40}"|"${zero_sha64}") remote_sha="" ;; esac
+  case "${remote_sha}" in
+    "${zero_sha40}"|"${zero_sha64}")
+      # RED7-1 fix: a brand-new remote ref (git reports the all-zero sha -- there is no
+      # prior remote tip to diff against) used to just blank remote_sha to "", and the R2
+      # `@{u}...HEAD` union never fired here either because @{u} is unset on the ordinary
+      # first push of any new local branch -- so the binding hash silently collapsed to the
+      # tip commit alone and an earlier unreviewed commit (e.g. one adding
+      # GRANT_ADMIN=true) rode through unseen. Resolve an explicit, safe, over-approximated
+      # base HERE instead of leaving it blank, so this hook is correct on its own even if
+      # review_binding_committed_payload's own internal fallback ever changed. See
+      # review_binding_safe_base_fallback (scripts/review-gate-binding.sh): the octopus
+      # merge-base with every known refs/remotes/* branch, or -- nothing known at all -- the
+      # empty tree, so the range NEVER silently narrows to "just the tip".
+      remote_sha="$(review_binding_safe_base_fallback "${local_sha}")"
+      ;;
+  esac
   if ! review_binding_check_ref "${local_sha}" "${remote_sha}"; then
     printf '[pre-push] no binding gate verdict for pushed ref %s (local sha %s -> remote %s). Run ./scripts/review-gate.sh on that content and retry push.\n' \
       "${local_ref}" "${local_sha}" "${remote_ref}" >&2

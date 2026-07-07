@@ -35,8 +35,19 @@ harness_proj_slug() {  # <project_repo> -> [a-z0-9-]{<=40}, stable, collision-re
             | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
             | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -c 'a-z0-9' '-' \
             | sed 's/-\{1,\}/-/g; s/^-//; s/-$//')"
-  # cksum (POSIX, decimal — no hex letters) over the repo identity carries the uniqueness
+  # cksum (POSIX, decimal — no hex letters) over the repo identity carries the uniqueness.
+  # RED7-2: the hash MUST survive the trailing `cut -c1-40` even when $tail alone is long
+  # (e.g. two DIFFERENT repos sharing a >=38-char basename prefix, like
+  # "...-for-client-ALPHA" vs "...-for-client-BETA") -- otherwise truncation silently drops
+  # the only thing that disambiguates them and both collapse to one slug/COMPOSE_PROJECT_NAME
+  # (shared container/network/volume/DB across unrelated repos). Fix: zero-pad the hash to a
+  # FIXED width (10 digits -- cksum's decimal output is a 32-bit value, max 4294967295, so 10
+  # digits always suffices) and place it immediately after the "h-" prefix; $tail (cosmetic
+  # only) then occupies whatever budget is left AFTER truncation. The "h-<10-digit-hash>-"
+  # prefix is 13 chars, always inside the 40-char budget, so it is always kept intact and is
+  # always decisive -- unlike $tail's length, which has no bound.
   hash="$(printf '%s' "$identity" | cksum | cut -d' ' -f1)"
-  slug="h-${tail:-p}-${hash}"          # leading 'h-' forces a [a-z] first char
+  hash="$(printf '%010d' "$hash")"
+  slug="h-${hash}-${tail:-p}"          # leading 'h-' forces a [a-z] first char
   printf '%s' "$slug" | cut -c1-40
 }

@@ -119,7 +119,14 @@ mods=""
 # build image/compose file. Tracked separately from $mods so an empty module scope caused
 # by ONLY this class of change is never mistaken for "nothing relevant changed" below.
 runtime_files=""
-runtime_re='^(requirements[^/]*\.txt|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|Pipfile(\.lock)?|pyproject\.toml|setup\.(py|cfg))$'
+# RED7-3: this MUST match the runtime filename anywhere in the path (any subdirectory),
+# not only at the repo root -- a root-anchored `^...$` pattern lets a Dockerfile/
+# requirements.txt/compose file nested under docker/, deploy/, .docker/, etc. evade the
+# scan entirely, silently falling back to the pre-RED2-3 exit-0-skip. The leading
+# `(.*/)?` makes the directory prefix optional so both `requirements.txt` (root) and
+# `docker/requirements.txt` (subdir) match, while the filename part still forbids an
+# embedded slash so it only ever matches the basename, not an arbitrary substring.
+runtime_re='^(.*/)?(requirements[^/]*\.txt|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|Pipfile(\.lock)?|pyproject\.toml|setup\.(py|cfg))$'
 while read -r _lref lsha _rref rsha; do
   # skip branch deletions (local sha all-zeros) and empty lines
   case "${lsha:-}" in ""|"$zero") continue ;; esac
