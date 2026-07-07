@@ -11,7 +11,31 @@ BASE_URL="http://localhost:${API_PORT}"
 
 run_product_pytest() {
   echo "[verify-project] running product pytest..."
+  # RED15-5 (2026-07-07 R7 ops-defense re-attack, CRITICAL): a bare, un-guarded pytest
+  # invocation here relies on `set -e` (errexit) to abort the caller on failure. That is
+  # unsafe: bash disables errexit for an ENTIRE nested call tree for the duration of any
+  # invocation that is itself being tested by `||`/`&&`/`if` -- including plain commands
+  # several function-calls deep that are not themselves attached to a `||`.
+  # run_scoped_product_verification (below) is invoked as
+  # `run_scoped_product_verification || scoped_rc=$?`, so a real pytest failure reached
+  # through that path previously did NOT abort: execution fell through to
+  # run_product_smoke, which (if the docker smoke passed on its own merits) let the whole
+  # script exit 0 with RUNTIME_ORACLE=passed while a genuine product test was RED.
+  # Capture the exit status EXPLICITLY via `set +e; ...; rc=$?; set -e` instead, so this
+  # function's return value is correct no matter what errexit state the caller is in.
+  local rc=0
+  set +e
   .venv/bin/python -m pytest -q tests/test_app.py
+  rc=$?
+  set -e
+  # pytest exit 5 == "no tests were collected" -- mirrors hooks/pre-commit's
+  # pre_commit_run_pytest convention: a test-less run is not a FAILURE, so exit 5 must not
+  # block. Only a real failing run (exit 1-4, or any other nonzero) propagates.
+  if [ "${rc}" -eq 5 ]; then
+    echo "[verify-project] pytest collected no tests (exit 5); nothing to gate, not blocking." >&2
+    return 0
+  fi
+  return "${rc}"
 }
 
 # RED7-4 / RED12 dogfood (2026-07-07 R6 ops-defense, MEDIUM): scripts/verify.sh's
@@ -125,7 +149,20 @@ run_scoped_product_verification() {
   if changed_paths_are_known_product_scope; then
     echo "[verify-project] scoped verification: known sample-app mapping; running tests/test_app.py and docker smoke"
     printf '%s\n' "${AI_AUTO_VERIFY_CHANGED_PATHS}" | sed 's/^/[verify-project] scoped path: /'
-    run_product_pytest
+    # RED15-5: explicitly capture run_product_pytest's exit status via `||` instead of
+    # letting a bare call rely on errexit -- this function itself is invoked as
+    # `run_scoped_product_verification || scoped_rc=$?` at the bottom of this file, which
+    # disables `set -e` for this function's entire call tree for the duration of that
+    # invocation. A bare (non-`||`) `run_product_pytest` call here would previously let a
+    # real pytest failure fall straight through to run_product_smoke, and this function
+    # would still `return 0`. A genuine pytest failure must abort BEFORE the docker smoke
+    # runs, and its real nonzero status must propagate out of this function.
+    local pytest_rc=0
+    run_product_pytest || pytest_rc=$?
+    if [ "${pytest_rc}" -ne 0 ]; then
+      echo "[verify-project] scoped verification: product pytest FAILED (exit ${pytest_rc}) -- aborting before docker smoke" >&2
+      return "${pytest_rc}"
+    fi
     run_product_smoke
     return 0
   fi

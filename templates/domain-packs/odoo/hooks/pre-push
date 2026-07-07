@@ -133,12 +133,44 @@ runtime_files=""
 # discovery names `compose.yaml`/`compose.yml` (no "docker-" prefix at all), not only the
 # legacy `docker-compose.yml` form. Still basename-anchored via `(.*/)?...$`, so an
 # unrelated file merely containing "compose" (e.g. `recompose.yaml`) does not match.
-runtime_re='^(.*/)?(requirements[^/]*\.txt|Dockerfile[^/]*|(docker-)?compose[^/]*\.ya?ml|Pipfile(\.lock)?|pyproject\.toml|setup\.(py|cfg))$'
+# RED15-4: `Dockerfile[^/]*` only matches the PREFIX naming convention (`Dockerfile`,
+# `Dockerfile.prod`). It misses the equally-real SUFFIX convention (`api.Dockerfile`,
+# `backend.dockerfile`) that multi-service monorepos use so editors' `*.Dockerfile` glob
+# syntax-highlighting picks the file up (`docker build -f api.Dockerfile .` works fine).
+# `[^/]*\.dockerfile` (matched case-insensitively, same as the rest of this regex) closes
+# that: any basename ending in a literal `.dockerfile` (any case), still `$`-anchored so
+# it does not spill past the basename. Also missing: Podman/Buildah's own DEFAULT build
+# file name `Containerfile` -- a mainstream Docker-CLI-compatible tool, not an exotic
+# alias -- added as `Containerfile[^/]*` to mirror the existing Dockerfile prefix-suffix
+# allowance (e.g. `Containerfile`, `Containerfile.dev`).
+runtime_re='^(.*/)?(requirements[^/]*\.txt|Dockerfile[^/]*|[^/]*\.dockerfile|Containerfile[^/]*|(docker-)?compose[^/]*\.ya?ml|Pipfile(\.lock)?|pyproject\.toml|setup\.(py|cfg))$'
 while read -r _lref lsha _rref rsha; do
   # skip branch deletions (local sha all-zeros) and empty lines
   case "${lsha:-}" in ""|"$zero") continue ;; esac
+  # RED15-2: `$rsha` (all-zeros for a brand-new remote ref, otherwise the remote's actual
+  # current tip) is the AUTHENTIC value git itself negotiated with the remote and fed us on
+  # stdin -- the whole reason `hooks/pre-push` receives ref lines at all. The pre-fix
+  # new-branch case instead recomputed "what's new" itself via
+  # `git rev-list "$lsha" --not --remotes`, which excludes everything reachable from ANY
+  # `refs/remotes/*` ref. Those refs are ordinary same-UID-writable local refs
+  # (`git update-ref refs/remotes/origin/decoy <sha-at-or-after-the-pushed-tip>`, no
+  # network/fetch needed) -- the identical forgeable-glob class already removed from
+  # `scripts/review-gate-binding.sh` (the octopus `--remotes` merge-base fix) but never
+  # touched in this sibling copy. A single decoy ref planted at/after the pushed tip made
+  # `rev-list` return ZERO commits, so `$mods`/`$runtime_files` were both empty and every
+  # Odoo validation below was silently skipped ("no custom-addons changes"), even though a
+  # real pushed commit carried a custom-addons/runtime-file change. Fix: never derive the
+  # pushed-commit set from a local remote-tracking glob. For an existing ref, `$rsha..$lsha`
+  # already only trusts the authentic stdin `rsha` (untouched, always was correct). For a
+  # brand-new ref there is no authentic lower bound at all (the remote has nothing yet) --
+  # so over-approximate safely by enumerating ALL of `$lsha`'s history rather than
+  # subtracting any local ref. This can validate MORE commits than strictly new (fine,
+  # never a security concern) but can never silently validate zero. (A forged `@{u}`/local
+  # remote-tracking ref remains a same-UID limit elsewhere, e.g. review-gate-binding.sh's
+  # own fallback -- documented there as backstopped by the out-of-band auditor; this hook's
+  # enumeration no longer depends on any such ref at all.)
   case "${rsha:-}" in
-    ""|"$zero") commits="$(git -C "$PROJECT" rev-list "$lsha" --not --remotes 2>/dev/null)" ;;  # new branch
+    ""|"$zero") commits="$(git -C "$PROJECT" rev-list "$lsha" 2>/dev/null)" ;;  # new branch: no authentic lower bound -> over-approximate with full history, never a local-ref glob
     *)          commits="$(git -C "$PROJECT" rev-list "$rsha..$lsha" 2>/dev/null)" ;;
   esac
   # RED11-2: `diff-tree` WITHOUT `-m`/`-c`/`--cc` prints NOTHING for a merge commit, by
