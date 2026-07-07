@@ -292,7 +292,7 @@ run_readonly_agy() {
   local timeout_seconds="$4"
   local kill_after_seconds="$5"
   local model="$6"
-  local help_text prompt_text prompt_bytes
+  local help_text prompt_text prompt_bytes fallback_status
   local prompt_arg_max_bytes="${RUNTIME_ADAPTER_PROMPT_ARG_MAX_BYTES:-100000}"
 
   help_text="$(command_help_text "${command_name}")"
@@ -325,7 +325,45 @@ run_readonly_agy() {
     run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" < /dev/null > "${output_file}"
   elif help_supports_flag "${help_text}" "--prompt"; then
     if [ "${prompt_bytes}" -gt "${prompt_arg_max_bytes}" ]; then
-      echo "runtime_unavailable: runtime=${command_name} reason=large_prompt_requires_prompt_file prompt_bytes=${prompt_bytes} prompt_arg_max_bytes=${prompt_arg_max_bytes}"
+      # AC3-1 (IP-3', 2026-07-07): --help advertising of --prompt-file can false-negative even
+      # though the running agy build genuinely supports it (D6) -- and the arg-max ceiling is
+      # about argv byte length, not file size, so a --prompt-file invocation is not actually
+      # blocked by an oversized prompt. Previously this branch just errored
+      # (large_prompt_requires_prompt_file) and got classified as a persistent disable that
+      # never auto-recovers, degrading every gate to codex self-review (audit A3). Instead,
+      # attempt --prompt-file directly before giving up; only report unavailable if that
+      # concrete attempt itself fails.
+      local agy_args=(--prompt-file "${prompt_file}")
+      if help_supports_flag "${help_text}" "--sandbox" && agy_command_sandbox_ok "${command_name}"; then
+        agy_args+=(--sandbox)
+      fi
+      if help_supports_flag "${help_text}" "--approval-mode"; then
+        agy_args+=(--approval-mode plan)
+      fi
+      if help_supports_flag "${help_text}" "--skip-trust"; then
+        agy_args+=(--skip-trust)
+      fi
+      if help_supports_flag "${help_text}" "--output-format"; then
+        agy_args+=(--output-format text)
+      fi
+      if help_supports_flag "${help_text}" "--print-timeout"; then
+        agy_args+=(--print-timeout "${timeout_seconds}s")
+      fi
+      if [ -n "${model}" ] && help_supports_flag "${help_text}" "--model"; then
+        agy_args+=(--model "${model}")
+      fi
+      # See the stdin-from-/dev/null note above: same reasoning applies to this fallback call.
+      # `|| fallback_status=$?` (not a bare `... ; fallback_status=$?`) so `set -e` does not abort
+      # the script on a nonzero exit before we get to classify and report it below.
+      fallback_status=0
+      run_with_timeout "${timeout_seconds}" "${kill_after_seconds}" "${command_name}" "${agy_args[@]}" < /dev/null > "${output_file}" || fallback_status=$?
+      if [ "${fallback_status}" -eq 0 ]; then
+        return 0
+      fi
+      # Reason string carries "large_prompt" so run-ai-reviews.sh's failure_class() classifies
+      # this as prompt_size_limit (transient, auto-recovering) rather than a generic
+      # command_failed (persistent, user_reset_required) -- AC3-3/AC3-5.
+      echo "runtime_unavailable: runtime=${command_name} reason=large_prompt_prompt_file_fallback_failed prompt_bytes=${prompt_bytes} prompt_arg_max_bytes=${prompt_arg_max_bytes} fallback_exit=${fallback_status}"
       return 4
     fi
     prompt_text="$(sed -n '1,$p' "${prompt_file}")"

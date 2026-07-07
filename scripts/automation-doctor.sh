@@ -30,17 +30,26 @@ MODE=""  # ""=auto (engine sentinel) | home=engine self-check | project=globaliz
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/automation-doctor.sh [--home|--project] [--fix]
+Usage: ./scripts/automation-doctor.sh [--home|--project|--bootstrap] [--fix]
 
-Diagnose automation readiness. Two modes:
-  --home     engine self-check (full framework inventory; default in the engine repo)
-  --project  GLOBALIZED project check (zero framework files is correct; confirms hook
-             shims + .omx gitignore; WARNS when scripts/verify-project.sh is absent)
-  (no mode)  auto-detect: engine sentinel present -> home, else project
+Diagnose automation readiness. Modes:
+  --home       engine self-check (full framework inventory; default in the engine repo)
+  --project    GLOBALIZED project check (zero framework files is correct; confirms hook
+               shims + .omx gitignore; WARNS when scripts/verify-project.sh is absent)
+  --bootstrap  STRICT opt-in detector (SPEC IP-2' AC2-1'): exits non-zero, naming each
+               missing item, if a project directory lacks any of an ENUMERATED required
+               set of gate/harness/lock wiring (see run_bootstrap_check for the exact
+               list + per-item justification). Does NOT change --project's warn-only
+               semantics; run it explicitly (session start, or an out-of-band auditor) --
+               a git hook cannot protect a worktree where the hook was never installed
+               (red-review D1), so this is a DETECTOR/reporter, not the authoritative
+               gate. A hook itself is dev-time convenience only.
+  (no mode)    auto-detect: engine sentinel present -> home, else project
 
 Default mode prints status and suggested repair commands without changing files.
 With --fix, the doctor may apply safe non-overwriting automation setup fixes.
 --fix does not edit shell profile files or other user environment configuration.
+--fix has no effect in --bootstrap mode (detector only; never mutates the project).
 
 Environment:
   DOCTOR_SKIP_DIRTY_CHECK=1  skip the uncommitted-changes check
@@ -65,6 +74,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --project)
       MODE=project
+      ;;
+    --bootstrap)
+      MODE=bootstrap
       ;;
     -h|--help)
       usage
@@ -486,6 +498,112 @@ check_project_globalization() {
     say_warn "not a git repository; cannot verify hook shims or .omx gitignore"
   fi
 }
+
+run_bootstrap_check() {
+  # SPEC IP-2' AC2-1' (red-review D9: doctor --project is warn-only BY DESIGN -- a
+  # globalized project legitimately ships zero framework files, so its absence checks must
+  # never fail-closed for early-stage projects). --bootstrap is a SEPARATE, strict, opt-in
+  # detector: the incident this SPEC responds to was gate/harness wiring being silently
+  # ABSENT in some project worktrees while commits proceeded on a non-blocking post-commit
+  # WARNING. This function enumerates the wiring whose absence recreates that incident and
+  # reports it LOUDLY (non-zero exit + every missing item named).
+  #
+  # Per red-review D1 (honesty): a git hook cannot protect a worktree where the hook was
+  # never installed (hooks do not propagate via clone/`worktree add`). So a hook is
+  # dev-time CONVENIENCE, not the authoritative gate -- the authoritative backstop is an
+  # out-of-band auditor (IP-1' AC1-7), which this is not. Passing --bootstrap only proves
+  # the convenience wiring is IN PLACE; it does NOT prove any push was ever actually
+  # gated, and it is never a substitute for the out-of-band auditor.
+  #
+  # REQUIRED SET (exactly these four; each is load-bearing for the wiring actually firing):
+  #   1. pre-push hook shim installed, pointing at a resolvable engine dir.
+  #      WHY: this is the wiring that fires before code leaves the machine at all. Its
+  #      absence is the literal root cause of the incident (a worktree with NO hook wiring,
+  #      where a commit/push proceeds with nothing automated running).
+  #   2. that engine's scripts/review-gate.sh exists and is executable.
+  #      WHY: the hook shim only delegates to this file (see hooks/pre-push). A shim can be
+  #      installed and still silently no-op if the entrypoint it calls is missing --
+  #      that is an invisible false-green, worse than an obviously-absent hook.
+  #   3. that engine's scripts/session-lock.sh exists and is executable.
+  #      WHY: review-gate.sh and verify.sh both source this to guard the SAME working tree
+  #      against two concurrent sessions racing the gate/verify state (see
+  #      scripts/session-lock.sh header). Without it a gate run has no concurrency guard.
+  #   4. scripts/verify-project.sh exists and is executable in THIS project.
+  #      WHY: this is the project-specific check the harness actually runs. --project mode
+  #      only WARNS on its absence ("project defines no verification"); --bootstrap
+  #      promotes that exact condition to a hard failure, because a wired-but-empty gate
+  #      (hook fires, review-gate runs, but there is nothing project-specific to check) is
+  #      the false-green class this SPEC exists to close.
+  local missing=()
+  local hooks_dir shim baked common_dir
+
+  if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # NOTE: deliberately NOT `git rev-parse --git-path hooks` here. This process may have
+    # sourced hooks/git-scrub.sh above, which (correctly, for its own RCE-hardening purpose)
+    # pins `core.hooksPath=/dev/null` via GIT_CONFIG_KEY/VALUE env -- and `--git-path hooks`
+    # HONORS core.hooksPath, so under that pin it resolves to `/dev/null`, not the real hooks
+    # dir. `--git-common-dir` is unaffected by the hooksPath pin (it is not a hooks-relative
+    # path), so derive hooks_dir from it directly; hooks live in the COMMON git dir and are
+    # shared across worktrees.
+    common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    case "$common_dir" in /*) : ;; *) common_dir="${ROOT}/${common_dir}" ;; esac
+    hooks_dir="${common_dir}/hooks"
+    shim="${hooks_dir}/pre-push"
+    if [ -f "$shim" ] && grep -q 'AI_AUTO shim' "$shim" 2>/dev/null; then
+      baked="$(sed -n 's/^AI_AUTO_HOME="\(.*\)"$/\1/p' "$shim" | head -n 1)"
+      if [ -n "$baked" ] && [ -x "${baked}/hooks/pre-push" ]; then
+        say_pass "[bootstrap] pre-push hook wired, engine resolved: ${baked}"
+      else
+        missing+=("pre-push hook shim points at an invalid/unresolvable engine path: ${baked:-<unset>} (${shim})")
+      fi
+      if [ -n "$baked" ] && [ -x "${baked}/scripts/review-gate.sh" ]; then
+        say_pass "[bootstrap] review-gate entrypoint reachable: ${baked}/scripts/review-gate.sh"
+      else
+        missing+=("review-gate entrypoint not reachable: ${baked:-<engine unresolved>}/scripts/review-gate.sh")
+      fi
+      if [ -n "$baked" ] && [ -x "${baked}/scripts/session-lock.sh" ]; then
+        say_pass "[bootstrap] session-lock present: ${baked}/scripts/session-lock.sh"
+      else
+        missing+=("session-lock.sh not reachable: ${baked:-<engine unresolved>}/scripts/session-lock.sh")
+      fi
+    else
+      missing+=("pre-push hook shim not installed: ${shim}")
+      missing+=("review-gate entrypoint not reachable (no hook shim to resolve an engine path)")
+      missing+=("session-lock.sh not reachable (no hook shim to resolve an engine path)")
+    fi
+  else
+    missing+=("pre-push hook shim not installed (not a git repository): ${ROOT}")
+    missing+=("review-gate entrypoint not reachable (not a git repository)")
+    missing+=("session-lock.sh not reachable (not a git repository)")
+  fi
+
+  if [ -x "${ROOT}/scripts/verify-project.sh" ]; then
+    say_pass "[bootstrap] verify seam present: scripts/verify-project.sh"
+  else
+    missing+=("verify seam missing or not executable: scripts/verify-project.sh")
+  fi
+
+  echo
+  if [ "${#missing[@]}" -eq 0 ]; then
+    printf '[bootstrap] all required gate/harness wiring present (detector only -- see header: not the authoritative gate)\n'
+    return 0
+  fi
+
+  printf '[bootstrap] MISSING required gate/harness wiring (%s item(s)):\n' "${#missing[@]}"
+  local m
+  for m in "${missing[@]}"; do
+    printf '  - %s\n' "$m"
+  done
+  return 1
+}
+
+if [ "$MODE" = "bootstrap" ]; then
+  printf '[doctor --bootstrap] checking REQUIRED gate/harness wiring in %s\n\n' "$ROOT"
+  if run_bootstrap_check; then
+    exit 0
+  fi
+  exit 1
+fi
 
 printf '[doctor] checking automation readiness in %s\n\n' "$ROOT"
 

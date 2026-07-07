@@ -128,7 +128,7 @@ reviewer_marker_canonical() {
   local top
   top="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
   printf 'marker_type=reviewer_disabled\nreviewer=%s\nworkspace=%s\n' "$1" "${top}"
-  grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id)=' "$2" 2>/dev/null
+  grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id|chronic_count)=' "$2" 2>/dev/null
 }
 reviewer_disabled_authentic() {
   local f stored expected
@@ -452,15 +452,19 @@ fi
 OVERSIZED_CONTEXT_FLAG="${PROMPT_DIR}/oversized-review-context.flag"
 
 reset_disabled_reviewers() {
+  # A manual reset is an explicit human judgment that the underlying cause is addressed, so it
+  # also clears the chronic-redisable streak (scripts/run-ai-reviews.sh:reviewer_chronic_file) --
+  # otherwise a resolved issue would still carry a stale chronic_count into the next disable.
   case "${RESET_DISABLED_AI_REVIEWERS:-}" in
     all)
       rm -f "${REVIEW_STATE_DIR}/claude.disabled" "${REVIEW_STATE_DIR}/gemini.disabled"
+      rm -f "${REVIEW_STATE_DIR}/claude.chronic" "${REVIEW_STATE_DIR}/gemini.chronic"
       ;;
     claude)
-      rm -f "${REVIEW_STATE_DIR}/claude.disabled"
+      rm -f "${REVIEW_STATE_DIR}/claude.disabled" "${REVIEW_STATE_DIR}/claude.chronic"
       ;;
     gemini)
-      rm -f "${REVIEW_STATE_DIR}/gemini.disabled"
+      rm -f "${REVIEW_STATE_DIR}/gemini.disabled" "${REVIEW_STATE_DIR}/gemini.chronic"
       ;;
     "")
       ;;
@@ -776,20 +780,31 @@ runtime_adapter_command() {
   esac
 }
 
+# AC3-5 (IP-3', D6): the chronic-redisable counter lives OUTSIDE the .disabled marker's own
+# lifecycle. expire_transient_disabled_reviewers() deletes a transient marker once its cooldown
+# elapses, so a counter stored only inside the marker would reset to zero every time the same
+# root cause re-trips it -- which is precisely the regression D6 warned about ("disabled_at reset
+# every run, stale alarm never fires"). This side file survives marker delete/recreate cycles and
+# is reset only when the reason genuinely changes or a human runs RESET_DISABLED_AI_REVIEWERS.
+reviewer_chronic_file() {
+  echo "${REVIEW_STATE_DIR}/$1.chronic"
+}
+
 disable_reviewer() {
   local reviewer="$1"
   local reason="$2"
   local details="$3"
   local disabled_file disable_class next_action _mk_hmac
+  local chronic_file prev_reason prev_count chronic_count
   disabled_file="$(reviewer_disabled_file "${reviewer}")"
 
-  # Classify: usage-limit / network-sandbox / connection-style failures are
+  # Classify: usage-limit / network-sandbox / connection-style / prompt-size-ceiling failures are
   # transient and auto-recover after the cooldown; anything else is persistent
   # and waits for a manual reset.
   case "${reason}" in
-    usage_limit|network_or_sandbox) disable_class="transient" ;;
+    usage_limit|network_or_sandbox|prompt_size_limit) disable_class="transient" ;;
     *)
-      if printf '%s' "${details}" | grep -qiE 'connectionrefused|connection refused|network|timeout|timed out|rate.?limit|usage.?limit|temporarily'; then
+      if printf '%s' "${details}" | grep -qiE 'connectionrefused|connection refused|network|timeout|timed out|rate.?limit|usage.?limit|temporarily|large_prompt_requires_prompt_file|large_prompt_prompt_file_fallback_failed'; then
         disable_class="transient"
       else
         disable_class="persistent"
@@ -802,6 +817,28 @@ disable_reviewer() {
     next_action="user_reset_required"
   fi
 
+  # Chronic-redisable bookkeeping: count consecutive same-reason disables regardless of whether
+  # the marker in between was deleted by cooldown auto-recovery. A reason change (a genuinely
+  # different failure) resets the streak to 1.
+  chronic_file="$(reviewer_chronic_file "${reviewer}")"
+  prev_reason=""
+  prev_count=0
+  if [ -f "${chronic_file}" ]; then
+    prev_reason="$(sed -n 's/^reason=//p' "${chronic_file}" 2>/dev/null | head -n 1)"
+    prev_count="$(sed -n 's/^count=//p' "${chronic_file}" 2>/dev/null | head -n 1)"
+  fi
+  case "${prev_count}" in ''|*[!0-9]*) prev_count=0 ;; esac
+  if [ "${prev_reason}" = "${reason}" ]; then
+    chronic_count=$((prev_count + 1))
+  else
+    chronic_count=1
+  fi
+  {
+    echo "reason=${reason}"
+    echo "count=${chronic_count}"
+    echo "last_disabled_at=$(date -Iseconds)"
+  } > "${chronic_file}"
+
   {
     echo "reviewer=${reviewer}"
     echo "disabled_at=$(date -Iseconds)"
@@ -810,6 +847,7 @@ disable_reviewer() {
     echo "disable_class=${disable_class}"
     echo "source_run_id=${REVIEW_RUN_ID}"
     echo "next_action=${next_action}"
+    echo "chronic_count=${chronic_count}"
     echo "reset_hint=RESET_DISABLED_AI_REVIEWERS=${reviewer} ./scripts/review-gate.sh"
   } > "${disabled_file}"
 
@@ -821,7 +859,7 @@ disable_reviewer() {
     if [ -n "${_mk_hmac}" ]; then printf 'marker_hmac=%s\n' "${_mk_hmac}" >> "${disabled_file}"; fi
   fi
 
-  echo "[review] ${reviewer} review disabled (${disable_class}): ${reason} (${details})"
+  echo "[review] ${reviewer} review disabled (${disable_class}): ${reason} (${details}) [chronic_count=${chronic_count}]"
 }
 
 failure_details() {
@@ -858,6 +896,12 @@ failure_class() {
     echo "trust_required"
   elif grep -qiE 'ECONNREFUSED|ConnectionRefused|connection refused|network.*blocked|sandbox|read-only file system|EROFS' "${output_file}" 2>/dev/null; then
     echo "network_or_sandbox"
+  elif grep -qiE 'large_prompt_requires_prompt_file|large_prompt_prompt_file_fallback_failed' "${output_file}" 2>/dev/null; then
+    # AC3-3 (IP-3', 2026-07-07): an oversized-prompt runtime_unavailable from
+    # ai-runtime-adapter.sh's agy path is a structural argv-length ceiling, not a persistent
+    # reviewer outage -- classify it distinctly so disable_reviewer() below treats it as
+    # transient (auto-recovers) instead of falling through to command_failed (persistent).
+    echo "prompt_size_limit"
   elif grep -qiE 'timed out|timeout|SIGTERM|Killed' "${output_file}" 2>/dev/null; then
     echo "timeout_or_killed"
   elif grep -qiE 'auth|login|credential|permission denied|unauthorized|forbidden' "${output_file}" 2>/dev/null; then
@@ -939,7 +983,11 @@ MSG
 is_limit_failure() {
   local output_file="$1"
 
-  grep -qiE 'hit your limit|usage limit|session limit|weekly limit|week limit|rate limit|quota|RESOURCE_EXHAUSTED|resets [0-9]|resets [ap]m|limit reached' "${output_file}"
+  # large_prompt_* is deliberately included here even though it isn't a usage/rate limit: it is
+  # equally deterministic (retrying the same oversized prompt without a code change always fails
+  # the same way), so short-circuit straight to disable_reviewer() with an accurate
+  # prompt_size_limit reason instead of burning REVIEW_RETRY_LIMIT identical, doomed attempts.
+  grep -qiE 'hit your limit|usage limit|session limit|weekly limit|week limit|rate limit|quota|RESOURCE_EXHAUSTED|resets [0-9]|resets [ap]m|limit reached|large_prompt_requires_prompt_file|large_prompt_prompt_file_fallback_failed' "${output_file}"
 }
 
 has_usable_verdict() {

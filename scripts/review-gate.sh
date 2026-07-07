@@ -639,10 +639,12 @@ EOF
 }
 
 # Persistent disabled-reviewer staleness warning (warn-only). A transient disable
-# (network/sandbox/usage) auto-recovers after a cooldown, so it is skipped here; this surfaces
-# a NON-transient marker that has sat for more than N days and is silently keeping every gate
-# degraded. The end-of-run trust report already flags degradation -- this front-loads it at
-# gate start so a stuck reviewer does not quietly become the steady state. Never blocks.
+# (network/sandbox/usage/prompt-size) auto-recovers after a cooldown, so its *freshness* is not
+# re-checked here; this surfaces a NON-transient marker that has sat for more than N days and is
+# silently keeping every gate degraded. The end-of-run trust report already flags degradation --
+# this front-loads it at gate start so a stuck reviewer does not quietly become the steady state.
+# Transient markers ARE still inspected (AC3-5/D6) for a chronic same-reason re-disable streak,
+# since disabled_at resets every cycle and would otherwise never trip a staleness alarm. Never blocks.
 warn_stale_disabled_reviewers() {
   local state_dir="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
   local stale_days="${AI_AUTO_DISABLED_REVIEWER_STALE_DAYS:-7}"
@@ -650,10 +652,31 @@ warn_stale_disabled_reviewers() {
   command -v date >/dev/null 2>&1 || return 0
   local now_s marker reviewer cls when when_s age_days hint
   now_s="$(date +%s)"
+  local chronic_threshold="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD:-3}"
+  case "${chronic_threshold}" in ''|*[!0-9]*) chronic_threshold=3 ;; esac
+  local chronic reviewer_name reason_field hint_field
   for marker in "${state_dir}"/*.disabled; do
     [ -e "${marker}" ] || continue
     cls="$(sed -n 's/^disable_class=//p' "${marker}" | head -1)"
-    [ "${cls}" = "transient" ] && continue   # auto-recovery (cooldown) owns transient disables
+    if [ "${cls}" = "transient" ]; then
+      # AC3-5 (IP-3', D6): a transient disable auto-recovers, so `disabled_at` resets on every
+      # re-disable and the freshness check below never sees it age -- a reviewer stuck
+      # perpetually re-tripping the SAME root cause would otherwise degrade every gate forever
+      # with no alarm ever firing. chronic_count (scripts/run-ai-reviews.sh:disable_reviewer)
+      # tracks consecutive same-reason disables independent of marker delete/recreate cycles;
+      # trip a loud warning once it crosses the threshold even though the class is transient.
+      chronic="$(sed -n 's/^chronic_count=//p' "${marker}" | head -1)"
+      case "${chronic}" in ''|*[!0-9]*) chronic=0 ;; esac
+      if [ "${chronic}" -ge "${chronic_threshold}" ]; then
+        reviewer_name="$(basename "${marker}" .disabled)"
+        reason_field="$(sed -n 's/^reason=//p' "${marker}" | head -1)"
+        hint_field="$(sed -n 's/^reset_hint=//p' "${marker}" | head -1)"
+        echo ""
+        echo "[gate] EXTERNAL REVIEW CHRONICALLY RE-DISABLED: reviewer '${reviewer_name}' has re-disabled for the same reason (${reason_field}) ${chronic} consecutive times even though disable_class=transient auto-recovers each time -- the cooldown is masking a recurring root cause, not fixing it."
+        [ -n "${hint_field}" ] && echo "       re-enable: ${hint_field}"
+      fi
+      continue   # auto-recovery (cooldown) still owns transient disables otherwise
+    fi
     when="$(sed -n 's/^disabled_at=//p' "${marker}" | head -1)"
     [ -n "${when}" ] || continue
     when_s="$(date -d "${when}" +%s 2>/dev/null || echo 0)"
