@@ -731,7 +731,11 @@ echo
 echo "[doctor] checking automation files"
 
 ensure_dir ".omx"
-ensure_dir ".omx/reviewer-state"
+# Same default + override precedence as scripts/run-ai-reviews.sh:18 and
+# scripts/review-gate.sh:118 -- honor REVIEW_STATE_DIR so the doctor inspects the
+# SAME reviewer-state directory the gate/reviewer actually read and write.
+REVIEW_STATE_DIR="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
+ensure_dir "${REVIEW_STATE_DIR}"
 ensure_dir "docs"
 ensure_dir "docs/research"
 ensure_dir "scripts"
@@ -847,9 +851,9 @@ check_gemini_cli_capabilities
 echo
 echo "[doctor] checking reviewer state"
 
-if [ -d ".omx/reviewer-state" ]; then
+if [ -d "${REVIEW_STATE_DIR}" ]; then
   disabled_count=0
-  for marker in .omx/reviewer-state/*.disabled; do
+  for marker in "${REVIEW_STATE_DIR}"/*.disabled; do
     [ -e "$marker" ] || continue
     disabled_count=$((disabled_count + 1))
     reviewer="$(basename "$marker" .disabled)"

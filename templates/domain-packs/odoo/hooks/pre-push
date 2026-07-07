@@ -30,11 +30,24 @@ odoo_ack_key_file() {
   else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
 }
 
+odoo_ack_abs_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${path}" 2>/dev/null && return 0
+  fi
+  AI_AUTO_ABS_PATH="${path}" python3 - <<'PY' 2>/dev/null
+import os
+print(os.path.realpath(os.environ["AI_AUTO_ABS_PATH"]))
+PY
+}
+
+# Resolution failure (realpath -m and the python3 fallback both fail) also REFUSES (fail closed):
+# treating an unresolvable key path as "not in tree" would let a plant escape the trust boundary.
 odoo_ack_key_in_tree() {
   local keyfile top rp
   keyfile="$(odoo_ack_key_file)"
-  top="$(realpath -m -- "${PROJECT}" 2>/dev/null)" || return 1
-  rp="$(realpath -m -- "${keyfile}" 2>/dev/null)" || return 1
+  top="$(odoo_ack_abs_path "${PROJECT}")" || return 0
+  rp="$(odoo_ack_abs_path "${keyfile}")" || return 0
   case "${rp}/" in "${top}/"*) return 0 ;; esac
   return 1
 }

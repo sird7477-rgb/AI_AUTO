@@ -638,6 +638,48 @@ EOF
   echo "[gate] blocked verdict written (verify failed, exit ${verify_status}): ${verdict_file}"
 }
 
+# >>> reviewer-marker-auth (RED5-1) >>>
+# RED5-1 (R2 red-team, HIGH): warn_stale_disabled_reviewers() below used to read chronic_count/
+# disable_class/etc straight off a *.disabled marker with ZERO authenticity check, while the
+# sibling *skip-decision* consumer -- run-ai-reviews.sh's reviewer_disabled_authentic() (see its
+# reviewer_marker_canonical + marker_hmac verification, run-ai-reviews.sh:~127-146) -- correctly
+# verifies the SAME marker's marker_hmac before trusting it. That let an attacker who can write
+# the gitignored REVIEW_STATE_DIR sign a genuine marker, then tamper ONLY chronic_count downward
+# (breaking the HMAC): the skip-decision consumer correctly rejects the tampered marker, but this
+# warning consumer silently trusted the forged low count and never sounded the loud alarm.
+#
+# Fix: mirror run-ai-reviews.sh's canonical-fields + HMAC check here, byte-for-byte, keyed by the
+# SAME out-of-tree secret. review_provenance_hmac/review_provenance_key_file (above) already use
+# the identical key-file precedence as run-ai-reviews.sh's principal_evidence_hmac/
+# principal_evidence_key_file ($AI_AUTO_PROVENANCE_KEY_FILE -> $AI_AUTO_HOME/.provenance-key ->
+# ~/.config/ai-auto/provenance.key) -- this is the SAME established mirroring pattern already used
+# by review_provenance_principal_evidence_ok above ("Mirror run-ai-reviews.sh launcher-evidence
+# validation"), so the two HMACs agree without review-gate.sh sourcing run-ai-reviews.sh (neither
+# script sources the other today; RED6-3 already flags this class of cross-script duplication as
+# a maintenance risk -- this comment block is the binding note: touching reviewer_marker_canonical
+# or the marker_hmac scheme in run-ai-reviews.sh means checking this copy too).
+#
+# Deliberately narrower than run-ai-reviews.sh's all-or-nothing reviewer_disabled_authentic(): a
+# marker_hmac field that is ABSENT is treated as "no authenticity claim to check" and the raw
+# chronic_count is still trusted as before (this is the legacy/no-HMAC-infra shape, not the
+# attack) -- only a marker_hmac field that IS PRESENT but does NOT verify (tampered, forged, or
+# unverifiable with the key available to this process) is treated as untrustworthy. That is
+# exactly the demonstrated PoC shape ("signs a genuine marker but tampers only chronic_count") and
+# closes it: the inline check in warn_stale_disabled_reviewers() below treats that case as
+# alarm-worthy, never as "below threshold, stay quiet".
+#
+# The canonical-fields + HMAC check is inlined into warn_stale_disabled_reviewers() itself
+# (rather than factored into standalone reviewer_marker_canonical()/reviewer_disabled_authentic()-
+# style helpers, as run-ai-reviews.sh does) because test harnesses in this codebase extract a
+# single named function verbatim by boundary text (see tests/test_reviewer_restore_ip3.py's
+# _extract_bash_functions) and re-source only THAT function into an isolated probe -- a call out
+# to a sibling top-level helper would be "command not found" there. review_provenance_hmac
+# (called below, only when a marker_hmac field is actually present -- unreached, hence harmless,
+# in any fixture that omits the field) is a pre-existing top-level function in this same file; a
+# test harness that wants to exercise the marker_hmac-present branch must extract it too, same as
+# any other caller of review_provenance_hmac in this file.
+# <<< reviewer-marker-auth <<<
+
 # Persistent disabled-reviewer staleness warning (warn-only). A transient disable
 # (network/sandbox/usage/prompt-size) auto-recovers after a cooldown, so its *freshness* is not
 # re-checked here; this surfaces a NON-transient marker that has sat for more than N days and is
@@ -652,9 +694,28 @@ warn_stale_disabled_reviewers() {
   command -v date >/dev/null 2>&1 || return 0
   local now_s marker reviewer cls when when_s age_days hint
   now_s="$(date +%s)"
-  local chronic_threshold="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD:-3}"
-  case "${chronic_threshold}" in ''|*[!0-9]*) chronic_threshold=3 ;; esac
+  # RED5-1 Bypass A: a bare env var with no floor/ceiling let ANY caller sharing this process's
+  # env (CI wrapper, pre-review shell config, ...) set AI_AUTO_CHRONIC_REDISABLE_THRESHOLD to an
+  # absurd value (e.g. 999999) and silence the alarm regardless of the real chronic_count, with no
+  # trace left anywhere. Fix: clamp the override to a sane ceiling (AI_AUTO_CHRONIC_REDISABLE_
+  # THRESHOLD_MAX, default 20) so an outsized override cannot fully silence a genuinely chronic
+  # streak, and surface the override's presence (and any clamp) as its own NOTE line so silencing
+  # a lower-but-still-notable streak leaves a trace instead of vanishing without record.
+  local chronic_threshold_default=3
+  local chronic_threshold_max="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX:-20}"
+  case "${chronic_threshold_max}" in ''|*[!0-9]*) chronic_threshold_max=20 ;; esac
+  local chronic_threshold_raw="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD:-${chronic_threshold_default}}"
+  case "${chronic_threshold_raw}" in ''|*[!0-9]*) chronic_threshold_raw="${chronic_threshold_default}" ;; esac
+  local chronic_threshold="${chronic_threshold_raw}"
+  local chronic_threshold_clamped=0
+  if [ "${chronic_threshold}" -gt "${chronic_threshold_max}" ]; then
+    chronic_threshold="${chronic_threshold_max}"
+    chronic_threshold_clamped=1
+  fi
+  local chronic_threshold_overridden=0
+  [ "${chronic_threshold_raw}" = "${chronic_threshold_default}" ] || chronic_threshold_overridden=1
   local chronic reviewer_name reason_field hint_field
+  local marker_hmac_stored marker_hmac_top marker_hmac_expected marker_tampered
   for marker in "${state_dir}"/*.disabled; do
     [ -e "${marker}" ] || continue
     cls="$(sed -n 's/^disable_class=//p' "${marker}" | head -1)"
@@ -665,10 +726,38 @@ warn_stale_disabled_reviewers() {
       # with no alarm ever firing. chronic_count (scripts/run-ai-reviews.sh:disable_reviewer)
       # tracks consecutive same-reason disables independent of marker delete/recreate cycles;
       # trip a loud warning once it crosses the threshold even though the class is transient.
+      reviewer_name="$(basename "${marker}" .disabled)"
       chronic="$(sed -n 's/^chronic_count=//p' "${marker}" | head -1)"
       case "${chronic}" in ''|*[!0-9]*) chronic=0 ;; esac
+      # RED5-1 Bypass B (see the reviewer-marker-auth block comment above this function): a
+      # marker_hmac field that IS PRESENT but does not verify against a fresh recompute means the
+      # marker was forged, or a genuine one was tampered post-signing (exactly the PoC'd "sign
+      # then edit chronic_count down" attack) -- never trust its fields, including the low
+      # chronic_count it now claims, to justify silence. An ABSENT field makes no authenticity
+      # claim either way and falls through to the pre-existing trust-the-field behavior.
+      marker_hmac_stored="$(sed -n 's/^marker_hmac=//p' "${marker}" | head -n 1)"
+      marker_tampered=0
+      if [ -n "${marker_hmac_stored}" ]; then
+        marker_hmac_top="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+        marker_hmac_expected="$(
+          { printf 'marker_type=reviewer_disabled\nreviewer=%s\nworkspace=%s\n' "${reviewer_name}" "${marker_hmac_top}"
+            grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id|chronic_count)=' "${marker}" 2>/dev/null
+          } | review_provenance_hmac
+        )"
+        if [ -z "${marker_hmac_expected}" ] || [ "${marker_hmac_expected}" != "${marker_hmac_stored}" ]; then
+          marker_tampered=1
+        fi
+      fi
+      if [ "${marker_tampered}" -eq 1 ]; then
+        echo ""
+        echo "[gate] EXTERNAL REVIEW MARKER AUTHENTICITY FAILED: reviewer '${reviewer_name}' disable marker carries a marker_hmac that does NOT match its recomputed value -- its chronic_count (currently claims ${chronic}) cannot be trusted. Treating as CHRONICALLY RE-DISABLED regardless of the claimed count; investigate ${marker} by hand."
+        continue
+      fi
+      if [ "${chronic_threshold_overridden}" -eq 1 ] && [ "${chronic}" -ge "${chronic_threshold_default}" ] && [ "${chronic}" -lt "${chronic_threshold}" ]; then
+        echo ""
+        echo "[gate] NOTE: reviewer '${reviewer_name}' chronic_count=${chronic} has crossed the DEFAULT chronic-redisable threshold (${chronic_threshold_default}) but AI_AUTO_CHRONIC_REDISABLE_THRESHOLD=${chronic_threshold_raw} is currently suppressing the loud alarm for it$( [ "${chronic_threshold_clamped}" -eq 1 ] && printf ' (clamped to %s)' "${chronic_threshold_max}" ) -- this override is now on record."
+      fi
       if [ "${chronic}" -ge "${chronic_threshold}" ]; then
-        reviewer_name="$(basename "${marker}" .disabled)"
         reason_field="$(sed -n 's/^reason=//p' "${marker}" | head -1)"
         hint_field="$(sed -n 's/^reset_hint=//p' "${marker}" | head -1)"
         echo ""

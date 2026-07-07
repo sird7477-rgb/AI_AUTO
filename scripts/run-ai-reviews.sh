@@ -57,14 +57,26 @@ principal_evidence_key_file() {
   elif [ -n "${AI_AUTO_HOME:-}" ]; then printf '%s/.provenance-key\n' "${AI_AUTO_HOME}"
   else printf '%s/.config/ai-auto/provenance.key\n' "${HOME:-/root}"; fi
 }
+principal_evidence_abs_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${path}" 2>/dev/null && return 0
+  fi
+  AI_AUTO_ABS_PATH="${path}" python3 - <<'PY' 2>/dev/null
+import os
+print(os.path.realpath(os.environ["AI_AUTO_ABS_PATH"]))
+PY
+}
 # Refuse an in-tree key path (attacker-readable) via realpath+toplevel; return 0 == in-tree == REFUSE.
+# Resolution failure (realpath -m and the python3 fallback both fail) also REFUSES (fail closed):
+# treating an unresolvable key path as "not in tree" would let a plant escape the trust boundary.
 principal_evidence_key_in_tree() {
   local kf top rp
   kf="$(principal_evidence_key_file)"
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ -n "${top}" ] || return 1
-  top="$(realpath -m -- "${top}" 2>/dev/null)" || return 1
-  rp="$(realpath -m -- "${kf}" 2>/dev/null)" || return 1
+  top="$(principal_evidence_abs_path "${top}")" || return 0
+  rp="$(principal_evidence_abs_path "${kf}")" || return 0
   case "${rp}/" in "${top}/"*) return 0 ;; esac
   return 1
 }
