@@ -751,13 +751,29 @@ warn_stale_disabled_reviewers() {
   # never be fully env-silenced no matter how large BOTH env vars are set.
   local chronic_threshold_default=3
   local chronic_threshold_hard_cap=1000
+  # RED14-2 fix (HIGH-narrow, .ops-game/R6-red14-convergence.md): the all-digit `case` test
+  # alone does not guarantee a later `[ x -gt y ]` can actually EVALUATE the value -- an
+  # all-digit string outside bash's signed 64-bit range (e.g. 27 nines) makes the arithmetic
+  # test ITSELF error ("integer expression expected", rc=2), which `if` silently reads as
+  # false. That skips the clamp below AND, independently, makes the real alarm-firing compare
+  # at the bottom of this loop (`[ "${chronic}" -ge "${chronic_threshold}" ]`) ALSO error and
+  # silently read as false for a perfectly ordinary, small chronic_count -- defeating the "no
+  # env can exceed 1000" claim empirically (reproduced: `[ "999999999999999999999999999" -gt
+  # "1000" ]` -> rc=2, not a clean false). Fix: reject (fall back to the safe default) any
+  # digit string whose LENGTH ALONE already guarantees a value far beyond anything this alarm
+  # ever needs. `${#var}` is a pure string-length expansion -- never arithmetic evaluation of
+  # the value itself -- so it is safe to compute regardless of how huge the digit string is.
+  # 15 digits is comfortably inside bash's ~19-digit 64-bit range, so a value that survives
+  # this guard can never make a later -gt/-ge compare against it error.
   local chronic_threshold_max="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX:-20}"
   case "${chronic_threshold_max}" in ''|*[!0-9]*) chronic_threshold_max=20 ;; esac
+  [ "${#chronic_threshold_max}" -le 15 ] || chronic_threshold_max="${chronic_threshold_hard_cap}"
   if [ "${chronic_threshold_max}" -gt "${chronic_threshold_hard_cap}" ]; then
     chronic_threshold_max="${chronic_threshold_hard_cap}"
   fi
   local chronic_threshold_raw="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD:-${chronic_threshold_default}}"
   case "${chronic_threshold_raw}" in ''|*[!0-9]*) chronic_threshold_raw="${chronic_threshold_default}" ;; esac
+  [ "${#chronic_threshold_raw}" -le 15 ] || chronic_threshold_raw="${chronic_threshold_default}"
   local chronic_threshold="${chronic_threshold_raw}"
   local chronic_threshold_clamped=0
   if [ "${chronic_threshold}" -gt "${chronic_threshold_max}" ]; then
@@ -781,6 +797,10 @@ warn_stale_disabled_reviewers() {
       reviewer_name="$(basename "${marker}" .disabled)"
       chronic="$(sed -n 's/^chronic_count=//p' "${marker}" | head -1)"
       case "${chronic}" in ''|*[!0-9]*) chronic=0 ;; esac
+      # RED14-2 fix: same overflow-length guard as chronic_threshold/_max above, applied to the
+      # marker-sourced count itself, so an absurdly long digit string here cannot ALSO make the
+      # final `-ge` compare below error out to a silent false.
+      [ "${#chronic}" -le 15 ] || chronic=0
       # RED9-2 (R4 red-team re-attack, HIGH, honest framing -- NOT fixed here): chronic_count as
       # read above (and as authenticated below) is only ever as trustworthy as the *.chronic
       # bookkeeping side-file it was incremented from (reviewer_chronic_file() /
@@ -837,6 +857,40 @@ warn_stale_disabled_reviewers() {
         [ -n "${hint_field}" ] && echo "       re-enable: ${hint_field}"
       fi
       continue   # auto-recovery (cooldown) still owns transient disables otherwise
+    fi
+    # RED13-2/RED14-3 fix (HIGH, .ops-game/R6-red13-reattack.md, .ops-game/R6-red14-
+    # convergence.md): RED9-1 above made the TRANSIENT branch's marker_hmac check symmetric
+    # with run-ai-reviews.sh's reviewer_disabled_authentic() -- an absent marker_hmac is NOT
+    # authentic, same as a present-but-mismatching one. That fix landed ONLY inside the
+    # `cls = transient` branch above; this sibling PERSISTENT/non-transient branch read
+    # disabled_at/reason/reset_hint straight off the marker with ZERO authenticity check --
+    # cheaper to exploit than RED9-2 (no HMAC key needed at all, just an unauthenticated field
+    # edit) and it can silence OR spoof (via a fabricated recent disabled_at) the "PERSISTENTLY
+    # DEGRADED" alarm this branch exists to surface. Fix: the IDENTICAL canonical-fields +
+    # HMAC recompute as the transient branch (same marker_type=reviewer_disabled canonical
+    # message, same out-of-tree-keyed review_provenance_hmac), applied here too -- absent or
+    # mismatching marker_hmac => not authentic => loud, never silent, symmetric with
+    # reviewer_disabled_authentic() and with the transient branch above.
+    reviewer_name="$(basename "${marker}" .disabled)"
+    marker_hmac_stored="$(sed -n 's/^marker_hmac=//p' "${marker}" | head -n 1)"
+    marker_tampered=0
+    if [ -n "${marker_hmac_stored}" ]; then
+      marker_hmac_top="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+      marker_hmac_expected="$(
+        { printf 'marker_type=reviewer_disabled\nreviewer=%s\nworkspace=%s\n' "${reviewer_name}" "${marker_hmac_top}"
+          grep -E '^(reviewer|disabled_at|reason|details|disable_class|source_run_id|chronic_count)=' "${marker}" 2>/dev/null
+        } | review_provenance_hmac
+      )"
+      if [ -z "${marker_hmac_expected}" ] || [ "${marker_hmac_expected}" != "${marker_hmac_stored}" ]; then
+        marker_tampered=1
+      fi
+    else
+      marker_tampered=1
+    fi
+    if [ "${marker_tampered}" -eq 1 ]; then
+      echo ""
+      echo "[gate] EXTERNAL REVIEW MARKER AUTHENTICITY FAILED: reviewer '${reviewer_name}' disable marker is not authenticated (marker_hmac is absent or does not match its recomputed value) -- its disabled_at/reason/reset_hint cannot be trusted. Treating as PERSISTENTLY DEGRADED regardless of the claimed timestamp; investigate ${marker} by hand."
+      continue
     fi
     when="$(sed -n 's/^disabled_at=//p' "${marker}" | head -1)"
     [ -n "${when}" ] || continue
@@ -1186,6 +1240,30 @@ echo "[gate] collecting review context for diff-scope policy..."
 "$AH/collect-review-context.sh"
 print_diff_scope_gate
 
+# RED14-1 fix (CRITICAL, .ops-game/R6-red14-convergence.md): review_binding_record used to
+# compute its binding hash from AMBIENT HEAD *at record time* -- which, for the full-review
+# path below, is AFTER verify, the run-ai-reviews.sh network round-trip to the AI panel, and
+# summarize-ai-reviews.sh. Nothing in that multi-minute window is git-level-locked:
+# session-lock.sh only gates review-gate.sh/verify.sh themselves, not an ordinary `git commit
+# --amend` (or a new commit) run directly in a second terminal on the same working tree. That
+# let a concurrent amend during the review window silently rebind an authentic `proceed`
+# verdict to content the reviewer never read -- pre-push and the auditor both match cleanly
+# because both re-derive from the SAME post-drift HEAD, just at different times.
+#
+# This is the exact "time-of-record ambient re-read" class already solved for the machinery
+# self-test a few hundred lines below in this same file: `machinery_tested_hash` is captured
+# BEFORE verify-machinery.sh runs ("a concurrent session could have mutated it during the
+# verify window") and `machinery_memo_record_pass` DECLINES to record if the live tree has
+# drifted from that pinned hash by the time verify finishes. Mirror that H1 pattern here: pin
+# HEAD's sha now, immediately after collect-review-context.sh has produced the diff that
+# feeds every downstream review decision (docs-only skip, provenance skip, and the full AI
+# panel review) -- BEFORE verify, the AI round-trip, and summarize all run -- and thread this
+# pinned sha through to every review_binding_record call below. review_binding_record now
+# refuses to bind (returns failure, no marker written) whenever ambient HEAD at record time
+# no longer matches the pinned sha, instead of silently re-deriving the hash from a HEAD the
+# reviewer (or the skip decision) never actually saw.
+review_reviewed_head_sha="$(review_binding_git rev-parse HEAD 2>/dev/null || true)"
+
 echo "[gate] running verification..."
 verify_scope_scopes="$(diff_scope_field "scopes")"
 verify_scope_policy="$(diff_scope_field "review gate policy")"
@@ -1395,11 +1473,17 @@ fi
 if [ "${REVIEW_DECISION_GATE:-0}" != "1" ] && [ "${AI_AUTO_VERIFY_FAILED_OVERRIDE:-0}" != "1" ] && verify_only_diff_scope_ready; then
   echo "[gate] review skipped: docs-only"
   verify_only_verdict="$(write_verify_only_skip_verdict)"
-  review_binding_record "proceed" "normal" "${verify_only_verdict}"
-  review_gate_record_history "proceed" "docs_only"
-  review_gate_housekeeping 0
+  if review_binding_record "proceed" "normal" "${verify_only_verdict}" "${review_reviewed_head_sha}"; then
+    review_gate_record_history "proceed" "docs_only"
+    review_gate_housekeeping 0
+    echo "[gate] complete"
+    exit 0
+  fi
+  echo "[gate] HEAD drifted since review context was collected (reviewed ${review_reviewed_head_sha:-<none>}); refusing to bind a docs-only skip verdict to unreviewed content -- rerun the gate." >&2
+  review_gate_record_history "blocked" "head_drifted_during_review"
+  review_gate_housekeeping 1
   echo "[gate] complete"
-  exit 0
+  exit 1
 fi
 
 # R2: skip the AI panel when the working tree is byte-identical to a prior
@@ -1414,11 +1498,17 @@ if [ "${REVIEW_INTEGRATION_ONLY:-0}" != "1" ] \
    && [ "$(review_provenance_decision)" = "skip" ]; then
   echo "[gate] review skipped: provenance exact-match (carrying prior approval)"
   provenance_verdict="$(write_provenance_skip_verdict)"
-  review_binding_record "proceed" "normal" "${provenance_verdict}"
-  review_gate_record_history "proceed" "provenance_exact_match"
-  review_gate_housekeeping 0
+  if review_binding_record "proceed" "normal" "${provenance_verdict}" "${review_reviewed_head_sha}"; then
+    review_gate_record_history "proceed" "provenance_exact_match"
+    review_gate_housekeeping 0
+    echo "[gate] complete"
+    exit 0
+  fi
+  echo "[gate] HEAD drifted since review context was collected (reviewed ${review_reviewed_head_sha:-<none>}); refusing to bind a provenance-skip verdict to unreviewed content -- rerun the gate." >&2
+  review_gate_record_history "blocked" "head_drifted_during_review"
+  review_gate_housekeeping 1
   echo "[gate] complete"
-  exit 0
+  exit 1
 fi
 
 # R3: integration-only combine pass. When ≥2 already-approved task diffs are combined
@@ -1476,8 +1566,19 @@ if [ "${summary_status}" -eq 0 ]; then
   if [ -n "${latest_verdict}" ] && [ -f "${latest_verdict}" ]; then
     latest_trust="$(sed -n 's/^- trust: //p' "${latest_verdict}" 2>/dev/null | head -1)"
   fi
-  review_binding_record "${latest_decision}" "${latest_trust:-unknown}" "${latest_verdict}"
-  review_gate_record_history "${latest_decision:-unknown}" "full_review"
+  # RED14-1 fix: bind to the sha pinned BEFORE the run-ai-reviews.sh/summarize-ai-reviews.sh
+  # round-trip, not a fresh ambient re-read of HEAD now. If HEAD drifted during that window
+  # (an ordinary concurrent commit/amend, session-lock does not cover it), review_binding_record
+  # refuses to write a binding marker at all -- treat that exactly like a failed summarize: a
+  # blocked gate run that the developer must re-run, never a quiet proceed bound to unreviewed
+  # content.
+  if review_binding_record "${latest_decision}" "${latest_trust:-unknown}" "${latest_verdict}" "${review_reviewed_head_sha}"; then
+    review_gate_record_history "${latest_decision:-unknown}" "full_review"
+  else
+    echo "[gate] HEAD moved during the AI review round-trip (reviewed ${review_reviewed_head_sha:-<none>}); refusing to bind the ${latest_decision:-unknown} verdict to unreviewed content -- rerun the gate." >&2
+    review_gate_record_history "blocked" "head_drifted_during_review"
+    summary_status=1
+  fi
 else
   review_gate_record_history "blocked" "summarize_failed"
 fi

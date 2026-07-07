@@ -24,6 +24,26 @@ the live script file verbatim by function-boundary text and sourced into a small
 self-contained bash harness -- editing the source functions changes what these tests
 execute, with no copy to fall out of sync).
 
+Also covers two round-6 residuals against the SAME warn_stale_disabled_reviewers()
+function (docs: .ops-game/R6-red13-reattack.md RED13-2, .ops-game/R6-red14-convergence.md
+RED14-2/RED14-3):
+
+  RED13-2/RED14-3 (HIGH): the RED9-1 fix above only hardened the TRANSIENT branch's
+  marker_hmac check; the sibling PERSISTENT-disable staleness branch a few lines below read
+  disabled_at/reason/reset_hint straight off the marker with ZERO authenticity check --
+  cheaper to exploit than RED9-2 (no HMAC key needed at all, just an unauthenticated field
+  edit), and it could silence OR spoof the "PERSISTENTLY DEGRADED" alarm. Fixed by applying
+  the IDENTICAL canonical-fields + HMAC recompute to that branch too.
+
+  RED14-2 (HIGH-narrow): the "no env can exceed 1000" hard cap sanitized
+  AI_AUTO_CHRONIC_REDISABLE_THRESHOLD(_MAX) with only an all-digits `case` test -- an
+  all-digit string outside bash's signed 64-bit range (e.g. 27 nines) makes `[ x -gt y ]`
+  itself ERROR (rc=2), which `if` reads as false, so the clamp (and, independently, the real
+  alarm-firing `-ge` compare against a genuinely small chronic_count) silently never fires.
+  Fixed by rejecting (falling back to the safe default) any digit string whose LENGTH ALONE
+  already guarantees a value far beyond anything this alarm ever needs (`${#var}` is a pure
+  string-length expansion, never arithmetic evaluation, so it is safe on any input).
+
 Non-vacuousness ("revert -> FAIL") is established two ways, both recorded in this file's
 docstrings/comments per test:
   - Structurally: each assertion targets output/behavior that the PRE-FIX code cannot
@@ -36,6 +56,7 @@ docstrings/comments per test:
     revision's content would make it fail again the moment the fix is committed.
 """
 
+import datetime
 import hashlib
 import hmac
 import os
@@ -593,3 +614,282 @@ def test_threshold_max_hard_cap_cannot_be_env_silenced(tmp_path):
         f"AI_AUTO_CHRONIC_REDISABLE_THRESHOLD and _THRESHOLD_MAX (RED9-3 reopened):\n{stdout}"
     )
     assert "AUTHENTICITY FAILED" not in case, stdout
+
+
+# ---------------------------------------------------------------------------
+# (e) RED13-2/RED14-3 (R6 red-team, docs: .ops-game/R6-red13-reattack.md,
+# .ops-game/R6-red14-convergence.md): the sibling PERSISTENT-disable staleness branch must be
+# just as authenticity-checked as the transient branch above -- an absent or tampered
+# marker_hmac must never be trusted to justify silence (or a spoofed freshness claim) here
+# either.
+# ---------------------------------------------------------------------------
+
+def _iso_days_ago(days: int) -> str:
+    return (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+    ).isoformat(timespec="seconds")
+
+
+def test_persistent_marker_absent_hmac_no_longer_trusted_silently(tmp_path):
+    """RED13-2/RED14-3, simplest shape: a PERSISTENT-disable marker that was never signed at
+    all (no marker_hmac line -- zero key/signing infra needed, cheaper than tampering a
+    present HMAC) has a FRESH disabled_at (within stale_days=7), so the pre-fix code prints
+    NOTHING (age_days < stale_days, and no authenticity check exists on this branch at all).
+    The fix must not let an unauthenticated marker's disabled_at field justify silence: it
+    must raise the loud authenticity-failed alarm regardless of the claimed timestamp.
+
+    Revert-proof: the pre-fix persistent branch has no marker_hmac check whatsoever -- it
+    reads disabled_at straight off the file, computes age_days ~0, and `continue`s past the
+    `age_days < stale_days` guard with zero output. Against that code this test's
+    "must not be silent" and "AUTHENTICITY FAILED" assertions both fail.
+    """
+    ws = _make_workspace(tmp_path)
+    key_file = _make_out_of_tree_key(tmp_path)
+    state_dir = ws / ".omx" / "reviewer-state"
+    state_dir.mkdir(parents=True)
+
+    marker = state_dir / "gemini.disabled"
+    _write_marker(
+        marker,
+        reviewer="gemini",
+        disabled_at=_iso_days_ago(0),
+        reason="config_error",
+        details="bad api key",
+        disable_class="persistent",
+        source_run_id="test",
+        chronic_count=1,
+        next_action="user_reset_required",
+        reset_hint="RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh",
+    )
+    # Deliberately NOT calling _sign_marker -- no marker_hmac line at all.
+
+    stdout = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN),
+        functions_src=_gate_functions_src(),
+        body='echo "===CASE==="\nwarn_stale_disabled_reviewers\necho "===CASE-END==="\n',
+    )
+    case = stdout.split("===CASE===\n", 1)[1].split("===CASE-END===")[0]
+    assert case.strip() != "", (
+        "an unauthenticated persistent-disable marker with a fresh disabled_at was silently "
+        f"trusted (RED13-2/RED14-3 reopened): {stdout}"
+    )
+    assert "AUTHENTICITY FAILED" in case, stdout
+    assert "gemini" in case, stdout
+
+
+def test_persistent_marker_disabled_at_tamper_no_longer_silences_the_stale_alarm(tmp_path):
+    """RED13-2, PoC-mirrored exactly: sign a genuine PERSISTENT marker with disabled_at 30
+    days ago (well past stale_days=7) -- baseline must alarm normally ("PERSISTENTLY
+    DEGRADED ... 30d ago"). Then, with NO key access at all, rewrite disabled_at to "now"
+    without re-signing (breaking the stale marker_hmac). Pre-fix, this silences the alarm
+    completely (age_days becomes ~0). The fix must not let the tamper succeed: it must raise
+    the authenticity-failed alarm instead of going quiet.
+    """
+    ws = _make_workspace(tmp_path)
+    key_file = _make_out_of_tree_key(tmp_path)
+    top = _git_toplevel(ws)
+    state_dir = ws / ".omx" / "reviewer-state"
+    state_dir.mkdir(parents=True)
+
+    marker = state_dir / "gemini.disabled"
+    stale_stamp = _iso_days_ago(30)
+    _write_marker(
+        marker,
+        reviewer="gemini",
+        disabled_at=stale_stamp,
+        reason="config_error",
+        details="bad api key",
+        disable_class="persistent",
+        source_run_id="test",
+        chronic_count=1,
+        next_action="user_reset_required",
+        reset_hint="RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh",
+    )
+    _sign_marker(marker, reviewer="gemini", workspace_top=top, key_file=key_file)
+
+    # Baseline: genuinely signed, genuinely stale -> must alarm normally, no false authenticity
+    # failure on an untampered marker.
+    stdout_baseline = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN),
+        functions_src=_gate_functions_src(),
+        body='echo "===BASE==="\nwarn_stale_disabled_reviewers\necho "===BASE-END==="\n',
+    )
+    baseline = stdout_baseline.split("===BASE===\n", 1)[1].split("===BASE-END===")[0]
+    assert "PERSISTENTLY DEGRADED" in baseline, stdout_baseline
+    assert "disabled 30d ago" in baseline, stdout_baseline
+    assert "AUTHENTICITY FAILED" not in baseline, stdout_baseline
+
+    # Tamper: rewrite disabled_at on disk WITHOUT re-signing -- no key needed at all, unlike
+    # the RED9-2 `.chronic` side-file route this mirrors on the transient branch.
+    tampered_lines = []
+    for line in marker.read_text().splitlines():
+        if line.startswith("disabled_at="):
+            tampered_lines.append(f"disabled_at={_iso_days_ago(0)}")
+        else:
+            tampered_lines.append(line)
+    marker.write_text("\n".join(tampered_lines) + "\n")
+
+    stdout_tamper = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN),
+        functions_src=_gate_functions_src(),
+        body='echo "===TAMPER==="\nwarn_stale_disabled_reviewers\necho "===TAMPER-END==="\n',
+    )
+    tamper = stdout_tamper.split("===TAMPER===\n", 1)[1].split("===TAMPER-END===")[0]
+
+    assert tamper.strip() != "", (
+        "a tampered disabled_at silently suppressed the persistent-degraded alarm with no "
+        f"key access at all (RED13-2 reopened): {stdout_tamper}"
+    )
+    assert "AUTHENTICITY FAILED" in tamper, stdout_tamper
+    # The genuine, per-day stale message must NOT appear -- the tampered claim (fresh,
+    # non-stale) must never be allowed to drive the wording either.
+    assert "disabled 0d ago" not in tamper, stdout_tamper
+
+
+def test_persistent_marker_genuinely_signed_and_fresh_stays_silent(tmp_path):
+    """Guard rail: a genuinely-signed, genuinely fresh persistent marker (within stale_days)
+    must stay fully silent -- the new authenticity check must not itself become a source of
+    false alarms on ordinary, untampered, non-stale markers."""
+    ws = _make_workspace(tmp_path)
+    key_file = _make_out_of_tree_key(tmp_path)
+    top = _git_toplevel(ws)
+    state_dir = ws / ".omx" / "reviewer-state"
+    state_dir.mkdir(parents=True)
+
+    marker = state_dir / "gemini.disabled"
+    _write_marker(
+        marker,
+        reviewer="gemini",
+        disabled_at=_iso_days_ago(0),
+        reason="config_error",
+        details="bad api key",
+        disable_class="persistent",
+        source_run_id="test",
+        chronic_count=1,
+        next_action="user_reset_required",
+        reset_hint="RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh",
+    )
+    _sign_marker(marker, reviewer="gemini", workspace_top=top, key_file=key_file)
+
+    stdout = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN),
+        functions_src=_gate_functions_src(),
+        body='echo "===CASE==="\nwarn_stale_disabled_reviewers\necho "===CASE-END==="\n',
+    )
+    case = stdout.split("===CASE===\n", 1)[1].split("===CASE-END===")[0]
+    assert case.strip() == "", stdout
+
+
+# ---------------------------------------------------------------------------
+# (f) RED14-2 (R6 red-team, docs: .ops-game/R6-red14-convergence.md): an all-digit but
+# 64-bit-overflowing threshold env value must not defeat the "no env can exceed 1000" hard
+# cap by making the `-gt`/`-ge` arithmetic tests themselves error out to a silent false.
+# ---------------------------------------------------------------------------
+
+_OVERFLOW_DIGITS = "999999999999999999999999999"  # 27 nines -- empirically reproduced in
+# the finding to make `[ "999999999999999999999999999" -gt "1000" ]` error (rc=2, "integer
+# expression expected"), not evaluate to a clean false.
+
+
+def test_overflowing_threshold_env_cannot_mute_a_genuine_chronic_alarm(tmp_path):
+    """RED14-2, PoC-mirrored: both AI_AUTO_CHRONIC_REDISABLE_THRESHOLD and
+    AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX set to a 64-bit-overflowing all-digit string. A
+    genuinely signed, ordinary chronic_count=50 marker (small, easily representable) must
+    still trip the loud alarm -- the overflow must not silently defeat the hard cap.
+
+    Revert-proof: the pre-fix code's `case` test alone accepts any all-digit string
+    regardless of length, so chronic_threshold_max/chronic_threshold both end up holding the
+    27-nines string verbatim; `[ "${chronic_threshold_max}" -gt "${chronic_threshold_hard_cap}" ]`
+    then ERRORS (not "false"), the clamp never fires, and the final
+    `[ "${chronic}" -ge "${chronic_threshold}" ]` (50 -ge <27 nines>) ALSO errors and is read
+    as false by `if` -- nothing prints at all. Against that code this test's
+    "CHRONICALLY RE-DISABLED" assertion fails.
+    """
+    ws = _make_workspace(tmp_path)
+    key_file = _make_out_of_tree_key(tmp_path)
+    top = _git_toplevel(ws)
+    state_dir = ws / ".omx" / "reviewer-state"
+    state_dir.mkdir(parents=True)
+
+    marker = state_dir / "gemini.disabled"
+    fresh_stamp = _run(["date", "-Iseconds"]).stdout.strip()
+    _write_marker(
+        marker,
+        reviewer="gemini",
+        disabled_at=fresh_stamp,
+        reason="prompt_size_limit",
+        details="class=prompt_size_limit; tail=large_prompt_prompt_file_fallback_failed",
+        disable_class="transient",
+        source_run_id="test",
+        chronic_count=50,
+        next_action="auto_recover_after_cooldown_300s",
+        reset_hint="RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh",
+    )
+    _sign_marker(marker, reviewer="gemini", workspace_top=top, key_file=key_file)
+
+    stdout = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN)
+        + f"AI_AUTO_CHRONIC_REDISABLE_THRESHOLD={_OVERFLOW_DIGITS}\n"
+        + f"AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX={_OVERFLOW_DIGITS}\n",
+        functions_src=_gate_functions_src(),
+        body='echo "===CASE==="\nwarn_stale_disabled_reviewers\necho "===CASE-END==="\n',
+    )
+    case = stdout.split("===CASE===\n", 1)[1].split("===CASE-END===")[0]
+    assert "CHRONICALLY RE-DISABLED" in case, (
+        f"a chronic_count=50 marker was silenced by a 64-bit-overflowing threshold env value "
+        f"(RED14-2 reopened -- the arithmetic test itself errored instead of clamping):\n{stdout}"
+    )
+    assert "AUTHENTICITY FAILED" not in case, stdout
+
+
+def test_overflowing_threshold_alone_cannot_mute_a_genuine_chronic_alarm(tmp_path):
+    """Narrower shape: only AI_AUTO_CHRONIC_REDISABLE_THRESHOLD overflows (THRESHOLD_MAX left
+    at its default of 20). This is the single-var variant that actually reaches the final
+    alarm-firing compare: `[ "${chronic_threshold}" -gt "${chronic_threshold_max}" ]` (27
+    nines -gt 20) errors and is skipped, leaving chronic_threshold holding the raw 27-nines
+    string, and the final `[ "${chronic}" -ge "${chronic_threshold}" ]` (50 -ge 27-nines)
+    then ALSO errors and reads as false -- silencing a genuine chronic_count=50. (Overflowing
+    only THRESHOLD_MAX with THRESHOLD left at its small default does not reach this path,
+    because comparing a small threshold against a huge max also errors/no-ops without ever
+    corrupting the small threshold -- that shape is intentionally not asserted here as a
+    revert-differentiator.)
+    """
+    ws = _make_workspace(tmp_path)
+    key_file = _make_out_of_tree_key(tmp_path)
+    top = _git_toplevel(ws)
+    state_dir = ws / ".omx" / "reviewer-state"
+    state_dir.mkdir(parents=True)
+
+    marker = state_dir / "gemini.disabled"
+    fresh_stamp = _run(["date", "-Iseconds"]).stdout.strip()
+    _write_marker(
+        marker,
+        reviewer="gemini",
+        disabled_at=fresh_stamp,
+        reason="prompt_size_limit",
+        details="class=prompt_size_limit; tail=large_prompt_prompt_file_fallback_failed",
+        disable_class="transient",
+        source_run_id="test",
+        chronic_count=50,
+        next_action="auto_recover_after_cooldown_300s",
+        reset_hint="RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh",
+    )
+    _sign_marker(marker, reviewer="gemini", workspace_top=top, key_file=key_file)
+
+    stdout = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN)
+        + f"AI_AUTO_CHRONIC_REDISABLE_THRESHOLD={_OVERFLOW_DIGITS}\n",
+        functions_src=_gate_functions_src(),
+        body='echo "===CASE==="\nwarn_stale_disabled_reviewers\necho "===CASE-END==="\n',
+    )
+    case = stdout.split("===CASE===\n", 1)[1].split("===CASE-END===")[0]
+    assert "CHRONICALLY RE-DISABLED" in case, (
+        f"a chronic_count=50 marker was silenced by an overflowing THRESHOLD alone "
+        f"(RED14-2 reopened):\n{stdout}"
+    )

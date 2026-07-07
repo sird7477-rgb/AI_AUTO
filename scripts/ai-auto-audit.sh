@@ -222,8 +222,17 @@ check_staleness() {
 # harness actually ran (state == passed(:*)) vs. just the log/marker being present?
 check_runtime_oracle() {
   local check="CHECK3-RUNTIME-ORACLE"
+  local require="${AI_AUTO_REQUIRE_RUNTIME_ORACLE:-0}"
   if [ ! -f "${VERIFY_OUTPUT_FILE}" ]; then
-    skip_check "${check}" "no captured verify-output log at ${VERIFY_OUTPUT_FILE} -- cannot assess a runtime-oracle claim (see CHECK1/CHECK5 for whether verify ran at all)"
+    # RED13-4: under an opted-in REQUIRE contract, an absent verify-output log is NOT the same
+    # as "this project doesn't use runtime-oracle" -- it is indistinguishable from "the log was
+    # deleted (same-UID) after a real run, or verify was never invoked at all", i.e. NO EVIDENCE
+    # the oracle ran. Under REQUIRE, no-evidence must fail closed (FLAG), not vanish as a SKIP.
+    if [ "${require}" = "1" ]; then
+      flag_high "${check}" "AI_AUTO_REQUIRE_RUNTIME_ORACLE=1 is set for this project but no captured verify-output log exists at ${VERIFY_OUTPUT_FILE} -- no evidence the runtime-oracle harness ran at all (log missing or deleted); a required contract with no evidence is NOT-VALIDATED, not exempt."
+    else
+      skip_check "${check}" "no captured verify-output log at ${VERIFY_OUTPUT_FILE} -- cannot assess a runtime-oracle claim (see CHECK1/CHECK5 for whether verify ran at all)"
+    fi
     return
   fi
   local oracle_line oracle_state
@@ -235,13 +244,20 @@ check_runtime_oracle() {
       ;;
     *)
       if grep -Fq 'NOT-VALIDATED (runtime oracle did not run)' "${VERIFY_OUTPUT_FILE}" 2>/dev/null; then
-        if [ "${AI_AUTO_REQUIRE_RUNTIME_ORACLE:-0}" = "1" ]; then
+        if [ "${require}" = "1" ]; then
           flag_high "${check}" "verify-output log's own NOT-VALIDATED signal is present (saw RUNTIME_ORACLE='${oracle_state:-absent}') and AI_AUTO_REQUIRE_RUNTIME_ORACLE=1 is set for this project -- a runtime-oracle contract is required but evidence it ran is absent."
         else
           flag_warn "${check}" "verify-output log's own NOT-VALIDATED signal is present (saw RUNTIME_ORACLE='${oracle_state:-absent}'); AI_AUTO_REQUIRE_RUNTIME_ORACLE is not 1 for this project so this is advisory only -- 'verify green' here does NOT imply runtime-oracle-validated."
         fi
       else
-        skip_check "${check}" "verify-output log has no RUNTIME_ORACLE= line at all (this project likely does not opt into the runtime-oracle contract)"
+        # Sibling of the RED13-4 gap above: a log can be PRESENT (so the first branch is not
+        # hit) yet have had its RUNTIME_ORACLE= line specifically stripped/truncated -- same
+        # "no evidence" shape, just a different deletion granularity. Same REQUIRE-gated rule.
+        if [ "${require}" = "1" ]; then
+          flag_high "${check}" "AI_AUTO_REQUIRE_RUNTIME_ORACLE=1 is set for this project but verify-output log at ${VERIFY_OUTPUT_FILE} has no RUNTIME_ORACLE= line at all and no NOT-VALIDATED signal -- no evidence the required oracle contract ran or was even checked (line missing/stripped)."
+        else
+          skip_check "${check}" "verify-output log has no RUNTIME_ORACLE= line at all (this project likely does not opt into the runtime-oracle contract)"
+        fi
       fi
       ;;
   esac

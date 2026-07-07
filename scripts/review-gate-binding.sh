@@ -272,9 +272,32 @@ review_binding_hash() {
 }
 
 review_binding_record() {
-  local decision="$1" trust="$2" verdict_file="${3:-}" hash ts tmp rec dst
+  local decision="$1" trust="$2" verdict_file="${3:-}" pinned_target="${4:-}" hash ts tmp rec dst current_head
   case "${decision}" in proceed|proceed_degraded) ;; *) return 0 ;; esac
-  hash="$(review_binding_hash)" || return 0
+  # RED14-1 fix (CRITICAL, .ops-game/R6-red14-convergence.md): review_binding_hash with no
+  # target recomputes the hash from AMBIENT HEAD at THIS call -- for review-gate.sh's full-
+  # review call site that is AFTER the multi-minute AI-panel round-trip, with no git-level
+  # lock preventing an ordinary `git commit --amend`/new commit in a second terminal from
+  # moving HEAD in between. Callers that captured the sha actually reviewed BEFORE that
+  # window (review-gate.sh's review_reviewed_head_sha, mirroring the machinery_tested_hash
+  # H1 pattern a few hundred lines below in review-gate.sh) pass it here as $4. When present,
+  # require ambient HEAD to still equal it: a match means nothing moved during the window, so
+  # it is safe to hash that exact target (bypassing review_binding_hash's ambient dirty/HEAD
+  # re-read entirely -- same "explicit target" routing RED1-1 already relies on for pre-push's
+  # pushed-sha call shape). A MISMATCH means HEAD drifted mid-review -- refuse to bind at all
+  # (no marker written, non-zero return) rather than silently re-deriving the hash from a HEAD
+  # the reviewer never saw; the caller must treat this as a failed/blocked gate run, not a
+  # quiet no-op, so an approval can never attach to unreviewed content.
+  if [ -n "${pinned_target}" ]; then
+    current_head="$(review_binding_git rev-parse HEAD 2>/dev/null || true)"
+    if [ -z "${current_head}" ] || [ "${current_head}" != "${pinned_target}" ]; then
+      echo "[review-binding] HEAD drifted during the review window (reviewed ${pinned_target}, now ${current_head:-<none>}) -- refusing to bind an approval to unreviewed content; rerun the gate." >&2
+      return 1
+    fi
+    hash="$(review_binding_hash "${pinned_target}")" || return 0
+  else
+    hash="$(review_binding_hash)" || return 0
+  fi
   ts="$(date -Iseconds)"
   review_binding_ensure_key || return 0
   mkdir -p "$(review_binding_dir)"
