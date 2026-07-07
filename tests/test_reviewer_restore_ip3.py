@@ -420,14 +420,29 @@ cat "${{REVIEW_STATE_DIR}}/gemini.disabled"
 # ---------------------------------------------------------------------------
 
 def test_warn_stale_disabled_reviewers_alarms_on_chronic_transient(tmp_path):
-    """AC3-5 / D6: a fresh, disable_class=transient marker is normally fully silent (it will
-    auto-recover on its own). But once chronic_count crosses the threshold -- the same root
-    cause re-tripping the disable run after run -- the staleness guard must still speak up,
-    because the ordinary freshness check (disabled_at) can never fire for a marker that keeps
-    getting deleted and recreated every cooldown cycle.
+    """AC3-5 / D6, UPDATED for RED9-1 (docs: .ops-game/R4-red9-reattack.md): a fresh,
+    disable_class=transient marker with a chronic_count that has crossed the threshold must
+    still make the staleness guard speak up loudly, because the ordinary freshness check
+    (disabled_at) can never fire for a marker that keeps getting deleted and recreated every
+    cooldown cycle.
 
-    Revert-proof: with the pre-AC3-5 code (`[ "${cls}" = "transient" ] && continue`
-    unconditionally), CASE1 below produces no warning at all and this assertion fails.
+    This test originally (round 3 and earlier) asserted that such a marker prints the specific
+    "CHRONICALLY RE-DISABLED" line while carrying NO marker_hmac field at all -- i.e. it pinned
+    the pre-RED9-1 behavior of trusting a raw, unauthenticated chronic_count off an unsigned
+    marker. Round-4 red-team re-attack (RED9-1) showed that fallthrough was itself the bug: an
+    absent marker_hmac is LESS effort to exploit than tampering a present one, and it made this
+    warn-path consumer disagree with the sibling skip-decision consumer
+    (run-ai-reviews.sh's reviewer_disabled_authentic()), which already treats an absent
+    marker_hmac as not authentic. The fix makes the warn-path symmetric: an unsigned marker is
+    now NEVER trusted to justify silence OR to vouch for its own claimed chronic_count -- it is
+    treated the same as a tampered one and takes the "AUTHENTICITY FAILED" branch, loud
+    regardless of the count it claims.
+
+    Updated assertion: the alarm still fires (never silent), but now via the authenticity-failed
+    branch, not by trusting the field. Revert-proof: reverting scripts/review-gate.sh to the
+    pre-RED9-1 fallthrough would print "CHRONICALLY RE-DISABLED" instead of "AUTHENTICITY
+    FAILED" here (chronic_count=3 >= default threshold 3 trusted directly off the unsigned
+    marker), so asserting "AUTHENTICITY FAILED" is present fails against that reverted code.
     """
     state_dir = tmp_path / "state"
     state_dir.mkdir()
@@ -462,13 +477,29 @@ echo "===CASE1-END==="
     )
 
     case1 = stdout.split("===CASE1===\n", 1)[1].split("===CASE1-END===")[0]
-    assert "CHRONICALLY RE-DISABLED" in case1, stdout
+    assert case1.strip() != "", "an unsigned chronic marker was silently trusted (RED9-1 reopened)"
+    assert "AUTHENTICITY FAILED" in case1, stdout
+    assert "gemini" in case1, stdout
 
 
 def test_warn_stale_disabled_reviewers_silent_for_ordinary_transient_disable(tmp_path):
-    """Guard rail: an ordinary, fresh, low-chronic-count transient disable must stay fully
-    silent (unchanged pre-existing behavior) -- the chronic alarm must not fire on every
-    routine transient disable."""
+    """Guard rail, UPDATED for RED9-1 (docs: .ops-game/R4-red9-reattack.md): an ordinary,
+    fresh, low-chronic-count transient disable must never be treated as CHRONICALLY
+    RE-DISABLED or PERSISTENTLY DEGRADED merely for having a low count -- the chronic-streak
+    alarm must not fire on every routine transient disable.
+
+    This test originally (round 3 and earlier) asserted the marker below -- which carries NO
+    marker_hmac field -- produced FULLY silent output, pinning the pre-RED9-1 behavior of
+    trusting an unsigned marker's low chronic_count. Per RED9-1, an unsigned marker is now
+    NEVER trusted, regardless of the count it claims, and always takes the loud
+    "AUTHENTICITY FAILED" branch (symmetric with run-ai-reviews.sh's
+    reviewer_disabled_authentic(), which already refuses to trust an absent marker_hmac). So
+    this marker is no longer silent -- it is loud, but via the authenticity-failure path, not
+    via the (correctly still-absent) CHRONICALLY RE-DISABLED / PERSISTENTLY DEGRADED alarms
+    that this guard rail is actually about. The true "ordinary authenticated marker with a low
+    chronic_count stays silent" guard rail is covered with a properly-signed marker in
+    tests/test_chronic_alarm_authentic_r3.py::test_untampered_marker_with_hmac_present_stays_authentic.
+    """
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     functions_src = _extract_bash_functions(
@@ -502,6 +533,10 @@ echo "===CASE2-END==="
     )
 
     case2 = stdout.split("===CASE2===\n", 1)[1].split("===CASE2-END===")[0]
-    assert "CHRONICALLY RE-DISABLED" not in case2, stdout
+    # The authenticity-failed branch mentions "CHRONICALLY RE-DISABLED" inline as part of its
+    # own message ("Treating as CHRONICALLY RE-DISABLED regardless..."); what must NOT appear is
+    # the separate, dedicated alarm line the (never-reached) trusted-count branch would emit.
+    assert "[gate] EXTERNAL REVIEW CHRONICALLY RE-DISABLED:" not in case2, stdout
     assert "PERSISTENTLY DEGRADED" not in case2, stdout
-    assert case2.strip() == "", stdout
+    # RED9-1: an unsigned marker is no longer silently trusted even at a low chronic_count.
+    assert "AUTHENTICITY FAILED" in case2, stdout

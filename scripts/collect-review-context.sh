@@ -8,6 +8,25 @@ set -euo pipefail
 CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=scripts/git-harden.sh
 . "${AI_AUTO_GIT_HARDEN_SH:-${CRC_DIR}/git-harden.sh}"
+# RED10-1 fix: prefer SOURCING review-gate-binding.sh for its safe-base-fallback helpers
+# (review_binding_safe_base_fallback / review_binding_empty_tree / review_binding_remote_tracking_refs)
+# -- see post_commit_upstream_ref below -- over a second hand-written copy of that logic.
+# In a real install review-gate-binding.sh ships in this same scripts/ directory (and is
+# copied alongside collect-review-context.sh everywhere the latter is, see
+# scripts/verify-machinery.sh's fixture cp-lists), so this is the common case. It only
+# defines functions (no top-level execution), so sourcing it is inert and order-independent
+# w.r.t. review_git, which review_binding_git resolves at CALL time via `command -v
+# review_git`, not at source time. Presence-guarded (ai-auto BLAST-H1 idiom, same as the
+# git-scrub guard just below) because several existing unit tests copy ONLY this script into
+# an isolated fixture repo without its sibling -- those get the faithful fallback mirror
+# defined right after this block instead; either way the two range-resolution code paths
+# must stay identical, which is the entire point of this fix (RED10-1 was exactly this kind
+# of drift between two copies of the same logic).
+# shellcheck source=scripts/review-gate-binding.sh
+if [ -f "${AI_AUTO_REVIEW_BINDING_SH:-${CRC_DIR}/review-gate-binding.sh}" ] \
+  && bash -n "${AI_AUTO_REVIEW_BINDING_SH:-${CRC_DIR}/review-gate-binding.sh}" 2>/dev/null; then
+  . "${AI_AUTO_REVIEW_BINDING_SH:-${CRC_DIR}/review-gate-binding.sh}"
+fi
 # R21-STANDALONE: this collector is a DOCUMENTED standalone entrypoint (`./scripts/collect-review-
 # context.sh`; also run mid-`ai-auto gate`). review_git closes the clean-filter vector, but several
 # BARE (non-review_git) worktree-scanning calls remain — `git diff --cached --name-only` (index vs
@@ -22,6 +41,40 @@ CRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=../hooks/git-scrub.sh
 if [ -f "${CRC_DIR}/../hooks/git-scrub.sh" ] && bash -n "${CRC_DIR}/../hooks/git-scrub.sh" 2>/dev/null; then
   . "${CRC_DIR}/../hooks/git-scrub.sh"
+fi
+
+# RED10-1 fallback mirror: only defined when review-gate-binding.sh above was NOT reachable
+# (e.g. an isolated test fixture that copied just this script). These three bodies are a
+# byte-for-byte copy of scripts/review-gate-binding.sh's review_binding_empty_tree /
+# review_binding_remote_tracking_refs / review_binding_safe_base_fallback (the ONLY
+# difference: review_git directly, since that hardened wrapper is already unconditionally
+# available in this file, in place of the review_binding_git indirection, which itself just
+# resolves to review_git when defined). KEEP THESE IN SYNC WITH THE ORIGINALS -- drift
+# between this copy and scripts/review-gate-binding.sh's is the exact bug class RED10-1 was.
+if ! command -v review_binding_empty_tree >/dev/null 2>&1; then
+  review_binding_empty_tree() {
+    review_git hash-object -t tree /dev/null 2>/dev/null
+  }
+fi
+if ! command -v review_binding_remote_tracking_refs >/dev/null 2>&1; then
+  review_binding_remote_tracking_refs() {
+    review_git for-each-ref --format='%(objectname)' refs/remotes 2>/dev/null | awk 'NF'
+  }
+fi
+if ! command -v review_binding_safe_base_fallback >/dev/null 2>&1; then
+  review_binding_safe_base_fallback() {
+    local target="${1:-HEAD}" refs base
+    refs="$(review_binding_remote_tracking_refs)"
+    if [ -n "${refs}" ]; then
+      # shellcheck disable=SC2086
+      base="$(review_git merge-base --octopus "${target}" ${refs} 2>/dev/null || true)"
+      if [ -n "${base}" ]; then
+        printf '%s\n' "${base}"
+        return 0
+      fi
+    fi
+    review_binding_empty_tree
+  }
 fi
 
 OUT_DIR="${OUT_DIR:-.omx/review-context}"
@@ -163,10 +216,56 @@ post_commit_parent_count() {
 # branch's upstream tracking ref and union it in, mirroring the validation harness's own
 # `@{u}...HEAD` fix for the identical "commits since upstream" scope gap
 # (templates/domain-packs/odoo/validation-harness/validate-warm.sh / validate-full.sh).
-# Empty when no upstream is configured (e.g. a fresh local-only branch) -- callers then fall
-# back to the tip-commit-only behavior, which is already everything there is to review.
+#
+# RED10-1 fix: the R3 comment above claimed an empty `@{u}` meant "callers then fall back to
+# the tip-commit-only behavior, which is already everything there is to review" -- FALSE
+# whenever 2+ commits are unpushed on a branch with no upstream configured yet (the ordinary
+# state of any brand-new local branch before its first push). That gap let the push-time
+# BINDING HASH (scripts/review-gate-binding.sh, RED7-1) and this collector's REVIEWER-FACING
+# diff diverge: after RED7-1 the hash correctly covers an over-approximated range via
+# review_binding_safe_base_fallback, but this function still returned empty and every caller
+# below silently shrank to tip-only, so a reviewer could approve tip commit B while an
+# earlier unreviewed commit A rides out on the same `proceed` verdict. Never let the range
+# collapse to tip-only: when `@{u}` is unset, resolve the SAME safe, over-approximated base
+# review-gate-binding.sh's push-time hash now uses (the octopus merge-base of HEAD with every
+# refs/remotes/* ref, else the empty tree) -- see review_binding_safe_base_fallback, sourced
+# above. This keeps the reviewer diff and the binding hash's range identical by construction
+# instead of by two independently-maintained copies of the same fallback (the drift between
+# exactly two such copies is what RED10-1 was).
 post_commit_upstream_ref() {
-  review_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true
+  local up
+  up="$(review_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [ -n "${up}" ]; then
+    printf '%s\n' "${up}"
+    return 0
+  fi
+  review_binding_safe_base_fallback HEAD
+}
+
+# RED10-1 fix: post_commit_upstream_ref's fallback may resolve to the empty-tree object (not
+# a commit) -- exactly like review_binding_committed_payload, `...` (triple-dot,
+# merge-base-based) diff syntax cannot resolve against it, so a direct two-dot diff against
+# HEAD is required in that case. Centralized here once so every caller (name-status/stat/diff)
+# applies the identical special-case rather than three independent copies of this check.
+post_commit_range_diff() {
+  local base="$1"
+  shift
+  if [ "${base}" = "$(review_binding_empty_tree)" ]; then
+    review_git diff "$@" "${base}" HEAD 2>/dev/null
+  else
+    review_git diff "$@" "${base}...HEAD" 2>/dev/null
+  fi
+}
+
+# Human-readable label for the range diff headings below -- the raw empty-tree blob sha is
+# meaningless to a reviewer, so name it explicitly instead.
+post_commit_range_label() {
+  local base="$1"
+  if [ "${base}" = "$(review_binding_empty_tree)" ]; then
+    printf 'full history, no upstream known'
+  else
+    printf '%s...HEAD' "${base}"
+  fi
 }
 
 post_commit_name_status() {
@@ -179,7 +278,7 @@ post_commit_name_status() {
   local up
   up="$(post_commit_upstream_ref)"
   if [ -n "${up}" ]; then
-    review_git diff --name-status -M "${up}...HEAD" 2>/dev/null
+    post_commit_range_diff "${up}" --name-status -M
   fi
 }
 
@@ -278,14 +377,15 @@ write_diff_stat() {
     echo '```'
     echo
     # RED3-1: also surface anything already committed but not yet pushed, ahead of the
-    # tip commit above (see post_commit_upstream_ref).
+    # tip commit above (see post_commit_upstream_ref). RED10-1: the range now always covers
+    # at least what the push-time binding hash covers, even with no upstream configured.
     local up
     up="$(post_commit_upstream_ref)"
     if [ -n "${up}" ]; then
-      echo "### Unpushed Range Diff Stat (${up}...HEAD)"
+      echo "### Unpushed Range Diff Stat ($(post_commit_range_label "${up}"))"
       echo
       echo '```text'
-      review_git diff --stat "${up}...HEAD"
+      post_commit_range_diff "${up}" --stat
       echo '```'
       echo
     fi
@@ -338,14 +438,16 @@ write_diff() {
     # RED3-1: the tip commit alone is invisible to an earlier commit already made but not
     # yet pushed (e.g. an unreviewed commit followed by a reviewed trivial fixup commit).
     # Surface the full unpushed range too, so THIS is genuinely the reviewer-facing diff of
-    # everything about to be pushed, not just the last commit.
+    # everything about to be pushed, not just the last commit. RED10-1: when no upstream is
+    # configured, this range now matches the push-time binding hash's over-approximated
+    # range (never silently narrows to tip-only) -- see post_commit_upstream_ref.
     local up
     up="$(post_commit_upstream_ref)"
     if [ -n "${up}" ]; then
-      echo "### Unpushed Range Diff (${up}...HEAD)"
+      echo "### Unpushed Range Diff ($(post_commit_range_label "${up}"))"
       echo
       echo '```diff'
-      review_git diff --no-ext-diff --no-textconv "${up}...HEAD"
+      post_commit_range_diff "${up}" --no-ext-diff --no-textconv
       echo '```'
       echo
     fi

@@ -472,3 +472,124 @@ def test_default_threshold_unaffected_when_no_override_present(tmp_path):
     )
     case = stdout.split("===CASE===\n", 1)[1].split("===CASE-END===")[0]
     assert case.strip() == "", stdout
+
+
+# ---------------------------------------------------------------------------
+# (c) RED9-1 (R4 red-team re-attack, docs: .ops-game/R4-red9-reattack.md): an ABSENT marker_hmac
+# must NOT be trusted to justify silence -- it must be treated the same as a tampered one.
+# ---------------------------------------------------------------------------
+
+def test_absent_marker_hmac_does_not_silence_alarm(tmp_path):
+    """RED9-1, PoC-mirrored: the round-3 fix only rejected a marker_hmac that was PRESENT but
+    did not verify; a marker that OMITS the field entirely fell through to trusting the raw
+    chronic_count -- LESS effort for an attacker than tampering a signed one, and it disagreed
+    with run-ai-reviews.sh's reviewer_disabled_authentic(), which already treats an absent
+    marker_hmac as not authentic.
+
+    This marker is genuinely chronic (chronic_count=5 >= default threshold 3) but was never
+    signed at all (no marker_hmac line, no key file needed -- the simplest possible plant/
+    legacy-no-infra shape). The fixed code must not let its absence justify silence: it must
+    take the loud authenticity-failed branch, exactly as it would for a present-but-tampered
+    marker_hmac.
+
+    Revert-proof: the pre-RED9-1 code treats an absent field as "no claim to check" and falls
+    through to `chronic -ge chronic_threshold`, which is true here (5 >= 3), printing
+    "CHRONICALLY RE-DISABLED" and never "AUTHENTICITY FAILED". Against that code this test's
+    "AUTHENTICITY FAILED" assertion fails, and its "CHRONICALLY RE-DISABLED" absence assertion
+    also fails (that string IS printed pre-fix).
+    """
+    ws = _make_workspace(tmp_path)
+    key_file = _make_out_of_tree_key(tmp_path)
+    state_dir = ws / ".omx" / "reviewer-state"
+    state_dir.mkdir(parents=True)
+
+    marker = state_dir / "gemini.disabled"
+    fresh_stamp = _run(["date", "-Iseconds"]).stdout.strip()
+    _write_marker(
+        marker,
+        reviewer="gemini",
+        disabled_at=fresh_stamp,
+        reason="prompt_size_limit",
+        details="class=prompt_size_limit; tail=large_prompt_prompt_file_fallback_failed",
+        disable_class="transient",
+        source_run_id="test",
+        chronic_count=5,
+        next_action="auto_recover_after_cooldown_300s",
+        reset_hint="RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh",
+    )
+    # Deliberately NOT calling _sign_marker -- this marker has no marker_hmac line at all.
+
+    stdout = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN),
+        functions_src=_gate_functions_src(),
+        body='echo "===CASE==="\nwarn_stale_disabled_reviewers\necho "===CASE-END==="\n',
+    )
+    case = stdout.split("===CASE===\n", 1)[1].split("===CASE-END===")[0]
+    assert case.strip() != "", "an absent marker_hmac silently trusted chronic_count (RED9-1 reopened)"
+    assert "AUTHENTICITY FAILED" in case, stdout
+    # The authenticity-failed branch mentions "CHRONICALLY RE-DISABLED" inline as part of its
+    # own message ("Treating as CHRONICALLY RE-DISABLED regardless..."); what must NOT appear is
+    # the separate, dedicated alarm line the (never-reached) trusted-count branch would emit.
+    assert "[gate] EXTERNAL REVIEW CHRONICALLY RE-DISABLED:" not in case, stdout
+    assert "gemini" in case, stdout
+
+
+# ---------------------------------------------------------------------------
+# (d) RED9-3 (R4 red-team re-attack): AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX is itself capped
+# by an in-code literal constant that no env var can raise past.
+# ---------------------------------------------------------------------------
+
+def test_threshold_max_hard_cap_cannot_be_env_silenced(tmp_path):
+    """RED9-3, PoC-mirrored: round-3's clamp bounded AI_AUTO_CHRONIC_REDISABLE_THRESHOLD by
+    AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX, but that ceiling was itself only digit-sanitized
+    with no upper bound -- a caller who can set one env var (the accepted threat model) can set
+    two: THRESHOLD=<huge> together with THRESHOLD_MAX=<huge> fully mutes a genuinely high
+    chronic_count, defeating the clamp's own stated goal.
+
+    This marker carries a genuinely high, validly-signed chronic_count (5000 -- comfortably
+    above any reasonable ceiling) with BOTH env vars set to an enormous value. The fix's
+    in-code hard cap (chronic_threshold_hard_cap) must still bound the effective threshold well
+    below 5000, so the alarm fires regardless of what the two env vars claim.
+
+    Revert-proof: the pre-RED9-3 code clamps chronic_threshold_max to whatever
+    AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX says (999999999 here, digit-sanity only), so
+    chronic_threshold ends up 999999999 and `5000 -ge 999999999` is false -- nothing prints at
+    all against that code, and this test's "CHRONICALLY RE-DISABLED" assertion fails.
+    """
+    ws = _make_workspace(tmp_path)
+    key_file = _make_out_of_tree_key(tmp_path)
+    top = _git_toplevel(ws)
+    state_dir = ws / ".omx" / "reviewer-state"
+    state_dir.mkdir(parents=True)
+
+    marker = state_dir / "gemini.disabled"
+    fresh_stamp = _run(["date", "-Iseconds"]).stdout.strip()
+    _write_marker(
+        marker,
+        reviewer="gemini",
+        disabled_at=fresh_stamp,
+        reason="prompt_size_limit",
+        details="class=prompt_size_limit; tail=large_prompt_prompt_file_fallback_failed",
+        disable_class="transient",
+        source_run_id="test",
+        chronic_count=5000,
+        next_action="auto_recover_after_cooldown_300s",
+        reset_hint="RESET_DISABLED_AI_REVIEWERS=gemini ./scripts/review-gate.sh",
+    )
+    _sign_marker(marker, reviewer="gemini", workspace_top=top, key_file=key_file)
+
+    stdout = _run_bash_harness(
+        ws,
+        preamble=_PREAMBLE_TEMPLATE.format(state_dir=state_dir, key_file=key_file, git_harden=GIT_HARDEN)
+        + "AI_AUTO_CHRONIC_REDISABLE_THRESHOLD=999999999\n"
+        + "AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX=999999999\n",
+        functions_src=_gate_functions_src(),
+        body='echo "===CASE==="\nwarn_stale_disabled_reviewers\necho "===CASE-END==="\n',
+    )
+    case = stdout.split("===CASE===\n", 1)[1].split("===CASE-END===")[0]
+    assert "CHRONICALLY RE-DISABLED" in case, (
+        f"a chronic_count=5000 marker was fully silenced by maxing out BOTH "
+        f"AI_AUTO_CHRONIC_REDISABLE_THRESHOLD and _THRESHOLD_MAX (RED9-3 reopened):\n{stdout}"
+    )
+    assert "AUTHENTICITY FAILED" not in case, stdout

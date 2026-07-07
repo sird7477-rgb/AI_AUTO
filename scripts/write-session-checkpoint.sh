@@ -15,6 +15,14 @@ if [ -f "${_hd}" ] && bash -n "${_hd}" 2>/dev/null; then . "${_hd}"; fi
 CHECKPOINT_FILE="${OMX_SESSION_CHECKPOINT_FILE:-.omx/state/session-checkpoint.md}"
 CHECKPOINT_STATUS_LIMIT="${OMX_SESSION_CHECKPOINT_STATUS_LIMIT:-40}"
 CHECKPOINT_FIELD_LIMIT="${OMX_SESSION_CHECKPOINT_FIELD_LIMIT:-300}"
+# RED9-5 fix: same default + override precedence as scripts/run-ai-reviews.sh:18 and
+# scripts/review-gate.sh:118 (and the RED6-2 fix already applied to
+# scripts/automation-doctor.sh:737) -- honor REVIEW_STATE_DIR so this checkpoint inspects the
+# SAME reviewer-state directory the gate/reviewer actually read and write. Before this fix the
+# "## Reviewer State" section below hardcoded ".omx/reviewer-state" and reported a false "none"
+# for a genuinely disabled reviewer whenever REVIEW_STATE_DIR was overridden -- a false-green in
+# a file explicitly documented as "resume evidence" an agent/operator is meant to trust.
+REVIEW_STATE_DIR="${REVIEW_STATE_DIR:-.omx/reviewer-state}"
 mkdir -p "$(dirname "$CHECKPOINT_FILE")"
 
 # Symlink-safe: a bare `> "$CHECKPOINT_FILE"` FOLLOWS a pre-existing symlink, so a hostile repo
@@ -147,8 +155,8 @@ trap 'rm -f "${_ck_tmp}"' EXIT
   echo
   echo "## Reviewer State"
   echo
-  if [ -d ".omx/reviewer-state" ] && ls .omx/reviewer-state/*.disabled >/dev/null 2>&1; then
-    for marker in .omx/reviewer-state/*.disabled; do
+  if [ -d "${REVIEW_STATE_DIR}" ] && ls "${REVIEW_STATE_DIR}"/*.disabled >/dev/null 2>&1; then
+    for marker in "${REVIEW_STATE_DIR}"/*.disabled; do
       reviewer="$(sed -n 's/^reviewer=//p' "$marker" | head -1)"
       reason="$(sed -n 's/^reason=//p' "$marker" | head -1)"
       echo "- ${reviewer:-unknown}: ${reason:-disabled}"

@@ -688,14 +688,23 @@ EOF
 # a maintenance risk -- this comment block is the binding note: touching reviewer_marker_canonical
 # or the marker_hmac scheme in run-ai-reviews.sh means checking this copy too).
 #
-# Deliberately narrower than run-ai-reviews.sh's all-or-nothing reviewer_disabled_authentic(): a
-# marker_hmac field that is ABSENT is treated as "no authenticity claim to check" and the raw
-# chronic_count is still trusted as before (this is the legacy/no-HMAC-infra shape, not the
-# attack) -- only a marker_hmac field that IS PRESENT but does NOT verify (tampered, forged, or
-# unverifiable with the key available to this process) is treated as untrustworthy. That is
-# exactly the demonstrated PoC shape ("signs a genuine marker but tampers only chronic_count") and
-# closes it: the inline check in warn_stale_disabled_reviewers() below treats that case as
-# alarm-worthy, never as "below threshold, stay quiet".
+# RED9-1 (R4 red-team re-attack, HIGH): the round-3 version of this comment argued that a
+# marker_hmac field that is ABSENT should be treated as "no authenticity claim to check" and the
+# raw chronic_count trusted as before, reasoning that this was only the legacy/no-HMAC-infra
+# shape and not the attack. That was wrong two ways: (1) omitting the field entirely is LESS
+# effort for an attacker than tampering a present one -- no signing infrastructure needed at
+# all; (2) it made this warn-path consumer DISAGREE with the sibling skip-decision consumer,
+# run-ai-reviews.sh's reviewer_disabled_authentic() (run-ai-reviews.sh:145-153), which already
+# treats an ABSENT marker_hmac as NOT authentic (`[ -n "${stored}" ] || return 1`). Two consumers
+# of the identical marker file disagreeing in the unsafe direction on exactly the field this fix
+# is about IS the bug, not an accepted legacy shape. Fix: this warn-path is now SYMMETRIC with
+# reviewer_disabled_authentic() -- an ABSENT marker_hmac is treated the SAME as a PRESENT-but-
+# non-verifying one: not authentic, never trusted to justify silence. Both shapes set
+# marker_tampered=1 below and take the loud "AUTHENTICITY FAILED" branch. This does mean a
+# genuinely framework-written marker from an environment lacking HMAC infra (no openssl, no
+# writable out-of-tree key dir, ...) is now loud instead of silently trusted -- that is the
+# intended fail-safe direction: a marker this process cannot authenticate must not be allowed to
+# vouch for its own low chronic_count.
 #
 # The canonical-fields + HMAC check is inlined into warn_stale_disabled_reviewers() itself
 # (rather than factored into standalone reviewer_marker_canonical()/reviewer_disabled_authentic()-
@@ -730,9 +739,23 @@ warn_stale_disabled_reviewers() {
   # THRESHOLD_MAX, default 20) so an outsized override cannot fully silence a genuinely chronic
   # streak, and surface the override's presence (and any clamp) as its own NOTE line so silencing
   # a lower-but-still-notable streak leaves a trace instead of vanishing without record.
+  #
+  # RED9-3 (R4 red-team re-attack, MEDIUM): AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX was itself
+  # only digit-sanitized with no ceiling of its own -- a caller who can set one env var (the
+  # accepted RED5-1-Bypass-A threat model) can set two, e.g. THRESHOLD=999999 alongside
+  # THRESHOLD_MAX=999999, fully muting a genuinely high chronic_count (a NOTE trace still prints,
+  # but the commit's stated goal -- "can't fully mute a high count" -- was defeated). Fix: an
+  # in-CODE literal absolute ceiling, chronic_threshold_hard_cap, that no env var can raise. The
+  # effective chronic_threshold_max is clamped to this constant BEFORE it is used to clamp
+  # chronic_threshold, so the loud alarm for a genuinely high authenticated chronic count can
+  # never be fully env-silenced no matter how large BOTH env vars are set.
   local chronic_threshold_default=3
+  local chronic_threshold_hard_cap=1000
   local chronic_threshold_max="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD_MAX:-20}"
   case "${chronic_threshold_max}" in ''|*[!0-9]*) chronic_threshold_max=20 ;; esac
+  if [ "${chronic_threshold_max}" -gt "${chronic_threshold_hard_cap}" ]; then
+    chronic_threshold_max="${chronic_threshold_hard_cap}"
+  fi
   local chronic_threshold_raw="${AI_AUTO_CHRONIC_REDISABLE_THRESHOLD:-${chronic_threshold_default}}"
   case "${chronic_threshold_raw}" in ''|*[!0-9]*) chronic_threshold_raw="${chronic_threshold_default}" ;; esac
   local chronic_threshold="${chronic_threshold_raw}"
@@ -758,12 +781,30 @@ warn_stale_disabled_reviewers() {
       reviewer_name="$(basename "${marker}" .disabled)"
       chronic="$(sed -n 's/^chronic_count=//p' "${marker}" | head -1)"
       case "${chronic}" in ''|*[!0-9]*) chronic=0 ;; esac
-      # RED5-1 Bypass B (see the reviewer-marker-auth block comment above this function): a
-      # marker_hmac field that IS PRESENT but does not verify against a fresh recompute means the
-      # marker was forged, or a genuine one was tampered post-signing (exactly the PoC'd "sign
-      # then edit chronic_count down" attack) -- never trust its fields, including the low
-      # chronic_count it now claims, to justify silence. An ABSENT field makes no authenticity
-      # claim either way and falls through to the pre-existing trust-the-field behavior.
+      # RED9-2 (R4 red-team re-attack, HIGH, honest framing -- NOT fixed here): chronic_count as
+      # read above (and as authenticated below) is only ever as trustworthy as the *.chronic
+      # bookkeeping side-file it was incremented from (reviewer_chronic_file() /
+      # disable_reviewer(), run-ai-reviews.sh:~801-853). That side-file carries NO marker_hmac
+      # and NO signature of its own anywhere in the codebase -- an attacker with write access to
+      # the same gitignored REVIEW_STATE_DIR (the exact threat model this whole fix assumes) can
+      # reset it to count=0 between two genuine disable_reviewer() calls, and the NEXT marker is
+      # honestly, validly signed over a deflated count: the HMAC check below only attests "this
+      # marker's fields are internally self-consistent," never "this counter's history wasn't
+      # tampered with". This is a same-UID, same-writable-directory limit that a per-marker HMAC
+      # cannot close by construction (signing chronic_count harder just re-signs whatever the
+      # unauthenticated upstream counter says), so it is NOT treated as tamper-proof here. Honest
+      # framing only: the chronic counter is a non-adversarial reliability signal (great at
+      # catching an accidentally-recurring root cause), and its ADVERSARIAL integrity depends on
+      # an out-of-band auditor (tracking chronic_file history/deltas independently of this
+      # process) that is being built separately -- not on anything in this function.
+      #
+      # RED9-1 (R4 red-team re-attack, HIGH; see the reviewer-marker-auth block comment above
+      # this function): a marker_hmac field that IS PRESENT but does not verify against a fresh
+      # recompute means the marker was forged, or a genuine one was tampered post-signing (the
+      # PoC'd "sign then edit chronic_count down" attack). A marker_hmac field that is ABSENT is
+      # now treated identically -- NOT authentic, symmetric with run-ai-reviews.sh's
+      # reviewer_disabled_authentic() -- rather than falling through to trust the raw field.
+      # Neither shape gets to justify silence.
       marker_hmac_stored="$(sed -n 's/^marker_hmac=//p' "${marker}" | head -n 1)"
       marker_tampered=0
       if [ -n "${marker_hmac_stored}" ]; then
@@ -776,10 +817,12 @@ warn_stale_disabled_reviewers() {
         if [ -z "${marker_hmac_expected}" ] || [ "${marker_hmac_expected}" != "${marker_hmac_stored}" ]; then
           marker_tampered=1
         fi
+      else
+        marker_tampered=1
       fi
       if [ "${marker_tampered}" -eq 1 ]; then
         echo ""
-        echo "[gate] EXTERNAL REVIEW MARKER AUTHENTICITY FAILED: reviewer '${reviewer_name}' disable marker carries a marker_hmac that does NOT match its recomputed value -- its chronic_count (currently claims ${chronic}) cannot be trusted. Treating as CHRONICALLY RE-DISABLED regardless of the claimed count; investigate ${marker} by hand."
+        echo "[gate] EXTERNAL REVIEW MARKER AUTHENTICITY FAILED: reviewer '${reviewer_name}' disable marker is not authenticated (marker_hmac is absent or does not match its recomputed value) -- its chronic_count (currently claims ${chronic}) cannot be trusted. Treating as CHRONICALLY RE-DISABLED regardless of the claimed count; investigate ${marker} by hand."
         continue
       fi
       if [ "${chronic_threshold_overridden}" -eq 1 ] && [ "${chronic}" -ge "${chronic_threshold_default}" ] && [ "${chronic}" -lt "${chronic_threshold}" ]; then
