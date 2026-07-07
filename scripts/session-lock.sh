@@ -128,7 +128,15 @@ _session_lock_flock_publish() {
   local op="$1" self="$2" dir sidecar fd rc
   dir="$(dirname "$SESSION_LOCK_FILE")"
   sidecar="$dir/.session.lock.reclaim"
-  exec {fd}>>"$sidecar" 2>/dev/null || return 2
+  # RED3-2: a BARE `exec {fd}>>path 2>/dev/null` (no command after `exec`) does not just
+  # suppress THIS statement's own error -- because there is no command, bash applies the
+  # redirection to the CURRENT SHELL PERMANENTLY, so `2>/dev/null` here silently nukes
+  # stderr for the rest of the process (every WARNING after this point, including the
+  # degraded-lock one just below, would vanish). Wrapping in a `{ ...; }` group scopes the
+  # `2>/dev/null` to only that group -- the {fd} allocation still persists as intended
+  # (exec's fd side effects on the calling shell are unaffected by the grouping), but
+  # stderr is restored immediately afterward.
+  { exec {fd}>>"$sidecar"; } 2>/dev/null || return 2
   if ! flock -w 10 "$fd"; then exec {fd}>&-; return 2; fi
   if [ -e "$SESSION_LOCK_FILE" ]; then flock -u "$fd"; exec {fd}>&-; return 1; fi
   _session_lock_meta "$op" "$self" > "$SESSION_LOCK_FILE" 2>/dev/null; rc=$?
@@ -150,6 +158,17 @@ _session_lock_publish() {
   else _session_lock_flock_publish "$1" "$2"; fi
 }
 
+# RED3-2 fix: a `prc=2` from publish/reclaim means EVERY exclusivity mechanism this file
+# knows failed for a non-contention reason -- typically O_EXCL not honored (9p / Z:) AND
+# `flock` missing from PATH (a stripped/minimal subprocess PATH). The caller still fails
+# OPEN on `prc=2` (proceeding unguarded beats hanging or hard-failing a whole gate run over
+# lock infra), but that degradation was previously completely silent: zero stdout/stderr,
+# so two concurrent sessions could race the tree with no diagnostic trail at all. Emit one
+# loud, unmissable stderr line so an operator/CI log has something to grep for.
+_session_lock_warn_degraded() {
+  printf '%s\n' "[lock] WARNING: could not acquire the session lock (no O_EXCL, no flock) -- proceeding WITHOUT exclusivity; two sessions may now race on this tree" >&2
+}
+
 # Race-safe reclaim of a STALE (dead-PID or TTL-expired) lock. The critical section is
 # serialized by an flock on a stable sidecar, so N racers that all saw the SAME stale lock
 # can never all `rm`+publish into each other's gap (the old bug: 100+/250 double-wins). Under the
@@ -161,7 +180,15 @@ _session_lock_reclaim() {
   local op="$1" self="$2" ttl="$3" dir sidecar rc fd
   dir="$(dirname "$SESSION_LOCK_FILE")"
   sidecar="$dir/.session.lock.reclaim"
-  exec {fd}>>"$sidecar" 2>/dev/null || return 2
+  # RED3-2: a BARE `exec {fd}>>path 2>/dev/null` (no command after `exec`) does not just
+  # suppress THIS statement's own error -- because there is no command, bash applies the
+  # redirection to the CURRENT SHELL PERMANENTLY, so `2>/dev/null` here silently nukes
+  # stderr for the rest of the process (every WARNING after this point, including the
+  # degraded-lock one just below, would vanish). Wrapping in a `{ ...; }` group scopes the
+  # `2>/dev/null` to only that group -- the {fd} allocation still persists as intended
+  # (exec's fd side effects on the calling shell are unaffected by the grouping), but
+  # stderr is restored immediately afterward.
+  { exec {fd}>>"$sidecar"; } 2>/dev/null || return 2
   if ! flock -w 10 "$fd"; then exec {fd}>&-; return 2; fi
   if [ -f "$SESSION_LOCK_FILE" ]; then
     local nsess npid nat
@@ -249,14 +276,14 @@ session_lock_acquire() {
       printf '%s\n' "[lock] reclaiming stale lock (holder pid=${held_pid}, dead or past TTL)" >&2
       _session_lock_reclaim "$op" "$self" "$ttl"; prc=$?
       [ "$prc" -eq 0 ] && return 0    # we now hold it (or it became ours)
-      [ "$prc" -eq 2 ] && return 0    # infra failure (no flock) -> fail open, proceed
+      if [ "$prc" -eq 2 ]; then _session_lock_warn_degraded; return 0; fi   # infra failure (no flock) -> fail open, proceed (LOUD)
       continue                        # someone live won it -> loop to inspect (resolves to 75)
     fi
 
     # Fresh path: no lock present -> atomic publish.
     _session_lock_publish "$op" "$self"; prc=$?
     [ "$prc" -eq 0 ] && return 0      # we won
-    [ "$prc" -eq 2 ] && return 0      # create infra failure -> fail open, proceed
+    if [ "$prc" -eq 2 ]; then _session_lock_warn_degraded; return 0; fi     # create infra failure -> fail open, proceed (LOUD)
     # prc=1: lost the create race, a racer just published -> loop to inspect it.
   done
 }

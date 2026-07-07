@@ -133,15 +133,35 @@ review_binding_change_payload() {
 }
 
 review_binding_head_parent_count() {
-  git rev-list --parents -n 1 HEAD 2>/dev/null | awk '{ print NF - 1 }'
+  git rev-list --parents -n 1 "${1:-HEAD}" 2>/dev/null | awk '{ print NF - 1 }'
 }
 
+# RED3-1 fix: the tip-commit diff alone is invisible to earlier commits that are already
+# made but not yet pushed -- e.g. an unreviewed commit A ("add GRANT_ADMIN=true") followed by
+# a reviewed trivial commit B rides through unseen, because `git show HEAD` / `HEAD^1..HEAD`
+# only ever covers B. Union in the full range since the upstream/base ref so the payload (and
+# therefore the hash) covers EVERY unpushed commit, mirroring the validation harness's own
+# `@{u}...HEAD` fix for the identical "commits since upstream" scope gap
+# (templates/domain-packs/odoo/validation-harness/validate-warm.sh / validate-full.sh --
+# `up="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}')"`, unioned with the tip
+# diff). $1=target commit-ish (default HEAD), $2=explicit base commit-ish (default: resolve
+# target's own @{u} tracking ref, only meaningful when target=HEAD -- an explicit base is
+# required for any other target, e.g. a pushed sha that is not the ambient checked-out
+# branch; see review_binding_check_ref / hooks/pre-push).
 review_binding_committed_payload() {
+  local target="${1:-HEAD}" base="${2:-}"
   printf '\037commit-diff\037\n'
-  if [ "$(review_binding_head_parent_count)" -gt 1 ]; then
-    review_binding_git diff --no-ext-diff --no-textconv HEAD^1 HEAD 2>/dev/null
+  if [ "$(review_binding_head_parent_count "${target}")" -gt 1 ]; then
+    review_binding_git diff --no-ext-diff --no-textconv "${target}^1" "${target}" 2>/dev/null
   else
-    review_binding_git show --format= --no-ext-diff --no-textconv HEAD 2>/dev/null
+    review_binding_git show --format= --no-ext-diff --no-textconv "${target}" 2>/dev/null
+  fi
+  if [ -z "${base}" ] && [ "${target}" = "HEAD" ]; then
+    base="$(review_binding_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  fi
+  if [ -n "${base}" ]; then
+    printf '\037range-diff\037\n'
+    review_binding_git diff --no-ext-diff --no-textconv "${base}...${target}" 2>/dev/null
   fi
 }
 
@@ -169,7 +189,16 @@ review_binding_prospective_commit_payload() {
 }
 
 review_binding_hash() {
-  review_binding_change_payload | git hash-object --stdin
+  # RED1-1 fix: an explicit $1 (target commit-ish) bypasses the ambient dirty/HEAD path
+  # entirely -- a pre-push-supplied local sha being pushed is always a real commit object,
+  # never "the pusher's uncommitted working tree", so it always goes straight to
+  # review_binding_committed_payload for THAT sha rather than review_binding_change_payload's
+  # ambient-HEAD-derived dirty check. See review_binding_check_ref / hooks/pre-push.
+  if [ -n "${1:-}" ]; then
+    review_binding_committed_payload "$1" "${2:-}" | git hash-object --stdin
+  else
+    review_binding_change_payload | git hash-object --stdin
+  fi
 }
 
 review_binding_record() {
@@ -225,8 +254,16 @@ review_binding_verdict_decision() {
   sed -n 's/^- decision: //p' "${file}" | head -1
 }
 
-review_binding_check() {
-  local latest latest_decision current recorded decision
+# RED1-1 fix: the actual check, parameterized by the commit-ish ACTUALLY being pushed ($1)
+# and its base ($2, typically the remote's current sha for that ref before the push). With
+# no arguments this reduces to the original ambient-HEAD behavior (review_binding_check
+# below), preserved for review-gate.sh's own interactive/dry-run callers. hooks/pre-push
+# calls this once per stdin ref-update line with the real pushed local sha and remote sha,
+# so a push whose local ref differs from the pusher's checked-out HEAD (e.g. `git push
+# origin evilbranch:main` while sitting on main) is bound to evilbranch's own content, not
+# main's -- closing the "binding checks ambient HEAD, never the pushed ref/sha" gap.
+review_binding_check_ref() {
+  local target="${1:-}" base="${2:-}" latest latest_decision current recorded decision
   latest="$(review_binding_latest_verdict)"
   latest_decision="$(review_binding_verdict_decision "${latest}")"
   case "${latest_decision}" in
@@ -245,14 +282,25 @@ review_binding_check() {
     return 1
     ;;
   esac
-  current="$(review_binding_hash)" || {
-    echo "no binding gate verdict for this change" >&2
-    return 1
-  }
+  if [ -n "${target}" ]; then
+    current="$(review_binding_hash "${target}" "${base}")" || {
+      echo "no binding gate verdict for this change" >&2
+      return 1
+    }
+  else
+    current="$(review_binding_hash)" || {
+      echo "no binding gate verdict for this change" >&2
+      return 1
+    }
+  fi
   recorded="$(review_binding_field binding_hash)"
   if [ -z "${recorded}" ] || [ "${current}" != "${recorded}" ]; then
     echo "no binding gate verdict for this change" >&2
     return 1
   fi
   return 0
+}
+
+review_binding_check() {
+  review_binding_check_ref
 }

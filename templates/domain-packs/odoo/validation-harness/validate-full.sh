@@ -214,6 +214,22 @@ elif [ "${DEMO_DATA_UNVALIDATED:-0}" = "1" ]; then
   echo "[full]   to rebuild base_demo and validate the changed demo records."
   exit 1
 else
-  echo "[full] PASS — scoped tests + demo load clean (parity-pinned Odoo 19)"
+  # RED2-7: the closing message must reflect what actually ran, not what the script is
+  # capable of running. A views-only change (WANT_TEST=0/WANT_DEMO=0) or an explicit
+  # SKIP_*_PASS never executes a sub-pass at all -- say so instead of unconditionally
+  # claiming "tests + demo load clean".
+  test_part="tests SKIPPED (no code/test/data change in scope)"
+  if [ "${SKIP_TEST_PASS:-0}" = "1" ]; then
+    test_part="tests SKIPPED (SKIP_TEST_PASS=1)"
+  elif [ "$WANT_TEST" = "1" ]; then
+    test_part="tests PASS"
+  fi
+  demo_part="demo SKIPPED (no demo/ change in scope)"
+  if [ "${SKIP_DEMO_PASS:-0}" = "1" ]; then
+    demo_part="demo SKIPPED (SKIP_DEMO_PASS=1)"
+  elif [ "$WANT_DEMO" = "1" ]; then
+    demo_part="demo PASS"
+  fi
+  echo "[full] PASS — ${test_part}; ${demo_part} (parity-pinned Odoo 19)"
 fi
 exit 0

@@ -101,12 +101,13 @@ run_product() {
     echo "[verify] scripts/verify-project.sh is empty or does not parse or has no executable content — FAIL-CLOSED (NOTHING was verified)" >&2
     exit 1
   fi
+  local -a runner_cmd=()
   if [ -x "${vp}" ]; then
     echo "[verify] delegating to project verification: ${vp}"
     if [ "${AI_AUTO_VERIFY_DIFF_SCOPE:-0}" = "1" ]; then
       echo "[verify] diff-scope metadata: scopes=${AI_AUTO_VERIFY_SCOPES:-unknown} policy=${AI_AUTO_VERIFY_SCOPE_POLICY:-unknown}"
     fi
-    "${vp}"
+    runner_cmd=("${vp}")
   elif [ -e "${vp}" ]; then
     # R24: the exec bit was lost. Dispatch by shebang so a NON-shell verifier
     # (#!/usr/bin/env python3, node, ruby…) is run by its DECLARED interpreter, not bash —
@@ -114,16 +115,76 @@ run_product() {
     # robustness regression). Fall back to bash only for a shell / no-shebang script.
     if [ "${apply_bashn}" = 0 ] && [ -n "${interp}" ]; then
       echo "[verify] ${vp} present but NOT executable — dispatching via its shebang interpreter (lost exec bit)" >&2
-      # shellcheck disable=SC2086  # deliberate word-split of the shebang's interpreter args
-      ${interp} "${vp}"
+      # shellcheck disable=SC2206  # deliberate word-split of the shebang's interpreter args
+      runner_cmd=(${interp} "${vp}")
     else
       echo "[verify] ${vp} present but NOT executable — running via bash (lost exec bit)" >&2
-      bash "${vp}"
+      runner_cmd=(bash "${vp}")
     fi
   else
     echo "[verify] no project verification: scripts/verify-project.sh is absent — NOTHING was verified" >&2
     exit 1
   fi
+
+  # RED2-1 (2026-07-07 R1 red-team, CRITICAL/LIVE): everything above this point fails
+  # closed only on SHAPE — empty / unparseable / no-executable-content. It cannot tell a
+  # verifier that runs a REAL runtime oracle (e.g. the Odoo docker harness booting a
+  # registry) apart from one that only does static analysis (py_compile/xmllint) and never
+  # executes anything runtime-relevant: both are non-empty, parse, and exit 0, so both read
+  # as full green. That content-blindness is the root cause named in
+  # docs/ops-audits/2026-07-07-spec-v2.md (IP-1'/AC1-5): a static-only-green verify-project.sh
+  # let an infinite-recursion commit reach origin and kill the odoo.sh build.
+  #
+  # Runtime-oracle contract: a project verifier that actually exercised a runtime oracle
+  # prints, on its own stdout/stderr, a line matching:
+  #   [verify-project] RUNTIME_ORACLE=<state>[:<detail>]
+  # <state> is `passed` (optionally `passed:<harness-version>`) when a real harness ran and
+  # passed; anything else (`absent`, `skipped`, `docker-down`, or no such line at all) means
+  # no runtime oracle confirmed. verify.sh captures the verifier's combined output and reads
+  # the LAST matching line:
+  #   - no match, or state != passed(:*)  -> LOUD `NOT-VALIDATED (runtime oracle did not
+  #     run)`, mirroring verify-machinery.sh's verify_scanner_absent pattern. Advisory by
+  #     default (many projects have no runtime-oracle need at all, and we cannot infer "this
+  #     change class needs one" here) so this alone does not regress existing green projects.
+  #     Set AI_AUTO_REQUIRE_RUNTIME_ORACLE=1 (the project/domain-pack opting in, e.g. an Odoo
+  #     project) to fail CLOSED instead, with exit 3 — a verdict distinct from "verifier
+  #     itself failed" (its own nonzero rc, passed straight through) and "unknown scope"
+  #     (exit 2), so a caller can tell "ran and failed" apart from "never proven to have run".
+  #   - state == passed(:*) -> full green, oracle confirmed.
+  #
+  # HONEST LIMIT (D2, spec-v2.md "위조내성 주장 하향"): this is a SIGNAL contract, not a
+  # forgery-proof one. A same-UID project verifier can print `RUNTIME_ORACLE=passed:x`
+  # without ever touching Docker/odoo-bin — this seam makes static-only masquerading
+  # DETECTABLE (grep the captured log for the marker/its absence) and raises the cost of
+  # lying, it does NOT make forging the marker impossible. Closing that gap needs an
+  # out-of-band auditor over harness logs (spec AC1-7), which is out of scope for this
+  # tool-side seam hardening.
+  local oracle_log rc=0
+  oracle_log="$(mktemp)"
+  set +e
+  "${runner_cmd[@]}" 2>&1 | tee "${oracle_log}"
+  rc="${PIPESTATUS[0]}"
+  set -e
+  if [ "${rc}" -ne 0 ]; then
+    rm -f "${oracle_log}"
+    exit "${rc}"
+  fi
+  local oracle_line oracle_state
+  oracle_line="$(grep -E '^\[verify-project\] RUNTIME_ORACLE=' "${oracle_log}" | tail -n1 || true)"
+  rm -f "${oracle_log}"
+  oracle_state="${oracle_line#*RUNTIME_ORACLE=}"
+  case "${oracle_state}" in
+    passed|passed:*)
+      echo "[verify] runtime oracle signal: PASSED (${oracle_state})"
+      ;;
+    *)
+      echo "[verify] NOT-VALIDATED (runtime oracle did not run): scripts/verify-project.sh completed but emitted no RUNTIME_ORACLE=passed signal (saw: '${oracle_state:-absent}') — 'verify green' does NOT imply 'runtime-oracle-validated'. Set AI_AUTO_REQUIRE_RUNTIME_ORACLE=1 to fail closed on this."
+      if [ "${AI_AUTO_REQUIRE_RUNTIME_ORACLE:-0}" = "1" ]; then
+        echo "[verify] AI_AUTO_REQUIRE_RUNTIME_ORACLE=1: runtime oracle validation is REQUIRED and did not confirm — fail CLOSED (degraded, not a clean pass)" >&2
+        exit 3
+      fi
+      ;;
+  esac
 }
 
 case "${AI_AUTO_VERIFY_SCOPE}" in

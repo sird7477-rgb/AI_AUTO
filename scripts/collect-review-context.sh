@@ -157,12 +157,29 @@ post_commit_parent_count() {
   git rev-list --parents -n 1 HEAD 2>/dev/null | awk '{ print NF - 1 }'
 }
 
+# RED3-1 fix: the tip-commit diff alone misses an earlier commit already made but not yet
+# pushed (e.g. an unreviewed commit A followed by a reviewed trivial commit B -- B's tip
+# diff never shows A's content, so reviewers never see A at all). Resolve the current
+# branch's upstream tracking ref and union it in, mirroring the validation harness's own
+# `@{u}...HEAD` fix for the identical "commits since upstream" scope gap
+# (templates/domain-packs/odoo/validation-harness/validate-warm.sh / validate-full.sh).
+# Empty when no upstream is configured (e.g. a fresh local-only branch) -- callers then fall
+# back to the tip-commit-only behavior, which is already everything there is to review.
+post_commit_upstream_ref() {
+  review_git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true
+}
+
 post_commit_name_status() {
   has_head_commit && is_status_clean || return 0
   if [ "$(post_commit_parent_count)" -gt 1 ]; then
     review_git diff --name-status -M HEAD^1 HEAD 2>/dev/null
   else
     review_git show --format= --name-status -M HEAD 2>/dev/null
+  fi
+  local up
+  up="$(post_commit_upstream_ref)"
+  if [ -n "${up}" ]; then
+    review_git diff --name-status -M "${up}...HEAD" 2>/dev/null
   fi
 }
 
@@ -260,6 +277,18 @@ write_diff_stat() {
     review_git show --stat --oneline --decorate --find-renames HEAD
     echo '```'
     echo
+    # RED3-1: also surface anything already committed but not yet pushed, ahead of the
+    # tip commit above (see post_commit_upstream_ref).
+    local up
+    up="$(post_commit_upstream_ref)"
+    if [ -n "${up}" ]; then
+      echo "### Unpushed Range Diff Stat (${up}...HEAD)"
+      echo
+      echo '```text'
+      review_git diff --stat "${up}...HEAD"
+      echo '```'
+      echo
+    fi
     return 0
   fi
 
@@ -306,6 +335,20 @@ write_diff() {
     review_git show --no-ext-diff --no-textconv --format= --find-renames HEAD
     echo '```'
     echo
+    # RED3-1: the tip commit alone is invisible to an earlier commit already made but not
+    # yet pushed (e.g. an unreviewed commit followed by a reviewed trivial fixup commit).
+    # Surface the full unpushed range too, so THIS is genuinely the reviewer-facing diff of
+    # everything about to be pushed, not just the last commit.
+    local up
+    up="$(post_commit_upstream_ref)"
+    if [ -n "${up}" ]; then
+      echo "### Unpushed Range Diff (${up}...HEAD)"
+      echo
+      echo '```diff'
+      review_git diff --no-ext-diff --no-textconv "${up}...HEAD"
+      echo '```'
+      echo
+    fi
     return 0
   fi
 

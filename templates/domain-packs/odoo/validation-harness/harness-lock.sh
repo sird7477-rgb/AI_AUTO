@@ -12,7 +12,15 @@
 HARNESS_LOCK_FILE="${HARNESS_LOCK_FILE:-${HARNESS_DIR:-.}/.harness-base.${HARNESS_SLUG:-default}.lock}"
 
 harness_lock() {  # $1 = read | write
-  command -v flock >/dev/null 2>&1 || return 0
+  # RED3-3: no fallback mechanism exists once flock is missing (unlike session-lock.sh's
+  # O_EXCL probe), so a bare `return 0` here was a fully silent no-op -- a concurrent
+  # write (prepare-base-db.sh dropping/rebuilding the base) and read (validate-*.sh
+  # cloning it) could then race with zero diagnostic trail. Degrading is still correct
+  # (do not block work over a missing binary) but it must be LOUD, not silent.
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "[lock] WARNING: flock not found — base rebuild/validation running WITHOUT concurrency protection (a concurrent rebuild + validate-* read can race/corrupt the shared warm base)" >&2
+    return 0
+  fi
   exec 9>"$HARNESS_LOCK_FILE" || return 0
   if [ "${1:-read}" = "write" ]; then
     echo "[lock] acquiring base WRITE lock (blocks concurrent rebuilds/validations)..." >&2

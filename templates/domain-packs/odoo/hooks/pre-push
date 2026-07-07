@@ -101,6 +101,12 @@ odoo_unvalidated_ack_or_block() {
 push_refs="$(cat)"
 zero=0000000000000000000000000000000000000000
 mods=""
+# Runtime-relevant files OUTSIDE custom-addons/ that can break the odoo.sh build/runtime
+# even though they touch zero modules (RED2-3): a bumped/broken python dep or a changed
+# build image/compose file. Tracked separately from $mods so an empty module scope caused
+# by ONLY this class of change is never mistaken for "nothing relevant changed" below.
+runtime_files=""
+runtime_re='^(requirements[^/]*\.txt|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|Pipfile(\.lock)?|pyproject\.toml|setup\.(py|cfg))$'
 while read -r _lref lsha _rref rsha; do
   # skip branch deletions (local sha all-zeros) and empty lines
   case "${lsha:-}" in ""|"$zero") continue ;; esac
@@ -108,15 +114,20 @@ while read -r _lref lsha _rref rsha; do
     ""|"$zero") commits="$(git -C "$PROJECT" rev-list "$lsha" --not --remotes 2>/dev/null)" ;;  # new branch
     *)          commits="$(git -C "$PROJECT" rev-list "$rsha..$lsha" 2>/dev/null)" ;;
   esac
-  m="$(printf '%s\n' "$commits" | while read -r c; do
+  changed_files="$(printf '%s\n' "$commits" | while read -r c; do
         [ -n "$c" ] && git -C "$PROJECT" diff-tree -r --no-commit-id --name-only "$c" 2>/dev/null
-      done | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p')"
+      done)"
+  m="$(printf '%s\n' "$changed_files" | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p')"
+  r="$(printf '%s\n' "$changed_files" | grep -E "$runtime_re")"
   mods="$mods$m
+"
+  runtime_files="$runtime_files$r
 "
 done <<EOF
 ${push_refs}
 EOF
 mods=$(printf '%s' "$mods" | sed '/^$/d' | sort -u | tr '\n' ' ')
+runtime_files=$(printf '%s' "$runtime_files" | sed '/^$/d' | sort -u | tr '\n' ' ')
 
 # Static manifest-integrity screen (no docker, no harness): a __manifest__.py listing a
 # data/demo file that does not exist fails `odoo -u <module>` and odoo.sh at load.
@@ -140,7 +151,18 @@ if [ -n "$mods" ]; then
   fi
 fi
 
-[ -n "$mods" ] || { echo "[pre-push] no custom-addons changes; skip Odoo validation"; exit 0; }
+if [ -z "$mods" ]; then
+  if [ -n "$runtime_files" ]; then
+    # RED2-3: empty module scope does NOT mean "nothing relevant changed" here — a
+    # runtime-relevant file outside custom-addons/ changed (deps/build image/compose).
+    # Never exit clean-green silently; require the same NOT-VALIDATED ack/block path as
+    # every other "could not actually validate" reason below.
+    echo "[pre-push] ⚠️  runtime-relevant file(s) changed outside custom-addons/ (no module scope to widen validation to): $runtime_files"
+    odoo_unvalidated_ack_or_block "runtime-relevant change outside custom-addons/ scope (no module to validate against): $runtime_files"
+  fi
+  echo "[pre-push] no custom-addons changes; skip Odoo validation"
+  exit 0
+fi
 
 # An explicit environment-only bypass is never enough for changed Odoo modules.
 if [ "${SKIP_ODOO_VALIDATE:-0}" = "1" ]; then
@@ -175,18 +197,25 @@ if [ -x "$HARNESS/check-inherited-field-overlap.py" ]; then
   ( cd "$PROJECT" && python3 "$HARNESS/check-inherited-field-overlap.py" ) || true
 fi
 
-if [ -n "$mods" ] && [ -x "$HARNESS/check-schema-catalog.py" ]; then
-  schema_catalog="$HARNESS/.odoo-schema-catalog.json"
-  if [ -x "$HARNESS/harness-slug.sh" ]; then
-    # shellcheck source=/dev/null
-    . "$HARNESS/harness-slug.sh"
-    schema_catalog="$HARNESS/.warm-base.$(harness_proj_slug "$PROJECT").${ODOO_BASE_DB:-base}.schema-catalog.json"
-  fi
-  # shellcheck disable=SC2086  # $mods is an intentional space-separated module list.
-  if ! ( cd "$PROJECT" && ODOO_SCHEMA_CATALOG="$schema_catalog" python3 "$HARNESS/check-schema-catalog.py" --modules $mods --strict ); then
-    echo "[pre-push] ❌ BLOCKED: schema catalog screen found invalid model/field references (see above)."
-    echo "[pre-push]     Rebuild the warm base/catalog, fix the reference, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
-    exit 1
+if [ -n "$mods" ]; then
+  if [ -x "$HARNESS/check-schema-catalog.py" ]; then
+    schema_catalog="$HARNESS/.odoo-schema-catalog.json"
+    if [ -x "$HARNESS/harness-slug.sh" ]; then
+      # shellcheck source=/dev/null
+      . "$HARNESS/harness-slug.sh"
+      schema_catalog="$HARNESS/.warm-base.$(harness_proj_slug "$PROJECT").${ODOO_BASE_DB:-base}.schema-catalog.json"
+    fi
+    # shellcheck disable=SC2086  # $mods is an intentional space-separated module list.
+    if ! ( cd "$PROJECT" && ODOO_SCHEMA_CATALOG="$schema_catalog" python3 "$HARNESS/check-schema-catalog.py" --modules $mods --strict ); then
+      echo "[pre-push] ❌ BLOCKED: schema catalog screen found invalid model/field references (see above)."
+      echo "[pre-push]     Rebuild the warm base/catalog, fix the reference, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
+      exit 1
+    fi
+  else
+    # RED2-4: this lane is BLOCKING when it runs; a missing/non-executable script must
+    # never silently drop that coverage. Mirror verify-machinery.sh's LOUD NOT-VALIDATED
+    # scanner-absence marker instead of a bare no-op `if`.
+    echo "[pre-push] NOT-VALIDATED (scanner check-schema-catalog.py unavailable): schema/model-field reference screen did NOT run for changed modules ($mods) — 'push validated' does NOT imply 'schema-catalog-checked'. Restore check-schema-catalog.py at \$HARNESS to close this gap."
   fi
 fi
 
