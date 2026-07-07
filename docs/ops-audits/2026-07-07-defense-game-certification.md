@@ -41,17 +41,26 @@ quality-uniformity. (git-exec RCE 클래스는 재스윕서 **여전히 닫힘**
 - **(iii) LATENT/LOW**: RED17b-1(매니페스트 범프 폴백 forgeable glob, 비보안) · slug 48bit 절단(non-load-
   bearing) · 유지보수성 중복(HMAC/safe-base mirror, comment-bound drift가드).
 - **(iv) FAIL-CLOSED-ANNOYANCE**: binding-verdict.env 단일슬롯 다중-ref(RED10-2, 안전방향 오거부).
-- **(v) STILL-OPEN-ACTIONABLE (carry-over, 1건)**: **RED17b-2 [HIGH]** — odoo push-tier docker 하네스
-  (`docker-compose.validate.yml`)가 push된 커밋 git-tree가 아닌 **라이브 작업트리**(`${PROJECT_ADDONS}` bind-
-  mount)를 검증. 소스트리 락 없음(harness-lock은 warm-base DB만) → ~95s~2min 검증창 동안 same-UID/단순
-  동시편집이 실제 push와 다른 바이트를 검증케 함(TOCTOU) → 실 커밋에 false "✅ validation passed". auditor
-  CHECK3는 이 odoo 하네스를 모름. **미수정**. 수정 스케치: 라이브마운트 대신 `git archive $lsha`/`git worktree
-  add --detach`로 pushed-tree export. R1~R7 미조사 각도, 최종 스윕서 발견.
+- **(v) STILL-OPEN-ACTIONABLE**: **없음.** (직전 carry-over였던 RED17b-2는 R9서 FIXED — 아래.)
+
+### R9 — RED17b-2 FIXED (사용자 지시로 carry-over까지 fix 후 병합)
+- **RED17b-2 [HIGH, FIXED, b8fba01]**: odoo push-tier 하네스가 라이브 작업트리 아닌 **push된 커밋의 불변
+  스냅샷**을 검증(HARNESS_VALIDATE_REF, pre-push가 pushed local sha thread). serve.sh는 의도적 라이브라 불변.
+- **3라운드 적대경화**(라이브 병합 전 각 취약점 차단): v1 `git archive|tar`→RED18이 **git-archive smudge
+  필터 실행 = 신규 git-exec RCE** 적발(archive엔 --attr-source 없음)→기각. v2 `ls-tree`+`cat-file blob`
+  (filter-immune)→RED18b가 **path-traversal(`..`엔트리가 스냅샷 밖 하네스 스크립트에 executable 안착=자기전파
+  백도어)+symlink-escape** 적발→기각. v3(채택)→cat-file raw + `..`/절대/non-custom-addons 거부 + symlink/
+  submodule 엔트리 거부 + canonicalize-under-$dest 구조검증 + fail-closed. **RED18c 독립 재공격 GO**(전 변형
+  차단·mode-disguise 무효·filter-immunity 유지). 각 층 revert→FAIL + discriminating positive-control 테스트.
+- 최종 스위트 **413 passed / 1 skipped**.
+- **follow-on(RED17b-2 범위 밖)**: `validate-odoo.sh`(pre-push 경로 아닌 구 CI-slice)는 아직 라이브마운트 —
+  동종·저위험, 후속 티켓.
 
 ## 수렴 판정
-**8라운드 겨냥 섹션 전부 수렴(FIXED, 재스윕 견고). carry-over (v) 1건(RED17b-2) — 데드라인(05:00) 경과 +
-세션한도로 게임 wrap-up, follow-on 항목으로 이관.** 이 게임은 same-UID 예방을 주장하지 않으며(PRESENCE≠TRUTH),
-탐지(auditor)+정직문서화를 백스톱으로 삼는다.
+**8라운드 겨냥 섹션 전부 + carry-over(RED17b-2)까지 FIXED. 남은 STILL-OPEN-ACTIONABLE 없음.** same-UID 예방은
+주장 안 함(PRESENCE≠TRUTH) — 탐지(out-of-band auditor)+정직문서화가 백스톱. git-exec RCE 클래스 닫힘 유지
+(R9 archive-RCE 회귀도 병합 전 차단).
 
 ## 병합
-전 산출물 `wt/ops-defense-20260707`에 격리. **main 병합은 사용자 승인 후**(#5). 미푸시.
+사용자 승인(carry-over fix 후 병합)에 따라 main으로 ff 병합 + 라이브 검증. 브랜치 HEAD `b8fba01` (base 4ab3437,
+12커밋).
