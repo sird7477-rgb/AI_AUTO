@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
@@ -32,6 +34,29 @@ def state_dir() -> Path:
     home = Path(os.environ.get("HOME", "")).expanduser()
     xdg = Path(os.environ.get("XDG_STATE_HOME", home / ".local" / "state")).expanduser()
     return xdg / "ai-auto" / "agent-watchdog"
+
+
+@contextlib.contextmanager
+def _state_lock():
+    # RED3-3/3-4: load_*/save_* is a read-modify-write; os.replace only makes the WRITE atomic,
+    # not the transaction. Under concurrent subagents two writers of DIFFERENT keys can
+    # interleave and silently drop one. Serialize the whole cycle on an exclusive flock over a
+    # lock file in the state dir. Degrades to no-lock only if the dir can't be created.
+    try:
+        sd = state_dir()
+        sd.mkdir(parents=True, exist_ok=True)
+        lf = open(sd / ".state.lock", "w")
+    except OSError:
+        yield
+        return
+    try:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        finally:
+            lf.close()
 
 
 def registry_path() -> Path:
@@ -141,7 +166,7 @@ def parse_reset_at(text: str, current: float) -> float | None:
     # or "resets 3:00amber alert" -- as a meridiem suffix and schedule a bogus resume. The
     # \b requires "am"/"pm" (or, when absent, the minutes) to end at a word boundary.
     match = re.search(
-        r"resets\s+(?:at\s+)?([0-2]?[0-9]):([0-5][0-9]) ?([ap]m)?\b",
+        r"resets\s+(?:at\s+)?([0-2]?[0-9]):([0-5][0-9])[ \t]*([ap]m)?\b",
         text,
         flags=re.IGNORECASE,
     )
@@ -410,30 +435,36 @@ def save_ledger(data: dict[str, Any]) -> None:
 
 
 def cmd_ledger_record(args: argparse.Namespace) -> int:
-    data = load_ledger()
-    rec = data["records"].get(args.key, {})  # idempotent: same key updates, never duplicates
+    with _state_lock():
+        data = load_ledger()
+        rec = data["records"].get(args.key, {})  # idempotent: same key updates, never duplicates
+        # RED3-2: do NOT resurrect an already-resolved record (record -> done -> re-record must
+        # not make completed work due again). A terminal status stays terminal unless --reopen.
+        if rec.get("status") in ("done", "exhausted") and not getattr(args, "reopen", False):
+            print(f"{args.key}: already {rec['status']}; not re-queued (use --reopen to force)")
+            return 0
     # Sanity ceiling (red-review #6): a mis-parsed reset far in the future must not become an
     # (effectively) infinite wait. Clamp not_before to now + max_wait; the resume protocol
     # re-checks the live limit state after the wake, so an early clamp is safe (it re-records
     # if still limited) while a bad parse can never freeze recovery forever.
-    nb = None
-    if args.reset_epoch is not None:
-        _rec_now = args.now if getattr(args,'now',None) is not None else now()
-        nb = min(args.reset_epoch + args.epsilon, _rec_now + args.max_wait_seconds)
-    else:
-        nb = rec.get("not_before")
-    rec.update({
-        "key": args.key,
-        "payload": args.payload if args.payload is not None else rec.get("payload", ""),
-        "reset_epoch": args.reset_epoch if args.reset_epoch is not None else rec.get("reset_epoch"),
-        "not_before": nb,
-        "max_retries": args.max_retries,
-        "retry_count": rec.get("retry_count", 0),
-        "status": "pending",
-        "updated_at": now(),
-    })
-    data["records"][args.key] = rec
-    save_ledger(data)
+        nb = None
+        if args.reset_epoch is not None:
+            _rec_now = args.now if getattr(args, "now", None) is not None else now()
+            nb = min(args.reset_epoch + args.epsilon, _rec_now + args.max_wait_seconds)
+        else:
+            nb = rec.get("not_before")
+        rec.update({
+            "key": args.key,
+            "payload": args.payload if args.payload is not None else rec.get("payload", ""),
+            "reset_epoch": args.reset_epoch if args.reset_epoch is not None else rec.get("reset_epoch"),
+            "not_before": nb,
+            "max_retries": args.max_retries,
+            "retry_count": rec.get("retry_count", 0),
+            "status": "pending",
+            "updated_at": now(),
+        })
+        data["records"][args.key] = rec
+        save_ledger(data)
     print(f"recorded {args.key} (not_before={rec.get('not_before')}, retries={rec['retry_count']}/{rec['max_retries']})")
     return 0
 
@@ -457,18 +488,19 @@ def cmd_ledger_due(args: argparse.Namespace) -> int:
 
 
 def cmd_ledger_done(args: argparse.Namespace) -> int:
-    data = load_ledger()
-    rec = data["records"].get(args.key)
-    if not rec:
-        print(f"no ledger record: {args.key}", file=sys.stderr)
-        return 1
-    if args.retried:
-        rec["retry_count"] = rec.get("retry_count", 0) + 1
-        rec["status"] = "pending" if rec["retry_count"] < rec.get("max_retries", 3) else "exhausted"
-    else:
-        rec["status"] = "done"
-    rec["updated_at"] = now()
-    save_ledger(data)
+    with _state_lock():
+        data = load_ledger()
+        rec = data["records"].get(args.key)
+        if not rec:
+            print(f"no ledger record: {args.key}", file=sys.stderr)
+            return 1
+        if args.retried:
+            rec["retry_count"] = rec.get("retry_count", 0) + 1
+            rec["status"] = "pending" if rec["retry_count"] < rec.get("max_retries", 3) else "exhausted"
+        else:
+            rec["status"] = "done"
+        rec["updated_at"] = now()
+        save_ledger(data)
     print(f"{args.key}: {rec['status']} (retries={rec.get('retry_count',0)}/{rec.get('max_retries',3)})")
     return 0
 
@@ -537,6 +569,7 @@ def parser() -> argparse.ArgumentParser:
     lr.add_argument("--max-wait-seconds", type=float, default=43200.0, help="clamp not_before to now+this (guard a mis-parsed far-future reset; default 12h)")
     lr.add_argument("--max-retries", type=int, default=3)
     lr.add_argument("--now", type=float, default=None, help="override current epoch (testing)")
+    lr.add_argument("--reopen", action="store_true", help="re-queue even if the record is done/exhausted")
     lr.set_defaults(func=cmd_ledger_record)
 
     ld = sub.add_parser("ledger-due", help="list pending records past not_before with retries left (exit 3 if none)")

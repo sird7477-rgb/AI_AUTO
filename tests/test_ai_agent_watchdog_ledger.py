@@ -44,3 +44,20 @@ def test_done_removes_from_due(tmp_path):
     wd("ledger-record", "--key", "k", "--reset-epoch", "2000000000", "--now", "1999990000")
     wd("ledger-done", "--key", "k")
     assert wd("ledger-due", "--now", "2000000100").returncode == 3
+
+
+def test_done_record_not_resurrected_by_rerecord(tmp_path):
+    # RED3-2: record -> done -> re-record same key must NOT make completed work due again.
+    wd = _wd(tmp_path)
+    wd("ledger-record", "--key", "k", "--reset-epoch", "1999990000", "--now", "1999990000")
+    wd("ledger-done", "--key", "k")
+    wd("ledger-record", "--key", "k", "--reset-epoch", "1999990000", "--now", "1999990000")
+    assert wd("ledger-due", "--now", "2000100000").returncode == 3  # still done, not re-queued
+
+
+def test_reopen_forces_requeue(tmp_path):
+    wd = _wd(tmp_path)
+    wd("ledger-record", "--key", "k", "--reset-epoch", "1999990000", "--now", "1999990000")
+    wd("ledger-done", "--key", "k")
+    wd("ledger-record", "--key", "k", "--reset-epoch", "1999990000", "--now", "1999990000", "--reopen")
+    assert wd("ledger-due", "--now", "2000100000").returncode == 0  # reopened -> due

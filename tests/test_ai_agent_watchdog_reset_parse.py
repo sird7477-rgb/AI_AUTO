@@ -113,3 +113,10 @@ def test_parse_reset_cli_pm_banner_and_seconds():
 def test_parse_reset_cli_no_match_exits_1():
     r = _cli([], stdin="no limits mentioned here")
     assert r.returncode == 1
+
+
+@pytest.mark.parametrize("text", ["resets 11:20  PM", "resets 11:20\tPM", "resets 11:20 \t pm"])
+def test_multi_space_or_tab_before_meridiem_still_parses_pm(text):
+    # RED3-1: 2+ spaces / a tab before am/pm must NOT silently drop the meridiem (which would
+    # schedule a wake ~12h off). Must parse to 23:20 (or return None), never a wrong 11:20.
+    assert _hhmm(WD.parse_reset_at(text, CUR)) == "2026-07-07 23:20"
