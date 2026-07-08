@@ -60,7 +60,10 @@ set -euo pipefail
 # Usage: ai-auto-audit.sh [PROJECT_DIR]     (PROJECT_DIR defaults to the current directory)
 # Exit 0  = clean (no HIGH flag raised; still read the WARN/SKIP lines -- they are findings too).
 # Exit 1  = at least one HIGH flag (see the FLAG lines and the summary).
-# Exit 2  = the auditor itself could not run (bad PROJECT_DIR / not a git repo with a commit).
+# Exit 2  = the auditor itself could not run (bad PROJECT_DIR / not a git repo with a commit /
+#           the hardened git-exec guard REFUSED a hostile repo -- look for a LOUD
+#           "HOSTILE-REPO DETECTED" line, which is a materially different finding from an
+#           ordinary path mistake even though both currently share this exit code).
 
 # Sibling-resolve our own dir the same way review-gate.sh/hooks/post-commit do, so this script
 # is invocable from any cwd/PATH/symlink and always finds its real siblings.
@@ -113,16 +116,55 @@ PROJECT_DIR="$(cd "${PROJECT_DIR_ARG}" 2>/dev/null && pwd)" || {
   exit 2
 }
 
-REPO_ROOT="$(review_git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || true)"
+# RED2-2 finding #6: _review_git_attr_guard (scripts/git-harden.sh) fires on EVERY review_git
+# call regardless of subcommand -- including these two bare entry-point rev-parses -- and
+# refuses (rc 3) with an actionable `review_git: REFUSING -- .../info/attributes binds a
+# filter/diff driver ...` message when it detects a hostile repo (e.g. a planted
+# `.git/info/attributes` RCE vector). Both calls used to route stderr straight to /dev/null, so
+# that message never reached the operator: a genuine hostile-repo detection surfaced as a
+# generic "not a git repository"/exit 2, indistinguishable from an ordinary path mistake --
+# under-alarming the single most security-relevant signal this script can produce. Capture each
+# call's stderr instead of discarding it, so a guard refusal can be told apart and surfaced LOUD.
+AUDIT_TMPDIR="$(mktemp -d 2>/dev/null || true)"
+if [ -n "${AUDIT_TMPDIR}" ]; then
+  trap 'rm -rf "${AUDIT_TMPDIR}" 2>/dev/null || true' EXIT
+fi
+_audit_stderr_capture() {
+  # Path to redirect an entry-point review_git call's stderr into. Falls back to /dev/null
+  # (losing only the loud-surfacing upgrade below, not the underlying fail-closed exit) if a
+  # scratch dir could not be created.
+  if [ -n "${AUDIT_TMPDIR}" ]; then
+    printf '%s/%s\n' "${AUDIT_TMPDIR}" "$1"
+  else
+    printf '/dev/null\n'
+  fi
+}
+_audit_report_hostile_repo_if_guard_refused() {
+  local stderr_file="$1" target="$2"
+  if grep -q 'review_git: REFUSING' "${stderr_file}" 2>/dev/null; then
+    printf '[audit] HOSTILE-REPO DETECTED (LOUD): the hardened git-exec guard REFUSED to operate on %q -- this is a BLOCKED filter/diff-driver RCE attempt (e.g. a planted .git/info/attributes), NOT a path/environment mistake. Guard message:\n' "${target}" >&2
+    sed 's/^/[audit]   /' "${stderr_file}" >&2
+    return 0
+  fi
+  return 1
+}
+
+_repo_root_stderr="$(_audit_stderr_capture repo-root)"
+REPO_ROOT="$(review_git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>"${_repo_root_stderr}" || true)"
 if [ -z "${REPO_ROOT}" ]; then
-  printf '[audit] ERROR: %q is not inside a git repository.\n' "${PROJECT_DIR}" >&2
+  if ! _audit_report_hostile_repo_if_guard_refused "${_repo_root_stderr}" "${PROJECT_DIR}"; then
+    printf '[audit] ERROR: %q is not inside a git repository.\n' "${PROJECT_DIR}" >&2
+  fi
   exit 2
 fi
 cd "${REPO_ROOT}"
 
-HEAD_SHA="$(review_git rev-parse HEAD 2>/dev/null || true)"
+_head_sha_stderr="$(_audit_stderr_capture head-sha)"
+HEAD_SHA="$(review_git rev-parse HEAD 2>"${_head_sha_stderr}" || true)"
 if [ -z "${HEAD_SHA}" ]; then
-  printf '[audit] ERROR: %q has no HEAD commit (empty repo) -- nothing to audit yet.\n' "${REPO_ROOT}" >&2
+  if ! _audit_report_hostile_repo_if_guard_refused "${_head_sha_stderr}" "${REPO_ROOT}"; then
+    printf '[audit] ERROR: %q has no HEAD commit (empty repo) -- nothing to audit yet.\n' "${REPO_ROOT}" >&2
+  fi
   exit 2
 fi
 
@@ -210,7 +252,18 @@ check_staleness() {
     return
   fi
   if [ "${current}" = "${recorded}" ]; then
-    pass_check "${check}" "recorded binding_hash matches the recomputed HEAD range hash (the verdict's range covers HEAD)"
+    # RED2-2 finding #1: this PASS's range trust rests on review_binding_committed_payload's
+    # base-resolution fallback chain (@{u} first, else the empty tree -- see
+    # review-gate-binding.sh's own in-line "documented residual, not a closed hole" comment).
+    # @{u} is an ordinary local ref, same-UID-settable via `git branch --set-upstream-to=<decoy>`
+    # or a raw `update-ref`; a same-UID actor who points it at a descendant of HEAD before this
+    # check runs collapses merge-base(HEAD, decoy) back to HEAD, making the range-diff section
+    # empty and any earlier unreviewed commit's content vanish from the very hash this PASS calls
+    # "matches" -- reproduced end-to-end in .ops-game2/R1-red2-auditor.md finding #1. Say so
+    # every time, not just when review-gate-binding.sh's own comments happen to be read: an
+    # honest PASS here is only as good as @{u}, and this check cannot tell a genuine upstream
+    # from a same-UID-planted decoy.
+    pass_check "${check}" "recorded binding_hash matches the recomputed HEAD range hash (the verdict's range covers HEAD) -- CAVEAT: this range's base resolves via '@{u}' (or the empty-tree fallback), an ordinary local ref that is same-UID-forgeable (git branch --set-upstream-to=<decoy>); a genuine same-UID @{u} forge collapsing the range to hide an unreviewed commit is NOT caught by this check. PASS reflects internal consistency with @{u}, not proof against that forgery."
   else
     flag_high "${check}" "recorded binding_hash (${recorded:0:16}...) does NOT match the recomputed range hash for HEAD ${HEAD_SHA:0:12} (${current:0:16}...) -- stale/mismatched proof: the tree moved on without a fresh review covering it."
   fi
@@ -283,7 +336,7 @@ check_auth_drift() {
   for marker in "${REVIEW_STATE_DIR}"/*.disabled; do
     [ -e "${marker}" ] || continue
     found=1
-    local reviewer_name marker_hmac_stored chronic reason chronic_file chronic_file_reason chronic_file_count
+    local reviewer_name marker_hmac_stored chronic reason chronic_file chronic_file_reason chronic_file_count hist_disable_count
     reviewer_name="$(basename "${marker}" .disabled)"
     marker_hmac_stored="$(sed -n 's/^marker_hmac=//p' "${marker}" | head -n1)"
     chronic="$(sed -n 's/^chronic_count=//p' "${marker}" | head -n1)"
@@ -308,6 +361,36 @@ check_auth_drift() {
         && [ -n "${chronic}" ] && [ "${chronic}" != "${chronic_file_count}" ]; then
         flag_high "${check}" "reviewer '${reviewer_name}': .disabled chronic_count=${chronic} disagrees with sibling ${chronic_file} count=${chronic_file_count} for the same reason='${reason}' -- one was edited without the other."
       fi
+    fi
+
+    # RED2-2 chronic-RESET erasure detection (the CHECK4 gap R1-red2-auditor.md's finding #2
+    # named: review-gate.sh's own RED9-2 comment calls for exactly this -- "an out-of-band
+    # auditor tracking chronic_file history/deltas independently"). A same-UID attacker who
+    # deletes BOTH the .disabled marker AND its .chronic side file, then calls the real
+    # disable_reviewer() once more, gets a fresh, validly-signed chronic_count=1 marker that the
+    # checks above cannot distinguish from a reviewer's genuine first-ever disable -- the prior
+    # streak (e.g. 12) is completely erased with no HMAC to forge, because there is nothing left
+    # to compare against. scripts/run-ai-reviews.sh's disable_reviewer() now appends a durable,
+    # append-only "event":"reviewer_disable" line to .omx/review-history.log on every disable
+    # (a reset-and-redisable call included), so a reset LEAVES A TRAIL even though the side
+    # files themselves were wiped: the number of disable-event lines recorded for this exact
+    # reviewer+reason pair only ever grows, while a wiped-and-fresh marker's chronic_count drops
+    # back to 1. current_chronic_count < recorded_disable_event_count for the same reviewer+
+    # reason is exactly that discontinuity -- flag it.
+    if [ -n "${reason}" ] && [ -f "${HISTORY_FILE}" ]; then
+      case "${chronic}" in
+        ''|*[!0-9]*) : ;; # non-numeric/absent chronic_count -- nothing to compare, skip silently
+        *)
+          hist_disable_count="$(grep -F '"event":"reviewer_disable"' "${HISTORY_FILE}" 2>/dev/null \
+            | grep -F "\"reviewer\":\"${reviewer_name}\"" \
+            | grep -F "\"reason\":\"${reason}\"" \
+            | grep -c '.' 2>/dev/null || true)"
+          case "${hist_disable_count}" in ''|*[!0-9]*) hist_disable_count=0 ;; esac
+          if [ "${hist_disable_count}" -gt 0 ] && [ "${chronic}" -lt "${hist_disable_count}" ]; then
+            flag_high "${check}" "reviewer '${reviewer_name}': current chronic_count=${chronic} (reason='${reason}') is LOWER than the ${hist_disable_count} disable-event(s) already recorded for this reviewer+reason in the durable ${HISTORY_FILE} trail -- consistent with a chronic-reset erasure (the .disabled/.chronic side files were deleted and re-disabled fresh, silently dropping a genuine chronic streak, whether by attack or by an unlogged manual reset). See ${HISTORY_FILE} for the true event count."
+          fi
+          ;;
+      esac
     fi
   done
   [ "${found}" -eq 1 ] || skip_check "${check}" "no *.disabled markers present in ${REVIEW_STATE_DIR}"

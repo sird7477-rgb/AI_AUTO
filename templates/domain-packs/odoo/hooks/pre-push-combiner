@@ -52,9 +52,18 @@ fi
 # --- gate 2: odoo domain-pack validation (per-worktree materialized reference) -------------
 top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 ODOO_HOOK="${top:+$top/.omx/domain-packs/odoo/hooks/pre-push}"
-if [ -n "$ODOO_HOOK" ] && [ -f "$ODOO_HOOK" ] && [ -x "$ODOO_HOOK" ]; then
-  printf '%s\n' "$refs" | "$ODOO_HOOK" "$@"
-  orc=$?
+if [ -n "$ODOO_HOOK" ] && [ -f "$ODOO_HOOK" ]; then
+  if [ -x "$ODOO_HOOK" ]; then
+    printf '%s\n' "$refs" | "$ODOO_HOOK" "$@"
+    orc=$?
+  else
+    # Present but not executable (e.g. an install that lost the exec bit) must
+    # still run the oracle -- an absent-vs-non-executable distinction that was
+    # previously conflated into one silent skip. Only genuine absence is quiet.
+    printf '[pre-push] WARNING: odoo pack hook present but not executable (%s); running via bash and continuing -- fix the exec bit\n' "$ODOO_HOOK" >&2
+    printf '%s\n' "$refs" | bash "$ODOO_HOOK" "$@"
+    orc=$?
+  fi
   [ "$orc" -ne 0 ] && exit "$orc"
 fi
 

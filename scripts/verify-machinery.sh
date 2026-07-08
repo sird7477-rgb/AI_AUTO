@@ -11306,7 +11306,12 @@ def is_text(f):
 # stash/apply/archive/cat-file (rule 4) ALSO run the in-repo `.gitattributes`+`.git/config`
 # filter driver on worktree blobs — `git status` runs `filter.<x>.clean` on a stat-dirty
 # tracked file (R12 RCE), the write-side (checkout/restore/reset --hard/stash/apply) runs
-# smudge, archive runs export filters, cat-file --filters runs clean. `worktree` (rule 5, R13+R21)
+# smudge, archive runs export filters, cat-file --filters/--textconv runs clean/textconv on the
+# NAMED path/object. `git cat-file blob|-p|<type> <object>` WITHOUT --filters/--textconv (a bare
+# oid, or the rev:path form) is the one exception: it is a pure object-database read (RAW stored
+# bytes, zero conversion — canary-proven, see the `cat_file_object_read` guard below) and is
+# exempted from rule 4 there; only a `--textconv`/`--filters` cat-file call stays guarded.
+# `worktree` (rule 5, R13+R21)
 # runs SMUDGE while `git worktree add` checks out the new tree (tools/ai-worktree, auto-invoked
 # by the tmux hook) — so `worktree add` MUST carry --attr-source/review_git. R21: `worktree add`/
 # `checkout` ALSO run the repo's post-checkout HOOK (and honor a hostile core.hooksPath) as the
@@ -11323,7 +11328,10 @@ def is_text(f):
 # sees why it is or is not in SUBS. GUARDED = must carry --attr-source/review_git:
 #   (a) clean-filter over worktree blobs .... status, diff .................. GUARDED (in SUBS)
 #   (b) smudge-filter writes worktree blobs . worktree(add) ................. GUARDED (rule 5)
-#        checkout/restore/reset/stash/apply/archive/cat-file: NO shipped site — pre-emptive in SUBS
+#        checkout/restore/reset/stash/apply/archive: NO shipped site — pre-emptive in SUBS
+#        cat-file: 3 shipped sites (validate-warm/full/odoo.sh), all bare `cat-file blob
+#          "$oid"` object reads — EXEMPT (filter-immune, see cat_file_object_read); a
+#          --textconv/--filters cat-file call would still be GUARDED (in SUBS)
 #        rebase (safe-push.sh): smudge driver must live in YOUR local .git/config, not
 #          attacker CONTENT -> not a hostile-repo RCE -> intentionally NOT guarded
 #   (b2) post-checkout HOOK / core.hooksPath . worktree(add), checkout ...... GUARDED hooks (rules 4/5)
@@ -11335,7 +11343,10 @@ def is_text(f):
 #   (d) FILTER-SAFE, intentionally NOT guarded (read no worktree blob / run no attr driver):
 #        rev-parse, config/`-c`, init, hash-object(--no-filters), merge-base,
 #        merge-file, rev-list, remote, push, fetch, branch, commit, diff-tree, show-ref,
-#        show-toplevel/show-current(options), worktree list.
+#        show-toplevel/show-current(options), worktree list, ls-tree (pure tree-object read —
+#          names+oids straight from a tree object, no blob content, no filter driver; never
+#          added to SUBS, so it is not even a matchable subcommand token here — same class as
+#          rev-parse/merge-base, not a rule-4 exemption like cat-file).
 # R22 (post-index-change HOOK class): the hook-RCE surface is BIGGER than R21 modeled. `git status`
 # — and reset/restore/stash/apply — FIRE the repo's `post-index-change` HOOK when the index refresh
 # rewrites the on-disk index (canary-proven: a stale-index directory-copy's first `git status`
@@ -11540,10 +11551,33 @@ for f in sorted(targets):
         # FUTURE site of the currently-zero-site subcommands.
         if sub in ("status", "checkout", "restore", "reset", "stash", "apply", "archive", "cat-file"):
             via_review_git = "review_git" in m.group(0)
-            if "--attr-source=" not in line and not via_review_git:
-                violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
-            if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
-                violations.append("%s: worktree `git %s` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
+            # R9-DRIFT / RED-4 fix (2026-07-08): `git cat-file blob|-p|commit|tree|tag <object>`
+            # -- a bare oid OR the rev:path form `HEAD:<path>` -- is a PURE OBJECT-DATABASE read:
+            # git resolves the (possibly rev:path) reference to an oid and streams the RAW stored
+            # bytes straight out of the object store. There is no worktree/index context for a
+            # bare oid, and even the rev:path form never invokes the clean filter, the smudge
+            # filter, or core.fsmonitor -- canary-verified LIVE (twice): a planted `.gitattributes`
+            # + `filter.evil.clean` driver and a `core.fsmonitor` hook program both stayed
+            # completely silent across `git cat-file blob <oid>` AND `git cat-file blob
+            # HEAD:<path>`, whereas `git add`/`git commit` on the same tree DID fire the clean
+            # filter as expected (see .ops-game2/R1-red4-quality-gitregression.md, RED-1
+            # self-refutation). This is DISTINCT from `git cat-file --textconv <object>` /
+            # `--filters <path>`, which EXPLICITLY request the textconv/clean driver be run on
+            # that object (per the class-(c)/(a) comment above: "cat-file --filters runs clean")
+            # -- those forms are excluded from this exemption and stay fully guarded below.
+            # `git ls-tree` is the analogous pure tree-object read (lists names+oids straight from
+            # a tree object, no blob content, no filter) and for the same reason has never been
+            # added to SUBS at all -- it lives in class (d) FILTER-SAFE alongside rev-parse/
+            # merge-base/show-ref, so no exemption code is needed for it here; it simply never
+            # matches the guard's INVOKE pattern as a flaggable subcommand.
+            cat_file_object_read = (
+                sub == "cat-file" and "--textconv" not in line and "--filters" not in line
+            )
+            if not cat_file_object_read:
+                if "--attr-source=" not in line and not via_review_git:
+                    violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
+                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
+                    violations.append("%s: worktree `git %s` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
             # HOOKS (R21): `git checkout` runs the repo post-checkout hook and honors a hostile
             # repo-local core.hooksPath as the operator -> RCE. git-scrub does NOT defend
             # core.hooksPath (repo-local config, not env-overridden) so sources_scrub does NOT

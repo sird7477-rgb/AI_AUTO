@@ -248,10 +248,20 @@ post_commit_upstream_ref() {
 post_commit_range_diff() {
   local base="$1"
   shift
+  # R9-DRIFT / RED-4 fix (2026-07-08): bake --no-ext-diff --no-textconv into THIS one
+  # chokepoint rather than relying on every caller's "$@" to supply them. Before this fix the
+  # static drift-guard could not see through the "$@" indirection to the 3 real call sites
+  # (some pass --name-status/--stat -- already non-patch and exempt; one, write_diff's
+  # unpushed-range branch, passes --no-ext-diff --no-textconv itself) and flagged this line as
+  # an unhardened patch-producing `git diff` -- a guard false positive, but also a genuine
+  # latent gap: a FUTURE caller requesting patch content here without remembering the flags
+  # would have been a real unhardened site with nothing to catch it. Baking the flags in here
+  # closes that gap unconditionally: harmless no-op on the --name-status/--stat (non-patch)
+  # call sites, and no longer dependent on any caller remembering them for the patch case.
   if [ "${base}" = "$(review_binding_empty_tree)" ]; then
-    review_git diff "$@" "${base}" HEAD 2>/dev/null
+    review_git diff --no-ext-diff --no-textconv "$@" "${base}" HEAD 2>/dev/null
   else
-    review_git diff "$@" "${base}...HEAD" 2>/dev/null
+    review_git diff --no-ext-diff --no-textconv "$@" "${base}...HEAD" 2>/dev/null
   fi
 }
 
@@ -445,7 +455,9 @@ write_diff() {
       echo "### Unpushed Range Diff ($(post_commit_range_label "${up}"))"
       echo
       echo '```diff'
-      post_commit_range_diff "${up}" --no-ext-diff --no-textconv
+      # --no-ext-diff/--no-textconv are now baked into post_commit_range_diff itself; no
+      # longer passed here (see its R9-DRIFT/RED-4 fix comment).
+      post_commit_range_diff "${up}"
       echo '```'
       echo
     fi

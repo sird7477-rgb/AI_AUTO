@@ -230,6 +230,22 @@ if [ -n "$mods" ]; then
       echo "[pre-push]     Fix the path/file, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
       exit 1
     fi
+  else
+    # RED-VG-1: a missing/renamed script here must never be a silent no-op --
+    # mirror check-schema-catalog.py's LOUD NOT-VALIDATED marker below (RED2-4)
+    # exactly: print-and-continue, not a forced exit. This screen's own
+    # docstring notes the warm-base validation (later, once docker+HARNESS are
+    # configured) independently catches the same missing-data/demo-file class,
+    # so it is backstopped there just like check-schema-catalog.py; and when
+    # HARNESS is unset or docker is unavailable, the existing "ODOO_HARNESS_DIR
+    # not set" / "docker unavailable" ack-or-block gates further down already
+    # fail-closed the whole push in that configuration on their own. Routing
+    # THIS marker through odoo_unvalidated_ack_or_block as well would exit the
+    # hook here unconditionally (block, or ack-and-exit-0) before those later
+    # stages ever run -- silently dropping their own distinct coverage/messages
+    # any time this one optional screen happens to be absent, which is strictly
+    # worse than today's fixed behavior below, not better.
+    echo "[pre-push] NOT-VALIDATED (scanner check-manifest-files.py unavailable): manifest-file-existence screen did NOT run for changed modules ($mods) -- 'push validated' does NOT imply 'manifest-files-checked'. Restore check-manifest-files.py next to this hook or at \$HARNESS to close this gap."
   fi
 fi
 

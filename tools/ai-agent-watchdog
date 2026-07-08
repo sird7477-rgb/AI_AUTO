@@ -282,7 +282,6 @@ def scan_entry(entry: dict[str, Any], dry_run: bool) -> str:
 
 
 def cmd_register(args: argparse.Namespace) -> int:
-    data = load_registry()
     resume = str(Path(args.resume_file).expanduser())
     if not Path(resume).is_file():
         print(f"resume file not found: {resume}", file=sys.stderr)
@@ -294,32 +293,40 @@ def cmd_register(args: argparse.Namespace) -> int:
         print("--relaunch-json must be a non-empty JSON string array", file=sys.stderr)
         return 2
     current = now()
-    data["entries"][args.pane] = {
-        "pane": args.pane,
-        "runtime": args.runtime,
-        "resume_file": resume,
-        "pane_text_file": args.pane_text_file,
-        "heartbeat_file": args.heartbeat_file,
-        "heartbeat_max_age_seconds": args.heartbeat_max_age_seconds,
-        "liveness_file": args.liveness_file,
-        "stall_seconds": args.stall_seconds,
-        "operation_silence_seconds": args.operation_silence_seconds,
-        "idle_pattern": args.idle_pattern,
-        "mission_complete_file": args.mission_complete_file,
-        "rate_limit_seconds": args.rate_limit_seconds,
-        "max_actions": args.max_actions,
-        "reset_epsilon_seconds": args.reset_epsilon_seconds,
-        "relaunch_argv": relaunch_argv,
-        "max_relaunch": args.max_relaunch,
-        "relaunch_timeout_seconds": args.relaunch_timeout_seconds,
-        "last_changed_at": current - args.seed_silence_seconds,
-        "last_fingerprint": args.seed_fingerprint,
-        "idle_stable_count": 0,
-        "action_count": 0,
-        "last_action_at": 0,
-        "relaunch_count": 0,
-    }
-    save_registry(data)
+    # RED-live-1: this whole load->mutate->save cycle is the registry's
+    # read-modify-write. Without the lock, a `register` racing a concurrent
+    # daemon scan iteration (run_scan) can load stale data, and whichever of
+    # the two saves lands last silently clobbers the other's write (the
+    # just-registered pane, or the scan's in-flight mutations, is dropped with
+    # no error). Serialize on the same flock used for the ledger's RMW.
+    with _state_lock():
+        data = load_registry()
+        data["entries"][args.pane] = {
+            "pane": args.pane,
+            "runtime": args.runtime,
+            "resume_file": resume,
+            "pane_text_file": args.pane_text_file,
+            "heartbeat_file": args.heartbeat_file,
+            "heartbeat_max_age_seconds": args.heartbeat_max_age_seconds,
+            "liveness_file": args.liveness_file,
+            "stall_seconds": args.stall_seconds,
+            "operation_silence_seconds": args.operation_silence_seconds,
+            "idle_pattern": args.idle_pattern,
+            "mission_complete_file": args.mission_complete_file,
+            "rate_limit_seconds": args.rate_limit_seconds,
+            "max_actions": args.max_actions,
+            "reset_epsilon_seconds": args.reset_epsilon_seconds,
+            "relaunch_argv": relaunch_argv,
+            "max_relaunch": args.max_relaunch,
+            "relaunch_timeout_seconds": args.relaunch_timeout_seconds,
+            "last_changed_at": current - args.seed_silence_seconds,
+            "last_fingerprint": args.seed_fingerprint,
+            "idle_stable_count": 0,
+            "action_count": 0,
+            "last_action_at": 0,
+            "relaunch_count": 0,
+        }
+        save_registry(data)
     event("register", args.pane, "registered", {"runtime": args.runtime})
     print(f"registered {args.pane}")
     return 0
@@ -334,11 +341,17 @@ def cmd_list(_: argparse.Namespace) -> int:
 
 def run_scan(iterations: int, interval: float, dry_run: bool) -> int:
     for index in range(iterations):
-        data = load_registry()
-        for pane, entry in sorted(data["entries"].items()):
-            result = scan_entry(entry, dry_run=dry_run)
-            print(f"{pane}: {result}")
-        save_registry(data)
+        # RED-live-1: lock the full load->mutate->save per iteration (not the
+        # whole daemon lifetime -- the lock must NOT be held across `sleep`,
+        # or a long-running daemon would starve `register`/other scans for the
+        # entire --interval). This is the other unlocked RMW half of the same
+        # registry-clobber race fixed in cmd_register.
+        with _state_lock():
+            data = load_registry()
+            for pane, entry in sorted(data["entries"].items()):
+                result = scan_entry(entry, dry_run=dry_run)
+                print(f"{pane}: {result}")
+            save_registry(data)
         if index + 1 < iterations:
             time.sleep(interval)
     return 0

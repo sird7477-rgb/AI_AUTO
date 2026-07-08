@@ -5,11 +5,28 @@ set -euo pipefail
 BASE_DB="${1:?usage: dump-schema-catalog.sh <base_db> <output_json> <module_set_sha>}"
 OUT="${2:?usage: dump-schema-catalog.sh <base_db> <output_json> <module_set_sha>}"
 MODULE_SET_SHA="${3:-}"
-tmp="${OUT}.tmp"
 
+# Fail-closed BY CONSTRUCTION (defect: mktemp/trap/fail_loud below all used to
+# run AFTER $OUT was resolved; if mktemp itself died -- e.g. `TMPDIR=/nonexistent`
+# -- `set -e` killed the script before any poisoning machinery was armed,
+# leaving a pre-existing stale-but-valid catalog at $OUT untouched and
+# indistinguishable from a fresh success. check-schema-catalog.py would then
+# silently reuse it.) Poison $OUT to schema:0 IMMEDIATELY, before the first
+# fallible command, and reinforce that via an EXIT trap that fires unless
+# `out_finalized=1` -- set only once $OUT deliberately holds its true final
+# value: the real catalog (success, at the very end) or fail_loud's own
+# detailed poison (which already wrote a better message -- don't clobber it).
+out_finalized=0
+poison_out() {
+  printf '{"schema": 0, "source": "odoo.ir_model_fields", "error": "dump did not complete"}\n' > "$OUT" 2>/dev/null || true
+}
+trap '[ "$out_finalized" = 1 ] || poison_out' EXIT
+poison_out
+
+tmp="${OUT}.tmp"
 psql_csv="$(mktemp)"
 poison=""
-trap 'rm -f "$psql_csv" "$tmp" "$poison"' EXIT
+trap 'rm -f "$psql_csv" "$tmp" "$poison"; [ "$out_finalized" = 1 ] || poison_out' EXIT
 
 # LOUD, fail-closed failure path (defect: a dump failure used to just `set -e`
 # out, leaving whatever catalog previously lived at $OUT (if any) untouched and
@@ -39,6 +56,8 @@ fail_loud() {
     "$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')" > "$poison"
   mv -f "$poison" "$OUT"
   poison=""
+  out_finalized=1   # $OUT now deliberately holds this detailed poison -- the
+                    # EXIT trap must not clobber it with the generic message
   exit 1
 }
 
@@ -105,4 +124,5 @@ print()
 PY
 
 mv "$tmp" "$OUT"
+out_finalized=1
 echo "[schema-catalog] wrote $OUT"
