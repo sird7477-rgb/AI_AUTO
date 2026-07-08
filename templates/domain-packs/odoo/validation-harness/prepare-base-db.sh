@@ -25,6 +25,21 @@ PROJECT="${1:?usage: prepare-base-db.sh <project_repo>}"
 # as before.
 export PROJECT_ADDONS="${PREPARE_BASE_ADDONS_DIR:-$PROJECT/custom-addons}"
 [ -d "$PROJECT_ADDONS" ] || { echo "[base] no custom-addons at $PROJECT_ADDONS" >&2; exit 2; }
+# AUD-RCE1 fix (same class as PREPARE_BASE_ADDONS_DIR above, one field over, WORSE blast
+# radius): requirements.txt content becomes `pip3 install -r` in the Dockerfile build of
+# the SHARED base/base_demo image every later validate-warm/validate-full run reuses --
+# so for a ref-scoped rebuild it must be the REVIEWED ref's requirements.txt, never the
+# live/mutable $PROJECT/requirements.txt (a malicious --index-url, VCS/URL requirement,
+# or poisoned pin in the live tree would otherwise get build-time-executed even though it
+# was never reviewed/committed). validate-full.sh's harness_materialize_tree now
+# materializes the reviewed ref's requirements.txt (if any) as a SIBLING of the snapshot
+# custom-addons dir it already hands over via PREPARE_BASE_ADDONS_DIR, so deriving the
+# default from dirname(PROJECT_ADDONS) picks that snapshot copy up automatically with NO
+# further change needed at the call site -- while an explicit PREPARE_BASE_REQUIREMENTS
+# still wins for a caller that wants to say otherwise. Default (no override at all, the
+# standalone/direct invocation): dirname("$PROJECT/custom-addons") = "$PROJECT", so this
+# is byte-identical to the old "$PROJECT/requirements.txt" behavior.
+export PREPARE_BASE_REQUIREMENTS="${PREPARE_BASE_REQUIREMENTS:-$(dirname "$PROJECT_ADDONS")/requirements.txt}"
 LANGCODE="${ODOO_LOAD_LANGUAGE:-ko_KR}"
 COMPANY_COUNTRY="${ODOO_COMPANY_COUNTRY:-base.kr}"
 # Demo variant (U-A1): ODOO_WITH_DEMO=1 builds a second base named 'base_demo' that
@@ -67,16 +82,26 @@ PY
 echo "[base] full module set: $MODS"
 MODULE_SET_SHA="$(printf '%s' "$MODS" | sha256sum | cut -d' ' -f1)"
 
-# Deps source of truth: install EXACTLY what odoo.sh installs. If the project has a
-# root requirements.txt (U-C1), the local image installs from it (drift-checked vs
+# Deps source of truth: install EXACTLY what odoo.sh installs. If the REVIEWED ref has a
+# root requirements.txt (U-C1) -- $PREPARE_BASE_REQUIREMENTS above, never a direct read
+# of $PROJECT/requirements.txt -- the local image installs from it (drift-checked vs
 # manifests); else fall back to the manifest python deps. This is the Dockerfile
 # "repoint" — the build context's .deps.txt is now requirements.txt content when present.
-if [ -f "$PROJECT/requirements.txt" ]; then
-  tr -d '\r' < "$PROJECT/requirements.txt" | grep -vE '^[[:space:]]*(#|$)' > "$HERE/.deps.txt" || true
-  echo "[base] deps source: $PROJECT/requirements.txt (odoo.sh parity)"
+# FAIL-CLOSED (AUD-RCE1): a ref-scoped rebuild whose reviewed ref genuinely has no
+# requirements.txt hits the `else` branch below -- manifest-derived deps only, ZERO bytes
+# read from the live tree -- rather than silently falling back to the live file. That is
+# a safe state (no extra deps beyond what the reviewed manifests themselves declare), not
+# a loud refusal, because it is indistinguishable from — and exactly as safe as — a
+# project that has simply never needed a requirements.txt (the pre-existing, long-
+# standing default behavior for every caller before this fix).
+if [ -f "$PREPARE_BASE_REQUIREMENTS" ]; then
+  tr -d '\r' < "$PREPARE_BASE_REQUIREMENTS" | grep -vE '^[[:space:]]*(#|$)' > "$HERE/.deps.txt" || true
+  echo "[base] deps source: $PREPARE_BASE_REQUIREMENTS (odoo.sh parity)"
   # Surface drift (do not silently swallow): the build proceeds with requirements.txt
   # as-is, but a manifest dep missing from it WILL break the odoo.sh build. The enforced
   # gate is the standalone `gen-requirements.sh --check` (rc 1); here it is advisory.
+  # (This drift check itself still reads the LIVE $PROJECT tree on both sides -- advisory
+  # only, never feeds .deps.txt/pip, so it is not part of the AUD-RCE1 fix surface.)
   if [ -x "$HERE/gen-requirements.sh" ] && ! "$HERE/gen-requirements.sh" --check "$PROJECT"; then
     echo "[base] WARNING requirements.txt drift detected above (advisory) — regenerate with gen-requirements.sh before pushing to odoo.sh."
   fi
@@ -91,7 +116,7 @@ for m in glob.glob(os.path.join(root,"*","__manifest__.py")):
     except Exception: pass
 print("\n".join(sorted(deps)))
 PY
-  echo "[base] deps source: custom-addons manifests (no root requirements.txt)"
+  echo "[base] deps source: custom-addons manifests (no requirements.txt at $PREPARE_BASE_REQUIREMENTS)"
 fi
 echo "[base] python deps: $(paste -sd' ' "$HERE/.deps.txt" 2>/dev/null || echo none)"
 dc build odoo >/dev/null
