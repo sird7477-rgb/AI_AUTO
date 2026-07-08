@@ -381,6 +381,88 @@ def cmd_parse_reset(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- orchestrator stop-and-go recovery ledger (GAP B / IP-2 minimal core) ------------------
+# A durable, idempotent record of subagent dispatches that hit a session/usage limit and must
+# be re-dispatched after reset. The ORCHESTRATOR (which runs Agent-tool/workflow subagents the
+# tmux daemon cannot see) writes a record on a limit-failure and reads `due` after a wake.
+# Bounded on purpose (Codex review): idempotent by --key (no duplicate resume), max_retries,
+# and a not_before gate so a wake can only resume what is actually past its reset.
+def ledger_path() -> Path:
+    return state_dir() / "recovery-ledger.json"
+
+
+def load_ledger() -> dict[str, Any]:
+    p = ledger_path()
+    if not p.exists():
+        return {"version": 1, "records": {}}
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("records"), dict):
+        raise SystemExit(f"invalid recovery ledger: {p}")
+    return data
+
+
+def save_ledger(data: dict[str, Any]) -> None:
+    p = ledger_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def cmd_ledger_record(args: argparse.Namespace) -> int:
+    data = load_ledger()
+    rec = data["records"].get(args.key, {})  # idempotent: same key updates, never duplicates
+    rec.update({
+        "key": args.key,
+        "payload": args.payload if args.payload is not None else rec.get("payload", ""),
+        "reset_epoch": args.reset_epoch if args.reset_epoch is not None else rec.get("reset_epoch"),
+        "not_before": (args.reset_epoch + args.epsilon) if args.reset_epoch is not None else rec.get("not_before"),
+        "max_retries": args.max_retries,
+        "retry_count": rec.get("retry_count", 0),
+        "status": "pending",
+        "updated_at": now(),
+    })
+    data["records"][args.key] = rec
+    save_ledger(data)
+    print(f"recorded {args.key} (not_before={rec.get('not_before')}, retries={rec['retry_count']}/{rec['max_retries']})")
+    return 0
+
+
+def cmd_ledger_due(args: argparse.Namespace) -> int:
+    data = load_ledger()
+    current = args.now if args.now is not None else now()
+    due = [
+        r for r in data["records"].values()
+        if r.get("status") == "pending"
+        and r.get("retry_count", 0) < r.get("max_retries", 3)
+        and (r.get("not_before") is None or r["not_before"] <= current)
+    ]
+    due.sort(key=lambda r: (r.get("not_before") or 0))
+    if args.json:
+        print(json.dumps(due, sort_keys=True))
+    else:
+        for r in due:
+            print(f"{r['key']}\t{r.get('retry_count',0)}/{r.get('max_retries',3)}\t{r.get('payload','')[:80]}")
+    return 0 if due else 3  # exit 3 = nothing due (distinct from error)
+
+
+def cmd_ledger_done(args: argparse.Namespace) -> int:
+    data = load_ledger()
+    rec = data["records"].get(args.key)
+    if not rec:
+        print(f"no ledger record: {args.key}", file=sys.stderr)
+        return 1
+    if args.retried:
+        rec["retry_count"] = rec.get("retry_count", 0) + 1
+        rec["status"] = "pending" if rec["retry_count"] < rec.get("max_retries", 3) else "exhausted"
+    else:
+        rec["status"] = "done"
+    rec["updated_at"] = now()
+    save_ledger(data)
+    print(f"{args.key}: {rec['status']} (retries={rec.get('retry_count',0)}/{rec.get('max_retries',3)})")
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="External continuity watchdog for tmux-based AI agent panes.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -436,6 +518,24 @@ def parser() -> argparse.ArgumentParser:
     pr.add_argument("--now", type=float, default=None, help="override current epoch (testing)")
     pr.add_argument("--json", action="store_true")
     pr.set_defaults(func=cmd_parse_reset)
+
+    lr = sub.add_parser("ledger-record", help="record a subagent to re-dispatch after a limit reset (idempotent by --key)")
+    lr.add_argument("--key", required=True, help="idempotent dispatch key (e.g. role+prompt-hash)")
+    lr.add_argument("--payload", default=None, help="what to re-dispatch (prompt/ref); free text")
+    lr.add_argument("--reset-epoch", type=float, default=None, help="reset time (epoch) from parse-reset")
+    lr.add_argument("--epsilon", type=float, default=60.0)
+    lr.add_argument("--max-retries", type=int, default=3)
+    lr.set_defaults(func=cmd_ledger_record)
+
+    ld = sub.add_parser("ledger-due", help="list pending records past not_before with retries left (exit 3 if none)")
+    ld.add_argument("--now", type=float, default=None)
+    ld.add_argument("--json", action="store_true")
+    ld.set_defaults(func=cmd_ledger_due)
+
+    ld2 = sub.add_parser("ledger-done", help="mark a record done (or --retried to bump retry_count)")
+    ld2.add_argument("--key", required=True)
+    ld2.add_argument("--retried", action="store_true")
+    ld2.set_defaults(func=cmd_ledger_done)
     return p
 
 
