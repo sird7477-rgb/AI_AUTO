@@ -13,24 +13,51 @@ Fix: when the hook file is present, run it regardless of the exec bit (`bash
 when it had to fall back to the bash-invocation path. A genuinely ABSENT hook (the
 normal "no odoo pack in this worktree" case) is still skipped quietly.
 
-Non-vacuousness: `test_pre_fix_combiner_silently_skips_non_executable_hook`
-re-extracts the exact pre-fix combiner text via `git show HEAD:...` (uncommitted at
-authoring time, so HEAD still holds the pre-fix content), writes it to a scratch
-executable file, and proves it does NOT run the sentinel-writing fake hook and does
-NOT print any WARNING -- i.e. reverting the combiner to HEAD reopens the defect.
+Non-vacuousness: `test_pre_fix_combiner_silently_skips_non_executable_hook` used to
+re-extract the exact pre-fix combiner text via `git show HEAD:...` at test-collection
+time. That only proves anything while HEAD is still the pre-fix commit -- the moment
+the fix is committed, HEAD becomes the FIXED state and `git show HEAD:` silently hands
+back the fixed text, so the "pre-fix must silently skip" assertion fails against a
+perfectly healthy fixed tree (a systemic defect, not specific to this file; see the
+sibling R9-DRIFT/ai-domain-pack test files for the same pattern). Fixed by embedding
+the OLD gate-2 shell snippet as a literal heredoc string below (pinned once against the
+real pre-fix commit, 2209dd6's parent, at authoring time -- never re-read from git at
+test time) and running THAT directly. The CURRENT/fixed combiner is still exercised
+live from the real, on-disk, shipped templates/domain-packs/odoo/hooks/pre-push-combiner
+(see the other tests in this file), so a real future regression is still caught.
 """
 from __future__ import annotations
 
 import os
 import stat
-import subprocess
 from pathlib import Path
+import subprocess
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 COMBINER = ROOT / "templates" / "domain-packs" / "odoo" / "hooks" / "pre-push-combiner"
+
+# Embedded literal reproduction of pre-push-combiner's gate 2 as it existed BEFORE this
+# round's fix (commit 2209dd6's parent). Gate 1 (AI_AUTO_HOME framework-binding
+# resolution) is irrelevant to this defect and is omitted for a minimal, self-contained
+# repro. The condition `[ -n "$ODOO_HOOK" ] && [ -f "$ODOO_HOOK" ] && [ -x "$ODOO_HOOK" ]`
+# has NO else branch -- a present-but-non-executable odoo hook simply falls out of the
+# condition: no sentinel runs, no WARNING, exit 0.
+PRE_FIX_COMBINER_GATE2_ONLY = r'''#!/usr/bin/env bash
+set -uo pipefail
+refs="$(cat)"
+
+# --- gate 2: odoo domain-pack validation (per-worktree materialized reference) -------------
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+ODOO_HOOK="${top:+$top/.omx/domain-packs/odoo/hooks/pre-push}"
+if [ -n "$ODOO_HOOK" ] && [ -f "$ODOO_HOOK" ] && [ -x "$ODOO_HOOK" ]; then
+  printf '%s\n' "$refs" | "$ODOO_HOOK" "$@"
+  orc=$?
+  [ "$orc" -ne 0 ] && exit "$orc"
+fi
+'''
 
 
 def _make_executable(path: Path) -> None:
@@ -134,24 +161,18 @@ def test_combiner_stays_quiet_when_odoo_hook_genuinely_absent(tmp_path):
 
 
 def test_pre_fix_combiner_silently_skips_non_executable_hook(tmp_path):
-    """Non-vacuousness proof: the pre-fix combiner text (as committed at HEAD,
-    before this round's edit) silently skips a present-but-non-executable odoo
-    hook -- no sentinel, no WARNING, exit 0. Reverting the combiner to HEAD
-    reopens exactly this defect."""
-    pre_fix_text = subprocess.run(
-        ["git", "-C", str(ROOT), "show", "HEAD:templates/domain-packs/odoo/hooks/pre-push-combiner"],
-        text=True,
-        capture_output=True,
-        check=True,
-    ).stdout
-
-    assert "not executable" not in pre_fix_text, (
-        "HEAD:pre-push-combiner already contains the fix -- this revert-proof is "
-        "no longer meaningful; the fix must have been committed already."
+    """Non-vacuousness proof: the embedded PRE-FIX gate-2 snippet (literal, pinned
+    against the real pre-fix commit, no git dependency) silently skips a
+    present-but-non-executable odoo hook -- no sentinel, no WARNING, exit 0. Reverting
+    the combiner to this pre-fix shape reopens exactly this defect (see the other
+    tests in this file for proof the REAL current combiner does not)."""
+    assert "not executable" not in PRE_FIX_COMBINER_GATE2_ONLY, (
+        "the embedded PRE-FIX literal accidentally contains the fix -- this "
+        "revert-proof is no longer meaningful; fix the embedded literal, not this assertion"
     )
 
     pre_fix_combiner = tmp_path / "pre-push-combiner-pre-fix"
-    pre_fix_combiner.write_text(pre_fix_text, encoding="utf-8")
+    pre_fix_combiner.write_text(PRE_FIX_COMBINER_GATE2_ONLY, encoding="utf-8")
     _make_executable(pre_fix_combiner)
 
     project = tmp_path / "project"

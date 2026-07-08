@@ -11565,14 +11565,36 @@ for f in sorted(targets):
             # `--filters <path>`, which EXPLICITLY request the textconv/clean driver be run on
             # that object (per the class-(c)/(a) comment above: "cat-file --filters runs clean")
             # -- those forms are excluded from this exemption and stay fully guarded below.
+            # F6 fix (2026-07-08, canary-proven false-negative): a literal-SUBSTRING check
+            # (`"--textconv" not in line and "--filters" not in line`) is defeated by any
+            # unambiguous OPTION ABBREVIATION git itself accepts -- `cat-file --text <obj>` /
+            # `--textc <obj>` / `--filt <obj>` invoke the IDENTICAL textconv/clean driver as the
+            # canonical spelling, but do not contain the flagged substring, so the old check
+            # silently EXEMPTED them. Fixed by INVERTING to an ALLOWLIST: exempt cat-file ONLY
+            # when NONE of the tokens following `cat-file` (within the same shell command --
+            # stopped at `;`/`&`/`|`/backtick so a later, unrelated command's flags are never
+            # attributed to this cat-file) start with `--`. Bare object reads use only SHORT
+            # options (`-p`/`-t`/`-s`/`-e`, which git does not and cannot abbreviate, and none of
+            # which invoke a filter) or a bare oid/type -> stay exempt. ANY `--`-prefixed token --
+            # canonical, abbreviated, or one nobody has thought of yet -- disqualifies the
+            # exemption and the line falls back to full guarding below. Safe-by-construction:
+            # being over-strict here only forces an ordinary object read to also carry the
+            # --attr-source/fsmonitor hardening; it can never manufacture a false-exempt.
             # `git ls-tree` is the analogous pure tree-object read (lists names+oids straight from
             # a tree object, no blob content, no filter) and for the same reason has never been
             # added to SUBS at all -- it lives in class (d) FILTER-SAFE alongside rev-parse/
             # merge-base/show-ref, so no exemption code is needed for it here; it simply never
             # matches the guard's INVOKE pattern as a flaggable subcommand.
-            cat_file_object_read = (
-                sub == "cat-file" and "--textconv" not in line and "--filters" not in line
+            _cf_tail_start = None
+            for _cf_gi in (1, 2, 3, 4):
+                if m.group(_cf_gi):
+                    _cf_tail_start = m.end(_cf_gi)
+                    break
+            _cf_same_cmd = (
+                re.split(r'[;&|`]', line[_cf_tail_start:])[0] if _cf_tail_start is not None else ""
             )
+            _cf_has_long_opt = bool(re.search(r'(?<![\w-])--[A-Za-z]', _cf_same_cmd))
+            cat_file_object_read = (sub == "cat-file" and not _cf_has_long_opt)
             if not cat_file_object_read:
                 if "--attr-source=" not in line and not via_review_git:
                     violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
