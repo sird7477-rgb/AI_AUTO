@@ -61,6 +61,11 @@ dc() { docker compose -f docker-compose.validate.yml "$@"; }
 COMPOSE_PROJECT_NAME="$(harness_proj_slug "$PROJECT")"
 export COMPOSE_PROJECT_NAME
 export HARNESS_SLUG="$COMPOSE_PROJECT_NAME"
+# RED-16 fix: the Docker build's ACTUAL input is this slug-namespaced path (see
+# docker-compose.validate.yml's `build.args.DEPS_FILE`) so two DIFFERENT repos sharing
+# one ODOO_HARNESS_DIR never clobber each other's build-context deps file. `.deps.txt`
+# (written below, unchanged) remains a human-readable "last run" artifact only.
+DEPS_FILE_NS="$HERE/.deps.${COMPOSE_PROJECT_NAME}.txt"
 # Concurrency: rebuilding the shared base is a WRITE — block concurrent rebuilds and any
 # in-flight validations (which read/clone the base) until this finishes.
 . "$HERE/harness-lock.sh"
@@ -119,6 +124,10 @@ PY
   echo "[base] deps source: custom-addons manifests (no requirements.txt at $PREPARE_BASE_REQUIREMENTS)"
 fi
 echo "[base] python deps: $(paste -sd' ' "$HERE/.deps.txt" 2>/dev/null || echo none)"
+# RED-16 fix: mirror .deps.txt into the slug-namespaced build input (see DEPS_FILE_NS
+# above) -- same content, different path, so a concurrent different-repo build never
+# reads/overwrites this one.
+cp "$HERE/.deps.txt" "$DEPS_FILE_NS"
 # Supply-chain advisory (never blocking): LOUD warning if the Dockerfile's base image is a
 # mutable tag with no @sha256 digest pin. See harness-preflight.sh/Dockerfile header.
 harness_check_base_image_pin

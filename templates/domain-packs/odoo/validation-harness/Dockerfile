@@ -16,7 +16,14 @@
 #   to a newer odoo:19 build -- never let it silently drift.
 FROM odoo:19
 USER root
-COPY .deps.txt /tmp/.deps.txt
+# RED-16 fix: DEPS_FILE is the per-project-slug build-context input (docker-compose.
+# validate.yml's `build.args.DEPS_FILE`, threaded from COMPOSE_PROJECT_NAME) so two
+# DIFFERENT repos that share one ODOO_HARNESS_DIR and race a first build never COPY
+# each other's dependency file into the image. Default (no --build-arg at all, e.g. a
+# raw `docker build .`) is the old, un-namespaced name -- byte-identical fallback for
+# the standalone/single-repo case.
+ARG DEPS_FILE=.deps.txt
+COPY ${DEPS_FILE} /tmp/.deps.txt
 # `-s` skips pip entirely when .deps.txt is empty (e.g. a comments-only / blank
 # requirements.txt reduces to no deps), so the build never fails on an empty dep list.
 RUN if [ -s /tmp/.deps.txt ]; then \

@@ -196,6 +196,11 @@ for m in glob.glob(os.path.join(root,"*","__manifest__.py")):
 print("\n".join(sorted(deps)))
 PY
 echo "[validate] python deps: $(paste -sd' ' "$HERE/.deps.txt" 2>/dev/null || echo none)"
+# RED-16 fix: the Docker build's ACTUAL input is this slug-namespaced path (see
+# docker-compose.validate.yml's `build.args.DEPS_FILE`), so a DIFFERENT repo sharing one
+# ODOO_HARNESS_DIR never clobbers/reads this project's build-context deps file.
+# `.deps.txt` above is kept as a human-readable "last run" artifact only.
+cp "$HERE/.deps.txt" "$HERE/.deps.${COMPOSE_PROJECT_NAME}.txt"
 # Supply-chain advisory (never blocking): LOUD warning if the Dockerfile's base image is a
 # mutable tag with no @sha256 digest pin. See harness-preflight.sh/Dockerfile header.
 harness_check_base_image_pin
