@@ -147,10 +147,24 @@ def explicit_liveness(entry: dict[str, Any]) -> bool:
         return False
 
 
+MAX_REL_SECONDS = 43200  # ceiling for the relative "resets in Ns" form; reuses the ledger's
+# default max_wait_seconds notion (12h). RED-live: N is matched with unbounded digits, so a
+# poisoned/injected pane containing e.g. "resets in " + hundreds of nines + "s" produced an int
+# so large that `current + int(n)` raised OverflowError (int too large to convert to float),
+# which (before the run_scan isolation fix below) aborted the WHOLE scan iteration -- every
+# other registered pane, not just the poisoned one. Clamp to a sane "far future" ceiling instead
+# of ever doing unbounded arithmetic; the try/except is belt-and-suspenders so this function can
+# never raise regardless of future edits here.
+
+
 def parse_reset_at(text: str, current: float) -> float | None:
     rel = re.search(r"resets\s+in\s+([0-9]+)s\b", text, flags=re.IGNORECASE)
     if rel:
-        return current + int(rel.group(1))
+        try:
+            seconds = min(int(rel.group(1)), MAX_REL_SECONDS)
+            return current + seconds
+        except (OverflowError, ValueError):
+            return None
     # Clock-time form. Real session-limit banners read e.g.
     #   "You've hit your session limit · resets 11:20pm (Asia/Seoul)"
     #   "resets at 8:00am", "resets 23:20".
@@ -349,7 +363,19 @@ def run_scan(iterations: int, interval: float, dry_run: bool) -> int:
         with _state_lock():
             data = load_registry()
             for pane, entry in sorted(data["entries"].items()):
-                result = scan_entry(entry, dry_run=dry_run)
+                # HIGH/LIVE: one pane's exception (e.g. a poisoned reset string, a tmux
+                # capture failure) must never abort scanning of every OTHER registered pane
+                # in this iteration -- that turns a single on-screen string into a whole-
+                # daemon denial of service. Isolate per-pane; let control-flow exceptions
+                # (KeyboardInterrupt/SystemExit) propagate as normal.
+                try:
+                    result = scan_entry(entry, dry_run=dry_run)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as exc:
+                    print(f"{pane}: scan_error:{exc.__class__.__name__}: {exc}", file=sys.stderr)
+                    event("scan_error", pane, exc.__class__.__name__, {"error": str(exc)})
+                    continue
                 print(f"{pane}: {result}")
             save_registry(data)
         if index + 1 < iterations:

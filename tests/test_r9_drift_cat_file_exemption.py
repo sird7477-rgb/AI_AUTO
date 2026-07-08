@@ -417,3 +417,222 @@ def test_revert_both_fixes_reproduces_original_ten_violations(tmp_path: Path) ->
         f"(3 cat-file sites x 2 + 2 diff calls x 2 = 10); got "
         f"{cat_file_pre_fix_violations} + {crc_violations} = {cat_file_pre_fix_violations + crc_violations}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. F7 (canary-proven false-negative, ops-defense2 game #2 R4): the HARDENING-MARKER checks
+#    themselves (rules 3/4/5/6/7/8's "--attr-source=" / "core.fsmonitor=" / "core.hooksPath=" /
+#    "--no-ext-diff" / "--no-textconv" substring tests) ran against the WHOLE (logical) line,
+#    unscoped to the SPECIFIC matched git invocation -- and only the FIRST git invocation on a
+#    line was ever inspected (`INVOKE.search` stops at its first match). Two exploit shapes both
+#    made the guard report ZERO violations for a genuinely-unguarded call:
+#      (1) a trailing shell COMMENT carrying a hardening-marker substring
+#          (`git <dangerous> ...  # ... --attr-source= ...`);
+#      (2) a SECOND, chained git call on the same line supplying the marker
+#          (`git <dangerous> ; git <hardened> --attr-source=...`).
+#    Fixed by (a) stripping a trailing shell comment before any marker test (COMMENT_RE), and
+#    (b) bounding the marker checks to the SAME shell command as the matched invocation via
+#    CMD_SEP + _owning_segment (split on `;`/`&`/`&&`/`|`/`||`/backtick -- the same separator
+#    alphabet the F6 cat-file allowlist already used). Both are proven non-vacuous below the same
+#    way F6 was: an embedded literal reproduction of the PRE-F7 whole-line substring predicate
+#    that WRONGLY passes each exploit shape, contrasted with the CURRENT guard (extracted live
+#    from the real, on-disk, shipped verify-machinery.sh) which must flag it.
+# ---------------------------------------------------------------------------
+
+def _pre_f7_marker_present_wholeline(line: str, marker: str) -> bool:
+    """Embedded literal reproduction of the PRE-F7 hardening-marker test: a bare, UNSCOPED
+    whole-line substring check (`marker in line`), exactly as every rule 3/4/5/6/7/8 check used
+    to read (e.g. `"--attr-source=" not in line`). This is the literal predicate F7 replaced with
+    the CMD_SEP/_owning_segment-bounded version -- embedded here so the non-vacuousness proof
+    never depends on a moving `git show HEAD:` ref."""
+    return marker in line
+
+
+@pytest.mark.parametrize(
+    "marker", ["--attr-source=", "core.fsmonitor=", "core.hooksPath="]
+)
+def test_guard_flags_dangerous_call_with_trailing_comment_marker(tmp_path: Path, marker: str) -> None:
+    """NON-VACUOUS (exploit shape 1, trailing comment): a genuinely bare, unhardened `git status`
+    followed by a trailing shell COMMENT that happens to carry a hardening-marker substring must
+    still be FLAGGED by the current (fixed) guard -- the comment must not be able to vouch for a
+    command it does not actually decorate. The embedded PRE-F7 whole-line predicate wrongly treats
+    the marker as present (proving the bug class)."""
+    bad_line = (
+        'git status --porcelain  '
+        '# decoy comment, NOT a real flag: --attr-source= core.fsmonitor= core.hooksPath=\n'
+    )
+    assert _pre_f7_marker_present_wholeline(bad_line, marker) is True, (
+        "revert -> FAIL evidence: the PRE-F7 whole-line substring predicate must WRONGLY see the "
+        f"comment-only {marker!r} as satisfying the hardening requirement: {bad_line!r}"
+    )
+
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "comment-exploit.sh").write_text(bad_line, encoding="utf-8")
+
+    current_guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    proc = _run_guard(current_guard_src, fake, tmp_path)
+    assert proc.returncode == 1, (
+        "the FIXED guard must flag a bare `git status` whose only hardening markers live inside a "
+        f"trailing comment (not the real command); got:\nstdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+    assert "comment-exploit.sh" in proc.stderr
+    assert "R9-DRIFT VIOLATIONS" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "marker", ["--attr-source=", "core.fsmonitor=", "core.hooksPath="]
+)
+def test_guard_flags_first_call_in_chain_despite_second_calls_markers(tmp_path: Path, marker: str) -> None:
+    """NON-VACUOUS (exploit shape 2, chained calls): a bare, unhardened `git status` chained via
+    `;` ahead of a SECOND, fully-hardened `git diff` on the SAME line must still get the bare
+    `status` FLAGGED -- the second call's --attr-source=/-c core.fsmonitor=/-c core.hooksPath=
+    markers live in a different shell command and must not satisfy the first, unrelated one. The
+    embedded PRE-F7 whole-line predicate wrongly treats the marker as present (proving the bug
+    class)."""
+    bad_line = (
+        'git status --porcelain ; '
+        'git diff --attr-source="$ET" -c core.fsmonitor= -c core.hooksPath=/dev/null '
+        '--name-only HEAD\n'
+    )
+    assert _pre_f7_marker_present_wholeline(bad_line, marker) is True, (
+        "revert -> FAIL evidence: the PRE-F7 whole-line substring predicate must WRONGLY see the "
+        f"second call's {marker!r} as satisfying the first (bare) call's hardening requirement: "
+        f"{bad_line!r}"
+    )
+
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "chain-exploit.sh").write_text(bad_line, encoding="utf-8")
+
+    current_guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    proc = _run_guard(current_guard_src, fake, tmp_path)
+    assert proc.returncode == 1, (
+        "the FIXED guard must flag the bare `git status` even though a second, hardened `git diff` "
+        f"is chained after it on the same line; got:\nstdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+    assert "chain-exploit.sh" in proc.stderr
+    assert "R9-DRIFT VIOLATIONS" in proc.stderr
+
+
+def test_guard_flags_bare_call_with_marker_in_earlier_chained_command(tmp_path: Path) -> None:
+    """NON-VACUOUS variant: a marker-looking decoy in an EARLIER chained command must not vouch
+    for a bare, dangerous call that comes AFTER it on the same line either (segment-scoping must
+    work in both directions, not just forward)."""
+    bad_line = 'echo "x" --attr-source=fake ; git status --porcelain\n'
+    current_guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "earlier-decoy.sh").write_text(bad_line, encoding="utf-8")
+    proc = _run_guard(current_guard_src, fake, tmp_path)
+    assert proc.returncode == 1, (
+        "a bare `git status` chained after an unrelated command carrying a decoy --attr-source= "
+        f"must still be flagged; got:\nstdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+    assert "earlier-decoy.sh" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# 6. F7 regressions: legitimately hardened single calls, plain safe lines, and the F6 cat-file
+#    forms must all keep behaving exactly as before -- the F7 scoping fix must not manufacture a
+#    NEW false-positive (over-strict scoping) any more than the pre-fix bug produced a false-
+#    negative (unscoped substring matching).
+# ---------------------------------------------------------------------------
+
+def test_guard_still_passes_legitimately_hardened_single_call(tmp_path: Path) -> None:
+    guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "ok-status.sh").write_text(
+        'git -c core.hooksPath=/dev/null --attr-source="$ET" -c core.fsmonitor= status --short\n',
+        encoding="utf-8",
+    )
+    proc = _run_guard(guard_src, fake, tmp_path)
+    assert proc.returncode == 0, (
+        f"a fully-hardened single `git status` call must NOT be flagged; got:\n"
+        f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+
+
+def test_guard_still_passes_plain_safe_line(tmp_path: Path) -> None:
+    guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "ok-revparse.sh").write_text(
+        'git rev-parse --show-toplevel\n', encoding="utf-8"
+    )
+    proc = _run_guard(guard_src, fake, tmp_path)
+    assert proc.returncode == 0, (
+        f"`git rev-parse` (not in SUBS at all) must never be flagged; got:\n"
+        f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+
+
+def test_guard_still_exempts_bare_catfile_with_trailing_decoy_comment(tmp_path: Path) -> None:
+    """F6+F7 interaction: a bare, filter-immune `cat-file blob` read with a trailing comment that
+    NAMES --textconv/--filters as prose must stay exempt -- the comment must not be able to
+    manufacture a false-POSITIVE any more than it could manufacture a false-negative elsewhere."""
+    guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "ok-catfile-comment.sh").write_text(
+        'git -C "$proj" cat-file blob "$oid" > "$outpath" || return 1  '
+        '# note: this is NOT --textconv or --filters\n',
+        encoding="utf-8",
+    )
+    proc = _run_guard(guard_src, fake, tmp_path)
+    assert proc.returncode == 0, (
+        f"a bare cat-file read with an unrelated trailing comment must stay exempt; got:\n"
+        f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+
+
+def test_guard_still_passes_real_ai_worktree_remove_prune_die_idiom(tmp_path: Path) -> None:
+    """Concrete regression case found while building the F7 fix: tools/ai-worktree's real shipped
+    `git worktree remove "$target" || die "remove failed (... 'git worktree remove --force' ...)"`
+    line chains a fully-hardened `worktree remove` with `||` ahead of a `die` call whose STRING
+    ARGUMENT happens to mention `git worktree remove --force` in prose. An early (rejected) fully
+    independent per-segment invocation scan mis-flagged the `die` segment as a second, bare
+    `worktree remove` invocation. The shipped fix scopes ONLY the one identified (first) invocation
+    to its own segment, so this must stay clean -- proven directly against the real, on-disk file
+    (not a synthetic fixture), so a future regression here is caught for real."""
+    import shutil as _shutil
+
+    guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    ai_worktree = ROOT / "tools" / "ai-worktree"
+    assert ai_worktree.is_file(), "tools/ai-worktree must exist for this regression check"
+    text = ai_worktree.read_text(encoding="utf-8")
+    assert "worktree remove" in text and "|| die" in text, (
+        "tools/ai-worktree no longer contains the `worktree remove ... || die \"...\"` idiom this "
+        "regression test targets -- update the fixture/assertions to match the new shipped shape"
+    )
+    mirror = tmp_path / "mirror-ai-worktree"
+    (mirror / "tools").mkdir(parents=True)
+    _shutil.copy(ai_worktree, mirror / "tools" / "ai-worktree")
+    proc = _run_guard(guard_src, mirror, tmp_path)
+    assert proc.returncode == 0, (
+        f"the real tools/ai-worktree file must scan clean; got:\n"
+        f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+
+
+def test_guard_f6_catfile_forms_unaffected_by_f7(tmp_path: Path) -> None:
+    """F6 non-regression under F7: the abbreviated --text/--filt cat-file forms must still be
+    flagged, and the bare/short-option forms must still be exempt, after the F7 comment-strip +
+    segment-scoping change (parametrized re-check of the F6 suite's core assertions in one place)."""
+    guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    cases = [
+        ('git -C "$proj" cat-file --text HEAD:some/path > "$out" || return 1\n', 1),
+        ('git -C "$proj" cat-file --filt HEAD:some/path > "$out" || return 1\n', 1),
+        ('git -C "$proj" cat-file blob "$oid" > "$outpath" || return 1\n', 0),
+        ('git -C "$proj" cat-file -p "$oid" > "$outpath" || return 1\n', 0),
+    ]
+    for i, (bad_line, expected_rc) in enumerate(cases):
+        fake = tmp_path / f"fake{i}"
+        (fake / "scripts").mkdir(parents=True)
+        (fake / "scripts" / "catfile.sh").write_text(bad_line, encoding="utf-8")
+        proc = _run_guard(guard_src, fake, tmp_path)
+        assert proc.returncode == expected_rc, (
+            f"case {bad_line!r}: expected rc={expected_rc}, got {proc.returncode}\n"
+            f"stdout={proc.stdout}\nstderr={proc.stderr}"
+        )
