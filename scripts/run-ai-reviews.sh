@@ -808,6 +808,7 @@ disable_reviewer() {
   local details="$3"
   local disabled_file disable_class next_action _mk_hmac
   local chronic_file prev_reason prev_count chronic_count
+  local _hist_head _hist_file
   disabled_file="$(reviewer_disabled_file "${reviewer}")"
 
   # Classify: usage-limit / network-sandbox / connection-style / prompt-size-ceiling failures are
@@ -870,6 +871,24 @@ disable_reviewer() {
     _mk_hmac="$(reviewer_marker_canonical "${reviewer}" "${disabled_file}" | principal_evidence_hmac)"
     if [ -n "${_mk_hmac}" ]; then printf 'marker_hmac=%s\n' "${_mk_hmac}" >> "${disabled_file}"; fi
   fi
+
+  # RED2-2 durable disable-event trail: append every disable to the SAME append-only
+  # .omx/review-history.log review-gate.sh's review_gate_record_history writes proceed/blocked
+  # verdicts to (a distinct "event":"reviewer_disable" line, never "verdict":"proceed...", so
+  # CHECK1-OMISSION's proceed/proceed_degraded grep is unaffected). Closes the chronic-reset
+  # erasure gap named in review-gate.sh's own RED9-2 comment ("needs an out-of-band auditor
+  # tracking chronic_file history/deltas"): ai-auto-audit.sh's CHECK4 can now compare the
+  # CURRENT .disabled marker's chronic_count against how many disable events this reviewer+
+  # reason pair has actually accumulated in this durable trail, so a same-UID actor who deletes
+  # BOTH .disabled and .chronic and re-disables fresh (chronic_count resets to 1) leaves behind
+  # a trail that still shows the true, larger count -- the delta is the tell. Best-effort:
+  # 2>/dev/null and no `set -e` propagation, since a logging failure must never block the real
+  # disable action this function exists to perform.
+  _hist_file=".omx/review-history.log"
+  _hist_head="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  mkdir -p .omx 2>/dev/null || true
+  printf '{"ts":"%s","head_sha":"%s","event":"reviewer_disable","reviewer":"%s","reason":"%s","chronic_count":%s,"source":"run-ai-reviews"}\n' \
+    "$(date -Iseconds)" "${_hist_head}" "${reviewer}" "${reason}" "${chronic_count}" >> "${_hist_file}" 2>/dev/null || true
 
   echo "[review] ${reviewer} review disabled (${disable_class}): ${reason} (${details}) [chronic_count=${chronic_count}]"
 }

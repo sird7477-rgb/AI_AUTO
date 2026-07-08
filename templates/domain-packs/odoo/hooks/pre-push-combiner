@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# AI_AUTO pre-push COMBINER (odoo domain pack) — runs BOTH gates on one push:
+#   (1) the framework binding gate (the baked engine hooks/pre-push, review-gate binding), and
+#   (2) the odoo domain-pack validation gate (registry-load / validate-warm of the pushed tree).
+#
+# WHY a combiner: git feeds the push refs on stdin ONCE, and the plain framework shim only
+# execs the engine hook, so the odoo gate never fires. This captures stdin and replays it to
+# each gate; a non-zero from either blocks the push.
+#
+# INSTALL (once per repo; hooks are NOT transferred by clone/worktree-add):
+#   cp this file to "$(git rev-parse --git-common-dir)/hooks/pre-push" (shared by all worktrees)
+#   and make it executable. Back up any existing shim first. NOTE (verified against tools/
+#   ai-auto's actual hook-install conditional, RED-13): re-running `ai-auto setup` does NOT
+#   silently overwrite an installed combiner. Its install loop only replaces a hook file that
+#   is EITHER absent OR already framework-owned (contains the 'AI_AUTO shim' marker, or one of
+#   the legacy 'AI_AUTO worktree-safe hook' / 'AI_AUTO post-commit guard' markers it upgrades).
+#   This combiner's body matches none of those markers, so setup leaves it untouched and
+#   prints "ai-auto setup: WARNING existing custom pre-push left untouched: <path> (merge
+#   manually)" to stderr instead — no re-install is needed after `ai-auto setup`. Residual: if
+#   this file's body were ever changed to contain one of those literal marker strings, setup
+#   WOULD then treat it as an upgradeable framework-owned body and overwrite it with the
+#   current baked thin shim, dropping the odoo chain silently — so never add those markers here.
+#
+# CONFIG (env; both have sensible resolution so no shell-profile edit is required):
+#   AI_AUTO_HOME       engine root that holds hooks/pre-push + hooks/git-scrub.sh.
+#                      Default: resolved from this file's location if it sits under an engine
+#                      checkout, else must be exported. (A baked install may hardcode it.)
+#   ODOO_HARNESS_DIR   local validation harness ("00. DATA/harness"). If unset, the odoo gate
+#                      fail-closes NOT-VALIDATED on custom-addons changes (ack-bypass exists).
+set -uo pipefail
+
+# --- resolve AI_AUTO_HOME -----------------------------------------------------------------
+# Prefer an explicit env; else try to locate an engine checkout that has hooks/pre-push.
+if [ -z "${AI_AUTO_HOME:-}" ]; then
+  for _cand in "$HOME/workspace/ai-lab" "/root/workspace/ai-lab" "/opt/ai-lab"; do
+    if [ -x "$_cand/hooks/pre-push" ]; then AI_AUTO_HOME="$_cand"; break; fi
+  done
+fi
+AI_AUTO_HOME="${AI_AUTO_HOME:-}"
+
+refs="$(cat)"   # capture the push refs from stdin ONCE, replay to each gate
+
+# --- gate 1: framework binding (baked engine hook), with the shim's BLAST hardening --------
+if [ -n "$AI_AUTO_HOME" ]; then
+  if [ -f "$AI_AUTO_HOME/hooks/git-scrub.sh" ] && bash -n "$AI_AUTO_HOME/hooks/git-scrub.sh" 2>/dev/null; then
+    . "$AI_AUTO_HOME/hooks/git-scrub.sh"
+  fi
+  if ! [ -f "$AI_AUTO_HOME/hooks/pre-push" ] || ! [ -x "$AI_AUTO_HOME/hooks/pre-push" ]; then
+    printf '[pre-push] WARNING: engine hook missing/not runnable (%s); re-run '\''ai-auto setup'\''. Skipping binding gate (NOT blocking).\n' "$AI_AUTO_HOME/hooks/pre-push" >&2
+  elif ! bash -n "$AI_AUTO_HOME/hooks/pre-push" 2>/dev/null; then
+    printf '[pre-push] WARNING: engine hook does not parse (%s); re-run '\''ai-auto setup'\''. Skipping binding gate (NOT blocking).\n' "$AI_AUTO_HOME/hooks/pre-push" >&2
+  else
+    printf '%s\n' "$refs" | PATH="$AI_AUTO_HOME/scripts:$AI_AUTO_HOME/tools:$PATH" "$AI_AUTO_HOME/hooks/pre-push" "$@"
+    brc=$?
+    [ "$brc" -ne 0 ] && exit "$brc"
+  fi
+else
+  printf '[pre-push] WARNING: AI_AUTO_HOME unresolved; skipping framework binding gate (NOT blocking). Export AI_AUTO_HOME to enable it.\n' >&2
+fi
+
+# --- gate 2: odoo domain-pack validation (per-worktree materialized reference) -------------
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+ODOO_HOOK="${top:+$top/.omx/domain-packs/odoo/hooks/pre-push}"
+if [ -n "$ODOO_HOOK" ] && [ -f "$ODOO_HOOK" ]; then
+  if [ -x "$ODOO_HOOK" ]; then
+    printf '%s\n' "$refs" | "$ODOO_HOOK" "$@"
+    orc=$?
+  else
+    # Present but not executable (e.g. an install that lost the exec bit) must
+    # still run the oracle -- an absent-vs-non-executable distinction that was
+    # previously conflated into one silent skip. Only genuine absence is quiet.
+    printf '[pre-push] WARNING: odoo pack hook present but not executable (%s); running via bash and continuing -- fix the exec bit\n' "$ODOO_HOOK" >&2
+    printf '%s\n' "$refs" | bash "$ODOO_HOOK" "$@"
+    orc=$?
+  fi
+  [ "$orc" -ne 0 ] && exit "$orc"
+else
+  # No odoo validation hook materialized in THIS worktree (the normal state for a
+  # worktree that never ran `ai-domain-pack ... odoo`, or one whose "$top" failed to
+  # resolve). Multi-worktree is this project's normal operating mode, so this is not
+  # rare -- and unlike gate 1's WARNING-on-skip, this branch used to fall out of the
+  # `if` with zero stderr and exit 0: a push from such a worktree LOOKED fully
+  # validated (clean exit, no notice) even when it changed custom-addons/. Detecting
+  # "did this push actually touch custom-addons/" here would require duplicating
+  # hooks/pre-push's own pushed-commit/module-scope walk (merge-commit `-m` diffing,
+  # decoy-ref immunity, new-branch over-approximation -- see that file's RED11-2/
+  # RED15-2 history) a SECOND time, out of sync by construction; that is not a cheap,
+  # safe check, so this stays advisory (WARN, do not block) mirroring gate 1's own
+  # warn-not-block philosophy for a worktree that legitimately carries no odoo pack.
+  printf '[pre-push] NOT-VALIDATED (odoo domain-pack gate 2): no materialized odoo validation hook in this worktree (%s) -- '\''push OK'\'' does NOT imply '\''odoo-validated'\''. Run '\''ai-domain-pack ... odoo'\'' in this worktree to enable it, or push from a worktree that has it.\n' "${ODOO_HOOK:-<unresolved: git rev-parse --show-toplevel failed>}" >&2
+fi
+
+exit 0

@@ -13,10 +13,24 @@ services:
     volumes:
       - odoo_pgdata:/var/lib/postgresql/data   # persists the regenerable warm base
   odoo:
-    build:                         # odoo:19 + project python deps (.deps.txt)
+    build:                         # odoo:19 + project python deps (.deps.<slug>.txt)
       context: .
       dockerfile: Dockerfile
-    image: odoo19-validate:local
+      args:
+        # RED-16 fix: namespace the build-context deps file by COMPOSE_PROJECT_NAME
+        # (harness-slug.sh's per-repo slug, exported by every wrapper script before any
+        # `docker compose` call) so two DIFFERENT repos sharing one ODOO_HARNESS_DIR
+        # never overwrite/consume each other's .deps.txt. Falls back to the old shared
+        # name ("local") only if COMPOSE_PROJECT_NAME is genuinely unset (e.g. compose
+        # invoked directly, bypassing every wrapper script) -- unchanged behavior for
+        # that edge case, not a regression.
+        DEPS_FILE: .deps.${COMPOSE_PROJECT_NAME:-local}.txt
+    # RED-16 fix: namespace the built image tag itself the same way -- Compose does not
+    # auto-prefix an explicit `image:` (unlike the container/network/unnamed-volume,
+    # which it already prefixes with COMPOSE_PROJECT_NAME), so an un-namespaced tag was
+    # the one thing in this stack a different repo COULD still clobber/reuse. Same
+    # fallback: "local" (today's literal tag) when COMPOSE_PROJECT_NAME is unset.
+    image: odoo19-validate:${COMPOSE_PROJECT_NAME:-local}
     depends_on: [db]
     entrypoint: []                 # clear image entrypoint; run our pinned source
     working_dir: /mnt/community

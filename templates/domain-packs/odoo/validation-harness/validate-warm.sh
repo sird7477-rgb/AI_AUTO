@@ -49,7 +49,7 @@ trap 'rm -rf "$HARNESS_SNAPSHOT_DIR" 2>/dev/null || true' EXIT
 # only exists for worktree-checkout/archive operations, which these two
 # plumbing commands do not implement. Immune by construction, not by an
 # extra flag that has to be remembered on every call.
-harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_root/custom-addons/**
+harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_root/custom-addons/** and dest_root/requirements.txt (if present at ref)
   local proj="$1" ref="$2" dest="$3" n=0 line meta path mode type oid outpath parentdir destreal parentreal
   # Fail closed on an unresolvable ref up front -- do not let ls-tree's silent
   # empty output on a bad ref masquerade as "zero files, still a valid pass".
@@ -103,8 +103,14 @@ harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_r
     esac
     case "$path" in
       custom-addons/*) : ;;
+      # AUD-RCE1 fix: requirements.txt is the one non-custom-addons file that feeds
+      # `pip3 install -r` (prepare-base-db.sh's .deps.txt). Materialize it from the
+      # REVIEWED ref via this same filter-immune cat-file path, never the live
+      # $PROJECT/requirements.txt -- same class of fix as custom-addons/* above, one
+      # field over. Exact top-level match only (not e.g. custom-addons/requirements.txt).
+      requirements.txt) : ;;
       *)
-        echo "[warm] REJECT: entry '$path' at $ref is outside custom-addons/ -- aborting materialization" >&2
+        echo "[warm] REJECT: entry '$path' at $ref is outside custom-addons/ (and is not requirements.txt) -- aborting materialization" >&2
         return 1 ;;
     esac
     outpath="$dest/$path"
@@ -126,8 +132,13 @@ harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_r
     # RAW stored bytes, zero conversion -- this is the filter-immune read.
     git -C "$proj" cat-file blob "$oid" > "$outpath" || return 1
     [ "$mode" = "100755" ] && chmod +x "$outpath"
-    n=$((n+1))
-  done < <(git -C "$proj" ls-tree -r -z "$ref" -- custom-addons 2>/dev/null)
+    # Only custom-addons/* entries count toward the fail-closed gate below --
+    # requirements.txt is OPTIONAL at the ref (a ref genuinely without one is a valid
+    # state; the deps-consuming caller fails closed on ITS OWN absence check, not on
+    # this function's return value), so its presence must never mask an otherwise-empty
+    # custom-addons/ at the ref.
+    case "$path" in custom-addons/*) n=$((n+1)) ;; esac
+  done < <(git -C "$proj" ls-tree -r -z "$ref" -- custom-addons requirements.txt 2>/dev/null)
   [ "$n" -gt 0 ] || return 1   # no custom-addons/ (or only unmaterializable entries) at that ref -> fail closed
   return 0
 }
@@ -261,17 +272,47 @@ if [ "${WARM_NO_CACHE:-0}" != "1" ]; then
     fi
   fi
 fi
+# PROVENANCE (bypass fix, LIVE/CRITICAL): a cache marker is only ever a valid stand-in
+# for a real docker-backed load if IT was itself written by a real docker-backed load.
+# WARM_CACHE_PRIME below writes a marker WITHOUT ever invoking docker (by design, for
+# offline test/CI fixturing) -- so the two write sites must stamp DISTINCT, non-forgeable
+# content, and the reuse path here must refuse anything that is not stamped "genuine".
+# Without this, a marker planted out-of-band (a stray WARM_CACHE_PRIME=1 test/CI run, or
+# a hostile shell) durably poisons this key: a LATER, ordinary (non-primed) invocation --
+# e.g. a real `git push` -- would read the file, see it exists, and print a cached PASS
+# for a module that never actually loaded in Odoo. An ambient/leaked WARM_CACHE_PRIME=1
+# on the real push itself is the same bypass by a second route; hooks/pre-push now unsets
+# it at the chokepoint (defense in depth), but that alone does not protect against a
+# marker planted earlier by a DIFFERENT (test/CI/hostile) process and merely read back
+# here, which is why the provenance stamp -- not just the env scrub -- is the fix.
+WARM_MARK_GENUINE='provenance=genuine'
+WARM_MARK_PRIMED='provenance=primed'
+warm_marker_provenance() {  # $1=path ; prints the marker's first line, or nothing
+  head -n 1 -- "$1" 2>/dev/null || true
+}
 if [ -n "$WARM_CACHE_KEY" ] && [ -f "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" ]; then
-  [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: cached"; exit 0; }
-  "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
-  echo "[warm] PASS (cached, no-op): '$MODCOMMA' content already validated on this warm base (key ${WARM_CACHE_KEY:0:12}); -u not re-run. (override: WARM_NO_CACHE=1)"
-  exit 0
+  _warm_prov="$(warm_marker_provenance "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}")"
+  if [ "$_warm_prov" = "$WARM_MARK_GENUINE" ] \
+     || { [ "$_warm_prov" = "$WARM_MARK_PRIMED" ] && [ "${WARM_CACHE_PRIME:-0}" = "1" ]; }; then
+    [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: cached"; exit 0; }
+    "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
+    echo "[warm] PASS (cached, no-op): '$MODCOMMA' content already validated on this warm base (key ${WARM_CACHE_KEY:0:12}); -u not re-run. (override: WARM_NO_CACHE=1)"
+    exit 0
+  fi
+  # Marker present but NOT genuine-provenance (a primed/test marker, or an unrecognized/
+  # legacy-empty one) read by a plain (non-primed) invocation -> a cache MISS, never a
+  # PASS. Fall through to real validation (or, further below, re-priming if THIS
+  # invocation also sets WARM_CACHE_PRIME=1 -- an equally-primed/test context).
+  echo "[warm] NOTE: cached marker at key ${WARM_CACHE_KEY:0:12} has non-genuine provenance ('${_warm_prov:-<empty>}') for this invocation -- treating as a cache MISS and re-validating." >&2
 fi
 # Test/CI hook: prime the cache for the current key WITHOUT a docker run, so the cache path
-# is fixturable offline. Never set in normal use.
+# is fixturable offline. Never set in normal use. The marker is stamped "primed" (never
+# "genuine") so it can only ever satisfy a LATER cache-hit that is itself WARM_CACHE_PRIME=1
+# (see the reuse check above) -- a plain production invocation can never read this marker
+# back as a PASS, closing the durable-out-of-band-plant bypass.
 if [ "${WARM_CACHE_PRIME:-0}" = "1" ] && [ -n "$WARM_CACHE_KEY" ]; then
   "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
-  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && : > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
+  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && printf '%s\n' "$WARM_MARK_PRIMED" > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
   echo "[warm] CACHE PRIMED ${WARM_CACHE_KEY:0:12}"; exit 0
 fi
 [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: validate"; exit 0; }
@@ -329,7 +370,9 @@ fi
 rm -f "$LOG"
 # Record this PASS so an identical (modset, on-disk content, base epoch) skips the -u re-run.
 # Only ever written on a real PASS; a FAIL above already exited without reaching here.
+# Stamped "genuine" (this is the one and only site that ran an actual `docker compose run`
+# odoo-bin -u load) -- the reuse check above accepts ONLY this provenance unconditionally.
 if [ -n "${WARM_CACHE_KEY:-}" ]; then
-  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && : > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
+  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && printf '%s\n' "$WARM_MARK_GENUINE" > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
 fi
 echo "[warm] PASS — $MODCOMMA updates cleanly on warm base (parity-pinned Odoo 19)"

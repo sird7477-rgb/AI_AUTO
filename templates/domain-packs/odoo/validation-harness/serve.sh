@@ -91,6 +91,9 @@ else
     | sed -n 's#^custom-addons/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
 fi
 
+# Supply-chain advisory (never blocking): LOUD warning if the Dockerfile's base image is a
+# mutable tag with no @sha256 digest pin. See harness-preflight.sh/Dockerfile header.
+harness_check_base_image_pin
 dc build odoo >/dev/null
 dc up -d db >/dev/null
 dc exec -T db sh -c 'until pg_isready -U odoo -q; do sleep 1; done'

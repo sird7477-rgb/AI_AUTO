@@ -11306,7 +11306,12 @@ def is_text(f):
 # stash/apply/archive/cat-file (rule 4) ALSO run the in-repo `.gitattributes`+`.git/config`
 # filter driver on worktree blobs — `git status` runs `filter.<x>.clean` on a stat-dirty
 # tracked file (R12 RCE), the write-side (checkout/restore/reset --hard/stash/apply) runs
-# smudge, archive runs export filters, cat-file --filters runs clean. `worktree` (rule 5, R13+R21)
+# smudge, archive runs export filters, cat-file --filters/--textconv runs clean/textconv on the
+# NAMED path/object. `git cat-file blob|-p|<type> <object>` WITHOUT --filters/--textconv (a bare
+# oid, or the rev:path form) is the one exception: it is a pure object-database read (RAW stored
+# bytes, zero conversion — canary-proven, see the `cat_file_object_read` guard below) and is
+# exempted from rule 4 there; only a `--textconv`/`--filters` cat-file call stays guarded.
+# `worktree` (rule 5, R13+R21)
 # runs SMUDGE while `git worktree add` checks out the new tree (tools/ai-worktree, auto-invoked
 # by the tmux hook) — so `worktree add` MUST carry --attr-source/review_git. R21: `worktree add`/
 # `checkout` ALSO run the repo's post-checkout HOOK (and honor a hostile core.hooksPath) as the
@@ -11323,7 +11328,10 @@ def is_text(f):
 # sees why it is or is not in SUBS. GUARDED = must carry --attr-source/review_git:
 #   (a) clean-filter over worktree blobs .... status, diff .................. GUARDED (in SUBS)
 #   (b) smudge-filter writes worktree blobs . worktree(add) ................. GUARDED (rule 5)
-#        checkout/restore/reset/stash/apply/archive/cat-file: NO shipped site — pre-emptive in SUBS
+#        checkout/restore/reset/stash/apply/archive: NO shipped site — pre-emptive in SUBS
+#        cat-file: 3 shipped sites (validate-warm/full/odoo.sh), all bare `cat-file blob
+#          "$oid"` object reads — EXEMPT (filter-immune, see cat_file_object_read); a
+#          --textconv/--filters cat-file call would still be GUARDED (in SUBS)
 #        rebase (safe-push.sh): smudge driver must live in YOUR local .git/config, not
 #          attacker CONTENT -> not a hostile-repo RCE -> intentionally NOT guarded
 #   (b2) post-checkout HOOK / core.hooksPath . worktree(add), checkout ...... GUARDED hooks (rules 4/5)
@@ -11335,7 +11343,10 @@ def is_text(f):
 #   (d) FILTER-SAFE, intentionally NOT guarded (read no worktree blob / run no attr driver):
 #        rev-parse, config/`-c`, init, hash-object(--no-filters), merge-base,
 #        merge-file, rev-list, remote, push, fetch, branch, commit, diff-tree, show-ref,
-#        show-toplevel/show-current(options), worktree list.
+#        show-toplevel/show-current(options), worktree list, ls-tree (pure tree-object read —
+#          names+oids straight from a tree object, no blob content, no filter driver; never
+#          added to SUBS, so it is not even a matchable subcommand token here — same class as
+#          rev-parse/merge-base, not a rule-4 exemption like cat-file).
 # R22 (post-index-change HOOK class): the hook-RCE surface is BIGGER than R21 modeled. `git status`
 # — and reset/restore/stash/apply — FIRE the repo's `post-index-change` HOOK when the index refresh
 # rewrites the on-disk index (canary-proven: a stale-index directory-copy's first `git status`
@@ -11420,6 +11431,104 @@ HOOK_SUBS = ("status", "reset", "restore", "stash", "apply",
 # (c) inlines `-c core.fsmonitor=` on the call itself. Rules 3/4/5 require BOTH the clean-filter
 # defense (attr-source/review_git) AND this fsmonitor defense.
 SCRUB_SOURCE = re.compile(r'(?:^|[;&|]|&&|\|\||\bthen\b|\bdo\b|\belse\b)\s*(?:\.|source)\s+\S*hooks/git-scrub\.sh')
+# F7 fix (2026-07-08, canary-proven false-negative): the hardening-marker substring checks below
+# ("--attr-source=" not in X, "core.fsmonitor=" not in X, "core.hooksPath=" not in X, "--no-ext-
+# diff"/"--no-textconv" not in X) used to run against the WHOLE logical line, unscoped to the
+# SPECIFIC git invocation being judged. Two exploit shapes result: (1) a TRAILING SHELL COMMENT
+# carrying a marker substring (`git <dangerous> ...  # ... --attr-source= ...`) got counted though
+# the executed command carries no such flag; (2) a SECOND, chained git call on the same line
+# (`git <dangerous> ; git ... --attr-source=...`) could supply a marker that wrongly "vouches for"
+# an unrelated, genuinely-unhardened FIRST call. Fixed in two parts: (a) a trailing-comment
+# stripper strips a trailing shell comment (a `#` that starts a shell WORD -- at line-start or
+# preceded by whitespace, and NOT inside a quoted string -- through end of line) before ANY
+# marker check, so a comment can never supply (or hide) a marker. CORRECTION (F7-2, RED-refuted):
+# this step was ORIGINALLY a quoting-unaware regex (COMMENT_RE) claimed to "err safe" by only
+# ever producing false-positives; RED disproved that -- a `#` inside an EARLIER quoted string on
+# the line (`msg="issue #123"; git diff --patch HEAD`) is also a word-boundary `#`, so the regex
+# truncated there and DELETED the real, unhardened `git diff --patch` call that followed,
+# producing a false-NEGATIVE (a hidden violation), the dangerous direction. Replaced with
+# `_strip_trailing_comment` (see its docstring below), which tracks quote state and only
+# truncates at a `#` that is both outside any quote and at a word boundary. (b) CMD_SEP + _owning_segment
+# bound the marker checks to the SAME shell command as the matched invocation (split on the same
+# separator alphabet the cat-file allowlist, rule 4, already used: `;`, `&`/`&&`, `|`/`||`,
+# backtick), so a marker living in a DIFFERENT chained command (earlier OR later on the line) can
+# never satisfy this invocation's requirement. Deliberately NOT a full independent per-segment
+# invocation scan (still only the FIRST git invocation on a line is identified, exactly as before
+# the F7 fix): a from-scratch scan of every segment for ITS OWN invocation was tried and reopened a
+# false-positive on tools/ai-worktree's `git worktree remove ... || die "...'git worktree remove
+# --force'..."` idiom -- the `die` branch's quoted, human-readable command mention is not really an
+# invocation, and the guard has no generic way to know `die` (unlike `echo`/`printf`, its only
+# named non-executing exception) never executes its argument. Scoping the ALREADY-identified first
+# match to its own segment closes both real exploits without that collateral false-positive risk;
+# a second, wholly independent dangerous invocation chained after a hardened first one on the same
+# physical line remains a (pre-existing, unchanged) blind spot -- no shipped or planted-control site
+# exercises that shape today.
+# F7-2 fix (2026-07-08, RED-refuted "errs safe" claim): COMMENT_RE above was a naive regex --
+# `(?:(?<=\s)|^)#.*$` -- that truncated the line at the FIRST `#` at a word boundary with NO
+# regard for quoting. That is quoting-UNAWARE, and the direction it errs is NOT uniformly safe:
+# a `#` inside an EARLIER quoted string on the same physical line (`msg="issue #123 needs a
+# fix"; git diff --patch HEAD`) is itself a word-boundary `#` (preceded by whitespace, the space
+# after `issue`), so the regex truncated THERE and deleted everything after it -- including the
+# real, unhardened `git diff --patch` invocation that followed. The comment-stripping step then
+# hides a genuine violation from every check below (false-NEGATIVE, the dangerous direction),
+# which directly contradicts the "false-positive only" claim this fix shipped under. Replaced
+# with `_strip_trailing_comment`, a tiny deterministic left-to-right scanner over the physical
+# line that tracks single-/double-quote state and only truncates at a `#` that is BOTH outside
+# any quote AND at a word boundary. This still satisfies the original R5/F7 intent (a trailing
+# ` # ... --attr-source= ...` comment is still stripped so it can never vouch for a dangerous
+# call) while no longer eating a real invocation that follows a quoted `#`. Known residual (not
+# handled, no shipped site exercises it today): a `#` inside a `$'...'` ANSI-C-quoted string
+# whose content itself contains an escaped `\'` will end quote-tracking early at that `\'` (this
+# scanner treats `'...'` as fully literal per POSIX single-quote rules and does not know the
+# `$'...'` variant permits backslash escapes inside); and comment stripping only ever runs on
+# ONE already-joined logical line, never inside a heredoc body (heredoc bodies are not fed
+# through this function at all, same as before this fix).
+def _strip_trailing_comment(line):
+    in_squote = False
+    in_dquote = False
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if in_squote:
+            if c == "'":
+                in_squote = False
+            i += 1
+            continue
+        if in_dquote:
+            if c == '\\' and i + 1 < n:
+                i += 2
+                continue
+            if c == '"':
+                in_dquote = False
+            i += 1
+            continue
+        if c == '\\' and i + 1 < n:
+            i += 2
+            continue
+        if c == "'":
+            in_squote = True
+            i += 1
+            continue
+        if c == '"':
+            in_dquote = True
+            i += 1
+            continue
+        if c == '#' and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+        i += 1
+    return line
+CMD_SEP = re.compile(r'[;&|`]+')
+def _owning_segment(text, anchor):
+    # Return the sub-range of `text` (a comment-stripped logical line) that contains `anchor` (a
+    # position INSIDE the matched subcommand token -- never a separator character) and is bounded
+    # by the nearest CMD_SEP occurrences on either side, i.e. "this invocation's own shell command".
+    pos = 0
+    for _sep in CMD_SEP.finditer(text):
+        if _sep.start() > anchor:
+            return text[pos:_sep.start()]
+        pos = _sep.end()
+    return text[pos:]
 violations = []
 scanned = 0
 for f in sorted(targets):
@@ -11456,7 +11565,15 @@ for f in sorted(targets):
         i = logical[i][0]
         if line.lstrip().startswith("#"):
             continue
-        m = INVOKE.search(line)
+        # F7 fix (2026-07-08, canary-proven false-negative in the hardening checks THEMSELVES --
+        # distinct from the F6 cat-file-allowlist substring bug below; see
+        # _strip_trailing_comment/CMD_SEP/_owning_segment above for the full rationale). Strip a
+        # trailing shell comment before matching/scoping so a comment can never supply (or hide)
+        # a hardening marker. Quoting-aware (F7-2): a `#` inside an earlier quoted string on the
+        # line is NOT treated as starting a comment, so it can no longer delete a real git
+        # invocation that follows it.
+        line_nc = _strip_trailing_comment(line)
+        m = INVOKE.search(line_nc)
         if not m:
             continue
         # Suggestion/diagnostic TEXT skip (R22): a line whose command is `echo`/`printf` PRINTS a git
@@ -11464,7 +11581,7 @@ for f in sorted(targets):
         # git -C ... commit ..." hint). Skip ONLY when the match is anchored on a quote (git sits at
         # the start of the echoed string) — a real trailing `; git ...`/`&& git ...` anchors on the
         # separator, not a quote, so it is NOT skipped.
-        if m.group(1) and re.match(r'\s*(?:echo|printf)\b', line) and m.start() < len(line) and line[m.start()] in ('"', "\x27"):
+        if m.group(1) and re.match(r'\s*(?:echo|printf)\b', line_nc) and m.start() < len(line_nc) and line_nc[m.start()] in ('"', "\x27"):
             continue
         sub = m.group(1) or m.group(2) or m.group(3) or m.group(4)
         # group(3): a python list-literal diff token reached via concat/splitting (over-approx).
@@ -11473,15 +11590,28 @@ for f in sorted(targets):
         # `GIT + ["diff",...]` / `["git"]+x+["diff",...]`. (Errs toward FLAGGING: a guard false-
         # positive is a loud test failure a dev fixes, far safer than a missed clean-filter RCE.)
         if m.group(3) and not m.group(1) and not m.group(2):
-            if not (re.search(r'(?i)\bgit', line) or "GIT" in line):
+            if not (re.search(r'(?i)\bgit', line_nc) or "GIT" in line_nc):
                 continue
         scanned += 1
         loc = "%s:%d" % (rel, i)
-        s = line.strip()
-        nonpatch = any(fl in line for fl in NONPATCH)
-        noindex = "--no-index" in line
+        # F7 fix (2/2): bound the hardening-marker text to just THIS invocation's own shell
+        # command -- the ANCHOR is a position inside the matched subcommand token itself (never a
+        # separator character, unlike m.start() which the punctuation-boundary alternative can
+        # consume), and _owning_segment walks CMD_SEP occurrences to find the enclosing `;`/`&`/
+        # `&&`/`|`/`||`/backtick-delimited range around it. A marker (or a second, differently-
+        # hardened git call) living in a DIFFERENT chained command on the same physical line can
+        # therefore never satisfy/vouch-for this one.
+        _anchor = None
+        for _gi in (1, 2, 3, 4):
+            if m.group(_gi):
+                _anchor = m.start(_gi)
+                break
+        seg = _owning_segment(line_nc, _anchor) if _anchor is not None else line_nc
+        s = seg.strip()
+        nonpatch = any(fl in seg for fl in NONPATCH)
+        noindex = "--no-index" in seg
         # `git show <rev>:<path>` is a raw blob read (not a patch); exempt from the patch-flag rule.
-        showblob = (sub == "show" and re.search(r'[\w}\"]:[\w./$%{}-]', line) and not nonpatch)
+        showblob = (sub == "show" and re.search(r'[\w}\"]:[\w./$%{}-]', seg) and not nonpatch)
         # rule 1: `git diff --no-index` content read. `--no-filters` is INVALID on this subcommand
         # (git errors 129 -> the read is swallowed by `|| true` and ALL content is silently
         # dropped), so it can NOT be the clean-filter defense. The in-repo .gitattributes clean/
@@ -11492,18 +11622,18 @@ for f in sorted(targets):
         # external-diff/textconv drivers). Must co-locate on the invoking line.
         if noindex:
             for need in ("--no-ext-diff", "--no-textconv"):
-                if need not in line:
+                if need not in seg:
                     violations.append("%s: --no-index content read MISSING %s: %s" % (loc, need, s))
-            if "--attr-source=" not in line and "GIT_ATTR_SOURCE=" not in line:
+            if "--attr-source=" not in seg and "GIT_ATTR_SOURCE=" not in seg:
                 violations.append("%s: --no-index content read MISSING attr-source neutralization (--attr-source=<empty-tree> or GIT_ATTR_SOURCE=<empty-tree>; NOT the invalid --no-filters): %s" % (loc, s))
         # rule 2: patch/content-producing diff / show(non-blob) / log -p / blame -> --no-ext-diff --no-textconv.
         patch = (not nonpatch) and (not noindex) and (
             sub in ("diff", "blame")
             or (sub == "show" and not showblob)
-            or (sub == "log" and ("-p" in line or "--patch" in line)))
+            or (sub == "log" and ("-p" in seg or "--patch" in seg)))
         if patch:
             for need in ("--no-ext-diff", "--no-textconv"):
-                if need not in line:
+                if need not in seg:
                     violations.append("%s: patch-producing `git %s` MISSING %s: %s" % (loc, sub, need, s))
         # rule 3: clean-filter on a WORKTREE `git diff` ANYWHERE in the tree -- DOMAIN-PACK
         # validators AND the ENGINE trust-path (scripts/ hooks/ tools/). git runs the in-repo clean
@@ -11515,13 +11645,13 @@ for f in sorted(targets):
         # centrally). is_dp is no longer a gate: the requirement is uniform tree-wide.
         if sub == "diff" and not noindex:
             via_review_git = "review_git" in m.group(0)
-            is_range = ".." in line
-            is_cached = ("--cached" in line or "--staged" in line)
+            is_range = ".." in seg
+            is_cached = ("--cached" in seg or "--staged" in seg)
             # clean-filter: ONLY a true WORKTREE diff runs the in-repo .gitattributes clean filter.
             # --cached/--staged (tree-vs-index) and a `..`/`...` range (tree-vs-tree) read NO
             # worktree blob -> exempt from the attr-source requirement (unchanged).
             if not is_cached and not is_range:
-                if "--attr-source=" not in line and not via_review_git:
+                if "--attr-source=" not in seg and not via_review_git:
                     violations.append("%s: worktree `git diff` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
             # fsmonitor: git REFRESHES THE INDEX (querying core.fsmonitor) on a worktree diff AND on
             # a `--cached` diff (canary-proven: `git diff --cached` fires an in-repo core.fsmonitor
@@ -11529,7 +11659,7 @@ for f in sorted(targets):
             # exemption above is the ONLY --cached exemption. A `..`/`...` RANGE (tree-vs-tree)
             # touches no index -> still exempt.
             if not is_range:
-                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
+                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in seg:
                     violations.append("%s: `git diff` (fsmonitor HOOK-PROGRAM RCE vector; index refresh incl. --cached) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, s))
         # rule 4 (R12): OTHER worktree clean/smudge-filter-running subcommands. Unlike `git diff`
         # there is NO --cached/range escape — EVERY `git status` (and checkout/restore/reset/
@@ -11540,15 +11670,60 @@ for f in sorted(targets):
         # FUTURE site of the currently-zero-site subcommands.
         if sub in ("status", "checkout", "restore", "reset", "stash", "apply", "archive", "cat-file"):
             via_review_git = "review_git" in m.group(0)
-            if "--attr-source=" not in line and not via_review_git:
-                violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
-            if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
-                violations.append("%s: worktree `git %s` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
+            # R9-DRIFT / RED-4 fix (2026-07-08): `git cat-file blob|-p|commit|tree|tag <object>`
+            # -- a bare oid OR the rev:path form `HEAD:<path>` -- is a PURE OBJECT-DATABASE read:
+            # git resolves the (possibly rev:path) reference to an oid and streams the RAW stored
+            # bytes straight out of the object store. There is no worktree/index context for a
+            # bare oid, and even the rev:path form never invokes the clean filter, the smudge
+            # filter, or core.fsmonitor -- canary-verified LIVE (twice): a planted `.gitattributes`
+            # + `filter.evil.clean` driver and a `core.fsmonitor` hook program both stayed
+            # completely silent across `git cat-file blob <oid>` AND `git cat-file blob
+            # HEAD:<path>`, whereas `git add`/`git commit` on the same tree DID fire the clean
+            # filter as expected (see .ops-game2/R1-red4-quality-gitregression.md, RED-1
+            # self-refutation). This is DISTINCT from `git cat-file --textconv <object>` /
+            # `--filters <path>`, which EXPLICITLY request the textconv/clean driver be run on
+            # that object (per the class-(c)/(a) comment above: "cat-file --filters runs clean")
+            # -- those forms are excluded from this exemption and stay fully guarded below.
+            # F6 fix (2026-07-08, canary-proven false-negative): a literal-SUBSTRING check
+            # (`"--textconv" not in line and "--filters" not in line`) is defeated by any
+            # unambiguous OPTION ABBREVIATION git itself accepts -- `cat-file --text <obj>` /
+            # `--textc <obj>` / `--filt <obj>` invoke the IDENTICAL textconv/clean driver as the
+            # canonical spelling, but do not contain the flagged substring, so the old check
+            # silently EXEMPTED them. Fixed by INVERTING to an ALLOWLIST: exempt cat-file ONLY
+            # when NONE of the tokens following `cat-file` (within the same shell command --
+            # stopped at `;`/`&`/`|`/backtick so a later, unrelated command's flags are never
+            # attributed to this cat-file) start with `--`. Bare object reads use only SHORT
+            # options (`-p`/`-t`/`-s`/`-e`, which git does not and cannot abbreviate, and none of
+            # which invoke a filter) or a bare oid/type -> stay exempt. ANY `--`-prefixed token --
+            # canonical, abbreviated, or one nobody has thought of yet -- disqualifies the
+            # exemption and the line falls back to full guarding below. Safe-by-construction:
+            # being over-strict here only forces an ordinary object read to also carry the
+            # --attr-source/fsmonitor hardening; it can never manufacture a false-exempt.
+            # `git ls-tree` is the analogous pure tree-object read (lists names+oids straight from
+            # a tree object, no blob content, no filter) and for the same reason has never been
+            # added to SUBS at all -- it lives in class (d) FILTER-SAFE alongside rev-parse/
+            # merge-base/show-ref, so no exemption code is needed for it here; it simply never
+            # matches the guard's INVOKE pattern as a flaggable subcommand.
+            _cf_tail_start = None
+            for _cf_gi in (1, 2, 3, 4):
+                if m.group(_cf_gi):
+                    _cf_tail_start = m.end(_cf_gi)
+                    break
+            _cf_same_cmd = (
+                re.split(r'[;&|`]', line_nc[_cf_tail_start:])[0] if _cf_tail_start is not None else ""
+            )
+            _cf_has_long_opt = bool(re.search(r'(?<![\w-])--[A-Za-z]', _cf_same_cmd))
+            cat_file_object_read = (sub == "cat-file" and not _cf_has_long_opt)
+            if not cat_file_object_read:
+                if "--attr-source=" not in seg and not via_review_git:
+                    violations.append("%s: worktree `git %s` (clean-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, sub, s))
+                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in seg:
+                    violations.append("%s: worktree `git %s` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
             # HOOKS (R21): `git checkout` runs the repo post-checkout hook and honors a hostile
             # repo-local core.hooksPath as the operator -> RCE. git-scrub does NOT defend
             # core.hooksPath (repo-local config, not env-overridden) so sources_scrub does NOT
             # satisfy this -> only inline `-c core.hooksPath=` or review_git (which now carries it).
-            if sub == "checkout" and not via_review_git and "core.hooksPath=" not in line:
+            if sub == "checkout" and not via_review_git and "core.hooksPath=" not in seg:
                 violations.append("%s: `git checkout` (post-checkout / core.hooksPath hook RCE vector) MISSING `-c core.hooksPath=/dev/null` (or review_git wrapper): %s" % (loc, s))
         # rule 5 (R13 + R14-#2 + R21): `git worktree add` checks out a NEW working tree and so runs
         # the in-repo SMUDGE filter on every blob written AND the repo's post-checkout HOOK (honoring
@@ -11562,25 +11737,25 @@ for f in sorted(targets):
         # (whitespace-separated) AND the Python-argv form (comma/quote-separated).
         if sub == "worktree":
             via_review_git = "review_git" in m.group(0)
-            is_add = bool(re.search(r'\bworktree\b["\x27,\s]+add\b', line))
-            is_rm_prune = bool(re.search(r'\bworktree\b["\x27,\s]+(?:remove|prune)\b', line))
+            is_add = bool(re.search(r'\bworktree\b["\x27,\s]+add\b', seg))
+            is_rm_prune = bool(re.search(r'\bworktree\b["\x27,\s]+(?:remove|prune)\b', seg))
             # `git worktree add` checks out a NEW tree -> runs the in-repo SMUDGE filter on every
             # blob written (attr-source/review_git required). list/remove/prune write no blob.
-            if is_add and "--attr-source=" not in line and not via_review_git:
+            if is_add and "--attr-source=" not in seg and not via_review_git:
                 violations.append("%s: `git worktree add` (smudge-filter RCE vector) MISSING --attr-source=<empty-tree> (or review_git wrapper): %s" % (loc, s))
             # `worktree add` (checkout) AND `worktree remove` (runs a clean-check on the target)
             # refresh/scan the index -> query core.fsmonitor (canary-proven: `worktree remove`
             # fires an in-repo core.fsmonitor hook). `worktree prune` pinned for parity. `worktree
             # list` is pure metadata (no index refresh) -> NOT matched here.
             if is_add or is_rm_prune:
-                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
+                if not via_review_git and not sources_scrub and "core.fsmonitor=" not in seg:
                     violations.append("%s: `git worktree %s` (fsmonitor HOOK-PROGRAM RCE vector) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, ("add" if is_add else "remove/prune"), s))
                 # HOOKS (R21 -- NEW RCE class): `git worktree add` runs the repo post-checkout hook
                 # (and honors a hostile core.hooksPath) as the operator -> unattended RCE auto-
                 # invoked by the tmux after-new-window hook (ai-tmux-worktree -> ai-worktree).
                 # remove/prune pinned for parity. git-scrub does NOT defend core.hooksPath (repo-
                 # local config) -> only inline `-c core.hooksPath=` or review_git counts.
-                if not via_review_git and "core.hooksPath=" not in line:
+                if not via_review_git and "core.hooksPath=" not in seg:
                     violations.append("%s: `git worktree %s` (post-checkout / core.hooksPath hook RCE vector) MISSING `-c core.hooksPath=/dev/null` (or review_git wrapper): %s" % (loc, ("add" if is_add else "remove/prune"), s))
         # rule 6 (R21): `git ls-files` refreshes the index (to learn what is tracked) and that
         # refresh QUERIES core.fsmonitor -> a hostile in-repo `.git/config core.fsmonitor` EXECUTES
@@ -11593,7 +11768,7 @@ for f in sorted(targets):
         if sub == "ls-files":
             via_review_git = "review_git" in m.group(0)
             is_py_dp = is_dp and rel.endswith(".py")
-            if not via_review_git and not sources_scrub and not is_py_dp and "core.fsmonitor=" not in line:
+            if not via_review_git and not sources_scrub and not is_py_dp and "core.fsmonitor=" not in seg:
                 violations.append("%s: `git ls-files` (fsmonitor HOOK-PROGRAM RCE vector; index refresh) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, s))
         # rule 7 (R22 — post-index-change HOOK class): status/reset/restore/stash/apply FIRE the repo's
         # `post-index-change` hook when the index refresh rewrites the on-disk index (canary-proven RCE
@@ -11609,7 +11784,7 @@ for f in sorted(targets):
         # and worktree add|remove|prune are handled STRICTER (inline/review_git only) in rules 4/5.
         if sub in HOOK_SUBS:
             via_review_git = "review_git" in m.group(0)
-            if not via_review_git and not sources_scrub and "core.hooksPath=" not in line:
+            if not via_review_git and not sources_scrub and "core.hooksPath=" not in seg:
                 violations.append("%s: `git %s` (post-index-change / hook RCE vector; hostile core.hooksPath or default .git/hooks) MISSING `-c core.hooksPath=/dev/null` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
         # rule 8 (R22): `git rm`/`git mv` REWRITE the index -> the refresh QUERIES core.fsmonitor, so a
         # hostile in-repo `.git/config core.fsmonitor` EXECUTES. They stage NAMES (no clean/smudge on a
@@ -11617,7 +11792,7 @@ for f in sorted(targets):
         # `review_git rm`, is covered by the wrapper's `-c core.fsmonitor=`.)
         if sub in ("rm", "mv"):
             via_review_git = "review_git" in m.group(0)
-            if not via_review_git and not sources_scrub and "core.fsmonitor=" not in line:
+            if not via_review_git and not sources_scrub and "core.fsmonitor=" not in seg:
                 violations.append("%s: `git %s` (fsmonitor HOOK-PROGRAM RCE vector; index rewrite) MISSING `-c core.fsmonitor=` (or review_git wrapper, or file sourcing hooks/git-scrub.sh): %s" % (loc, sub, s))
 if violations:
     sys.stderr.write("R9-DRIFT VIOLATIONS:\n")

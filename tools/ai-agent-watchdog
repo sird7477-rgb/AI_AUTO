@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
@@ -32,6 +34,29 @@ def state_dir() -> Path:
     home = Path(os.environ.get("HOME", "")).expanduser()
     xdg = Path(os.environ.get("XDG_STATE_HOME", home / ".local" / "state")).expanduser()
     return xdg / "ai-auto" / "agent-watchdog"
+
+
+@contextlib.contextmanager
+def _state_lock():
+    # RED3-3/3-4: load_*/save_* is a read-modify-write; os.replace only makes the WRITE atomic,
+    # not the transaction. Under concurrent subagents two writers of DIFFERENT keys can
+    # interleave and silently drop one. Serialize the whole cycle on an exclusive flock over a
+    # lock file in the state dir. Degrades to no-lock only if the dir can't be created.
+    try:
+        sd = state_dir()
+        sd.mkdir(parents=True, exist_ok=True)
+        lf = open(sd / ".state.lock", "w")
+    except OSError:
+        yield
+        return
+    try:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        finally:
+            lf.close()
 
 
 def registry_path() -> Path:
@@ -122,15 +147,60 @@ def explicit_liveness(entry: dict[str, Any]) -> bool:
         return False
 
 
+MAX_REL_SECONDS = 43200  # ceiling for the relative "resets in Ns" form; reuses the ledger's
+# default max_wait_seconds notion (12h). RED-live: N is matched with unbounded digits, so a
+# poisoned/injected pane containing e.g. "resets in " + hundreds of nines + "s" produced an int
+# so large that `current + int(n)` raised OverflowError (int too large to convert to float),
+# which (before the run_scan isolation fix below) aborted the WHOLE scan iteration -- every
+# other registered pane, not just the poisoned one. Clamp to a sane "far future" ceiling instead
+# of ever doing unbounded arithmetic; the try/except is belt-and-suspenders so this function can
+# never raise regardless of future edits here.
+
+
 def parse_reset_at(text: str, current: float) -> float | None:
     rel = re.search(r"resets\s+in\s+([0-9]+)s\b", text, flags=re.IGNORECASE)
     if rel:
-        return current + int(rel.group(1))
-    match = re.search(r"resets\s+([0-2]?[0-9]):([0-5][0-9])\b", text, flags=re.IGNORECASE)
+        try:
+            seconds = min(int(rel.group(1)), MAX_REL_SECONDS)
+            return current + seconds
+        except (OverflowError, ValueError):
+            return None
+    # Clock-time form. Real session-limit banners read e.g.
+    #   "You've hit your session limit · resets 11:20pm (Asia/Seoul)"
+    #   "resets at 8:00am", "resets 23:20".
+    # The previous pattern `([0-5][0-9])\b` FAILED on a 12-hour "HH:MMpm" (there is no word
+    # boundary between the "0" of the minutes and the "p" of "pm"), so this returned None and
+    # NO reset-aware resume was ever scheduled for the very format Claude emits. Accept an
+    # optional "at ", an optional am/pm suffix (converted to 24h), and an optional trailing
+    # timezone token (informational only — the host clock is already in that zone here, so
+    # HH:MM is interpreted in local time; see note below).
+    # NOTE the trailing \b (and single optional space): parse_reset_at is fed the WHOLE
+    # captured pane, so `\s*([ap]m)?` (unbounded) would misread ordinary prose that merely
+    # starts with "am"/"pm" right after an "HH:MM"-shaped token -- e.g. "resets 12:00amazing"
+    # or "resets 3:00amber alert" -- as a meridiem suffix and schedule a bogus resume. The
+    # \b requires "am"/"pm" (or, when absent, the minutes) to end at a word boundary.
+    match = re.search(
+        r"resets\s+(?:at\s+)?([0-2]?[0-9]):([0-5][0-9])[ \t]*([ap]m)?\b",
+        text,
+        flags=re.IGNORECASE,
+    )
     if not match:
         return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    meridiem = (match.group(3) or "").lower()
+    if meridiem == "pm" and hour != 12:
+        hour += 12
+    elif meridiem == "am" and hour == 12:
+        hour = 0
+    if not (0 <= hour <= 23):
+        return None
+    # NOTE (tz): the banner states the reset in the *account* timezone (e.g. Asia/Seoul);
+    # this host's local clock is the same zone, so interpreting HH:MM against local time is
+    # correct here. If a deployment ever runs with a host tz different from the banner's,
+    # the explicit-timezone token would need honoring — out of scope while they match.
     local_now = dt.datetime.fromtimestamp(current)
-    target = local_now.replace(hour=int(match.group(1)), minute=int(match.group(2)), second=0, microsecond=0)
+    target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target.timestamp() <= current:
         target += dt.timedelta(days=1)
     return target.timestamp()
@@ -170,8 +240,19 @@ def maybe_relaunch(entry: dict[str, Any], dry_run: bool, current: float) -> str:
     if dry_run:
         event("would_relaunch", entry["pane"], "pane_unavailable", {"argv": argv})
         return "would_relaunch"
-    subprocess.run(argv, check=False, timeout=entry.get("relaunch_timeout_seconds", 30))
+    # MEDIUM-HIGH/LIVE: subprocess.run can raise (FileNotFoundError for a bad/stale
+    # relaunch argv, TimeoutExpired, or other OSError) before relaunch_count is
+    # bumped. If the count isn't incremented for the ATTEMPT (not just success),
+    # max_relaunch never trips and a persistently-bad relaunch command retries
+    # every scan interval forever, growing events.log without bound. Count the
+    # attempt first so it's durable even if the spawn itself blows up; the
+    # per-iteration save_registry() in run_scan then persists it.
     entry["relaunch_count"] = entry.get("relaunch_count", 0) + 1
+    try:
+        subprocess.run(argv, check=False, timeout=entry.get("relaunch_timeout_seconds", 30))
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        event("relaunch_spawn_error", entry["pane"], exc.__class__.__name__, {"argv": argv})
+        return "relaunch_spawn_error"
     event("relaunch", entry["pane"], "pane_unavailable", {"argv": argv})
     return "relaunch"
 
@@ -226,7 +307,6 @@ def scan_entry(entry: dict[str, Any], dry_run: bool) -> str:
 
 
 def cmd_register(args: argparse.Namespace) -> int:
-    data = load_registry()
     resume = str(Path(args.resume_file).expanduser())
     if not Path(resume).is_file():
         print(f"resume file not found: {resume}", file=sys.stderr)
@@ -238,32 +318,40 @@ def cmd_register(args: argparse.Namespace) -> int:
         print("--relaunch-json must be a non-empty JSON string array", file=sys.stderr)
         return 2
     current = now()
-    data["entries"][args.pane] = {
-        "pane": args.pane,
-        "runtime": args.runtime,
-        "resume_file": resume,
-        "pane_text_file": args.pane_text_file,
-        "heartbeat_file": args.heartbeat_file,
-        "heartbeat_max_age_seconds": args.heartbeat_max_age_seconds,
-        "liveness_file": args.liveness_file,
-        "stall_seconds": args.stall_seconds,
-        "operation_silence_seconds": args.operation_silence_seconds,
-        "idle_pattern": args.idle_pattern,
-        "mission_complete_file": args.mission_complete_file,
-        "rate_limit_seconds": args.rate_limit_seconds,
-        "max_actions": args.max_actions,
-        "reset_epsilon_seconds": args.reset_epsilon_seconds,
-        "relaunch_argv": relaunch_argv,
-        "max_relaunch": args.max_relaunch,
-        "relaunch_timeout_seconds": args.relaunch_timeout_seconds,
-        "last_changed_at": current - args.seed_silence_seconds,
-        "last_fingerprint": args.seed_fingerprint,
-        "idle_stable_count": 0,
-        "action_count": 0,
-        "last_action_at": 0,
-        "relaunch_count": 0,
-    }
-    save_registry(data)
+    # RED-live-1: this whole load->mutate->save cycle is the registry's
+    # read-modify-write. Without the lock, a `register` racing a concurrent
+    # daemon scan iteration (run_scan) can load stale data, and whichever of
+    # the two saves lands last silently clobbers the other's write (the
+    # just-registered pane, or the scan's in-flight mutations, is dropped with
+    # no error). Serialize on the same flock used for the ledger's RMW.
+    with _state_lock():
+        data = load_registry()
+        data["entries"][args.pane] = {
+            "pane": args.pane,
+            "runtime": args.runtime,
+            "resume_file": resume,
+            "pane_text_file": args.pane_text_file,
+            "heartbeat_file": args.heartbeat_file,
+            "heartbeat_max_age_seconds": args.heartbeat_max_age_seconds,
+            "liveness_file": args.liveness_file,
+            "stall_seconds": args.stall_seconds,
+            "operation_silence_seconds": args.operation_silence_seconds,
+            "idle_pattern": args.idle_pattern,
+            "mission_complete_file": args.mission_complete_file,
+            "rate_limit_seconds": args.rate_limit_seconds,
+            "max_actions": args.max_actions,
+            "reset_epsilon_seconds": args.reset_epsilon_seconds,
+            "relaunch_argv": relaunch_argv,
+            "max_relaunch": args.max_relaunch,
+            "relaunch_timeout_seconds": args.relaunch_timeout_seconds,
+            "last_changed_at": current - args.seed_silence_seconds,
+            "last_fingerprint": args.seed_fingerprint,
+            "idle_stable_count": 0,
+            "action_count": 0,
+            "last_action_at": 0,
+            "relaunch_count": 0,
+        }
+        save_registry(data)
     event("register", args.pane, "registered", {"runtime": args.runtime})
     print(f"registered {args.pane}")
     return 0
@@ -278,11 +366,29 @@ def cmd_list(_: argparse.Namespace) -> int:
 
 def run_scan(iterations: int, interval: float, dry_run: bool) -> int:
     for index in range(iterations):
-        data = load_registry()
-        for pane, entry in sorted(data["entries"].items()):
-            result = scan_entry(entry, dry_run=dry_run)
-            print(f"{pane}: {result}")
-        save_registry(data)
+        # RED-live-1: lock the full load->mutate->save per iteration (not the
+        # whole daemon lifetime -- the lock must NOT be held across `sleep`,
+        # or a long-running daemon would starve `register`/other scans for the
+        # entire --interval). This is the other unlocked RMW half of the same
+        # registry-clobber race fixed in cmd_register.
+        with _state_lock():
+            data = load_registry()
+            for pane, entry in sorted(data["entries"].items()):
+                # HIGH/LIVE: one pane's exception (e.g. a poisoned reset string, a tmux
+                # capture failure) must never abort scanning of every OTHER registered pane
+                # in this iteration -- that turns a single on-screen string into a whole-
+                # daemon denial of service. Isolate per-pane; let control-flow exceptions
+                # (KeyboardInterrupt/SystemExit) propagate as normal.
+                try:
+                    result = scan_entry(entry, dry_run=dry_run)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as exc:
+                    print(f"{pane}: scan_error:{exc.__class__.__name__}: {exc}", file=sys.stderr)
+                    event("scan_error", pane, exc.__class__.__name__, {"error": str(exc)})
+                    continue
+                print(f"{pane}: {result}")
+            save_registry(data)
         if index + 1 < iterations:
             time.sleep(interval)
     return 0
@@ -326,6 +432,126 @@ def cmd_keepalive_once(args: argparse.Namespace) -> int:
         return 0
     subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     print("started")
+    return 0
+
+
+def cmd_parse_reset(args: argparse.Namespace) -> int:
+    # One-shot exposure of parse_reset_at so an ORCHESTRATOR (which runs Agent-tool /
+    # workflow subagents, not tmux panes the daemon can watch) can turn a subagent's
+    # session-limit failure text into a concrete resume time for its own stop-and-go:
+    #   ai-agent-watchdog parse-reset <<<"You've hit your session limit · resets 11:20pm"
+    # Prints "<reset_epoch> <seconds_from_now> <iso_local>" (or --json). Exit 1 = no reset.
+    text = " ".join(args.text) if args.text else sys.stdin.read()
+    current = args.now if args.now is not None else now()
+    reset_at = parse_reset_at(text, current)
+    if reset_at is None:
+        print("no reset time found in input", file=sys.stderr)
+        return 1
+    seconds = max(0, int(round(reset_at - current)))
+    iso = dt.datetime.fromtimestamp(reset_at).isoformat()
+    if args.json:
+        print(json.dumps({"reset_at_epoch": reset_at, "reset_at_local": iso, "seconds_from_now": seconds}, sort_keys=True))
+    else:
+        print(f"{int(reset_at)} {seconds} {iso}")
+    return 0
+
+
+# --- orchestrator stop-and-go recovery ledger (GAP B / IP-2 minimal core) ------------------
+# A durable, idempotent record of subagent dispatches that hit a session/usage limit and must
+# be re-dispatched after reset. The ORCHESTRATOR (which runs Agent-tool/workflow subagents the
+# tmux daemon cannot see) writes a record on a limit-failure and reads `due` after a wake.
+# Bounded on purpose (Codex review): idempotent by --key (no duplicate resume), max_retries,
+# and a not_before gate so a wake can only resume what is actually past its reset.
+def ledger_path() -> Path:
+    return state_dir() / "recovery-ledger.json"
+
+
+def load_ledger() -> dict[str, Any]:
+    p = ledger_path()
+    if not p.exists():
+        return {"version": 1, "records": {}}
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("records"), dict):
+        raise SystemExit(f"invalid recovery ledger: {p}")
+    return data
+
+
+def save_ledger(data: dict[str, Any]) -> None:
+    p = ledger_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def cmd_ledger_record(args: argparse.Namespace) -> int:
+    with _state_lock():
+        data = load_ledger()
+        rec = data["records"].get(args.key, {})  # idempotent: same key updates, never duplicates
+        # RED3-2: do NOT resurrect an already-resolved record (record -> done -> re-record must
+        # not make completed work due again). A terminal status stays terminal unless --reopen.
+        if rec.get("status") in ("done", "exhausted") and not getattr(args, "reopen", False):
+            print(f"{args.key}: already {rec['status']}; not re-queued (use --reopen to force)")
+            return 0
+    # Sanity ceiling (red-review #6): a mis-parsed reset far in the future must not become an
+    # (effectively) infinite wait. Clamp not_before to now + max_wait; the resume protocol
+    # re-checks the live limit state after the wake, so an early clamp is safe (it re-records
+    # if still limited) while a bad parse can never freeze recovery forever.
+        nb = None
+        if args.reset_epoch is not None:
+            _rec_now = args.now if getattr(args, "now", None) is not None else now()
+            nb = min(args.reset_epoch + args.epsilon, _rec_now + args.max_wait_seconds)
+        else:
+            nb = rec.get("not_before")
+        rec.update({
+            "key": args.key,
+            "payload": args.payload if args.payload is not None else rec.get("payload", ""),
+            "reset_epoch": args.reset_epoch if args.reset_epoch is not None else rec.get("reset_epoch"),
+            "not_before": nb,
+            "max_retries": args.max_retries,
+            "retry_count": rec.get("retry_count", 0),
+            "status": "pending",
+            "updated_at": now(),
+        })
+        data["records"][args.key] = rec
+        save_ledger(data)
+    print(f"recorded {args.key} (not_before={rec.get('not_before')}, retries={rec['retry_count']}/{rec['max_retries']})")
+    return 0
+
+
+def cmd_ledger_due(args: argparse.Namespace) -> int:
+    data = load_ledger()
+    current = args.now if args.now is not None else now()
+    due = [
+        r for r in data["records"].values()
+        if r.get("status") == "pending"
+        and r.get("retry_count", 0) < r.get("max_retries", 3)
+        and (r.get("not_before") is None or r["not_before"] <= current)
+    ]
+    due.sort(key=lambda r: (r.get("not_before") or 0))
+    if args.json:
+        print(json.dumps(due, sort_keys=True))
+    else:
+        for r in due:
+            print(f"{r['key']}\t{r.get('retry_count',0)}/{r.get('max_retries',3)}\t{r.get('payload','')[:80]}")
+    return 0 if due else 3  # exit 3 = nothing due (distinct from error)
+
+
+def cmd_ledger_done(args: argparse.Namespace) -> int:
+    with _state_lock():
+        data = load_ledger()
+        rec = data["records"].get(args.key)
+        if not rec:
+            print(f"no ledger record: {args.key}", file=sys.stderr)
+            return 1
+        if args.retried:
+            rec["retry_count"] = rec.get("retry_count", 0) + 1
+            rec["status"] = "pending" if rec["retry_count"] < rec.get("max_retries", 3) else "exhausted"
+        else:
+            rec["status"] = "done"
+        rec["updated_at"] = now()
+        save_ledger(data)
+    print(f"{args.key}: {rec['status']} (retries={rec.get('retry_count',0)}/{rec.get('max_retries',3)})")
     return 0
 
 
@@ -378,6 +604,33 @@ def parser() -> argparse.ArgumentParser:
     once.add_argument("--daemon-command", default="ai-agent-watchdog daemon --interval 60")
     once.add_argument("--dry-run", action="store_true")
     once.set_defaults(func=cmd_keepalive_once)
+
+    pr = sub.add_parser("parse-reset", help="parse a session/rate-limit reset time from text (stdin or args)")
+    pr.add_argument("text", nargs="*", help="text to scan; if omitted, read stdin")
+    pr.add_argument("--now", type=float, default=None, help="override current epoch (testing)")
+    pr.add_argument("--json", action="store_true")
+    pr.set_defaults(func=cmd_parse_reset)
+
+    lr = sub.add_parser("ledger-record", help="record a subagent to re-dispatch after a limit reset (idempotent by --key)")
+    lr.add_argument("--key", required=True, help="idempotent dispatch key (e.g. role+prompt-hash)")
+    lr.add_argument("--payload", default=None, help="what to re-dispatch (prompt/ref); free text")
+    lr.add_argument("--reset-epoch", type=float, default=None, help="reset time (epoch) from parse-reset")
+    lr.add_argument("--epsilon", type=float, default=60.0)
+    lr.add_argument("--max-wait-seconds", type=float, default=43200.0, help="clamp not_before to now+this (guard a mis-parsed far-future reset; default 12h)")
+    lr.add_argument("--max-retries", type=int, default=3)
+    lr.add_argument("--now", type=float, default=None, help="override current epoch (testing)")
+    lr.add_argument("--reopen", action="store_true", help="re-queue even if the record is done/exhausted")
+    lr.set_defaults(func=cmd_ledger_record)
+
+    ld = sub.add_parser("ledger-due", help="list pending records past not_before with retries left (exit 3 if none)")
+    ld.add_argument("--now", type=float, default=None)
+    ld.add_argument("--json", action="store_true")
+    ld.set_defaults(func=cmd_ledger_due)
+
+    ld2 = sub.add_parser("ledger-done", help="mark a record done (or --retried to bump retry_count)")
+    ld2.add_argument("--key", required=True)
+    ld2.add_argument("--retried", action="store_true")
+    ld2.set_defaults(func=cmd_ledger_done)
     return p
 
 

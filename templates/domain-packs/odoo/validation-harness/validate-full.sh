@@ -56,7 +56,7 @@ trap 'rm -rf "$HARNESS_SNAPSHOT_DIR" 2>/dev/null || true' EXIT
 # instead -- pure object-database reads, no .gitattributes/filter/fsmonitor
 # machinery ever fires for either. See validate-warm.sh's harness_materialize_tree
 # for the full rationale; duplicated here (each script is standalone).
-harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_root/custom-addons/**
+harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_root/custom-addons/** and dest_root/requirements.txt (if present at ref)
   local proj="$1" ref="$2" dest="$3" n=0 line meta path mode type oid outpath parentdir destreal parentreal
   git -C "$proj" rev-parse --verify -q "${ref}^{tree}" >/dev/null 2>&1 || return 1
   destreal="$(cd "$dest" && pwd -P)" || return 1
@@ -108,8 +108,15 @@ harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_r
     esac
     case "$path" in
       custom-addons/*) : ;;
+      # AUD-RCE1 fix: requirements.txt is the one non-custom-addons file that feeds
+      # `pip3 install -r` (prepare-base-db.sh's .deps.txt, via this script's
+      # ODOO_DEMO_REBUILD -> prepare-base-db.sh call). Materialize it from the REVIEWED
+      # ref via this same filter-immune cat-file path, never the live
+      # $PROJECT/requirements.txt -- same class of fix as custom-addons/* above, one
+      # field over. Exact top-level match only (not e.g. custom-addons/requirements.txt).
+      requirements.txt) : ;;
       *)
-        echo "[full] REJECT: entry '$path' at $ref is outside custom-addons/ -- aborting materialization" >&2
+        echo "[full] REJECT: entry '$path' at $ref is outside custom-addons/ (and is not requirements.txt) -- aborting materialization" >&2
         return 1 ;;
     esac
     outpath="$dest/$path"
@@ -131,8 +138,13 @@ harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_r
     # RAW stored bytes, zero conversion -- this is the filter-immune read.
     git -C "$proj" cat-file blob "$oid" > "$outpath" || return 1
     [ "$mode" = "100755" ] && chmod +x "$outpath"
-    n=$((n+1))
-  done < <(git -C "$proj" ls-tree -r -z "$ref" -- custom-addons 2>/dev/null)
+    # Only custom-addons/* entries count toward the fail-closed gate below --
+    # requirements.txt is OPTIONAL at the ref (a ref genuinely without one is a valid
+    # state; the deps-consuming caller fails closed on ITS OWN absence check, not on
+    # this function's return value), so its presence must never mask an otherwise-empty
+    # custom-addons/ at the ref.
+    case "$path" in custom-addons/*) n=$((n+1)) ;; esac
+  done < <(git -C "$proj" ls-tree -r -z "$ref" -- custom-addons requirements.txt 2>/dev/null)
   [ "$n" -gt 0 ] || return 1   # no custom-addons/ (or only unmaterializable entries) at that ref -> fail closed
   return 0
 }
@@ -290,7 +302,13 @@ if [ "${SKIP_DEMO_PASS:-0}" != "1" ] && [ "$WANT_DEMO" = "1" ]; then
     # (U-A0: -u does not reload demo). Its success IS the demo-data validation.
     echo "[full] demo/ changed -> rebuilding base_demo to validate changed demo data (full reload)..."
     harness_unlock   # release our READ lock so the child prepare-base can take the WRITE lock (no self-deadlock)
-    if ODOO_WITH_DEMO=1 ./prepare-base-db.sh "$PROJECT"; then
+    # Fix (same class as RED17b-2/18/18b): pass the ALREADY-MATERIALIZED, immutable
+    # snapshot's custom-addons ($PROJECT_ADDONS, set above from $HARNESS_SNAPSHOT_DIR)
+    # via PREPARE_BASE_ADDONS_DIR, NOT the raw/live $PROJECT path -- prepare-base-db.sh
+    # would otherwise unconditionally re-derive "$PROJECT/custom-addons" and rebuild the
+    # base from the live, mutable working dir instead of the reviewed $HARNESS_VALIDATE_REF,
+    # silently reintroducing the "validate the live dir, not the reviewed ref" TOCTOU class.
+    if ODOO_WITH_DEMO=1 PREPARE_BASE_ADDONS_DIR="$PROJECT_ADDONS" ./prepare-base-db.sh "$PROJECT"; then
       echo "[full] demo-pass(rebuild) PASS — changed demo data loads cleanly on the full set"
     else
       echo "[full] demo-pass(rebuild) FAIL — changed demo data did not load"; overall=1

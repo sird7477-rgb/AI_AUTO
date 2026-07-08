@@ -224,12 +224,38 @@ if [ -n "$mods" ]; then
     if [ -n "$mf_cand" ] && [ -f "$mf_cand" ]; then mf_screen="$mf_cand"; break; fi
   done
   if [ -n "$mf_screen" ]; then
-    # shellcheck disable=SC2086  # $mods is an intentional space-separated module list
-    if ! ( cd "$PROJECT" && python3 "$mf_screen" --modules $mods ); then
+    # shellcheck disable=SC2086  # $mods is an intentional space-separated module list --
+    # word-splitting is wanted here, but an UNQUOTED expansion also undergoes bash
+    # PATHNAME EXPANSION: a custom-addons module directory literally named `*` (or
+    # containing `?`/`[...]`, all git-legal on Linux) would otherwise glob-match every
+    # file in $PROJECT (the subshell's cwd after `cd`), silently replacing the real
+    # module token with a pile of unrelated filenames -- check-manifest-files.py's
+    # `resolve_modules()` then finds none of those under custom-addons/*/__manifest__.py
+    # and drops them all, printing a false "OK: no changed modules to check" for a
+    # module this screen's own docstring says must fail-closed. `set -f` (noglob) inside
+    # this subshell suppresses ONLY the pathname expansion (word-splitting is untouched)
+    # and is scoped to the subshell alone -- it never leaks into the parent shell.
+    if ! ( cd "$PROJECT" && set -f && python3 "$mf_screen" --modules $mods ); then
       echo "[pre-push] ❌ BLOCKED: a __manifest__.py references a missing file (see above)."
       echo "[pre-push]     Fix the path/file, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
       exit 1
     fi
+  else
+    # RED-VG-1: a missing/renamed script here must never be a silent no-op --
+    # mirror check-schema-catalog.py's LOUD NOT-VALIDATED marker below (RED2-4)
+    # exactly: print-and-continue, not a forced exit. This screen's own
+    # docstring notes the warm-base validation (later, once docker+HARNESS are
+    # configured) independently catches the same missing-data/demo-file class,
+    # so it is backstopped there just like check-schema-catalog.py; and when
+    # HARNESS is unset or docker is unavailable, the existing "ODOO_HARNESS_DIR
+    # not set" / "docker unavailable" ack-or-block gates further down already
+    # fail-closed the whole push in that configuration on their own. Routing
+    # THIS marker through odoo_unvalidated_ack_or_block as well would exit the
+    # hook here unconditionally (block, or ack-and-exit-0) before those later
+    # stages ever run -- silently dropping their own distinct coverage/messages
+    # any time this one optional screen happens to be absent, which is strictly
+    # worse than today's fixed behavior below, not better.
+    echo "[pre-push] NOT-VALIDATED (scanner check-manifest-files.py unavailable): manifest-file-existence screen did NOT run for changed modules ($mods) -- 'push validated' does NOT imply 'manifest-files-checked'. Restore check-manifest-files.py next to this hook or at \$HARNESS to close this gap."
   fi
 fi
 
@@ -259,7 +285,11 @@ if [ -z "$HARNESS" ]; then
 fi
 
 if [ -n "$mods" ] && [ -x "$HARNESS/changed-module-scope.py" ]; then
-  mods="$(python3 "$HARNESS/changed-module-scope.py" --addons-root "$PROJECT/custom-addons" --changed $mods --reverse-deps --format space)"
+  # Glob-safety (same class as the manifest screen above): `set -f` inside this command
+  # substitution's own subshell blocks pathname expansion of the unquoted $mods word list
+  # without touching the parent shell's glob state.
+  # shellcheck disable=SC2086  # $mods is an intentional space-separated module list
+  mods="$(set -f; python3 "$HARNESS/changed-module-scope.py" --addons-root "$PROJECT/custom-addons" --changed $mods --reverse-deps --format space)"
 fi
 
 # Static action-shape screen (no docker needed): flag CHANGED act_window popups
@@ -288,7 +318,9 @@ if [ -n "$mods" ]; then
       schema_catalog="$HARNESS/.warm-base.$(harness_proj_slug "$PROJECT").${ODOO_BASE_DB:-base}.schema-catalog.json"
     fi
     # shellcheck disable=SC2086  # $mods is an intentional space-separated module list.
-    if ! ( cd "$PROJECT" && ODOO_SCHEMA_CATALOG="$schema_catalog" python3 "$HARNESS/check-schema-catalog.py" --modules $mods --strict ); then
+    # `set -f` (scoped to this subshell only, see the manifest-screen comment above)
+    # blocks pathname expansion of a `*`/`?`/`[...]`-named module directory.
+    if ! ( cd "$PROJECT" && set -f && ODOO_SCHEMA_CATALOG="$schema_catalog" python3 "$HARNESS/check-schema-catalog.py" --modules $mods --strict ); then
       echo "[pre-push] ❌ BLOCKED: schema catalog screen found invalid model/field references (see above)."
       echo "[pre-push]     Rebuild the warm base/catalog, fix the reference, or bypass with: SKIP_ODOO_VALIDATE=1 git push"
       exit 1
@@ -317,6 +349,69 @@ fi
 
 echo "[pre-push] Odoo validating changed modules: $mods"
 
+# AUD-ENFORCE1 fix: byte-identical copy of validate-warm.sh/validate-full.sh's
+# harness_materialize_tree() (each of those files duplicates it standalone rather than
+# sourcing a shared copy -- this is the same convention, one more file over). Needed
+# because the enforced-gate auto-build path below (odoo_validate_one_ref's rc==3 branch)
+# must hand prepare-base-db.sh a snapshot of the REVIEWED/pushed ref, never the live
+# working tree -- and validate-warm.sh's OWN internal snapshot (HARNESS_SNAPSHOT_DIR) is
+# already `rm -rf`'d by its EXIT trap before control returns here with rc==3, so there is
+# nothing left over from that call to reuse; this hook must materialize its own.
+# See validate-warm.sh for the full RED18/RED18b rationale (submodule/symlink reject,
+# path-traversal reject, filter-immune git ls-tree/cat-file reads).
+harness_materialize_tree() {  # <project_repo> <ref> <dest_root> ; writes dest_root/custom-addons/** and dest_root/requirements.txt (if present at ref)
+  local proj="$1" ref="$2" dest="$3" n=0 line meta path mode type oid outpath parentdir destreal parentreal
+  git -C "$proj" rev-parse --verify -q "${ref}^{tree}" >/dev/null 2>&1 || return 1
+  destreal="$(cd "$dest" && pwd -P)" || return 1
+  while IFS= read -r -d '' line; do
+    meta="${line%%$'\t'*}"; path="${line#*$'\t'}"
+    mode="${meta%% *}"
+    type="${meta#* }"; type="${type%% *}"
+    oid="${meta##* }"
+    case "$mode" in
+      160000)
+        echo "[pre-push] NOTE: skipping submodule entry '$path' at $ref (not materialized)" >&2
+        continue ;;
+      120000)
+        echo "[pre-push] NOTE: skipping symlink entry '$path' at $ref (symlinks are not materialized; not a valid addon source file)" >&2
+        continue ;;
+    esac
+    [ "$type" = "blob" ] || { echo "[pre-push] NOTE: skipping non-blob entry '$path' (type=$type) at $ref" >&2; continue; }
+    case "$path" in
+      /*)
+        echo "[pre-push] REJECT: absolute path '$path' at $ref -- aborting materialization" >&2
+        return 1 ;;
+    esac
+    case "$path" in
+      ..|../*|*/../*|*/..)
+        echo "[pre-push] REJECT: '..' path component in '$path' at $ref -- aborting materialization" >&2
+        return 1 ;;
+    esac
+    case "$path" in
+      custom-addons/*) : ;;
+      requirements.txt) : ;;
+      *)
+        echo "[pre-push] REJECT: entry '$path' at $ref is outside custom-addons/ (and is not requirements.txt) -- aborting materialization" >&2
+        return 1 ;;
+    esac
+    outpath="$dest/$path"
+    parentdir="$(dirname "$outpath")"
+    mkdir -p "$parentdir" || return 1
+    parentreal="$(cd "$parentdir" && pwd -P)" || return 1
+    case "$parentreal" in
+      "$destreal"|"$destreal"/*) : ;;
+      *)
+        echo "[pre-push] REJECT: resolved path for '$path' escapes the snapshot dir ($parentreal not under $destreal) -- aborting materialization" >&2
+        return 1 ;;
+    esac
+    git -C "$proj" cat-file blob "$oid" > "$outpath" || return 1
+    [ "$mode" = "100755" ] && chmod +x "$outpath"
+    case "$path" in custom-addons/*) n=$((n+1)) ;; esac
+  done < <(git -C "$proj" ls-tree -r -z "$ref" -- custom-addons requirements.txt 2>/dev/null)
+  [ "$n" -gt 0 ] || return 1
+  return 0
+}
+
 # RED17b-2: validate-warm.sh's docker bind-mount otherwise reads the LIVE working
 # directory (mutable, tens of seconds to ~2 minutes after this hook starts), never
 # actually pinned to the commit `git push` transmits. HARNESS_VALIDATE_REF makes
@@ -330,9 +425,28 @@ echo "[pre-push] Odoo validating changed modules: $mods"
 # widening (validate a superset of modules per ref), never a narrowing that could
 # silently drop coverage.
 odoo_validate_one_ref() {  # $1 = pushed local sha to materialize+validate against
-  local ref="$1" rc
+  local ref="$1" rc _base_snap
+  # Env-scrub chokepoint (defense in depth alongside validate-warm.sh's own marker-
+  # provenance fix): a real push must NEVER inherit a test/CI-only WARM_* override from
+  # the ambient shell. WARM_CACHE_PRIME and WARM_CLASSIFY_ONLY both make validate-warm.sh
+  # exit 0 WITHOUT ever running `docker compose ... -u` (the whole point of a real push's
+  # validation) -- WARM_CACHE_PRIME by printing a cached/primed PASS, WARM_CLASSIFY_ONLY by
+  # printing its dry-run decision and exiting before the docker stage in every code path
+  # (asset-skip, cache-hit, AND the plain validate branch). Left set, either would silently
+  # bypass this gate on a real push, exactly the class of defect this hook exists to close.
+  # (WARM_NO_ASSET_SKIP / WARM_NO_CACHE are NOT scrubbed: both only ever force MORE
+  # validation to run, never less, so they carry no bypass risk if inherited.)
+  unset WARM_CACHE_PRIME WARM_CLASSIFY_ONLY
+  # Glob-safety: $mods is intentionally unquoted below (word-splitting into separate
+  # positional args), but that ALSO exposes it to bash pathname expansion -- a module
+  # dir literally named `*`/`?`/`[...]` would otherwise glob-expand against the CURRENT
+  # DIRECTORY here (not a subshell this time, so `set -f`/`set +f` bracket exactly this
+  # one call and are restored immediately after, never left on for the rest of the hook).
+  set -f
+  # shellcheck disable=SC2086  # $mods is an intentional space-separated module list
   HARNESS_VALIDATE_REF="$ref" "$HARNESS/validate-warm.sh" "$PROJECT" $mods
   rc=$?
+  set +f
   if [ "$rc" = "3" ]; then
     # Warm base missing. Fail-closed: never silently skip. Auto-build it once
     # (default), or block-with-instructions if ODOO_SKIP_AUTO_BASE=1.
@@ -341,13 +455,61 @@ odoo_validate_one_ref() {  # $1 = pushed local sha to materialize+validate again
       return 1
     fi
     echo "[pre-push] ⏳ first-time setup: warm base missing — building it now (~10min, one-time for this project)..."
-    if ! "$HARNESS/prepare-base-db.sh" "$PROJECT"; then
-      echo "[pre-push] ❌ BLOCKED: base build failed (a custom module is not installable on a clean base). Fix the error above, or SKIP_ODOO_VALIDATE=1 git push to bypass."
+    # AUD-ENFORCE1 fix: this is the ENFORCED/blocking gate's own base build -- it must
+    # carry the exact same guarantee validate-warm.sh's docker bind-mount already has
+    # (materialize the REVIEWED/pushed ref, never the live mutable working tree), or a
+    # project's first push with custom-addons changes (the common/default case) would
+    # silently build the shared, persistent validation base from whatever
+    # requirements.txt/custom-addons/* happen to sit on disk right now -- build-time
+    # `pip install -r` code exec plus a full live `odoo -i` on unreviewed content, and a
+    # bypass of the RED18b symlink/submodule/path-traversal rejects harness_materialize_tree
+    # enforces on every OTHER validated path. Materialize "$ref" into a fresh snapshot dir
+    # here (validate-warm.sh's own snapshot for this same rc==3 call is already gone -- its
+    # EXIT trap removed it before returning control to us -- so there is nothing to reuse)
+    # and hand prepare-base-db.sh ONLY that snapshot's custom-addons/requirements.txt via
+    # PREPARE_BASE_ADDONS_DIR/PREPARE_BASE_REQUIREMENTS, never "$PROJECT" itself. An
+    # unmaterializable ref (bad ref, no custom-addons/ at that commit, or a rejected
+    # symlink/submodule/path-traversal entry) fails CLOSED and LOUD here, exactly like
+    # every other "could not actually validate" reason in this hook -- never a silent
+    # fall-back to the live tree.
+    #
+    # LOW disk-hygiene fix: prepare-base-db.sh below blocks ~10min on the common
+    # first-push case, and until now $_base_snap's cleanup was ONLY the inline
+    # `rm -rf` calls on the normal/return paths further down -- a signal-interrupted
+    # push (Ctrl-C, CI cancel, closed terminal) during that window skipped all of
+    # them and leaked this mktemp dir under $HARNESS with no reaper. Match
+    # validate-warm.sh's own trap convention (EXIT cleanup + explicit INT/TERM ->
+    # exit, so the EXIT trap deterministically fires even on signal termination):
+    # the EXIT trap only ever touches $_base_snap, and is a safe no-op (guarded by
+    # `-n`) both before this variable is assigned and after this function has
+    # returned and its `local` has gone out of scope -- so it never mis-fires on an
+    # unrelated exit. This is the first trap this hook installs (verified no
+    # pre-existing trap here to clobber); the inline `rm -rf "$_base_snap"` calls
+    # below are kept as the primary cleanup for the ordinary (non-signal) failure
+    # paths -- once this function returns, its `local $_base_snap` is out of scope
+    # and this EXIT trap can no longer see it, so they are NOT merely redundant --
+    # and this trap adds the missing signal-interruption coverage on top.
+    trap '[ -n "${_base_snap:-}" ] && rm -rf "$_base_snap" 2>/dev/null || true' EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
+    _base_snap="$(mktemp -d "${HARNESS}/.odoo-harness-prepush-snap.XXXXXX" 2>/dev/null || true)"
+    if [ -z "$_base_snap" ] || ! harness_materialize_tree "$PROJECT" "$ref" "$_base_snap"; then
+      echo "[pre-push] ❌ BLOCKED: cannot materialize pushed ref ${ref} for the base build (bad ref, no custom-addons/ at that commit, a rejected symlink/submodule/path-traversal entry, or object read error) -- refusing to fall back to the live working tree. Fix the error above, or SKIP_ODOO_VALIDATE=1 git push to bypass."
+      [ -n "$_base_snap" ] && rm -rf "$_base_snap" 2>/dev/null
       return 1
     fi
+    if ! PREPARE_BASE_ADDONS_DIR="$_base_snap/custom-addons" PREPARE_BASE_REQUIREMENTS="$_base_snap/requirements.txt" "$HARNESS/prepare-base-db.sh" "$PROJECT"; then
+      echo "[pre-push] ❌ BLOCKED: base build failed (a custom module is not installable on a clean base). Fix the error above, or SKIP_ODOO_VALIDATE=1 git push to bypass."
+      rm -rf "$_base_snap" 2>/dev/null
+      return 1
+    fi
+    rm -rf "$_base_snap" 2>/dev/null
     echo "[pre-push] base built — re-running validation..."
+    set -f
+    # shellcheck disable=SC2086  # $mods is an intentional space-separated module list
     HARNESS_VALIDATE_REF="$ref" "$HARNESS/validate-warm.sh" "$PROJECT" $mods
     rc=$?
+    set +f
   fi
   if [ "$rc" != "0" ]; then
     echo "[pre-push] ❌ BLOCKED: Odoo validation failed for pushed commit ${ref}. Fix the error above, or override: SKIP_ODOO_VALIDATE=1 git push"
