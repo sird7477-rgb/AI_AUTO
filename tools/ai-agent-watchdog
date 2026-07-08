@@ -135,8 +135,13 @@ def parse_reset_at(text: str, current: float) -> float | None:
     # optional "at ", an optional am/pm suffix (converted to 24h), and an optional trailing
     # timezone token (informational only — the host clock is already in that zone here, so
     # HH:MM is interpreted in local time; see note below).
+    # NOTE the trailing \b (and single optional space): parse_reset_at is fed the WHOLE
+    # captured pane, so `\s*([ap]m)?` (unbounded) would misread ordinary prose that merely
+    # starts with "am"/"pm" right after an "HH:MM"-shaped token -- e.g. "resets 12:00amazing"
+    # or "resets 3:00amber alert" -- as a meridiem suffix and schedule a bogus resume. The
+    # \b requires "am"/"pm" (or, when absent, the minutes) to end at a word boundary.
     match = re.search(
-        r"resets\s+(?:at\s+)?([0-2]?[0-9]):([0-5][0-9])\s*([ap]m)?",
+        r"resets\s+(?:at\s+)?([0-2]?[0-9]):([0-5][0-9]) ?([ap]m)?\b",
         text,
         flags=re.IGNORECASE,
     )
@@ -355,6 +360,27 @@ def cmd_keepalive_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_parse_reset(args: argparse.Namespace) -> int:
+    # One-shot exposure of parse_reset_at so an ORCHESTRATOR (which runs Agent-tool /
+    # workflow subagents, not tmux panes the daemon can watch) can turn a subagent's
+    # session-limit failure text into a concrete resume time for its own stop-and-go:
+    #   ai-agent-watchdog parse-reset <<<"You've hit your session limit · resets 11:20pm"
+    # Prints "<reset_epoch> <seconds_from_now> <iso_local>" (or --json). Exit 1 = no reset.
+    text = " ".join(args.text) if args.text else sys.stdin.read()
+    current = args.now if args.now is not None else now()
+    reset_at = parse_reset_at(text, current)
+    if reset_at is None:
+        print("no reset time found in input", file=sys.stderr)
+        return 1
+    seconds = max(0, int(round(reset_at - current)))
+    iso = dt.datetime.fromtimestamp(reset_at).isoformat()
+    if args.json:
+        print(json.dumps({"reset_at_epoch": reset_at, "reset_at_local": iso, "seconds_from_now": seconds}, sort_keys=True))
+    else:
+        print(f"{int(reset_at)} {seconds} {iso}")
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="External continuity watchdog for tmux-based AI agent panes.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -404,6 +430,12 @@ def parser() -> argparse.ArgumentParser:
     once.add_argument("--daemon-command", default="ai-agent-watchdog daemon --interval 60")
     once.add_argument("--dry-run", action="store_true")
     once.set_defaults(func=cmd_keepalive_once)
+
+    pr = sub.add_parser("parse-reset", help="parse a session/rate-limit reset time from text (stdin or args)")
+    pr.add_argument("text", nargs="*", help="text to scan; if omitted, read stdin")
+    pr.add_argument("--now", type=float, default=None, help="override current epoch (testing)")
+    pr.add_argument("--json", action="store_true")
+    pr.set_defaults(func=cmd_parse_reset)
     return p
 
 
