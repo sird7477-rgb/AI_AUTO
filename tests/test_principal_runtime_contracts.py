@@ -2,8 +2,26 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_provenance_key(tmp_path_factory, monkeypatch):
+    # Hermeticity: the provenance HMAC key resolves as
+    #   $AI_AUTO_PROVENANCE_KEY_FILE -> $AI_AUTO_HOME/.provenance-key -> ~/.config/ai-auto/.
+    # These tests run scripts with cwd=ROOT and merge os.environ, so an ambient AI_AUTO_HOME
+    # that equals the repo root -- the engine self-host case, e.g. running the suite from the
+    # live main worktree -- makes $AI_AUTO_HOME/.provenance-key resolve IN-TREE, which the
+    # fail-closed in-tree-key guard (RED6-1) refuses. The launcher evidence then can't
+    # authenticate and the launcher/principal tests behave differently than in a clean
+    # checkout (where AI_AUTO_HOME != cwd, so the key is out-of-tree). Pin the key to an
+    # out-of-tree tmp path (highest-precedence override) so record-launch and the run under
+    # test share one deterministic, out-of-tree key regardless of where the suite runs.
+    keydir = tmp_path_factory.mktemp("provkey")
+    monkeypatch.setenv("AI_AUTO_PROVENANCE_KEY_FILE", str(keydir / "provenance.key"))
 
 
 def _run(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
