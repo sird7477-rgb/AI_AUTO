@@ -59,6 +59,28 @@ site is driven with SHIMMED validate-warm.sh/prepare-base-db.sh scripts inside
 $HARNESS that record what they were handed, matching the stub pattern in
 tests/test_odoo_prepare_base_db_defense2.py's DEFECT-1-integration test.
 
+DEFECT 3 (LOW/LIVE, disk hygiene) -- the rc==3 auto-build branch's own
+`_base_snap` mktemp dir (materializing the reviewed ref for prepare-base-db.sh,
+see DEFECT 1 above) had ZERO `trap`. Its only cleanup was the inline `rm -rf`
+calls on the normal/return paths. prepare-base-db.sh blocks ~10min on the
+common first-push case, so a signal-interrupted push (Ctrl-C, CI cancel,
+closed terminal) landing during that window skips every inline `rm -rf` and
+leaks `$HARNESS/.odoo-harness-prepush-snap.XXXXXX` with no reaper. (The R11
+commit that introduced `_base_snap` claimed "Snapshot cleaned on every exit" --
+false until this fix.)
+
+Fix: `odoo_validate_one_ref` now installs, right before creating `_base_snap`,
+`trap '[ -n "${_base_snap:-}" ] && rm -rf "$_base_snap" ... ' EXIT` plus
+`trap 'exit 143' TERM` / `trap 'exit 130' INT` -- the same convention
+validate-warm.sh already uses (EXIT-trap cleanup + explicit INT/TERM -> exit,
+so the EXIT trap deterministically fires on signal termination too). The
+guard on `-n "${_base_snap:-}"` makes the trap a safe no-op both before the
+variable is assigned and after this function has returned (its `local` goes
+out of scope, so the EXIT trap installed here can no longer see it once
+control has left the function -- which is exactly why the pre-existing inline
+`rm -rf` calls on the ordinary/non-signal failure paths are kept, not removed:
+they remain the only cleanup once the signal window has passed).
+
 Non-vacuousness (PROJECT RULE: embedded literals for pre-fix contrast, NEVER
 `git show HEAD` at test time):
   - Defect 1: the OLD, unconditioned pre-push call
@@ -72,6 +94,14 @@ Non-vacuousness (PROJECT RULE: embedded literals for pre-fix contrast, NEVER
     `set -f`) is reproduced literally and driven directly, and shown to
     glob-drop the `*`-named module into a false "OK: no changed modules to
     check" PASS.
+  - Defect 3: the OLD (no-trap) shape of the rc==3 auto-build branch is
+    reproduced literally as a standalone script and driven with a stub
+    `prepare-base-db.sh` that signals its OWN parent (the running script,
+    blocked on that call -- standing in for the real ~10min block) with TERM
+    mid-call, then exits non-zero itself, mirroring how a real interrupted
+    child dies alongside its parent under Ctrl-C/CI-cancel. The OLD shape is
+    shown to leak `.odoo-harness-prepush-snap.*`; the FIXED hook, driven
+    end-to-end through the same interrupt, is shown not to.
 """
 from __future__ import annotations
 
@@ -589,4 +619,199 @@ def test_old_unquoted_expansion_would_have_glob_dropped_the_star_module(tmp_path
         "the embedded pre-fix (unquoted, no `set -f`) expansion no longer "
         f"glob-drops the `*` module -- this control is no longer discriminating. "
         f"stdout:\n{result.stdout}"
+    )
+
+
+# ==========================================================================
+# DEFECT 3 -- the rc==3 auto-build branch's `_base_snap` mktemp dir must be
+# cleaned up even when a signal (Ctrl-C / CI cancel) interrupts the ~10min
+# prepare-base-db.sh block, not only on the ordinary return paths.
+# ==========================================================================
+
+# A `prepare-base-db.sh` stand-in that simulates a Ctrl-C / CI-cancel landing
+# on the whole foreground process group WHILE this call (standing in for the
+# real ~10min block) is in flight: it signals its OWN parent (the pre-push
+# process, blocked waiting on this child) with TERM, then exits non-zero
+# itself -- exactly how a real interrupted child dies alongside its parent.
+_STUB_PREPARE_BASE_DB_SIGTERM_SH = """#!/usr/bin/env bash
+set -u
+: "${STUB_LOG:?STUB_LOG not set}"
+echo "==CALL (signal-interrupt stub)==" >> "$STUB_LOG"
+kill -TERM "$PPID" 2>/dev/null || true
+sleep 0.2
+exit 143
+"""
+
+
+def test_enforced_autobuild_signal_interrupt_leaves_no_leaked_snapshot(tmp_path):
+    """Non-vacuous positive: the FIXED hook's trap removes `_base_snap` even
+    when prepare-base-db.sh's block is interrupted by a signal landing on the
+    whole foreground process group mid-call."""
+    project, tip_sha = _make_poisoned_project(tmp_path)
+
+    stub_log = tmp_path / "stub.log"
+    vw_log = tmp_path / "vw.log"
+    vw_count_file = tmp_path / "vw.count"
+    harness = _harness_with_stubs(tmp_path, stub_log, vw_log, vw_count_file)
+    # Swap in the signal-interrupting prepare-base-db.sh stub in place of the
+    # always-succeeds one _harness_with_stubs installs by default.
+    pb = harness / "prepare-base-db.sh"
+    pb.write_text(_STUB_PREPARE_BASE_DB_SIGTERM_SH, encoding="utf-8")
+    _make_executable(pb)
+    fake_docker = _fake_docker_noop(tmp_path)
+
+    env_extra = {
+        "ODOO_HARNESS_DIR": str(harness),
+        "PATH": f"{fake_docker}:{os.environ.get('PATH', '')}",
+        "VW_CALL_LOG": str(vw_log),
+        "VW_COUNT_FILE": str(vw_count_file),
+        "STUB_LOG": str(stub_log),
+    }
+    result = _run_prepush(project, lsha=tip_sha, rsha=ZERO, env_extra=env_extra)
+
+    # Reached the actual risk window (proves this drives the intended branch,
+    # not some earlier unrelated exit)...
+    assert "building it now" in result.stdout, result.stdout
+    # ...but the interrupt preempts continuing past it: neither the "base
+    # build failed" message nor "base built" / "Odoo validation passed" is
+    # ever reached (matches the empirically-verified bash behavior: a pending
+    # trapped signal is processed the instant the foreground child call
+    # returns, before the enclosing `if` body runs).
+    assert "base built" not in result.stdout, result.stdout
+    assert "Odoo validation passed" not in result.stdout, result.stdout
+    assert result.returncode != 0, result.stdout
+
+    leaked = list(harness.glob(".odoo-harness-prepush-snap.*"))
+    assert not leaked, (
+        f"the fixed hook still leaked a snapshot dir on signal interrupt: {leaked}. "
+        f"stdout:\n{result.stdout}"
+    )
+
+
+def test_enforced_autobuild_normal_completion_still_leaves_no_leaked_snapshot(tmp_path):
+    """Regression: an uninterrupted, successful auto-build still cleans up
+    `_base_snap` and still validates (the trap must not disturb the ordinary
+    path -- already covered functionally by
+    test_enforced_autobuild_uses_reviewed_ref_snapshot_not_live_poison; this
+    test isolates just the "no leaked snapshot dir remains" assertion)."""
+    project, tip_sha = _make_poisoned_project(tmp_path)
+
+    stub_log = tmp_path / "stub.log"
+    vw_log = tmp_path / "vw.log"
+    vw_count_file = tmp_path / "vw.count"
+    harness = _harness_with_stubs(tmp_path, stub_log, vw_log, vw_count_file)
+    fake_docker = _fake_docker_noop(tmp_path)
+
+    env_extra = {
+        "ODOO_HARNESS_DIR": str(harness),
+        "PATH": f"{fake_docker}:{os.environ.get('PATH', '')}",
+        "VW_CALL_LOG": str(vw_log),
+        "VW_COUNT_FILE": str(vw_count_file),
+        "STUB_LOG": str(stub_log),
+    }
+    result = _run_prepush(project, lsha=tip_sha, rsha=ZERO, env_extra=env_extra)
+
+    assert "Odoo validation passed" in result.stdout, result.stdout
+    assert result.returncode == 0, result.stdout
+    leaked = list(harness.glob(".odoo-harness-prepush-snap.*"))
+    assert not leaked, f"a successful auto-build leaked a snapshot dir: {leaked}"
+
+
+def test_enforced_autobuild_unmaterializable_ref_still_blocks_with_no_leak(tmp_path):
+    """Regression: the fail-closed "cannot materialize pushed ref" path (a
+    changed-modules scope whose only committed content is a rejected entry --
+    here, a symlink, mirroring harness_materialize_tree's own RED18b reject)
+    must still BLOCK the push, and must still leave no leaked snapshot dir
+    (this path's cleanup is the pre-existing inline `rm -rf`, kept as-is by
+    this round's fix; the trap only adds coverage for the signal-interrupt
+    case above)."""
+    project = tmp_path / "project"
+    _init_repo(project)
+    (project / "README.md").write_text("base\n", encoding="utf-8")
+    _commit_all(project, "base")
+    # The ONLY custom-addons entry is a symlink -- harness_materialize_tree
+    # skips symlink entries (mode 120000), so n stays 0 and materialization
+    # fails, even though the changed-file path still matches `mods`'s
+    # `custom-addons/<name>/...` pattern (entering the auto-build branch).
+    mod_dir = project / "custom-addons" / "mod1"
+    mod_dir.mkdir(parents=True)
+    os.symlink("/etc/hostname", mod_dir / "link")
+    tip_sha = _commit_all(project, "reviewed: symlink-only module")
+
+    stub_log = tmp_path / "stub.log"
+    vw_log = tmp_path / "vw.log"
+    vw_count_file = tmp_path / "vw.count"
+    harness = _harness_with_stubs(tmp_path, stub_log, vw_log, vw_count_file)
+    fake_docker = _fake_docker_noop(tmp_path)
+
+    env_extra = {
+        "ODOO_HARNESS_DIR": str(harness),
+        "PATH": f"{fake_docker}:{os.environ.get('PATH', '')}",
+        "VW_CALL_LOG": str(vw_log),
+        "VW_COUNT_FILE": str(vw_count_file),
+        "STUB_LOG": str(stub_log),
+    }
+    result = _run_prepush(project, lsha=tip_sha, rsha=ZERO, env_extra=env_extra)
+
+    assert result.returncode != 0, result.stdout
+    assert "cannot materialize pushed ref" in result.stdout, result.stdout
+    leaked = list(harness.glob(".odoo-harness-prepush-snap.*"))
+    assert not leaked, f"the unmaterializable-ref path leaked a snapshot dir: {leaked}"
+
+
+# Non-vacuousness control for DEFECT 3: the OLD (pre-fix) shape of the rc==3
+# auto-build branch -- mktemp's `_base_snap`, then ONLY inline `rm -rf` on the
+# normal/return paths, NO trap at all -- reproduced literally as a standalone
+# script and driven with the same signal-interrupting prepare-base-db.sh stub
+# used above, proving the historical (no-trap) shape really did leak.
+OLD_AUTOBUILD_NO_TRAP_SH = """#!/usr/bin/env bash
+# Pre-fix embedded literal of hooks/pre-push's odoo_validate_one_ref rc==3
+# auto-build branch, transplanted for standalone driving: _base_snap's mktemp
+# dir carries ZERO trap here -- cleanup is only the inline `rm -rf` below,
+# reached solely via ordinary (non-signal) return paths.
+set -u
+HARNESS="$1"
+_base_snap="$(mktemp -d "${HARNESS}/.odoo-harness-prepush-snap.XXXXXX" 2>/dev/null || true)"
+if [ -z "$_base_snap" ]; then
+  echo "[pre-push] BLOCKED: cannot materialize"
+  [ -n "$_base_snap" ] && rm -rf "$_base_snap" 2>/dev/null
+  exit 1
+fi
+if ! "$HARNESS/prepare-base-db.sh"; then
+  echo "[pre-push] BLOCKED: base build failed"
+  rm -rf "$_base_snap" 2>/dev/null
+  exit 1
+fi
+rm -rf "$_base_snap" 2>/dev/null
+exit 0
+"""
+
+
+def test_old_no_trap_autobuild_would_have_leaked_snapshot_on_signal_interrupt(tmp_path):
+    harness = tmp_path / "harness_old_notrap"
+    harness.mkdir()
+    stub_log = tmp_path / "old_stub.log"
+    stub_log.write_text("", encoding="utf-8")
+    pb = harness / "prepare-base-db.sh"
+    pb.write_text(_STUB_PREPARE_BASE_DB_SIGTERM_SH, encoding="utf-8")
+    _make_executable(pb)
+
+    old_script = tmp_path / "old_autobuild_no_trap.sh"
+    old_script.write_text(OLD_AUTOBUILD_NO_TRAP_SH, encoding="utf-8")
+    _make_executable(old_script)
+
+    env = os.environ.copy()
+    env["STUB_LOG"] = str(stub_log)
+
+    result = subprocess.run(
+        ["bash", str(old_script), str(harness)],
+        env=env, text=True, capture_output=True, check=False,
+    )
+
+    leaked = list(harness.glob(".odoo-harness-prepush-snap.*"))
+    assert leaked, (
+        "the embedded pre-fix (no-trap) auto-build shape no longer leaks the "
+        "snapshot dir on a signal-interrupted prepare-base-db.sh call -- this "
+        f"control is no longer discriminating. stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
     )

@@ -472,6 +472,26 @@ odoo_validate_one_ref() {  # $1 = pushed local sha to materialize+validate again
     # symlink/submodule/path-traversal entry) fails CLOSED and LOUD here, exactly like
     # every other "could not actually validate" reason in this hook -- never a silent
     # fall-back to the live tree.
+    #
+    # LOW disk-hygiene fix: prepare-base-db.sh below blocks ~10min on the common
+    # first-push case, and until now $_base_snap's cleanup was ONLY the inline
+    # `rm -rf` calls on the normal/return paths further down -- a signal-interrupted
+    # push (Ctrl-C, CI cancel, closed terminal) during that window skipped all of
+    # them and leaked this mktemp dir under $HARNESS with no reaper. Match
+    # validate-warm.sh's own trap convention (EXIT cleanup + explicit INT/TERM ->
+    # exit, so the EXIT trap deterministically fires even on signal termination):
+    # the EXIT trap only ever touches $_base_snap, and is a safe no-op (guarded by
+    # `-n`) both before this variable is assigned and after this function has
+    # returned and its `local` has gone out of scope -- so it never mis-fires on an
+    # unrelated exit. This is the first trap this hook installs (verified no
+    # pre-existing trap here to clobber); the inline `rm -rf "$_base_snap"` calls
+    # below are kept as the primary cleanup for the ordinary (non-signal) failure
+    # paths -- once this function returns, its `local $_base_snap` is out of scope
+    # and this EXIT trap can no longer see it, so they are NOT merely redundant --
+    # and this trap adds the missing signal-interruption coverage on top.
+    trap '[ -n "${_base_snap:-}" ] && rm -rf "$_base_snap" 2>/dev/null || true' EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
     _base_snap="$(mktemp -d "${HARNESS}/.odoo-harness-prepush-snap.XXXXXX" 2>/dev/null || true)"
     if [ -z "$_base_snap" ] || ! harness_materialize_tree "$PROJECT" "$ref" "$_base_snap"; then
       echo "[pre-push] ❌ BLOCKED: cannot materialize pushed ref ${ref} for the base build (bad ref, no custom-addons/ at that commit, a rejected symlink/submodule/path-traversal entry, or object read error) -- refusing to fall back to the live working tree. Fix the error above, or SKIP_ODOO_VALIDATE=1 git push to bypass."
