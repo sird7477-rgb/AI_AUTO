@@ -240,8 +240,19 @@ def maybe_relaunch(entry: dict[str, Any], dry_run: bool, current: float) -> str:
     if dry_run:
         event("would_relaunch", entry["pane"], "pane_unavailable", {"argv": argv})
         return "would_relaunch"
-    subprocess.run(argv, check=False, timeout=entry.get("relaunch_timeout_seconds", 30))
+    # MEDIUM-HIGH/LIVE: subprocess.run can raise (FileNotFoundError for a bad/stale
+    # relaunch argv, TimeoutExpired, or other OSError) before relaunch_count is
+    # bumped. If the count isn't incremented for the ATTEMPT (not just success),
+    # max_relaunch never trips and a persistently-bad relaunch command retries
+    # every scan interval forever, growing events.log without bound. Count the
+    # attempt first so it's durable even if the spawn itself blows up; the
+    # per-iteration save_registry() in run_scan then persists it.
     entry["relaunch_count"] = entry.get("relaunch_count", 0) + 1
+    try:
+        subprocess.run(argv, check=False, timeout=entry.get("relaunch_timeout_seconds", 30))
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        event("relaunch_spawn_error", entry["pane"], exc.__class__.__name__, {"argv": argv})
+        return "relaunch_spawn_error"
     event("relaunch", entry["pane"], "pane_unavailable", {"argv": argv})
     return "relaunch"
 

@@ -65,6 +65,20 @@ if [ -n "$ODOO_HOOK" ] && [ -f "$ODOO_HOOK" ]; then
     orc=$?
   fi
   [ "$orc" -ne 0 ] && exit "$orc"
+else
+  # No odoo validation hook materialized in THIS worktree (the normal state for a
+  # worktree that never ran `ai-domain-pack ... odoo`, or one whose "$top" failed to
+  # resolve). Multi-worktree is this project's normal operating mode, so this is not
+  # rare -- and unlike gate 1's WARNING-on-skip, this branch used to fall out of the
+  # `if` with zero stderr and exit 0: a push from such a worktree LOOKED fully
+  # validated (clean exit, no notice) even when it changed custom-addons/. Detecting
+  # "did this push actually touch custom-addons/" here would require duplicating
+  # hooks/pre-push's own pushed-commit/module-scope walk (merge-commit `-m` diffing,
+  # decoy-ref immunity, new-branch over-approximation -- see that file's RED11-2/
+  # RED15-2 history) a SECOND time, out of sync by construction; that is not a cheap,
+  # safe check, so this stays advisory (WARN, do not block) mirroring gate 1's own
+  # warn-not-block philosophy for a worktree that legitimately carries no odoo pack.
+  printf '[pre-push] NOT-VALIDATED (odoo domain-pack gate 2): no materialized odoo validation hook in this worktree (%s) -- '\''push OK'\'' does NOT imply '\''odoo-validated'\''. Run '\''ai-domain-pack ... odoo'\'' in this worktree to enable it, or push from a worktree that has it.\n' "${ODOO_HOOK:-<unresolved: git rev-parse --show-toplevel failed>}" >&2
 fi
 
 exit 0

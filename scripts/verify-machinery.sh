@@ -11438,12 +11438,17 @@ SCRUB_SOURCE = re.compile(r'(?:^|[;&|]|&&|\|\||\bthen\b|\bdo\b|\belse\b)\s*(?:\.
 # carrying a marker substring (`git <dangerous> ...  # ... --attr-source= ...`) got counted though
 # the executed command carries no such flag; (2) a SECOND, chained git call on the same line
 # (`git <dangerous> ; git ... --attr-source=...`) could supply a marker that wrongly "vouches for"
-# an unrelated, genuinely-unhardened FIRST call. Fixed in two parts: (a) COMMENT_RE strips a
-# trailing shell comment (a `#` that starts a shell WORD -- at line-start or preceded by
-# whitespace -- through end of line) before ANY marker check, so a comment can never supply (or
-# hide) a marker. Pragmatic: does not track quoting, so a literal `#` inside a quoted argument is
-# also stripped; that errs SAFE (a spurious false-positive a maintainer must silence with real
-# hardening) rather than unsafe (a comment hiding/forging a marker). (b) CMD_SEP + _owning_segment
+# an unrelated, genuinely-unhardened FIRST call. Fixed in two parts: (a) a trailing-comment
+# stripper strips a trailing shell comment (a `#` that starts a shell WORD -- at line-start or
+# preceded by whitespace, and NOT inside a quoted string -- through end of line) before ANY
+# marker check, so a comment can never supply (or hide) a marker. CORRECTION (F7-2, RED-refuted):
+# this step was ORIGINALLY a quoting-unaware regex (COMMENT_RE) claimed to "err safe" by only
+# ever producing false-positives; RED disproved that -- a `#` inside an EARLIER quoted string on
+# the line (`msg="issue #123"; git diff --patch HEAD`) is also a word-boundary `#`, so the regex
+# truncated there and DELETED the real, unhardened `git diff --patch` call that followed,
+# producing a false-NEGATIVE (a hidden violation), the dangerous direction. Replaced with
+# `_strip_trailing_comment` (see its docstring below), which tracks quote state and only
+# truncates at a `#` that is both outside any quote and at a word boundary. (b) CMD_SEP + _owning_segment
 # bound the marker checks to the SAME shell command as the matched invocation (split on the same
 # separator alphabet the cat-file allowlist, rule 4, already used: `;`, `&`/`&&`, `|`/`||`,
 # backtick), so a marker living in a DIFFERENT chained command (earlier OR later on the line) can
@@ -11458,7 +11463,61 @@ SCRUB_SOURCE = re.compile(r'(?:^|[;&|]|&&|\|\||\bthen\b|\bdo\b|\belse\b)\s*(?:\.
 # a second, wholly independent dangerous invocation chained after a hardened first one on the same
 # physical line remains a (pre-existing, unchanged) blind spot -- no shipped or planted-control site
 # exercises that shape today.
-COMMENT_RE = re.compile(r'(?:(?<=\s)|^)#.*$')
+# F7-2 fix (2026-07-08, RED-refuted "errs safe" claim): COMMENT_RE above was a naive regex --
+# `(?:(?<=\s)|^)#.*$` -- that truncated the line at the FIRST `#` at a word boundary with NO
+# regard for quoting. That is quoting-UNAWARE, and the direction it errs is NOT uniformly safe:
+# a `#` inside an EARLIER quoted string on the same physical line (`msg="issue #123 needs a
+# fix"; git diff --patch HEAD`) is itself a word-boundary `#` (preceded by whitespace, the space
+# after `issue`), so the regex truncated THERE and deleted everything after it -- including the
+# real, unhardened `git diff --patch` invocation that followed. The comment-stripping step then
+# hides a genuine violation from every check below (false-NEGATIVE, the dangerous direction),
+# which directly contradicts the "false-positive only" claim this fix shipped under. Replaced
+# with `_strip_trailing_comment`, a tiny deterministic left-to-right scanner over the physical
+# line that tracks single-/double-quote state and only truncates at a `#` that is BOTH outside
+# any quote AND at a word boundary. This still satisfies the original R5/F7 intent (a trailing
+# ` # ... --attr-source= ...` comment is still stripped so it can never vouch for a dangerous
+# call) while no longer eating a real invocation that follows a quoted `#`. Known residual (not
+# handled, no shipped site exercises it today): a `#` inside a `$'...'` ANSI-C-quoted string
+# whose content itself contains an escaped `\'` will end quote-tracking early at that `\'` (this
+# scanner treats `'...'` as fully literal per POSIX single-quote rules and does not know the
+# `$'...'` variant permits backslash escapes inside); and comment stripping only ever runs on
+# ONE already-joined logical line, never inside a heredoc body (heredoc bodies are not fed
+# through this function at all, same as before this fix).
+def _strip_trailing_comment(line):
+    in_squote = False
+    in_dquote = False
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if in_squote:
+            if c == "'":
+                in_squote = False
+            i += 1
+            continue
+        if in_dquote:
+            if c == '\\' and i + 1 < n:
+                i += 2
+                continue
+            if c == '"':
+                in_dquote = False
+            i += 1
+            continue
+        if c == '\\' and i + 1 < n:
+            i += 2
+            continue
+        if c == "'":
+            in_squote = True
+            i += 1
+            continue
+        if c == '"':
+            in_dquote = True
+            i += 1
+            continue
+        if c == '#' and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+        i += 1
+    return line
 CMD_SEP = re.compile(r'[;&|`]+')
 def _owning_segment(text, anchor):
     # Return the sub-range of `text` (a comment-stripped logical line) that contains `anchor` (a
@@ -11507,10 +11566,13 @@ for f in sorted(targets):
         if line.lstrip().startswith("#"):
             continue
         # F7 fix (2026-07-08, canary-proven false-negative in the hardening checks THEMSELVES --
-        # distinct from the F6 cat-file-allowlist substring bug below; see COMMENT_RE/CMD_SEP/
-        # _owning_segment above for the full rationale). Strip a trailing shell comment before
-        # matching/scoping so a comment can never supply (or hide) a hardening marker.
-        line_nc = COMMENT_RE.sub('', line)
+        # distinct from the F6 cat-file-allowlist substring bug below; see
+        # _strip_trailing_comment/CMD_SEP/_owning_segment above for the full rationale). Strip a
+        # trailing shell comment before matching/scoping so a comment can never supply (or hide)
+        # a hardening marker. Quoting-aware (F7-2): a `#` inside an earlier quoted string on the
+        # line is NOT treated as starting a comment, so it can no longer delete a real git
+        # invocation that follows it.
+        line_nc = _strip_trailing_comment(line)
         m = INVOKE.search(line_nc)
         if not m:
             continue

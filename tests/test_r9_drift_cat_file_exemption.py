@@ -39,6 +39,7 @@ independently, forever -- not just until the next commit.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -614,6 +615,158 @@ def test_guard_still_passes_real_ai_worktree_remove_prune_die_idiom(tmp_path: Pa
         f"the real tools/ai-worktree file must scan clean; got:\n"
         f"stdout={proc.stdout}\nstderr={proc.stderr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 7. F7-2 (RED-refuted "errs safe" claim, ops-defense2 game #2 R6): the F7 comment-stripper
+#    (COMMENT_RE, `re.compile(r'(?:(?<=\s)|^)#.*$')`) claimed to err SAFE (false-positive only)
+#    because it "does not track quoting". RED refuted this: a `#` inside an EARLIER quoted
+#    string on the SAME physical line is itself a word-boundary `#` (preceded by whitespace), so
+#    the regex truncates there too -- deleting a REAL git invocation that follows the quote. That
+#    is a false-NEGATIVE (a genuine violation goes unscanned), the dangerous direction, directly
+#    contradicting the "errs safe" claim. Fixed by replacing COMMENT_RE with
+#    `_strip_trailing_comment`, a quoting-aware left-to-right scanner (see scripts/verify-
+#    machinery.sh for its full docstring/rationale) that only truncates at a `#` that is BOTH
+#    outside any quote AND at a word boundary.
+# ---------------------------------------------------------------------------
+
+# Embedded literal reproduction of the PRE-F7-2 COMMENT_RE regex exactly as it shipped in R5/F7
+# (verified against the real on-disk verify-machinery.sh at authoring time) -- pinned here as a
+# literal so the non-vacuousness proof below never depends on a moving `git show HEAD:` ref.
+_OLD_COMMENT_RE = re.compile(r'(?:(?<=\s)|^)#.*$')
+
+
+def _extract_strip_trailing_comment(script_text: str):
+    """Pull the CURRENT (fixed) `_strip_trailing_comment` function body verbatim out of the
+    shipped R9-DRIFT guard heredoc and exec it standalone, so unit-level assertions below run the
+    REAL shipped implementation, not a hand-copied reimplementation that could silently diverge."""
+    guard_src = _extract_r9_drift_guard(script_text)
+    start_marker = "def _strip_trailing_comment(line):"
+    end_marker = "CMD_SEP = re.compile(r'[;&|`]+')"
+    start = guard_src.index(start_marker)
+    end = guard_src.index(end_marker, start)
+    fn_src = guard_src[start:end]
+    ns: dict = {}
+    exec(fn_src, ns)
+    return ns["_strip_trailing_comment"]
+
+
+def _build_old_comment_re_guard_src() -> str:
+    """Reconstruct the guard exactly as it behaved under the OLD (pre-F7-2), quoting-unaware
+    COMMENT_RE by taking the CURRENT, on-disk, shipped guard body and swapping ONLY the one
+    `line_nc = _strip_trailing_comment(line)` call site back to the literal OLD regex-based
+    `COMMENT_RE.sub('', line)` behavior -- INVOKE, CMD_SEP, _owning_segment, and every rule stay
+    the real, current, shipped code, unmodified. This isolates exactly the ONE behavioral
+    difference F7-2 changed and runs it end-to-end for real (not a hand-rebuilt guard), without
+    ever reading `git show HEAD:` (the swap is done on the CURRENT working-tree source)."""
+    current = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    anchor = "line_nc = _strip_trailing_comment(line)"
+    assert anchor in current, (
+        "extraction anchor stale -- update this test's swap-in point to match the current guard"
+    )
+    return current.replace(
+        anchor,
+        r"line_nc = re.compile(r'(?:(?<=\s)|^)#.*$').sub('', line)",
+    )
+
+
+def test_old_comment_re_truncates_at_quoted_hash_deleting_real_git_call() -> None:
+    """NON-VACUOUS root-cause proof: the embedded literal OLD COMMENT_RE regex, run directly
+    against the exploit line, truncates at the `#` inside the EARLIER quoted string and deletes
+    the real, unhardened `git diff --patch HEAD` invocation that follows it."""
+    bad_line = 'msg="issue #123 needs a fix"; git diff --patch HEAD'
+    old_stripped = _OLD_COMMENT_RE.sub('', bad_line)
+    assert "git diff" not in old_stripped, (
+        "revert -> FAIL evidence: the OLD quoting-unaware COMMENT_RE must truncate at the quoted "
+        f"`#` and delete the real `git diff --patch` call: stripped={old_stripped!r}"
+    )
+
+
+def test_guard_built_on_old_comment_re_hides_the_dangerous_diff(tmp_path: Path) -> None:
+    """NON-VACUOUS end-to-end proof: a guard reconstructed with ONLY the OLD, quoting-unaware
+    COMMENT_RE swapped back in (everything else is the real, current, shipped code) reports ZERO
+    violations for a planted, genuinely-unhardened `git diff --patch HEAD` that is preceded on the
+    same line by a quoted string containing a `#` -- the comment-stripping step alone hides the
+    violation before INVOKE ever gets to see it. This is the false-negative F7-2 closes."""
+    bad_line = 'msg="issue #123 needs a fix"; git diff --patch HEAD\n'
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "quoted-hash.sh").write_text(bad_line, encoding="utf-8")
+
+    old_guard_src = _build_old_comment_re_guard_src()
+    proc = _run_guard(old_guard_src, fake, tmp_path)
+    assert proc.returncode == 0, (
+        "revert -> FAIL evidence: the OLD-COMMENT_RE-based guard must WRONGLY report ZERO "
+        f"violations (the quoted `#` deletes the real git diff call); got:\n"
+        f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+    assert "quoted-hash.sh" not in proc.stderr
+
+
+def test_guard_flags_git_call_after_quoted_hash_false_negative_fixed(tmp_path: Path) -> None:
+    """The actual fix: the CURRENT (fixed) guard -- extracted live from the real, on-disk,
+    shipped verify-machinery.sh -- MUST flag the same planted `git diff --patch HEAD` line, now
+    that comment-stripping is quoting-aware and no longer eats a real invocation following a
+    quoted `#`."""
+    bad_line = 'msg="issue #123 needs a fix"; git diff --patch HEAD\n'
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "quoted-hash.sh").write_text(bad_line, encoding="utf-8")
+
+    current_guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    proc = _run_guard(current_guard_src, fake, tmp_path)
+    assert proc.returncode == 1, (
+        "the FIXED guard must flag the unhardened `git diff --patch` that follows a quoted `#` "
+        f"on the same line; got:\nstdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+    assert "quoted-hash.sh" in proc.stderr
+    assert "R9-DRIFT VIOLATIONS" in proc.stderr
+
+
+def test_guard_still_flags_genuine_trailing_comment_after_quoting_aware_rewrite(tmp_path: Path) -> None:
+    """Preserved R5/F7 intent: a GENUINE trailing shell comment carrying a hardening-marker
+    substring must still be stripped (so it can never vouch for a dangerous call) under the new
+    quoting-aware `_strip_trailing_comment` -- exactly the shape the original R5 fix targeted."""
+    bad_line = 'git status --porcelain   # --attr-source= core.fsmonitor=\n'
+    fake = tmp_path / "fake"
+    (fake / "scripts").mkdir(parents=True)
+    (fake / "scripts" / "trailing-comment.sh").write_text(bad_line, encoding="utf-8")
+
+    current_guard_src = _extract_r9_drift_guard(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    proc = _run_guard(current_guard_src, fake, tmp_path)
+    assert proc.returncode == 1, (
+        "a genuine trailing comment must still be stripped, so its markers cannot vouch for the "
+        f"bare `git status`; got:\nstdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+    assert "trailing-comment.sh" in proc.stderr
+
+
+def test_strip_trailing_comment_ignores_quoted_hash() -> None:
+    """Unit-level (real shipped function, extracted verbatim): a `#` inside a single- or
+    double-quoted string is not a comment start -- the line must come back UNCHANGED."""
+    strip = _extract_strip_trailing_comment(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    line = 'msg="issue #123 needs a fix"; git diff --patch HEAD'
+    assert strip(line) == line
+
+
+def test_strip_trailing_comment_ignores_mid_word_hash() -> None:
+    """Unit-level: a `#` NOT preceded by whitespace/line-start (mid-word, e.g. a `git log`
+    format placeholder or a ref-like path) must not start a comment -- no spurious truncation."""
+    strip = _extract_strip_trailing_comment(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    for line in (
+        'git log --format=%h#%s',
+        'echo refs/heads/#x',
+        'foo#bar baz',
+    ):
+        assert strip(line) == line, f"mid-word `#` must not truncate: {line!r} -> {strip(line)!r}"
+
+
+def test_strip_trailing_comment_still_strips_genuine_boundary_hash() -> None:
+    """Unit-level: a `#` at a real word boundary (line-start or preceded by whitespace) outside
+    any quote still starts a comment and truncates through end of line -- the R5/F7 intent."""
+    strip = _extract_strip_trailing_comment(VERIFY_MACHINERY.read_text(encoding="utf-8"))
+    assert strip('git status --porcelain   # --attr-source= core.fsmonitor=') == 'git status --porcelain   '
+    assert strip('# a leading comment') == ''
 
 
 def test_guard_f6_catfile_forms_unaffected_by_f7(tmp_path: Path) -> None:
