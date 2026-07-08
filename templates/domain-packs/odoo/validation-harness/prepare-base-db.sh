@@ -13,7 +13,17 @@ export HARNESS_DIR="$HERE"
 . "$HERE/harness-preflight.sh"
 harness_require_docker || exit 4
 PROJECT="${1:?usage: prepare-base-db.sh <project_repo>}"
-export PROJECT_ADDONS="$PROJECT/custom-addons"
+# RED17b-2-class fix (validate-full.sh ODOO_DEMO_REBUILD path): a caller that has
+# already materialized an IMMUTABLE snapshot of the reviewed ref (validate-full.sh's
+# HARNESS_SNAPSHOT_DIR/custom-addons, HARNESS_VALIDATE_REF-pinned) must be able to hand
+# THAT dir to the base rebuild instead of this script unconditionally re-deriving
+# "$PROJECT/custom-addons" -- the live, mutable working tree -- which would silently
+# reintroduce the "validate the live dir, not the reviewed ref" TOCTOU class RED17b-2/
+# 18/18b closed everywhere else (deterministic under an overridden HARNESS_VALIDATE_REF;
+# racy at defaults over this rebuild's multi-minute window). Default (no override) is
+# UNCHANGED: "$PROJECT/custom-addons", so a direct/standalone invocation behaves exactly
+# as before.
+export PROJECT_ADDONS="${PREPARE_BASE_ADDONS_DIR:-$PROJECT/custom-addons}"
 [ -d "$PROJECT_ADDONS" ] || { echo "[base] no custom-addons at $PROJECT_ADDONS" >&2; exit 2; }
 LANGCODE="${ODOO_LOAD_LANGUAGE:-ko_KR}"
 COMPANY_COUNTRY="${ODOO_COMPANY_COUNTRY:-base.kr}"
@@ -89,6 +99,17 @@ dc up -d db >/dev/null
 dc exec -T db sh -c 'until pg_isready -U odoo -q; do sleep 1; done'
 dc exec -T db dropdb -U odoo --if-exists "$BASE_DB" >/dev/null 2>&1 || true
 echo "[base] installing full set into '$BASE_DB' (one-time, ~10min)..."
+# Log-grep backstop (same FAIL_RE pattern + mechanism as validate-warm.sh/
+# validate-full.sh's IDENTICAL "-i/-u ... --stop-after-init" invocation): rc can be 0
+# even on a failed module load in edge configs (their own measured, documented
+# behavior), and until now this was the one caller of that same odoo-bin invocation
+# with ZERO backstop -- a silently-broken base could be reported "ready" and every
+# downstream validate-warm/validate-full run would then build on a broken foundation.
+# Capture the run's combined output to a log; a FAIL_RE hit fails this step LOUD and
+# non-zero even when rc==0.
+FAIL_RE="ParseError|cannot be located|does not exist|Invalid field|Element .* cannot|Failed to load registry|violates not-null|FAIL|ERROR.*test|[0-9]+ failed|ValidationError|Quants cannot be created|should be set"
+LOG="$(mktemp)"
+set +e
 dc run --rm \
   -e VDB="$BASE_DB" -e LANGCODE="$LANGCODE" -e COMPANY_COUNTRY="$COMPANY_COUNTRY" -e MODS="$MODS" -e DEMO_FLAG="$DEMO_FLAG" \
   odoo bash -c '
@@ -97,7 +118,15 @@ OPTS="-d $VDB --addons-path=/mnt/community/addons,/mnt/enterprise,/mnt/extra-add
 python3 /mnt/community/odoo-bin $OPTS -i base ${LANGCODE:+--load-language=$LANGCODE} --stop-after-init
 python3 /mnt/community/odoo-bin shell $OPTS --no-http < /mnt/harness/setup_company.py
 python3 /mnt/community/odoo-bin $OPTS -i $MODS $DEMO_FLAG --stop-after-init
-'
+' 2>&1 | tee "$LOG"
+rc=${PIPESTATUS[0]}
+set -e
+if [ "$rc" -ne 0 ] || grep -qiE "$FAIL_RE" "$LOG"; then
+  echo "[base] FAIL (rc=$rc) — install/load error above; '$BASE_DB' NOT ready." >&2
+  rm -f "$LOG"
+  exit 1
+fi
+rm -f "$LOG"
 # (A) warm-PASS cache invalidation: stamp a base epoch so validate-warm.sh's PASS cache
 # (keyed partly on this) is invalidated whenever the base is rebuilt — a new parity pin or
 # module set means a prior PASS no longer proves installability. A nanosecond stamp differs

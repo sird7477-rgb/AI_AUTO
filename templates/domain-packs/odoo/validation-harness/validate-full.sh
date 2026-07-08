@@ -290,7 +290,13 @@ if [ "${SKIP_DEMO_PASS:-0}" != "1" ] && [ "$WANT_DEMO" = "1" ]; then
     # (U-A0: -u does not reload demo). Its success IS the demo-data validation.
     echo "[full] demo/ changed -> rebuilding base_demo to validate changed demo data (full reload)..."
     harness_unlock   # release our READ lock so the child prepare-base can take the WRITE lock (no self-deadlock)
-    if ODOO_WITH_DEMO=1 ./prepare-base-db.sh "$PROJECT"; then
+    # Fix (same class as RED17b-2/18/18b): pass the ALREADY-MATERIALIZED, immutable
+    # snapshot's custom-addons ($PROJECT_ADDONS, set above from $HARNESS_SNAPSHOT_DIR)
+    # via PREPARE_BASE_ADDONS_DIR, NOT the raw/live $PROJECT path -- prepare-base-db.sh
+    # would otherwise unconditionally re-derive "$PROJECT/custom-addons" and rebuild the
+    # base from the live, mutable working dir instead of the reviewed $HARNESS_VALIDATE_REF,
+    # silently reintroducing the "validate the live dir, not the reviewed ref" TOCTOU class.
+    if ODOO_WITH_DEMO=1 PREPARE_BASE_ADDONS_DIR="$PROJECT_ADDONS" ./prepare-base-db.sh "$PROJECT"; then
       echo "[full] demo-pass(rebuild) PASS — changed demo data loads cleanly on the full set"
     else
       echo "[full] demo-pass(rebuild) FAIL — changed demo data did not load"; overall=1
