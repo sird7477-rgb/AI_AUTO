@@ -347,6 +347,17 @@ echo "[pre-push] Odoo validating changed modules: $mods"
 # silently drop coverage.
 odoo_validate_one_ref() {  # $1 = pushed local sha to materialize+validate against
   local ref="$1" rc
+  # Env-scrub chokepoint (defense in depth alongside validate-warm.sh's own marker-
+  # provenance fix): a real push must NEVER inherit a test/CI-only WARM_* override from
+  # the ambient shell. WARM_CACHE_PRIME and WARM_CLASSIFY_ONLY both make validate-warm.sh
+  # exit 0 WITHOUT ever running `docker compose ... -u` (the whole point of a real push's
+  # validation) -- WARM_CACHE_PRIME by printing a cached/primed PASS, WARM_CLASSIFY_ONLY by
+  # printing its dry-run decision and exiting before the docker stage in every code path
+  # (asset-skip, cache-hit, AND the plain validate branch). Left set, either would silently
+  # bypass this gate on a real push, exactly the class of defect this hook exists to close.
+  # (WARM_NO_ASSET_SKIP / WARM_NO_CACHE are NOT scrubbed: both only ever force MORE
+  # validation to run, never less, so they carry no bypass risk if inherited.)
+  unset WARM_CACHE_PRIME WARM_CLASSIFY_ONLY
   HARNESS_VALIDATE_REF="$ref" "$HARNESS/validate-warm.sh" "$PROJECT" $mods
   rc=$?
   if [ "$rc" = "3" ]; then

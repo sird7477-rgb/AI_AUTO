@@ -289,6 +289,9 @@ def main() -> int:
             print(f"[schema-catalog] {problem}")
         print("[schema-catalog] registry-load remains the oracle; fix or confirm with Odoo before push.")
         return 1 if args.strict else 0
+    if not modules:
+        print("[schema-catalog] OK: no changed modules to check")
+        return 0
     print(f"[schema-catalog] OK: screened {len(modules)} module(s)")
     return 0
 

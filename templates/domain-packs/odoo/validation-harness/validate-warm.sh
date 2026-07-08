@@ -261,17 +261,47 @@ if [ "${WARM_NO_CACHE:-0}" != "1" ]; then
     fi
   fi
 fi
+# PROVENANCE (bypass fix, LIVE/CRITICAL): a cache marker is only ever a valid stand-in
+# for a real docker-backed load if IT was itself written by a real docker-backed load.
+# WARM_CACHE_PRIME below writes a marker WITHOUT ever invoking docker (by design, for
+# offline test/CI fixturing) -- so the two write sites must stamp DISTINCT, non-forgeable
+# content, and the reuse path here must refuse anything that is not stamped "genuine".
+# Without this, a marker planted out-of-band (a stray WARM_CACHE_PRIME=1 test/CI run, or
+# a hostile shell) durably poisons this key: a LATER, ordinary (non-primed) invocation --
+# e.g. a real `git push` -- would read the file, see it exists, and print a cached PASS
+# for a module that never actually loaded in Odoo. An ambient/leaked WARM_CACHE_PRIME=1
+# on the real push itself is the same bypass by a second route; hooks/pre-push now unsets
+# it at the chokepoint (defense in depth), but that alone does not protect against a
+# marker planted earlier by a DIFFERENT (test/CI/hostile) process and merely read back
+# here, which is why the provenance stamp -- not just the env scrub -- is the fix.
+WARM_MARK_GENUINE='provenance=genuine'
+WARM_MARK_PRIMED='provenance=primed'
+warm_marker_provenance() {  # $1=path ; prints the marker's first line, or nothing
+  head -n 1 -- "$1" 2>/dev/null || true
+}
 if [ -n "$WARM_CACHE_KEY" ] && [ -f "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" ]; then
-  [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: cached"; exit 0; }
-  "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
-  echo "[warm] PASS (cached, no-op): '$MODCOMMA' content already validated on this warm base (key ${WARM_CACHE_KEY:0:12}); -u not re-run. (override: WARM_NO_CACHE=1)"
-  exit 0
+  _warm_prov="$(warm_marker_provenance "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}")"
+  if [ "$_warm_prov" = "$WARM_MARK_GENUINE" ] \
+     || { [ "$_warm_prov" = "$WARM_MARK_PRIMED" ] && [ "${WARM_CACHE_PRIME:-0}" = "1" ]; }; then
+    [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: cached"; exit 0; }
+    "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
+    echo "[warm] PASS (cached, no-op): '$MODCOMMA' content already validated on this warm base (key ${WARM_CACHE_KEY:0:12}); -u not re-run. (override: WARM_NO_CACHE=1)"
+    exit 0
+  fi
+  # Marker present but NOT genuine-provenance (a primed/test marker, or an unrecognized/
+  # legacy-empty one) read by a plain (non-primed) invocation -> a cache MISS, never a
+  # PASS. Fall through to real validation (or, further below, re-priming if THIS
+  # invocation also sets WARM_CACHE_PRIME=1 -- an equally-primed/test context).
+  echo "[warm] NOTE: cached marker at key ${WARM_CACHE_KEY:0:12} has non-genuine provenance ('${_warm_prov:-<empty>}') for this invocation -- treating as a cache MISS and re-validating." >&2
 fi
 # Test/CI hook: prime the cache for the current key WITHOUT a docker run, so the cache path
-# is fixturable offline. Never set in normal use.
+# is fixturable offline. Never set in normal use. The marker is stamped "primed" (never
+# "genuine") so it can only ever satisfy a LATER cache-hit that is itself WARM_CACHE_PRIME=1
+# (see the reuse check above) -- a plain production invocation can never read this marker
+# back as a PASS, closing the durable-out-of-band-plant bypass.
 if [ "${WARM_CACHE_PRIME:-0}" = "1" ] && [ -n "$WARM_CACHE_KEY" ]; then
   "$HERE/check-parity.sh" "$PROJECT" "$BASE_DB"
-  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && : > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
+  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && printf '%s\n' "$WARM_MARK_PRIMED" > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
   echo "[warm] CACHE PRIMED ${WARM_CACHE_KEY:0:12}"; exit 0
 fi
 [ "${WARM_CLASSIFY_ONLY:-0}" = "1" ] && { echo "[warm] CLASSIFY: validate"; exit 0; }
@@ -329,7 +359,9 @@ fi
 rm -f "$LOG"
 # Record this PASS so an identical (modset, on-disk content, base epoch) skips the -u re-run.
 # Only ever written on a real PASS; a FAIL above already exited without reaching here.
+# Stamped "genuine" (this is the one and only site that ran an actual `docker compose run`
+# odoo-bin -u load) -- the reuse check above accepts ONLY this provenance unconditionally.
 if [ -n "${WARM_CACHE_KEY:-}" ]; then
-  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && : > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
+  mkdir -p "$WARM_CACHE_DIR" 2>/dev/null && printf '%s\n' "$WARM_MARK_GENUINE" > "${WARM_CACHE_DIR}/${WARM_CACHE_KEY}" 2>/dev/null || true
 fi
 echo "[warm] PASS — $MODCOMMA updates cleanly on warm base (parity-pinned Odoo 19)"
