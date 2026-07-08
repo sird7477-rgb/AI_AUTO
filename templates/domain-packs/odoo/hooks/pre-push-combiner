@@ -9,8 +9,17 @@
 #
 # INSTALL (once per repo; hooks are NOT transferred by clone/worktree-add):
 #   cp this file to "$(git rev-parse --git-common-dir)/hooks/pre-push" (shared by all worktrees)
-#   and make it executable. Back up any existing shim first. NOTE: re-running `ai-auto setup`
-#   restores the plain framework shim and DROPS the odoo chain — re-install this combiner then.
+#   and make it executable. Back up any existing shim first. NOTE (verified against tools/
+#   ai-auto's actual hook-install conditional, RED-13): re-running `ai-auto setup` does NOT
+#   silently overwrite an installed combiner. Its install loop only replaces a hook file that
+#   is EITHER absent OR already framework-owned (contains the 'AI_AUTO shim' marker, or one of
+#   the legacy 'AI_AUTO worktree-safe hook' / 'AI_AUTO post-commit guard' markers it upgrades).
+#   This combiner's body matches none of those markers, so setup leaves it untouched and
+#   prints "ai-auto setup: WARNING existing custom pre-push left untouched: <path> (merge
+#   manually)" to stderr instead — no re-install is needed after `ai-auto setup`. Residual: if
+#   this file's body were ever changed to contain one of those literal marker strings, setup
+#   WOULD then treat it as an upgradeable framework-owned body and overwrite it with the
+#   current baked thin shim, dropping the odoo chain silently — so never add those markers here.
 #
 # CONFIG (env; both have sensible resolution so no shell-profile edit is required):
 #   AI_AUTO_HOME       engine root that holds hooks/pre-push + hooks/git-scrub.sh.

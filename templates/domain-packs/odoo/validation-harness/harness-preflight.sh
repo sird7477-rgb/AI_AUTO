@@ -28,3 +28,28 @@ harness_require_docker() {
     return 1
   fi
 }
+
+# SUPPLY-CHAIN advisory (LATENT residual, ops-defense game #2): the harness Dockerfile's
+# base image (`FROM odoo:19`) is a MUTABLE registry tag with no `@sha256:` digest pin and
+# no content-trust check anywhere -- a registry-side tag swap would silently change what
+# `dc build odoo` (and every downstream validate-warm/validate-full run reusing that image)
+# actually validates. Deliberately NOT a Dockerfile ARG/build-arg for the image ref (that
+# would reintroduce an image-ref injection surface this harness currently has none of) and
+# NOT a hardcoded, unverifiable digest guess -- instead, make the gap LOUD and advisory,
+# mirroring dump-schema-catalog.sh's NOT-VALIDATED idiom: never block the build, but never
+# stay silent either. Called by each entry script right before it triggers `docker compose
+# build` (prepare-base-db.sh, serve.sh, validate-odoo.sh); reads the Dockerfile AS SHIPPED
+# on disk, so it cannot see a build triggered against a runtime-overridden image ref.
+harness_check_base_image_pin() {
+  local dockerfile="${1:-${HARNESS_DIR:-.}/Dockerfile}"
+  [ -f "$dockerfile" ] || return 0
+  local from_line image
+  while IFS= read -r from_line; do
+    image="$(printf '%s\n' "$from_line" | sed -E 's/^[[:space:]]*FROM[[:space:]]+//; s/[[:space:]]+[Aa][Ss][[:space:]]+.*$//')"
+    if printf '%s' "$image" | grep -qE '@sha256:[0-9a-fA-F]{64}$'; then
+      continue   # digest-pinned -- recognized, no warning
+    fi
+    echo "[harness] SUPPLY-CHAIN WARNING: base image '${image}' is a mutable tag, not digest-pinned -- a registry-side tag swap changes what validates. Pin via FROM ${image}@sha256:<digest> (see Dockerfile header) to close this." >&2
+  done < <(grep -E '^[[:space:]]*FROM[[:space:]]+' "$dockerfile" 2>/dev/null)
+  return 0
+}

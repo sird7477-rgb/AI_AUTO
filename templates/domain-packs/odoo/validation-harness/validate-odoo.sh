@@ -196,6 +196,9 @@ for m in glob.glob(os.path.join(root,"*","__manifest__.py")):
 print("\n".join(sorted(deps)))
 PY
 echo "[validate] python deps: $(paste -sd' ' "$HERE/.deps.txt" 2>/dev/null || echo none)"
+# Supply-chain advisory (never blocking): LOUD warning if the Dockerfile's base image is a
+# mutable tag with no @sha256 digest pin. See harness-preflight.sh/Dockerfile header.
+harness_check_base_image_pin
 docker compose -f "$HERE/docker-compose.validate.yml" build odoo >/dev/null
 # Start Postgres and wait for readiness before running Odoo (the image entrypoint
 # is cleared and there is no DB healthcheck, so avoid racing DB startup).

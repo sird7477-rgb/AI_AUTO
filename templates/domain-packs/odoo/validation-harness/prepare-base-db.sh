@@ -119,6 +119,9 @@ PY
   echo "[base] deps source: custom-addons manifests (no requirements.txt at $PREPARE_BASE_REQUIREMENTS)"
 fi
 echo "[base] python deps: $(paste -sd' ' "$HERE/.deps.txt" 2>/dev/null || echo none)"
+# Supply-chain advisory (never blocking): LOUD warning if the Dockerfile's base image is a
+# mutable tag with no @sha256 digest pin. See harness-preflight.sh/Dockerfile header.
+harness_check_base_image_pin
 dc build odoo >/dev/null
 dc up -d db >/dev/null
 dc exec -T db sh -c 'until pg_isready -U odoo -q; do sleep 1; done'
