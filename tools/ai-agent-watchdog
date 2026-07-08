@@ -412,11 +412,21 @@ def save_ledger(data: dict[str, Any]) -> None:
 def cmd_ledger_record(args: argparse.Namespace) -> int:
     data = load_ledger()
     rec = data["records"].get(args.key, {})  # idempotent: same key updates, never duplicates
+    # Sanity ceiling (red-review #6): a mis-parsed reset far in the future must not become an
+    # (effectively) infinite wait. Clamp not_before to now + max_wait; the resume protocol
+    # re-checks the live limit state after the wake, so an early clamp is safe (it re-records
+    # if still limited) while a bad parse can never freeze recovery forever.
+    nb = None
+    if args.reset_epoch is not None:
+        _rec_now = args.now if getattr(args,'now',None) is not None else now()
+        nb = min(args.reset_epoch + args.epsilon, _rec_now + args.max_wait_seconds)
+    else:
+        nb = rec.get("not_before")
     rec.update({
         "key": args.key,
         "payload": args.payload if args.payload is not None else rec.get("payload", ""),
         "reset_epoch": args.reset_epoch if args.reset_epoch is not None else rec.get("reset_epoch"),
-        "not_before": (args.reset_epoch + args.epsilon) if args.reset_epoch is not None else rec.get("not_before"),
+        "not_before": nb,
         "max_retries": args.max_retries,
         "retry_count": rec.get("retry_count", 0),
         "status": "pending",
@@ -524,7 +534,9 @@ def parser() -> argparse.ArgumentParser:
     lr.add_argument("--payload", default=None, help="what to re-dispatch (prompt/ref); free text")
     lr.add_argument("--reset-epoch", type=float, default=None, help="reset time (epoch) from parse-reset")
     lr.add_argument("--epsilon", type=float, default=60.0)
+    lr.add_argument("--max-wait-seconds", type=float, default=43200.0, help="clamp not_before to now+this (guard a mis-parsed far-future reset; default 12h)")
     lr.add_argument("--max-retries", type=int, default=3)
+    lr.add_argument("--now", type=float, default=None, help="override current epoch (testing)")
     lr.set_defaults(func=cmd_ledger_record)
 
     ld = sub.add_parser("ledger-due", help="list pending records past not_before with retries left (exit 3 if none)")
